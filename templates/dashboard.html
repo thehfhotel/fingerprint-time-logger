@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employee Time Log Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+            font-size: 0.9rem;
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #4CAF50;
+        }
+        
+        .status-dot.disconnected {
+            background-color: #f44336;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 0.5rem;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .employee-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 1rem;
+        }
+        
+        .employee-card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+            transition: transform 0.2s ease;
+        }
+        
+        .employee-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        
+        .employee-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem;
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+        
+        .attendance-list {
+            padding: 1rem;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .attendance-entry {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .attendance-entry:last-child {
+            border-bottom: none;
+        }
+        
+        .employee-info {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        
+        .employee-name {
+            font-weight: bold;
+            color: #333;
+            font-size: 1rem;
+        }
+        
+        .employee-id {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 0.2rem;
+        }
+        
+        .time-info {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+        
+        .consolidated-view .attendance-list {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        
+        .consolidated-list .attendance-entry {
+            padding: 1rem 0;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .consolidated-list .attendance-entry:hover {
+            background-color: #f9f9f9;
+            padding-left: 0.5rem;
+            transition: all 0.2s ease;
+        }
+        
+        .attendance-time {
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .attendance-date {
+            font-size: 0.8rem;
+            color: #666;
+            margin-left: 0.5rem;
+        }
+        
+        .attendance-status {
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        
+        .status-checkin {
+            background-color: #e8f5e8;
+            color: #2e7d32;
+        }
+        
+        .status-checkout {
+            background-color: #fce4ec;
+            color: #c2185b;
+        }
+        
+        
+        .no-data {
+            text-align: center;
+            color: #666;
+            padding: 2rem;
+            font-style: italic;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+        
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #666;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+            margin-left: 0.5rem;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .refresh-btn {
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.2s ease;
+        }
+        
+        .refresh-btn:hover {
+            background: linear-gradient(135deg, #45a049 0%, #4CAF50 100%);
+        }
+        
+        .refresh-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            .employee-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header {
+                padding: 1rem;
+            }
+            
+            .header h1 {
+                font-size: 1.5rem;
+            }
+            
+            .status-bar {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Employee Time Log Dashboard</h1>
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-dot" id="deviceStatus"></div>
+                <span id="deviceStatusText">Connecting...</span>
+            </div>
+            <div class="status-item">
+                <span>Last Update: <span id="lastUpdate">Never</span></span>
+            </div>
+            <div class="status-item">
+                <span>Auto-refresh: 2min</span>
+            </div>
+            <div class="status-item">
+                <span id="timeSyncStatus">Time: Checking...</span>
+            </div>
+            <div class="status-item">
+                <span id="performanceStatus">Load: Measuring...</span>
+            </div>
+            <div class="status-item">
+                <button id="refreshButton" class="refresh-btn">🔄 Manual Refresh</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="totalEmployees">0</div>
+                <div class="stat-label">Thai Employees</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalRecords">0</div>
+                <div class="stat-label">Total Records (Today+Yesterday)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="todayCheckins">0</div>
+                <div class="stat-label">Today's Check-ins</div>
+            </div>
+        </div>
+
+        <div id="employeeContainer">
+            <div class="loading">Loading attendance data...</div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let attendanceData = {};
+        
+        // Socket event handlers
+        socket.on('connect', function() {
+            console.log('Connected to server');
+        });
+        
+        socket.on('attendance_update', function(data) {
+            console.log('Received attendance update:', data);
+            attendanceData = data.data || {};
+            updateDashboard(data);
+        });
+        
+        function updateDashboard(data) {
+            // Update status
+            const deviceStatus = document.getElementById('deviceStatus');
+            const deviceStatusText = document.getElementById('deviceStatusText');
+            const lastUpdate = document.getElementById('lastUpdate');
+            
+            if (data.device_status && data.device_status.connected) {
+                deviceStatus.classList.remove('disconnected');
+                deviceStatusText.textContent = 'Device Connected';
+            } else {
+                deviceStatus.classList.add('disconnected');
+                deviceStatusText.textContent = 'Device Disconnected';
+            }
+            
+            lastUpdate.textContent = data.last_update || 'Never';
+            
+            // Update time sync status
+            const timeSyncStatus = document.getElementById('timeSyncStatus');
+            if (data.device_status && data.device_status.time_sync) {
+                const syncInfo = data.device_status.time_sync;
+                timeSyncStatus.textContent = `Time: ${syncInfo.success ? '✅' : '❌'} ${syncInfo.message}`;
+                timeSyncStatus.title = syncInfo.message;
+            } else {
+                timeSyncStatus.textContent = 'Time: Unknown';
+            }
+            
+            // Update performance status
+            const performanceStatus = document.getElementById('performanceStatus');
+            if (data.device_status && data.device_status.performance) {
+                const perf = data.device_status.performance;
+                performanceStatus.textContent = `Load: ${perf.last_sync_duration} (${perf.record_count} records)`;
+                performanceStatus.title = `Last sync took ${perf.last_sync_duration} to process ${perf.record_count} records`;
+            } else {
+                performanceStatus.textContent = 'Load: Unknown';
+            }
+            
+            // Update stats
+            const totalEmployees = Object.keys(attendanceData).length;
+            const totalRecords = Object.values(attendanceData).reduce((sum, records) => sum + records.length, 0);
+            const todayDate = new Date().toISOString().split('T')[0];
+            const todayCheckins = Object.values(attendanceData).reduce((sum, records) => {
+                return sum + records.filter(record => record.date === todayDate && record.status === 'Check-in').length;
+            }, 0);
+            
+            document.getElementById('totalEmployees').textContent = totalEmployees;
+            document.getElementById('totalRecords').textContent = totalRecords;
+            document.getElementById('todayCheckins').textContent = todayCheckins;
+            
+            // Update employee grid
+            updateEmployeeGrid();
+        }
+        
+        function updateEmployeeGrid() {
+            const container = document.getElementById('employeeContainer');
+            
+            if (Object.keys(attendanceData).length === 0) {
+                container.innerHTML = '<div class="no-data">No attendance data available</div>';
+                return;
+            }
+            
+            // Handle consolidated data structure
+            let allRecords = [];
+            
+            // Extract all records from all employees
+            Object.entries(attendanceData).forEach(([employeeName, records]) => {
+                if (Array.isArray(records)) {
+                    allRecords = allRecords.concat(records);
+                }
+            });
+            
+            // Sort by timestamp (most recent first)
+            allRecords.sort((a, b) => {
+                const timeA = new Date(`${a.date} ${a.time}`);
+                const timeB = new Date(`${b.date} ${b.time}`);
+                return timeB - timeA;
+            });
+            
+            // Create consolidated attendance entries
+            const attendanceEntries = allRecords.map(record => `
+                <div class="attendance-entry">
+                    <div class="employee-info">
+                        <span class="employee-name">${record.employee_name || 'Unknown'}</span>
+                        <span class="employee-id">(ID: ${record.employee_id || 'N/A'})</span>
+                    </div>
+                    <div class="time-info">
+                        <span class="attendance-time">${record.time}</span>
+                        <span class="attendance-date">${record.date_display || record.date}</span>
+                    </div>
+                    <span class="attendance-status ${record.status === 'Check-in' ? 'status-checkin' : 'status-checkout'}">
+                        ${record.status}
+                    </span>
+                </div>
+            `).join('');
+            
+            // Create single consolidated view
+            const consolidatedCard = `
+                <div class="employee-card consolidated-view">
+                    <div class="employee-header">
+                        🏢 All Employees - Consolidated View (Most Recent First)
+                        <span style="float: right; font-size: 0.9rem; opacity: 0.8;">
+                            ${allRecords.length} total record${allRecords.length !== 1 ? 's' : ''}
+                        </span>
+                    </div>
+                    <div class="attendance-list consolidated-list">
+                        ${attendanceEntries || '<div class="no-data">No attendance records found</div>'}
+                    </div>
+                </div>
+            `;
+            
+            container.innerHTML = consolidatedCard;
+        }
+        
+        // Manual refresh function
+        function manualRefresh() {
+            const refreshBtn = document.getElementById('refreshButton');
+            refreshBtn.disabled = true;
+            refreshBtn.textContent = '🔄 Refreshing...';
+            
+            fetch('/api/refresh', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Manual refresh completed:', data);
+                    // Data will be updated via socket event
+                    setTimeout(() => {
+                        refreshBtn.disabled = false;
+                        refreshBtn.textContent = '🔄 Manual Refresh';
+                    }, 2000);
+                })
+                .catch(error => {
+                    console.error('Manual refresh failed:', error);
+                    refreshBtn.disabled = false;
+                    refreshBtn.textContent = '🔄 Manual Refresh';
+                    alert('Refresh failed: ' + error.message);
+                });
+        }
+        
+        // Add event listener for refresh button
+        document.getElementById('refreshButton').addEventListener('click', manualRefresh);
+        
+        // Initial load
+        fetch('/api/attendance')
+            .then(response => response.json())
+            .then(data => {
+                attendanceData = data.data || {};
+                updateDashboard(data);
+            })
+            .catch(error => {
+                console.error('Error loading initial data:', error);
+                document.getElementById('employeeContainer').innerHTML = 
+                    '<div class="no-data">Error loading attendance data</div>';
+            });
+    </script>
+</body>
+</html>
