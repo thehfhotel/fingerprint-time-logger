@@ -24,6 +24,10 @@ python-dotenv==1.0.0
 pytest==7.4.3
 pytest-asyncio==0.21.1
 
+# Production Server (REQUIRED for production deployment)
+gunicorn==23.0.0
+eventlet==0.40.1
+
 # Optional: Remove if not using PostgreSQL/Redis/Celery
 # psycopg2-binary==2.9.9  # Only needed for PostgreSQL
 # redis==5.0.1            # Only needed for caching

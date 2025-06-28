@@ -67,11 +67,10 @@ def is_realistic_date(timestamp):
     current_year = datetime.now().year
     record_year = timestamp.year
     
-    # Temporarily allow 2065 dates until device time is properly synced
-    # Consider dates realistic if they are:
-    # - From 2020 onwards (past 5 years)
-    # - Not more than 50 years in future (allows 2065 device dates)
-    return (current_year - 5) <= record_year <= (current_year + 50)
+    # Filter out clearly unrealistic dates:
+    # - Allow from 2020 onwards (past 5 years of historical data)
+    # - Only allow up to 1 year in the future (filter out 2065 dates)
+    return (current_year - 5) <= record_year <= (current_year + 1)
 
 def check_and_sync_device_time(conn):
     """Check device time and sync if necessary"""
@@ -172,10 +171,18 @@ def get_device_data():
         }
         
         processed_count = 0
+        filtered_count = 0
         for record in attendance_records:
             timestamp = record.timestamp
             user_id = str(record.user_id)
             processed_count += 1
+            
+            # Filter out unrealistic dates (like 2065)
+            if not is_realistic_date(timestamp):
+                filtered_count += 1
+                if filtered_count <= 5:  # Show first 5 filtered records
+                    print(f"🚫 Filtering unrealistic date: {timestamp} (year {timestamp.year})")
+                continue
             
             # Get employee name - prioritize Thai names, but show ALL employees
             if user_id in employee_names and employee_names[user_id]:
@@ -246,7 +253,9 @@ def get_device_data():
         
         print(f"⚡ Data processing complete ({performance_stats['sync_time']:.1f}s):")
         print(f"  - {len(attendance_data)} consolidated view created")
-        print(f"  - {total_processed} total records processed (ALL DATA - NO FILTERS)")
+        print(f"  - {processed_count} total records processed")
+        print(f"  - {filtered_count} unrealistic dates filtered out (e.g. year 2065)")
+        print(f"  - {len(all_attendance_records)} valid records found")
         print(f"  - Showing {len(all_attendance_records[:100])} most recent records")
         print(f"  - {time_sync_message}")
         print(f"  - Device load: {performance_stats['sync_time']:.1f}s connection time")

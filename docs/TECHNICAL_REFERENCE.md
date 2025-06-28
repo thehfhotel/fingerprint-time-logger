@@ -241,13 +241,56 @@ DASHBOARD_PORT=5000
 
 ## Deployment
 
-### Single-Machine Deployment
+### ⚠️ **CRITICAL**: Production Server Requirements
+
+**Current Issue**: Using Werkzeug development server (NOT production-ready)
+```
+WARNING: This is a development server. Do not use it in a production deployment.
+```
+
+### Development Deployment (Current)
 ```bash
 # Start API server
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-# Start dashboard (separate terminal)
+# Start dashboard (DEVELOPMENT ONLY)
 python dashboard_app.py
+```
+
+### Production Deployment (Required)
+```bash
+# Install production server
+pip install gunicorn eventlet
+
+# Start API server
+uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+
+# Start dashboard with Gunicorn (PRODUCTION)
+gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 dashboard_app:app
+```
+
+### Production Startup Script
+```bash
+#!/bin/bash
+# start_production.sh
+source venv/bin/activate
+export PYTHONPATH=/home/nut/fingerprint-time-logger
+
+echo "Starting Fingerprint Time Logger (Production Mode)"
+
+# Start FastAPI backend
+uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+API_PID=$!
+
+# Start dashboard with Gunicorn
+gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 dashboard_app:app &
+DASHBOARD_PID=$!
+
+echo "API Server PID: $API_PID"
+echo "Dashboard PID: $DASHBOARD_PID"
+
+# Wait for both processes
+wait
 ```
 
 ### Simple Backup Strategy
@@ -264,6 +307,13 @@ tar -czf logs_$(date +%Y%m%d).tar.gz *.log
 - **No Authentication**: Single trusted user
 - **Local Network**: ZKTeco device on private network
 - **File Permissions**: Restrict database file access
+- **Production Server**: **MUST** use Gunicorn, not Werkzeug
+
+### Technical Debt
+- See `docs/TECHNICAL_DEBT.md` for complete production readiness checklist
+- **Priority 1**: Migrate from Werkzeug to Gunicorn
+- **Priority 2**: Environment-based configuration
+- **Priority 3**: Structured logging and monitoring
 
 ---
 

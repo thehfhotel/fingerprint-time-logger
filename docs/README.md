@@ -45,6 +45,17 @@ Comprehensive troubleshooting guide for system issues.
 
 **Target Audience:** System administrators, technical users
 
+#### [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md) - **Production Readiness & Tech Debt**
+Critical production issues and technical debt tracking.
+
+**Key Sections:**
+- **CRITICAL**: Werkzeug → Gunicorn migration (production server)
+- Performance and security improvements
+- Implementation priority matrix
+- Production deployment checklist
+
+**Target Audience:** DevOps, system administrators, project managers
+
 #### [FRONTEND_DESIGN.md](FRONTEND_DESIGN.md) - **Frontend Architecture & Design**
 Detailed frontend design documentation and component architecture.
 
@@ -69,11 +80,18 @@ Detailed frontend design documentation and component architecture.
 1. Begin with [DOCUMENTATION.md](DOCUMENTATION.md) - Developer Setup section
 2. Review [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md) for architecture
 3. Study [FRONTEND_DESIGN.md](FRONTEND_DESIGN.md) for UI/UX patterns
-4. Use API Reference in [DOCUMENTATION.md](DOCUMENTATION.md) for endpoints
+4. **CRITICAL**: Read [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md) for production requirements
+5. Use API Reference in [DOCUMENTATION.md](DOCUMENTATION.md) for endpoints
 
 ### For System Administrators
-1. Use [DOCUMENTATION.md](DOCUMENTATION.md) for installation and operation
-2. Keep [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for problem resolution
+1. **START HERE**: [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md) - Production server requirements
+2. Use [DOCUMENTATION.md](DOCUMENTATION.md) for installation and operation
+3. Keep [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for problem resolution
+
+### For Production Deployment
+1. **MANDATORY**: Review [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md) - Werkzeug migration
+2. Follow production deployment steps in [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md)
+3. Test all functionality before going live
 
 ## 🎯 Project Scope (Simplified)
 
@@ -99,6 +117,7 @@ docs/
 ├── README.md                  # This file - documentation index
 ├── DOCUMENTATION.md           # Primary comprehensive documentation
 ├── TECHNICAL_REFERENCE.md     # System architecture and implementation
+├── TECHNICAL_DEBT.md          # Production readiness and tech debt tracking
 ├── FRONTEND_DESIGN.md         # Frontend architecture and design patterns
 └── TROUBLESHOOTING.md         # Problem resolution guide
 ```
