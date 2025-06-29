@@ -63,32 +63,7 @@
             padding: 2rem;
         }
         
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2rem;
-        }
-        
-        .stat-card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        
-        .stat-number {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #667eea;
-            margin-bottom: 0.5rem;
-        }
-        
-        .stat-label {
-            color: #666;
-            font-size: 0.9rem;
-        }
+        /* Stats styles removed for simplified UI */
         
         .employee-grid {
             display: grid;
@@ -309,21 +284,6 @@
     </div>
 
     <div class="container">
-        <div class="stats">
-            <div class="stat-card">
-                <div class="stat-number" id="totalEmployees">0</div>
-                <div class="stat-label">Thai Employees</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="totalRecords">0</div>
-                <div class="stat-label">Total Records (Today+Yesterday)</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="todayCheckins">0</div>
-                <div class="stat-label">Today's Check-ins</div>
-            </div>
-        </div>
-
         <div id="employeeContainer">
             <div class="loading">Loading attendance data...</div>
         </div>
@@ -380,17 +340,7 @@
                 performanceStatus.textContent = 'Load: Unknown';
             }
             
-            // Update stats
-            const totalEmployees = Object.keys(attendanceData).length;
-            const totalRecords = Object.values(attendanceData).reduce((sum, records) => sum + records.length, 0);
-            const todayDate = new Date().toISOString().split('T')[0];
-            const todayCheckins = Object.values(attendanceData).reduce((sum, records) => {
-                return sum + records.filter(record => record.date === todayDate && record.status === 'Check-in').length;
-            }, 0);
-            
-            document.getElementById('totalEmployees').textContent = totalEmployees;
-            document.getElementById('totalRecords').textContent = totalRecords;
-            document.getElementById('todayCheckins').textContent = todayCheckins;
+            // Stats removed for simplified UI
             
             // Update employee grid
             updateEmployeeGrid();

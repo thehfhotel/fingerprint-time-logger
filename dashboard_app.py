@@ -10,9 +10,10 @@ import threading
 import time
 from datetime import datetime, timedelta
 from collections import defaultdict
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 from zk import ZK
+import requests
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'attendance-dashboard-2025'
@@ -26,6 +27,9 @@ USERID_CSV = "userid.csv"
 DEVICE_TIMEOUT = 3  # seconds (reduced from 5s for faster operations)
 MAX_RETRIES = 2  # Maximum connection retries
 CACHE_DURATION = 300  # Cache data for 5 minutes
+
+# API Server Configuration
+API_BASE_URL = "http://localhost:8000"
 
 # Global data storage - Optimized with caching
 employee_names = {}
@@ -369,6 +373,63 @@ def api_manual_refresh():
             'success': False,
             'message': f'Refresh failed: {str(e)}'
         }), 500
+
+# Thai Names API proxy routes
+@app.route('/api/thai-names/', methods=['GET'])
+@app.route('/api/thai-names', methods=['GET'])
+def proxy_get_thai_names():
+    """Proxy GET requests to Thai names API"""
+    try:
+        # Forward query parameters
+        params = request.args.to_dict()
+        response = requests.get(f"{API_BASE_URL}/api/thai-names/", params=params)
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/thai-names/', methods=['PUT'])
+@app.route('/api/thai-names', methods=['PUT'])
+def proxy_update_thai_names():
+    """Proxy PUT requests to Thai names API"""
+    try:
+        data = request.get_json()
+        response = requests.put(f"{API_BASE_URL}/api/thai-names/", json=data)
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/thai-names/sync', methods=['POST'])
+def proxy_sync_thai_names():
+    """Proxy sync requests to Thai names API"""
+    try:
+        response = requests.post(f"{API_BASE_URL}/api/thai-names/sync")
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/thai-names/<badge_number>', methods=['GET', 'PUT', 'DELETE'])
+def proxy_thai_name_by_badge(badge_number):
+    """Proxy individual Thai name operations"""
+    try:
+        if request.method == 'GET':
+            response = requests.get(f"{API_BASE_URL}/api/thai-names/{badge_number}")
+        elif request.method == 'PUT':
+            data = request.get_json()
+            response = requests.put(f"{API_BASE_URL}/api/thai-names/{badge_number}", json=data)
+        elif request.method == 'DELETE':
+            response = requests.delete(f"{API_BASE_URL}/api/thai-names/{badge_number}")
+        
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @socketio.on('connect')
 def on_connect(auth):

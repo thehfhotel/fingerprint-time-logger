@@ -27,8 +27,47 @@ This updated implementation plan incorporates the new Thai Name Management requi
 
 ## Revised Implementation Roadmap
 
+### **URGENT Phase 0: Dashboard UI Cleanup** (Immediate - Day 0)
+*Remove unnecessary summarized stats to simplify dashboard*
+
+#### 0.1 Remove Dashboard Statistics Cards
+**Rationale**: Simplify UI by removing redundant stats (Thai Employees, Total Records, Today's Check-ins)
+
+**Tasks**:
+- 🔄 Remove stats cards HTML from dashboard template
+- 🔄 Remove JavaScript stats update logic
+- 🔄 Clean up CSS for stats styling
+- 🔄 Ensure no breaking changes to attendance display
+- 🔄 Test dashboard functionality after removal
+- 🔄 Update any dependent code safely
+
+**Implementation Plan**:
+1. **Identify Dependencies**:
+   - Check JavaScript functions that update stats
+   - Verify no other components rely on stats elements
+   - Document current stats update flow
+
+2. **Safe Removal Process**:
+   - Comment out stats HTML first (test)
+   - Remove JavaScript updateStats() calls
+   - Clean up unused CSS classes
+   - Remove backend stats calculations if unused
+
+3. **Testing Checklist**:
+   - ✓ Dashboard loads without errors
+   - ✓ Attendance data displays correctly
+   - ✓ WebSocket updates work
+   - ✓ Manual refresh works
+   - ✓ Thai names integration intact
+
+**Files to Modify**:
+- `/templates/dashboard.html` - Remove stats div (lines 312-325)
+- `/templates/dashboard.html` - Remove updateStats() JavaScript function
+- `/dashboard_app.py` - Remove stats calculations if present
+- CSS cleanup for `.stats`, `.stat-card`, `.stat-number`, `.stat-label`
+
 ### **Phase 1: Thai Name Management Foundation** (Week 1, Days 1-2)
-*Replaces previous "Core Schedule Management" phase*
+*Follows after dashboard cleanup*
 
 #### 1.1 Database Schema Enhancement (Day 1)
 ```sql
