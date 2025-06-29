@@ -162,13 +162,26 @@ def get_device_data():
         # All attendance records in a single consolidated list
         all_attendance_records = []
         
-        # Enhanced Thai employees mapping with more comprehensive list
-        thai_names = {
-            '105': 'ไกด์', '106': 'พราว', '107': 'ดรีม', '109': 'ช่างเก่ง', 
-            '123': 'น้อยโหน่ง', '421': 'วิณัฐ', '1188': 'พนักงาน 1188',
-            '2522': 'หมวย', '2537': 'รีวิว', '2541': 'สะเบ้นซ์', '2559': 'พี่หญิง',
-            '37': 'จิ๋ม', '22': 'พรทิพย์', '10468': 'พนักงาน 10468'
-        }
+        # Get Thai names from database via API
+        thai_names = {}
+        try:
+            import requests
+            response = requests.get('http://localhost:8000/api/thai-names/', timeout=2)
+            if response.status_code == 200:
+                thai_name_data = response.json()
+                thai_names = {item['badge_number']: item['thai_name'] for item in thai_name_data}
+                print(f"✅ Loaded {len(thai_names)} Thai names from database")
+            else:
+                print(f"⚠️  Failed to load Thai names from API: {response.status_code}")
+        except Exception as e:
+            print(f"⚠️  Error loading Thai names from API: {e}")
+            # Fallback to hardcoded names if API fails
+            thai_names = {
+                '105': 'ไกด์', '106': 'พราว', '107': 'ดรีม', '109': 'ช่างเก่ง', 
+                '123': 'น้อยโหน่ง', '421': 'วิณัฐ', '1188': 'พนักงาน 1188',
+                '2522': 'หมวย', '2537': 'รีวิว', '2541': 'สะเบ้นซ์', '2559': 'พี่หญิง',
+                '37': 'จิ๋ม', '22': 'พรทิพย์', '10468': 'พนักงาน 10468'
+            }
         
         processed_count = 0
         filtered_count = 0
