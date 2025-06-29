@@ -5,7 +5,7 @@ import logging
 
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.api import attendance, devices, employees, sync
+from app.api import attendance, devices, employees, sync, thai_names
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ app.include_router(attendance.router, prefix="/api/attendance", tags=["attendanc
 app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(employees.router, prefix="/api/employees", tags=["employees"])
 app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
+app.include_router(thai_names.router, tags=["thai-names"])
 
 
 @app.get("/")

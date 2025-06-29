@@ -309,6 +309,11 @@ def dashboard():
     """Main dashboard page"""
     return render_template('dashboard.html')
 
+@app.route('/thai-names')
+def thai_names_management():
+    """Thai name management page"""
+    return render_template('thai_names.html')
+
 @app.route('/api/attendance')
 def api_attendance():
     """API endpoint for attendance data"""

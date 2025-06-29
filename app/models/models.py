@@ -51,6 +51,17 @@ class AttendanceRecord(Base):
     device = relationship("Device", back_populates="attendance_records")
 
 
+class EmployeeThaiName(Base):
+    __tablename__ = "employee_thai_names"
+
+    id = Column(Integer, primary_key=True, index=True)
+    badge_number = Column(String(50), unique=True, nullable=False, index=True)
+    thai_name = Column(String(100), nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
 class SyncLog(Base):
     __tablename__ = "sync_logs"
 
