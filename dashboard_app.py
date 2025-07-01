@@ -26,7 +26,7 @@ UPDATE_INTERVAL = 120  # seconds (reduced from 30s to minimize device load)
 USERID_CSV = "userid.csv"
 DEVICE_TIMEOUT = 3  # seconds (reduced from 5s for faster operations)
 MAX_RETRIES = 2  # Maximum connection retries
-CACHE_DURATION = 300  # Cache data for 5 minutes
+CACHE_DURATION = 60  # Cache data for 1 minute (reduced to allow background updates)
 
 # API Server Configuration
 API_BASE_URL = "http://localhost:8000"
@@ -35,9 +35,13 @@ API_BASE_URL = "http://localhost:8000"
 employee_names = {}
 attendance_data = {}
 last_update = None
-device_status = {"connected": False, "last_sync": None}
+device_status = {"connected": False, "last_sync": None, "loading": True}
 data_cache = {"last_record_count": 0, "last_cache_time": 0}
 performance_stats = {"sync_time": 0, "record_count": 0, "errors": 0}
+startup_data_loaded = False
+
+# Background updater thread (global to prevent multiple instances)
+updater_thread = None
 
 def load_employee_names():
     """Load employee name mappings from CSV - only employees with Thai names"""
@@ -130,18 +134,28 @@ def is_data_fresh():
     current_time = time.time()
     return (current_time - data_cache.get("last_cache_time", 0)) < CACHE_DURATION
 
-def get_device_data():
+def get_device_data(force_refresh=False, limit_records=None):
     """Fetch attendance data from ZKTeco device - Optimized for minimal device strain"""
-    global attendance_data, device_status, last_update, data_cache, performance_stats
+    global attendance_data, device_status, last_update, data_cache, performance_stats, startup_data_loaded
     
     print("🚀 get_device_data() called")
     sync_start_time = time.time()
     
     try:
-        # Use shorter timeout and efficient connection settings
-        zk = ZK(DEVICE_IP, port=DEVICE_PORT, timeout=DEVICE_TIMEOUT, 
-               force_udp=False, ommit_ping=True)  # Skip ping for faster connection
-        conn = zk.connect()
+        # Use shorter timeout and efficient connection settings with retry logic
+        for attempt in range(MAX_RETRIES):
+            try:
+                zk = ZK(DEVICE_IP, port=DEVICE_PORT, timeout=DEVICE_TIMEOUT, 
+                       force_udp=False, ommit_ping=True)  # Skip ping for faster connection
+                conn = zk.connect()
+                break  # Success, exit retry loop
+            except Exception as retry_error:
+                if attempt < MAX_RETRIES - 1:
+                    print(f"⚠️  Connection attempt {attempt + 1} failed: {retry_error}")
+                    time.sleep(1)  # Brief delay before retry
+                    continue
+                else:
+                    raise  # Final attempt failed, propagate error
         
         device_status["connected"] = True
         device_status["last_sync"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -149,13 +163,28 @@ def get_device_data():
         # Get attendance records efficiently
         attendance_records = conn.get_attendance()
         
-        # Quick check: if record count hasn't changed, skip processing
+        # Quick check: if record count hasn't changed, skip processing (unless forced)
         current_record_count = len(attendance_records)
-        if (current_record_count == data_cache.get("last_record_count", 0) and 
+        if (not force_refresh and 
+            current_record_count == data_cache.get("last_record_count", 0) and 
             is_data_fresh()):
             conn.disconnect()
             print(f"📊 Data unchanged ({current_record_count} records), using cache")
             return
+            
+        # Performance optimization: Limit records for efficiency
+        if limit_records:
+            # Use specified limit (for startup optimization)
+            attendance_records = sorted(attendance_records, key=lambda x: x.timestamp, reverse=True)[:limit_records]
+            print(f"⚡ Limited mode: Processing {len(attendance_records)} most recent records (limited from {current_record_count} for startup)")
+        elif current_record_count > 5000:
+            # Sort by timestamp and take only recent records
+            attendance_records = sorted(attendance_records, key=lambda x: x.timestamp, reverse=True)[:5000]
+            print(f"⚡ Performance mode: Processing {len(attendance_records)} most recent records (limited from {current_record_count})")
+        elif current_record_count > 1000 and not force_refresh:
+            # For regular updates, use smaller subset
+            attendance_records = sorted(attendance_records, key=lambda x: x.timestamp, reverse=True)[:1000]
+            print(f"⚡ Incremental mode: Processing {len(attendance_records)} most recent records")
             
         data_cache["last_record_count"] = current_record_count
         data_cache["last_cache_time"] = time.time()
@@ -280,11 +309,13 @@ def get_device_data():
         # Update device status and performance stats
         if 'error' in device_status:
             del device_status['error']
+        device_status['loading'] = False
         device_status['performance'] = {
             'sync_time': performance_stats['sync_time'],
             'record_count': performance_stats['record_count'],
             'last_sync_duration': f"{performance_stats['sync_time']:.1f}s"
         }
+        startup_data_loaded = True
         
         # Update device status with time sync info
         device_status['time_sync'] = {
@@ -306,8 +337,10 @@ def get_device_data():
         
     except Exception as e:
         device_status["connected"] = False
+        device_status["loading"] = False
         device_status["error"] = str(e)
         performance_stats["errors"] += 1
+        startup_data_loaded = True  # Mark as loaded even on error to prevent blocking
         print(f"❌ Error fetching device data: {e}")
         print(f"🔄 Will retry in {UPDATE_INTERVAL} seconds")
         
@@ -317,8 +350,14 @@ def get_device_data():
 
 def background_updater():
     """Background thread to update attendance data"""
+    print("🔄 Background updater thread started")
     while True:
-        get_device_data()
+        try:
+            print(f"🔄 Background update starting at {datetime.now().strftime('%H:%M:%S')}")
+            get_device_data(force_refresh=True)  # Always refresh in background
+            print(f"🔄 Background update completed, sleeping for {UPDATE_INTERVAL} seconds")
+        except Exception as e:
+            print(f"❌ Background update error: {e}")
         time.sleep(UPDATE_INTERVAL)
 
 @app.route('/')
@@ -330,6 +369,16 @@ def dashboard():
 def thai_names_management():
     """Thai name management page"""
     return render_template('thai_names.html')
+
+@app.route('/work-schedules')
+def work_schedules_management():
+    """Work schedule configuration page"""
+    return render_template('work_schedules.html')
+
+@app.route('/attendance-calendar')
+def attendance_calendar():
+    """Monthly attendance calendar page"""
+    return render_template('attendance_calendar.html')
 
 @app.route('/api/attendance')
 def api_attendance():
@@ -353,8 +402,9 @@ def api_manual_refresh():
         data_cache["last_cache_time"] = 0
         data_cache["last_record_count"] = -1
         
-        print("🔄 About to call get_device_data()")
-        get_device_data()
+        print("🔄 About to call get_device_data() for manual refresh")
+        # For manual refresh, use performance mode (not full force refresh)
+        get_device_data(force_refresh=False)  # Use performance optimizations
         print("🔄 get_device_data() completed")
         
         result = {
@@ -373,6 +423,123 @@ def api_manual_refresh():
             'success': False,
             'message': f'Refresh failed: {str(e)}'
         }), 500
+
+# Work Schedules API proxy routes
+@app.route('/api/work-schedules/job-roles', methods=['GET'])
+def proxy_get_job_roles():
+    """Proxy GET requests to work schedules API"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/work-schedules/job-roles")
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/work-schedules/job-roles/<role_name>/schedule', methods=['PUT'])
+def proxy_update_work_schedule(role_name):
+    """Proxy PUT requests to work schedule API"""
+    try:
+        data = request.get_json()
+        response = requests.put(f"{API_BASE_URL}/api/work-schedules/job-roles/{role_name}/schedule", json=data)
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/work-schedules/job-roles/<role_name>/shifts', methods=['PUT'])
+def proxy_update_work_shifts(role_name):
+    """Proxy PUT requests to work shifts API"""
+    try:
+        data = request.get_json()
+        response = requests.put(f"{API_BASE_URL}/api/work-schedules/job-roles/{role_name}/shifts", json=data)
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# Employee Schedules API proxy routes
+@app.route('/api/employee-schedules/roles/<role_name>/time-settings', methods=['GET', 'PUT'])
+def proxy_employee_time_settings(role_name):
+    """Proxy employee time settings requests to API server"""
+    try:
+        if request.method == 'GET':
+            response = requests.get(f"{API_BASE_URL}/api/employee-schedules/roles/{role_name}/time-settings")
+        else:  # PUT
+            data = request.get_json()
+            response = requests.put(f"{API_BASE_URL}/api/employee-schedules/roles/{role_name}/time-settings", json=data)
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/employee-schedules/roles/<role_name>/available-employees', methods=['GET'])
+def proxy_available_employees(role_name):
+    """Proxy available employees requests to API server"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/employee-schedules/roles/{role_name}/available-employees")
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/employee-schedules/roles/<role_name>/assigned-employees', methods=['GET'])
+def proxy_assigned_employees(role_name):
+    """Proxy assigned employees requests to API server"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/employee-schedules/roles/{role_name}/assigned-employees")
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/employee-schedules/monthly/<int:year>/<int:month>', methods=['GET', 'PUT'])
+def proxy_monthly_schedule(year, month):
+    """Proxy monthly schedule requests to API server"""
+    try:
+        if request.method == 'GET':
+            # Forward query parameters (role parameter)
+            params = request.args.to_dict()
+            response = requests.get(f"{API_BASE_URL}/api/employee-schedules/monthly/{year}/{month}", params=params)
+        else:  # PUT
+            data = request.get_json()
+            response = requests.put(f"{API_BASE_URL}/api/employee-schedules/monthly/{year}/{month}", json=data)
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/employee-schedules/reception/shifts', methods=['GET'])
+def proxy_reception_shifts():
+    """Proxy reception shifts requests to API server"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/employee-schedules/reception/shifts")
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/employee-schedules/reception/monthly/<int:year>/<int:month>', methods=['GET', 'PUT'])
+def proxy_reception_monthly_schedule(year, month):
+    """Proxy reception monthly schedule requests to API server"""
+    try:
+        if request.method == 'GET':
+            response = requests.get(f"{API_BASE_URL}/api/employee-schedules/reception/monthly/{year}/{month}")
+        else:  # PUT
+            data = request.get_json()
+            response = requests.put(f"{API_BASE_URL}/api/employee-schedules/reception/monthly/{year}/{month}", json=data)
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # Thai Names API proxy routes
 @app.route('/api/thai-names/', methods=['GET'])
@@ -399,6 +566,19 @@ def proxy_update_thai_names():
         return jsonify(response.json()), response.status_code
     except requests.exceptions.ConnectionError:
         return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/sync/health', methods=['GET'])
+def proxy_sync_health():
+    """Proxy sync health check requests to API server"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/sync/health", timeout=5)
+        return jsonify(response.json()), response.status_code
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except requests.exceptions.Timeout:
+        return jsonify({"error": "Health check timeout"}), 504
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -431,6 +611,91 @@ def proxy_thai_name_by_badge(badge_number):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/attendance/export/csv', methods=['GET'])
+def proxy_attendance_export_csv():
+    """Proxy CSV export requests to attendance API"""
+    try:
+        # Forward all query parameters to the FastAPI server
+        params = request.args.to_dict(flat=False)
+        # Handle multiple values for the same parameter (e.g., employee_ids)
+        query_params = {}
+        for key, values in params.items():
+            if len(values) == 1:
+                query_params[key] = values[0]
+            else:
+                query_params[key] = values
+        
+        response = requests.get(f"{API_BASE_URL}/api/attendance/export/csv", params=query_params, stream=True)
+        
+        # Return the CSV file directly with appropriate headers
+        if response.status_code == 200:
+            # Get filename from Content-Disposition header if available
+            content_disposition = response.headers.get('Content-Disposition', '')
+            if 'filename=' in content_disposition:
+                filename = content_disposition.split('filename=')[1].strip('"')
+            else:
+                filename = 'attendance_export.csv'
+            
+            # Create Flask response with streaming data
+            from flask import Response
+            def generate():
+                for chunk in response.iter_content(chunk_size=8192):
+                    yield chunk
+            
+            # Forward additional headers from the API response
+            headers = {
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Type': 'text/csv; charset=utf-8'
+            }
+            
+            # Include custom headers if present
+            if 'X-Total-Records' in response.headers:
+                headers['X-Total-Records'] = response.headers['X-Total-Records']
+            if 'X-Export-Mode' in response.headers:
+                headers['X-Export-Mode'] = response.headers['X-Export-Mode']
+            
+            return Response(
+                generate(),
+                mimetype='text/csv',
+                headers=headers
+            )
+        else:
+            # Forward error response
+            return response.text, response.status_code
+            
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "API server is not available"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def initial_data_fetch():
+    """Perform initial data fetch in background - non-blocking startup"""
+    print("🚀 Starting initial data fetch in background...")
+    try:
+        # Use limited record count for faster startup
+        get_device_data(force_refresh=True, limit_records=500)
+        print("✅ Initial background data fetch completed")
+    except Exception as e:
+        print(f"⚠️ Initial background data fetch failed: {e}")
+
+def start_background_updater():
+    """Start background updater if not already running - works with gunicorn"""
+    global updater_thread
+    
+    if updater_thread is None or not updater_thread.is_alive():
+        print("🚀 Starting background data updater...")
+        updater_thread = threading.Thread(target=background_updater, daemon=True)
+        updater_thread.start()
+        print("✅ Background updater thread started successfully")
+    else:
+        print("📊 Background updater already running")
+
+def start_initial_fetch():
+    """Start initial data fetch in background thread"""
+    initial_thread = threading.Thread(target=initial_data_fetch, daemon=True)
+    initial_thread.start()
+    print("🚀 Initial data fetch started in background")
+
 @socketio.on('connect')
 def on_connect(auth):
     """Handle client connection"""
@@ -440,19 +705,21 @@ def on_connect(auth):
         'device_status': device_status
     })
 
+# Module-level initialization (runs regardless of gunicorn/direct execution)
+print("=== Employee Time Log Dashboard ===")
+print("Loading employee name mappings...")
+load_employee_names()
+
+# Start background updater (works with both gunicorn and direct execution)
+start_background_updater()
+
+# Start initial data fetch in background (non-blocking)
+print("Starting non-blocking initial data fetch...")
+start_initial_fetch()
+print("✅ Dashboard startup completed - data loading in background")
+
 if __name__ == '__main__':
-    print("=== Employee Time Log Dashboard ===")
-    print("Loading employee name mappings...")
-    load_employee_names()
-    
-    print("Starting background data updater...")
-    updater_thread = threading.Thread(target=background_updater, daemon=True)
-    updater_thread.start()
-    
     print("Starting web server...")
     print("Dashboard will be available at: http://localhost:5000")
-    
-    # Initial data fetch
-    get_device_data()
     
     socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)

@@ -19,10 +19,13 @@ class DeviceService:
     def connect(self) -> bool:
         """Establish connection to ZKTeco device"""
         try:
+            # Use default timeout of 5 seconds if device doesn't have timeout field
+            timeout_value = getattr(self.device, 'timeout', 5)
+            
             self.zk = ZK(
                 self.device.ip_address, 
                 port=self.device.port,
-                timeout=self.device.timeout,
+                timeout=timeout_value,
                 password=self.device.password,
                 force_udp=False,
                 ommit_ping=False

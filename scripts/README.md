@@ -1,71 +1,54 @@
-# Scripts Directory
+# Scripts
 
-This directory contains utility scripts for development, testing, and operations.
+Management scripts for fingerprint time logger.
 
-## Testing Scripts
-
-### `test_device_connection.py`
-Basic connectivity test for ZKTeco devices.
+## Usage
 
 ```bash
-python scripts/test_device_connection.py <IP_ADDRESS>
+./scripts/start.sh     # Start services
+./scripts/stop.sh      # Stop services  
+./scripts/restart.sh   # Restart services
+./scripts/status.sh    # Check status
+./scripts/health.sh    # Quick health check
 ```
 
-### `display_attendance.py`
-Retrieve and display attendance data from device.
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `start.sh` | Start API (8000) + Dashboard (5000) |
+| `stop.sh` | Stop all services |
+| `restart.sh` | Restart with health checks |
+| `status.sh` | Full system diagnostics |
+| `health.sh` | Quick health check (exit codes) |
+
+## Health Check Exit Codes
+
+- `0` = Healthy
+- `1` = Partial  
+- `2` = Down
+
+## Access
+
+- Dashboard: http://localhost:5000
+- API: http://localhost:8000
+- Docs: http://localhost:8000/docs
+
+## Files
+
+- PIDs: `pids/api.pid`, `pids/dashboard.pid`
+- Logs: `logs/api.log`, `logs/dashboard.log`
+- DB: `attendance.db`
+
+## Troubleshooting
 
 ```bash
-python scripts/display_attendance.py <IP_ADDRESS> [-d DAYS]
+# Check logs
+tail -f logs/*.log
+
+# Force restart
+./scripts/stop.sh && ./scripts/start.sh
+
+# Port conflicts
+ss -tlnp | grep :8000
 ```
-
-### `debug_data.py`
-Debug script for data analysis and troubleshooting.
-
-```bash
-python scripts/debug_data.py
-```
-
-## Dashboard Management Scripts
-
-### `start_dashboard.sh`
-Start the Flask dashboard in background.
-
-```bash
-./scripts/start_dashboard.sh
-```
-
-### `stop_dashboard.sh`
-Stop the running dashboard process.
-
-```bash
-./scripts/stop_dashboard.sh
-```
-
-### `restart_dashboard.sh`
-Restart the dashboard (stop + start).
-
-```bash
-./scripts/restart_dashboard.sh
-```
-
-### `check_status.sh`
-Check status of dashboard and API services.
-
-```bash
-./scripts/check_status.sh
-```
-
-## Performance Scripts
-
-### `performance_summary.sh`
-Generate performance metrics and system status.
-
-```bash
-./scripts/performance_summary.sh
-```
-
-## Usage Notes
-
-- Make sure scripts are executable: `chmod +x scripts/*.sh`
-- All Python scripts should be run from the project root directory
-- Check script dependencies before running

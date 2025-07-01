@@ -19,6 +19,7 @@ router = APIRouter(prefix="/api/thai-names", tags=["Thai Names"])
 class ThaiNameBase(BaseModel):
     badge_number: str = Field(..., min_length=1, max_length=50, description="Employee badge number")
     thai_name: str = Field(..., min_length=1, max_length=100, description="Thai name for employee")
+    is_hidden: Optional[bool] = Field(default=False, description="Hide employee from normal view")
     
     @validator('thai_name')
     def validate_thai_name(cls, v):
@@ -38,13 +39,14 @@ class ThaiNameCreate(ThaiNameBase):
 
 
 class ThaiNameUpdate(BaseModel):
-    thai_name: str = Field(..., min_length=1, max_length=100, description="Updated Thai name")
+    thai_name: Optional[str] = Field(None, min_length=1, max_length=100, description="Updated Thai name")
+    is_hidden: Optional[bool] = Field(None, description="Hide/show employee")
     
     @validator('thai_name')
     def validate_thai_name(cls, v):
-        if not v.strip():
+        if v is not None and not v.strip():
             raise ValueError('Thai name cannot be empty')
-        return v.strip()
+        return v.strip() if v else v
 
 
 class ThaiNameResponse(ThaiNameBase):
@@ -74,6 +76,7 @@ def get_all_thai_names(
     skip: int = 0,
     limit: int = 100,
     search: Optional[str] = None,
+    show_hidden: bool = False,
     db: Session = Depends(get_db)
 ):
     """
@@ -85,6 +88,10 @@ def get_all_thai_names(
     print(f"DEBUG: Total Thai names: {total_count}, Active: {active_count}")
     
     query = db.query(EmployeeThaiName).filter(EmployeeThaiName.is_active == True)
+    
+    # Filter by hidden status
+    if not show_hidden:
+        query = query.filter(EmployeeThaiName.is_hidden == False)
     
     # Add search filter if provided
     if search:
@@ -139,6 +146,7 @@ def get_thai_name(badge_number: str, db: Session = Depends(get_db)):
         "badge_number": thai_name.badge_number,
         "thai_name": thai_name.thai_name,
         "is_active": thai_name.is_active,
+        "is_hidden": thai_name.is_hidden,
         "created_at": thai_name.created_at.isoformat() if thai_name.created_at else None,
         "updated_at": thai_name.updated_at.isoformat() if thai_name.updated_at else None
     }
@@ -164,7 +172,8 @@ def create_thai_name(thai_name_data: ThaiNameCreate, db: Session = Depends(get_d
     db_thai_name = EmployeeThaiName(
         badge_number=thai_name_data.badge_number,
         thai_name=thai_name_data.thai_name,
-        is_active=True
+        is_active=True,
+        is_hidden=thai_name_data.is_hidden if hasattr(thai_name_data, 'is_hidden') else False
     )
     
     db.add(db_thai_name)
@@ -176,6 +185,7 @@ def create_thai_name(thai_name_data: ThaiNameCreate, db: Session = Depends(get_d
         "badge_number": db_thai_name.badge_number,
         "thai_name": db_thai_name.thai_name,
         "is_active": db_thai_name.is_active,
+        "is_hidden": db_thai_name.is_hidden,
         "created_at": db_thai_name.created_at.isoformat() if db_thai_name.created_at else None,
         "updated_at": db_thai_name.updated_at.isoformat() if db_thai_name.updated_at else None
     }
@@ -201,8 +211,12 @@ def update_thai_name(
             detail=f"Thai name not found for badge number: {badge_number}"
         )
     
-    # Update Thai name
-    thai_name.thai_name = thai_name_update.thai_name
+    # Update fields if provided
+    if thai_name_update.thai_name is not None:
+        thai_name.thai_name = thai_name_update.thai_name
+    if thai_name_update.is_hidden is not None:
+        thai_name.is_hidden = thai_name_update.is_hidden
+    
     thai_name.updated_at = func.now()
     
     db.commit()
@@ -213,6 +227,7 @@ def update_thai_name(
         "badge_number": thai_name.badge_number,
         "thai_name": thai_name.thai_name,
         "is_active": thai_name.is_active,
+        "is_hidden": thai_name.is_hidden,
         "created_at": thai_name.created_at.isoformat() if thai_name.created_at else None,
         "updated_at": thai_name.updated_at.isoformat() if thai_name.updated_at else None
     }

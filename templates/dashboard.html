@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Employee Time Log Dashboard</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="{{ url_for('static', filename='js/offline-manager.js') }}"></script>
     <style>
         * {
             margin: 0;
@@ -28,22 +29,67 @@
         
         .header h1 {
             font-size: 2rem;
-            margin-bottom: 0.5rem;
+            margin: 0;
         }
         
-        .status-bar {
+        .header-row-1 {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            flex-wrap: wrap;
-            gap: 1rem;
-            font-size: 0.9rem;
+            margin-bottom: 0.75rem;
         }
         
-        .status-item {
+        .header-row-2 {
             display: flex;
+            justify-content: flex-end;
+        }
+        
+        .last-update-display {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+        
+        .header-actions {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+        
+        .action-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            display: inline-flex;
             align-items: center;
             gap: 0.5rem;
+        }
+        
+        .action-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        
+        .action-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .import-btn {
+            background: rgba(255, 255, 255, 0.25);
+            border-color: rgba(255, 255, 255, 0.4);
+            font-weight: 500;
+        }
+        
+        .import-btn:hover {
+            background: rgba(255, 255, 255, 0.35);
         }
         
         .status-dot {
@@ -55,6 +101,16 @@
         
         .status-dot.disconnected {
             background-color: #f44336;
+        }
+        
+        .status-dot.loading {
+            background-color: #ff9800;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
         
         .container {
@@ -209,25 +265,6 @@
             to { transform: rotate(360deg); }
         }
         
-        .refresh-btn {
-            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            transition: background 0.2s ease;
-        }
-        
-        .refresh-btn:hover {
-            background: linear-gradient(135deg, #45a049 0%, #4CAF50 100%);
-        }
-        
-        .refresh-btn:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-        }
         
         @media (max-width: 768px) {
             .container {
@@ -246,40 +283,52 @@
                 font-size: 1.5rem;
             }
             
-            .status-bar {
+            .header-row-1 {
                 flex-direction: column;
                 align-items: flex-start;
                 gap: 0.5rem;
+                margin-bottom: 1rem;
+            }
+            
+            .header-row-2 {
+                justify-content: flex-start;
+            }
+            
+            .header-actions {
+                flex-direction: column;
+                width: 100%;
+                gap: 0.75rem;
+            }
+            
+            .action-btn {
+                width: 100%;
+                justify-content: center;
+                padding: 0.75rem 1rem;
             }
         }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>Employee Time Log Dashboard</h1>
-        <div class="status-bar">
-            <div class="status-item">
-                <div class="status-dot" id="deviceStatus"></div>
-                <span id="deviceStatusText">Connecting...</span>
+        <div class="header-row-1">
+            <h1>Employee Time Log Dashboard</h1>
+            <div class="last-update-display">
+                Last Update: <span id="lastUpdate">Never</span>
             </div>
-            <div class="status-item">
-                <span>Last Update: <span id="lastUpdate">Never</span></span>
+        </div>
+        <div class="header-row-2">
+            <div class="header-actions">
+                <a href="/thai-names" class="action-btn thai-names-btn">📝 Thai Names</a>
+                <a href="/work-schedules" class="action-btn">⏰ Work Schedules</a>
+                <button id="exportButton" class="action-btn export-btn">📊 Export CSV</button>
+                <button id="importButton" class="action-btn import-btn">📥 Import Fingerprint Log</button>
             </div>
-            <div class="status-item">
-                <span>Auto-refresh: 2min</span>
-            </div>
-            <div class="status-item">
-                <span id="timeSyncStatus">Time: Checking...</span>
-            </div>
-            <div class="status-item">
-                <span id="performanceStatus">Load: Measuring...</span>
-            </div>
-            <div class="status-item">
-                <a href="/thai-names" class="refresh-btn" style="text-decoration: none;">📝 Thai Names</a>
-            </div>
-            <div class="status-item">
-                <button id="refreshButton" class="refresh-btn">🔄 Manual Refresh</button>
-            </div>
+        </div>
+        
+        <!-- Hidden elements for JavaScript compatibility - DO NOT REMOVE -->
+        <div style="display: none;">
+            <div class="status-dot" id="deviceStatus"></div>
+            <span id="deviceStatusText">Connecting...</span>
         </div>
     </div>
 
@@ -292,6 +341,7 @@
     <script>
         const socket = io();
         let attendanceData = {};
+        let thaiNamesData = {};
         
         // Socket event handlers
         socket.on('connect', function() {
@@ -302,6 +352,8 @@
             console.log('Received attendance update:', data);
             attendanceData = data.data || {};
             updateDashboard(data);
+            
+            // Background data management handled automatically
         });
         
         function updateDashboard(data) {
@@ -310,35 +362,23 @@
             const deviceStatusText = document.getElementById('deviceStatusText');
             const lastUpdate = document.getElementById('lastUpdate');
             
-            if (data.device_status && data.device_status.connected) {
+            // Handle loading state first
+            if (data.device_status && data.device_status.loading) {
                 deviceStatus.classList.remove('disconnected');
+                deviceStatus.classList.add('loading');
+                deviceStatusText.textContent = 'Loading Device Data...';
+            } else if (data.device_status && data.device_status.connected) {
+                deviceStatus.classList.remove('disconnected', 'loading');
                 deviceStatusText.textContent = 'Device Connected';
             } else {
                 deviceStatus.classList.add('disconnected');
+                deviceStatus.classList.remove('loading');
                 deviceStatusText.textContent = 'Device Disconnected';
             }
             
             lastUpdate.textContent = data.last_update || 'Never';
             
-            // Update time sync status
-            const timeSyncStatus = document.getElementById('timeSyncStatus');
-            if (data.device_status && data.device_status.time_sync) {
-                const syncInfo = data.device_status.time_sync;
-                timeSyncStatus.textContent = `Time: ${syncInfo.success ? '✅' : '❌'} ${syncInfo.message}`;
-                timeSyncStatus.title = syncInfo.message;
-            } else {
-                timeSyncStatus.textContent = 'Time: Unknown';
-            }
-            
-            // Update performance status
-            const performanceStatus = document.getElementById('performanceStatus');
-            if (data.device_status && data.device_status.performance) {
-                const perf = data.device_status.performance;
-                performanceStatus.textContent = `Load: ${perf.last_sync_duration} (${perf.record_count} records)`;
-                performanceStatus.title = `Last sync took ${perf.last_sync_duration} to process ${perf.record_count} records`;
-            } else {
-                performanceStatus.textContent = 'Load: Unknown';
-            }
+            // Technical status indicators hidden for simplified user experience
             
             // Stats removed for simplified UI
             
@@ -346,47 +386,104 @@
             updateEmployeeGrid();
         }
         
-        function updateEmployeeGrid() {
+        // Load Thai names data
+        async function loadThaiNames() {
+            try {
+                const response = await fetch('/api/thai-names/');
+                if (response.ok) {
+                    const thaiNames = await response.json();
+                    thaiNamesData = {};
+                    thaiNames.forEach(item => {
+                        thaiNamesData[item.badge_number] = item.thai_name;
+                    });
+                    console.log('Thai names loaded:', Object.keys(thaiNamesData).length);
+                }
+            } catch (error) {
+                console.error('Failed to load Thai names:', error);
+            }
+        }
+
+        // Get Thai name or fallback to employee ID
+        function getDisplayName(employeeId) {
+            const thaiName = thaiNamesData[employeeId];
+            return thaiName ? `${thaiName} (${employeeId})` : `Employee ${employeeId}`;
+        }
+
+        function updateEmployeeGrid(rawApiData = null) {
             const container = document.getElementById('employeeContainer');
             
-            if (Object.keys(attendanceData).length === 0) {
+            let allRecords = [];
+            
+            // Handle different data sources - socket data vs API data
+            if (rawApiData && rawApiData.data) {
+                // API data format from dashboard - extract from consolidated structure
+                const consolidatedData = rawApiData.data;
+                Object.entries(consolidatedData).forEach(([employeeName, records]) => {
+                    if (Array.isArray(records)) {
+                        allRecords = allRecords.concat(records);
+                    }
+                });
+            } else if (rawApiData && rawApiData.records) {
+                // Direct API data format - convert to display format (fallback)
+                allRecords = rawApiData.records.map(record => {
+                    const timestamp = new Date(record.timestamp);
+                    const status = record.punch_type === 0 ? 'Check-in' : 'Check-out';
+                    
+                    return {
+                        employee_id: record.employee_id,
+                        time: timestamp.toLocaleTimeString('en-US', {hour12: false}),
+                        date: timestamp.toLocaleDateString(),
+                        status: status,
+                        timestamp: record.timestamp
+                    };
+                });
+            } else if (Object.keys(attendanceData).length > 0) {
+                // Socket data format - extract from consolidated structure
+                Object.entries(attendanceData).forEach(([employeeName, records]) => {
+                    if (Array.isArray(records)) {
+                        allRecords = allRecords.concat(records);
+                    }
+                });
+            }
+            
+            if (allRecords.length === 0) {
                 container.innerHTML = '<div class="no-data">No attendance data available</div>';
                 return;
             }
             
-            // Handle consolidated data structure
-            let allRecords = [];
-            
-            // Extract all records from all employees
-            Object.entries(attendanceData).forEach(([employeeName, records]) => {
-                if (Array.isArray(records)) {
-                    allRecords = allRecords.concat(records);
-                }
-            });
-            
             // Sort by timestamp (most recent first)
             allRecords.sort((a, b) => {
-                const timeA = new Date(`${a.date} ${a.time}`);
-                const timeB = new Date(`${b.date} ${b.time}`);
+                let timeA, timeB;
+                if (a.timestamp) {
+                    timeA = new Date(a.timestamp);
+                    timeB = new Date(b.timestamp);
+                } else {
+                    timeA = new Date(`${a.date} ${a.time}`);
+                    timeB = new Date(`${b.date} ${b.time}`);
+                }
                 return timeB - timeA;
             });
             
-            // Create consolidated attendance entries
-            const attendanceEntries = allRecords.map(record => `
-                <div class="attendance-entry">
-                    <div class="employee-info">
-                        <span class="employee-name">${record.employee_name || 'Unknown'}</span>
-                        <span class="employee-id">(ID: ${record.employee_id || 'N/A'})</span>
+            // Create consolidated attendance entries with Thai names
+            const attendanceEntries = allRecords.map(record => {
+                const displayName = getDisplayName(record.employee_id);
+                const statusClass = record.status === 'Check-in' ? 'status-checkin' : 'status-checkout';
+                
+                return `
+                    <div class="attendance-entry">
+                        <div class="employee-info">
+                            <span class="employee-name">${displayName}</span>
+                        </div>
+                        <div class="time-info">
+                            <span class="attendance-time">${record.time}</span>
+                            <span class="attendance-date">${record.date_display || record.date}</span>
+                        </div>
+                        <span class="attendance-status ${statusClass}">
+                            ${record.status}
+                        </span>
                     </div>
-                    <div class="time-info">
-                        <span class="attendance-time">${record.time}</span>
-                        <span class="attendance-date">${record.date_display || record.date}</span>
-                    </div>
-                    <span class="attendance-status ${record.status === 'Check-in' ? 'status-checkin' : 'status-checkout'}">
-                        ${record.status}
-                    </span>
-                </div>
-            `).join('');
+                `;
+            }).join('');
             
             // Create single consolidated view
             const consolidatedCard = `
@@ -406,45 +503,692 @@
             container.innerHTML = consolidatedCard;
         }
         
-        // Manual refresh function
-        function manualRefresh() {
-            const refreshBtn = document.getElementById('refreshButton');
-            refreshBtn.disabled = true;
-            refreshBtn.textContent = '🔄 Refreshing...';
+        // Unified import function - imports fingerprint data and discovers new employees
+        async function importFingerprintLog() {
+            const importBtn = document.getElementById('importButton');
+            importBtn.disabled = true;
+            importBtn.textContent = '📥 Importing...';
             
-            fetch('/api/refresh', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    console.log('Manual refresh completed:', data);
-                    // Data will be updated via socket event
-                    setTimeout(() => {
-                        refreshBtn.disabled = false;
-                        refreshBtn.textContent = '🔄 Manual Refresh';
-                    }, 2000);
-                })
-                .catch(error => {
-                    console.error('Manual refresh failed:', error);
-                    refreshBtn.disabled = false;
-                    refreshBtn.textContent = '🔄 Manual Refresh';
-                    alert('Refresh failed: ' + error.message);
+            // Create AbortController for timeout handling
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+            
+            try {
+                // Step 1: Import attendance data from fingerprint device
+                console.log('Step 1: Importing attendance data from device...');
+                importBtn.textContent = '📥 Reading fingerprint device...';
+                
+                const refreshResponse = await fetch('/api/refresh', { 
+                    method: 'POST',
+                    signal: controller.signal,
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
                 });
+                
+                clearTimeout(timeoutId); // Clear timeout on successful response
+                
+                if (!refreshResponse.ok) {
+                    const errorData = await refreshResponse.json().catch(() => ({}));
+                    throw new Error(errorData.message || `Server error: ${refreshResponse.status}`);
+                }
+                
+                const refreshData = await refreshResponse.json();
+                console.log('Step 1 completed:', refreshData);
+                
+                // Step 2: Auto-discover new employees from imported data
+                console.log('Step 2: Discovering new employees...');
+                importBtn.textContent = '📥 Processing employees...';
+                
+                const syncResponse = await fetch('/api/thai-names/sync', { 
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (!syncResponse.ok) {
+                    const errorData = await syncResponse.json().catch(() => ({}));
+                    throw new Error(errorData.message || `Sync error: ${syncResponse.status}`);
+                }
+                
+                const syncData = await syncResponse.json();
+                console.log('Step 2 completed:', syncData);
+                
+                // Show unified success message
+                const newEmployees = syncData.total_synced || 0;
+                const totalRecords = refreshData.total_employees || 0;
+                
+                let message = `✅ Successfully imported fingerprint log`;
+                if (newEmployees > 0) {
+                    message += ` and discovered ${newEmployees} new employee${newEmployees !== 1 ? 's' : ''}`;
+                }
+                
+                console.log('Import completed successfully:', { refreshData, syncData });
+                importBtn.textContent = '✅ Import Complete';
+                
+                // Reload Thai names and attendance data in background
+                setTimeout(async () => {
+                    try {
+                        await loadThaiNames();
+                        await loadInitialData();
+                    } catch (e) {
+                        console.warn('Background reload failed:', e);
+                    }
+                }, 500);
+                
+                // Reset button after success
+                setTimeout(() => {
+                    importBtn.disabled = false;
+                    importBtn.textContent = '📥 Import Fingerprint Log';
+                }, 3000);
+                
+            } catch (error) {
+                clearTimeout(timeoutId); // Ensure timeout is cleared
+                console.error('Import failed:', error);
+                
+                let errorMessage = 'Import failed';
+                if (error.name === 'AbortError') {
+                    errorMessage = 'Import timed out - operation may still be processing in background';
+                    importBtn.textContent = '⏱️ Timed out';
+                } else if (error.message) {
+                    errorMessage = `Import failed: ${error.message}`;
+                    importBtn.textContent = '❌ Failed';
+                } else {
+                    importBtn.textContent = '❌ Error';
+                }
+                
+                console.error('Error details:', errorMessage);
+                alert(errorMessage);
+                
+                // Reset button after error
+                setTimeout(() => {
+                    importBtn.disabled = false;
+                    importBtn.textContent = '📥 Import Fingerprint Log';
+                }, 5000);
+            }
         }
         
-        // Add event listener for refresh button
-        document.getElementById('refreshButton').addEventListener('click', manualRefresh);
+        // Add event listener for import button
+        document.getElementById('importButton').addEventListener('click', importFingerprintLog);
         
-        // Initial load
-        fetch('/api/attendance')
-            .then(response => response.json())
-            .then(data => {
-                attendanceData = data.data || {};
-                updateDashboard(data);
-            })
-            .catch(error => {
+        // Initial load with offline fallback
+        async function loadInitialData() {
+            try {
+                console.log('Loading initial data...');
+                
+                // Load Thai names first
+                await loadThaiNames();
+                console.log('Thai names loaded');
+                
+                // Then load attendance data
+                const response = await fetch('/api/attendance');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                console.log('Attendance data loaded:', data);
+                
+                // Update dashboard with API data format
+                updateEmployeeGrid(data);
+                console.log('Dashboard updated with data');
+                
+                // Update status indicators (simplified since no socket data)
+                const deviceStatus = document.getElementById('deviceStatus');
+                const deviceStatusText = document.getElementById('deviceStatusText');
+                const lastUpdate = document.getElementById('lastUpdate');
+                
+                deviceStatusText.textContent = 'API Connected';
+                deviceStatus.classList.remove('disconnected');
+                lastUpdate.textContent = new Date().toLocaleString();
+                
+                console.log('Initial data load completed successfully');
+                
+                // Background caching handled automatically
+            } catch (error) {
                 console.error('Error loading initial data:', error);
+                
+                // Show user-friendly error message
                 document.getElementById('employeeContainer').innerHTML = 
-                    '<div class="no-data">Error loading attendance data</div>';
+                    '<div class="no-data">Unable to load attendance data. Please try importing fingerprint log.</div>';
+            }
+        }
+        
+        // Background connection handling - simplified for user experience
+        socket.on('disconnect', function() {
+            console.log('Connection temporarily lost - will reconnect automatically');
+        });
+        
+        socket.on('reconnect', function() {
+            console.log('Connection restored');
+            loadInitialData();
+        });
+        
+        loadInitialData();
+        
+        // Export functionality
+        document.getElementById('exportButton').addEventListener('click', function() {
+            showExportModal();
+        });
+        
+        function showExportModal() {
+            document.getElementById('exportModal').style.display = 'block';
+            
+            // Set default dates (last 30 days)
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - 30);
+            
+            document.getElementById('exportStartDate').value = startDate.toISOString().split('T')[0];
+            document.getElementById('exportEndDate').value = endDate.toISOString().split('T')[0];
+            
+            // Set up streaming checkbox listener
+            const streamingCheckbox = document.getElementById('enableStreaming');
+            const batchSizeGroup = document.getElementById('batchSizeGroup');
+            
+            streamingCheckbox.addEventListener('change', function() {
+                batchSizeGroup.style.display = this.checked ? 'block' : 'none';
             });
+        }
+        
+        function hideExportModal() {
+            document.getElementById('exportModal').style.display = 'none';
+            document.querySelector('.export-progress').style.display = 'none';
+        }
+        
+        async function startExport() {
+            const progressContainer = document.querySelector('.export-progress');
+            const progressBar = document.querySelector('.progress-bar');
+            const progressText = document.querySelector('.progress-text');
+            
+            try {
+                progressContainer.style.display = 'block';
+                updateProgress('Preparing export...', 10);
+                
+                // Collect form data
+                const startDate = document.getElementById('exportStartDate').value;
+                const endDate = document.getElementById('exportEndDate').value;
+                const enableStreaming = document.getElementById('enableStreaming').checked;
+                const batchSize = document.getElementById('batchSize').value;
+                const maxRecords = document.getElementById('maxRecords').value;
+                
+                const filters = {
+                    start_date: startDate ? startDate + 'T00:00:00' : undefined,
+                    end_date: endDate ? endDate + 'T23:59:59' : undefined,
+                    format: document.getElementById('exportFormat').value,
+                    include_employee_names: document.getElementById('includeNames').checked,
+                    include_device_names: document.getElementById('includeDeviceNames').checked,
+                    streaming: enableStreaming || undefined,
+                    batch_size: (enableStreaming && batchSize) ? parseInt(batchSize) : undefined,
+                    max_records: maxRecords ? parseInt(maxRecords) : undefined
+                };
+                
+                // Remove empty values
+                Object.keys(filters).forEach(key => {
+                    if (filters[key] === '' || filters[key] === null || filters[key] === undefined) {
+                        delete filters[key];
+                    }
+                });
+                
+                updateProgress('Checking dataset size...', 30);
+                
+                // Build API URL
+                const params = new URLSearchParams();
+                Object.entries(filters).forEach(([key, value]) => {
+                    if (value !== undefined) {
+                        params.append(key, value.toString());
+                    }
+                });
+                const exportUrl = `/api/attendance/export/csv?${params}`;
+                
+                updateProgress('Starting export...', 40);
+                
+                // Start the download with streaming support
+                const startTime = Date.now();
+                const response = await fetch(exportUrl);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Export failed: ${response.status} - ${errorText}`);
+                }
+                
+                // Check if streaming was used
+                const totalRecords = response.headers.get('X-Total-Records');
+                const exportMode = response.headers.get('X-Export-Mode');
+                
+                if (exportMode === 'streaming') {
+                    updateProgress(`Streaming ${totalRecords} records...`, 60);
+                    await handleStreamingDownload(response, filters, totalRecords);
+                } else {
+                    updateProgress('Downloading file...', 80);
+                    const blob = await response.blob();
+                    const filename = generateFilename(filters);
+                    downloadFile(blob, filename);
+                }
+                
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                updateProgress(`Complete! (${elapsed}s, ${totalRecords || 'unknown'} records)`, 100);
+                
+                // Show success message
+                showAlert(`Export completed successfully! ${totalRecords ? `${totalRecords} records` : ''} exported in ${elapsed} seconds.`, 'success');
+                
+                setTimeout(() => {
+                    hideExportModal();
+                }, 2000);
+                
+            } catch (error) {
+                console.error('Export error:', error);
+                showAlert('Export failed: ' + error.message, 'error');
+                progressContainer.style.display = 'none';
+            }
+        }
+        
+        async function handleStreamingDownload(response, filters, totalRecords) {
+            const reader = response.body.getReader();
+            const chunks = [];
+            let received = 0;
+            
+            updateProgress('Receiving data stream...', 60);
+            
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    if (done) break;
+                    
+                    chunks.push(value);
+                    received += value.length;
+                    
+                    // Update progress based on data received
+                    // Note: This is an approximation since we don't know total file size
+                    const progress = Math.min(60 + (received / 1024 / 1024) * 2, 95); // Rough estimate
+                    updateProgress(`Streaming... ${(received / 1024 / 1024).toFixed(1)}MB received`, progress);
+                }
+                
+                updateProgress('Processing download...', 95);
+                
+                // Combine all chunks into a blob
+                const blob = new Blob(chunks, { type: 'text/csv' });
+                const filename = generateFilename(filters);
+                downloadFile(blob, filename);
+                
+            } finally {
+                reader.releaseLock();
+            }
+        }
+        
+        function updateProgress(text, percentage) {
+            document.querySelector('.progress-text').textContent = text;
+            document.querySelector('.progress-bar').style.width = percentage + '%';
+        }
+        
+        function generateFilename(filters) {
+            const date = new Date().toISOString().split('T')[0];
+            const format = filters.format || 'detailed';
+            
+            if (filters.start_date && filters.end_date) {
+                return `attendance_${format}_${filters.start_date}_to_${filters.end_date}.csv`;
+            } else {
+                return `attendance_${format}_export_${date}.csv`;
+            }
+        }
+        
+        function downloadFile(blob, filename) {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        }
+        
+        function showAlert(message, type) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.textContent = message;
+            alertDiv.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 1rem;
+                border-radius: 4px;
+                color: white;
+                z-index: 10000;
+                max-width: 300px;
+                background-color: ${type === 'error' ? '#dc3545' : '#28a745'};
+            `;
+            
+            document.body.appendChild(alertDiv);
+            
+            setTimeout(() => {
+                document.body.removeChild(alertDiv);
+            }, 5000);
+        }
     </script>
+
+    <!-- Export Modal -->
+    <div id="exportModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📊 Export Attendance Records</h3>
+                <span class="modal-close" onclick="hideExportModal()">&times;</span>
+            </div>
+            
+            <div class="modal-body">
+                <div class="export-filters">
+                    <!-- Date Range -->
+                    <div class="form-group">
+                        <label>Date Range</label>
+                        <div class="date-inputs">
+                            <input type="date" id="exportStartDate" />
+                            <span>to</span>
+                            <input type="date" id="exportEndDate" />
+                        </div>
+                    </div>
+                    
+                    <!-- Format Selection -->
+                    <div class="form-group">
+                        <label>Export Format</label>
+                        <select id="exportFormat">
+                            <option value="detailed">Detailed (with names and device info)</option>
+                            <option value="summary">Daily Summary (work hours)</option>
+                            <option value="raw">Raw Data (technical format)</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Advanced Options -->
+                    <details class="advanced-options">
+                        <summary>Advanced Options</summary>
+                        <div class="checkbox-group">
+                            <label><input type="checkbox" id="includeNames" checked> Include Thai Names</label>
+                            <label><input type="checkbox" id="includeDeviceNames" checked> Include Device Names</label>
+                        </div>
+                        
+                        <!-- Streaming Options -->
+                        <div class="streaming-options">
+                            <h4>Performance Options</h4>
+                            <label><input type="checkbox" id="enableStreaming"> Force streaming mode (for large exports)</label>
+                            
+                            <div class="form-group" id="batchSizeGroup" style="display: none;">
+                                <label for="batchSize">Batch Size (100-10000)</label>
+                                <input type="number" id="batchSize" min="100" max="10000" value="1000" step="100">
+                                <small>Larger batches = faster export but more memory usage</small>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="maxRecords">Maximum Records (optional)</label>
+                                <input type="number" id="maxRecords" min="1" placeholder="No limit">
+                                <small>Leave empty to export all records</small>
+                            </div>
+                        </div>
+                        
+                        <div class="export-info">
+                            <p><strong>ℹ️ Note:</strong> Exports larger than 10,000 records will automatically use streaming mode for better performance.</p>
+                        </div>
+                    </details>
+                </div>
+                
+                <div class="export-actions">
+                    <button class="export-btn" onclick="startExport()">📥 Export CSV</button>
+                    <button class="cancel-btn" onclick="hideExportModal()">Cancel</button>
+                </div>
+                
+                <div class="export-progress" style="display: none;">
+                    <div class="progress-container">
+                        <div class="progress-bar"></div>
+                    </div>
+                    <span class="progress-text">Preparing export...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        /* Export Modal Styles */
+        .modal {
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal-content {
+            background: white;
+            padding: 0;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        
+        .modal-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-radius: 8px 8px 0 0;
+        }
+        
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1.2rem;
+        }
+        
+        .modal-close {
+            font-size: 1.5rem;
+            cursor: pointer;
+            opacity: 0.8;
+        }
+        
+        .modal-close:hover {
+            opacity: 1;
+        }
+        
+        .modal-body {
+            padding: 1.5rem;
+        }
+        
+        .export-filters .form-group {
+            margin-bottom: 1rem;
+        }
+        
+        .export-filters label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .date-inputs {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .date-inputs input[type="date"] {
+            flex: 1;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        .export-filters select {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        .advanced-options {
+            margin-top: 1rem;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 1rem;
+        }
+        
+        .advanced-options summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #667eea;
+        }
+        
+        .checkbox-group {
+            margin-top: 0.5rem;
+        }
+        
+        .checkbox-group label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.25rem;
+            font-weight: normal;
+        }
+        
+        .export-actions {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+        
+        .export-btn, .cancel-btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            flex: 1;
+        }
+        
+        .export-btn {
+            background: #667eea;
+            color: white;
+        }
+        
+        .export-btn:hover {
+            background: #5a67d8;
+        }
+        
+        .cancel-btn {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .cancel-btn:hover {
+            background: #5a6268;
+        }
+        
+        .export-progress {
+            margin-top: 1rem;
+            text-align: center;
+        }
+        
+        .progress-container {
+            width: 100%;
+            height: 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background: #667eea;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        
+        .progress-text {
+            font-size: 0.9rem;
+            color: #666;
+        }
+        
+        /* Streaming Options Styles */
+        .streaming-options {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        .streaming-options h4 {
+            margin: 0 0 0.75rem 0;
+            color: #333;
+            font-size: 1rem;
+        }
+        
+        .streaming-options input[type="number"] {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 0.25rem;
+        }
+        
+        .streaming-options small {
+            display: block;
+            color: #666;
+            font-size: 0.8rem;
+            margin-top: 0.25rem;
+        }
+        
+        .export-info {
+            margin-top: 1rem;
+            padding: 0.75rem;
+            background: #e7f3ff;
+            border: 1px solid #b3d9ff;
+            border-radius: 4px;
+        }
+        
+        .export-info p {
+            margin: 0;
+            color: #0066cc;
+            font-size: 0.9rem;
+        }
+        
+        .alert {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 1rem 1.5rem;
+            border-radius: 6px;
+            color: white;
+            z-index: 10001;
+            max-width: 400px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            animation: slideIn 0.3s ease;
+        }
+        
+        .alert-success {
+            background: linear-gradient(135deg, #28a745, #20c997);
+        }
+        
+        .alert-error {
+            background: linear-gradient(135deg, #dc3545, #e83e8c);
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+    </style>
 </body>
 </html>

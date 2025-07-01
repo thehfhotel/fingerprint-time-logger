@@ -163,6 +163,48 @@
             cursor: not-allowed;
         }
         
+        .hidden-toggle-btn {
+            background: #f7fafc;
+            color: #4a5568;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .hidden-toggle-btn:hover {
+            background: #edf2f7;
+            border-color: #cbd5e0;
+        }
+        
+        .hidden-toggle-btn.active {
+            background: #5a67d8;
+            color: white;
+            border-color: #5a67d8;
+        }
+        
+        .hide-btn {
+            background: transparent;
+            border: 1px solid #e53e3e;
+            color: #e53e3e;
+            padding: 0.3rem 0.8rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .hide-btn:hover {
+            background: #e53e3e;
+            color: white;
+        }
+        
+        .hide-btn.hidden {
+            background: #e53e3e;
+            color: white;
+        }
+        
+        .employee-row.hidden {
+            opacity: 0.5;
+        }
+        
         .card-body {
             padding: 0;
         }
@@ -333,7 +375,6 @@
             </div>
             <div class="nav-buttons">
                 <a href="/" class="nav-btn">🏠 Dashboard</a>
-                <button id="syncBtn" class="nav-btn secondary-btn">🔄 Sync New IDs</button>
             </div>
         </div>
     </div>
@@ -362,6 +403,7 @@
                     <h2 class="card-title">Employee Thai Names</h2>
                     <div class="card-actions">
                         <input type="text" id="searchBox" class="search-box" placeholder="🔍 Search badge number or Thai name...">
+                        <button id="showHiddenBtn" class="action-btn hidden-toggle-btn">👁️ Show Hidden</button>
                         <button id="saveAllBtn" class="action-btn primary-btn" disabled>💾 Save All Changes</button>
                         <button id="resetBtn" class="action-btn secondary-btn">↻ Reset Changes</button>
                     </div>
@@ -383,6 +425,7 @@
                             <th>Thai Name</th>
                             <th>Status</th>
                             <th>Last Updated</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="thaiNamesTableBody">
@@ -397,6 +440,7 @@
         let thaiNames = [];
         let originalThaiNames = {};
         let modifiedNames = new Set();
+        let showHidden = false;
 
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
@@ -414,14 +458,17 @@
             // Reset changes
             document.getElementById('resetBtn').addEventListener('click', resetAllChanges);
             
-            // Sync new IDs
-            document.getElementById('syncBtn').addEventListener('click', syncNewBadgeNumbers);
+            // Show/hide hidden employees
+            document.getElementById('showHiddenBtn').addEventListener('click', toggleShowHidden);
+            
+            // Sync functionality moved to main dashboard
         }
 
         async function loadThaiNames() {
             try {
                 showLoading();
-                const response = await fetch('/api/thai-names/');
+                const url = showHidden ? '/api/thai-names/?show_hidden=true' : '/api/thai-names/';
+                const response = await fetch(url);
                 
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -432,7 +479,10 @@
                 
                 // Store original values
                 thaiNames.forEach(item => {
-                    originalThaiNames[item.badge_number] = item.thai_name;
+                    originalThaiNames[item.badge_number] = {
+                        thai_name: item.thai_name,
+                        is_hidden: item.is_hidden
+                    };
                 });
                 
                 renderTable();
@@ -455,8 +505,8 @@
             if (data.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="4" style="text-align: center; padding: 3rem; color: #718096;">
-                            No Thai names found. Click "Sync New IDs" to discover badge numbers from attendance records.
+                        <td colspan="5" style="text-align: center; padding: 3rem; color: #718096;">
+                            No Thai names found. Use "Import Fingerprint Log" on the dashboard to discover badge numbers from attendance records.
                         </td>
                     </tr>
                 `;
@@ -472,6 +522,8 @@
 
         function createTableRow(item) {
             const row = document.createElement('tr');
+            row.className = item.is_hidden ? 'employee-row hidden' : 'employee-row';
+            row.dataset.badge = item.badge_number;
             
             const isModified = modifiedNames.has(item.badge_number);
             const modifiedClass = isModified ? 'modified' : '';
@@ -484,7 +536,7 @@
                         class="thai-name-input ${modifiedClass}"
                         value="${item.thai_name}"
                         data-badge="${item.badge_number}"
-                        data-original="${originalThaiNames[item.badge_number] || item.thai_name}"
+                        data-original="${originalThaiNames[item.badge_number]?.thai_name || item.thai_name}"
                     >
                 </td>
                 <td>
@@ -494,6 +546,12 @@
                 </td>
                 <td style="color: #718096; font-size: 0.85rem;">
                     ${formatDate(item.updated_at)}
+                </td>
+                <td>
+                    <button type="button" class="hide-btn ${item.is_hidden ? 'hidden' : ''}" 
+                            onclick="toggleHideEmployee('${item.badge_number}')">
+                        ${item.is_hidden ? 'Unhide' : 'Hide'}
+                    </button>
                 </td>
             `;
             
@@ -507,7 +565,7 @@
         function handleThaiNameChange(event) {
             const input = event.target;
             const badgeNumber = input.dataset.badge;
-            const originalValue = input.dataset.original;
+            const originalValue = originalThaiNames[badgeNumber]?.thai_name || input.dataset.original;
             const currentValue = input.value.trim();
             
             if (currentValue !== originalValue) {
@@ -552,8 +610,9 @@
         async function saveAllChanges() {
             if (modifiedNames.size === 0) return;
             
+            const saveBtn = document.getElementById('saveAllBtn');
+            
             try {
-                const saveBtn = document.getElementById('saveAllBtn');
                 saveBtn.disabled = true;
                 saveBtn.textContent = '💾 Saving...';
                 
@@ -594,8 +653,8 @@
             } catch (error) {
                 console.error('Error saving changes:', error);
                 showError(`Failed to save changes: ${error.message}`);
-                
-                // Re-enable save button
+            } finally {
+                // Always reset button state regardless of success/failure (FIXED)
                 updateModifiedIndicators();
             }
         }
@@ -612,42 +671,7 @@
             hideMessages();
         }
 
-        async function syncNewBadgeNumbers() {
-            try {
-                const syncBtn = document.getElementById('syncBtn');
-                syncBtn.disabled = true;
-                syncBtn.textContent = '🔄 Syncing...';
-                
-                const response = await fetch('/api/thai-names/sync', {
-                    method: 'POST'
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    if (result.total_synced > 0) {
-                        showSuccess(`Successfully synced ${result.total_synced} new badge numbers!`);
-                        await loadThaiNames(); // Reload data
-                    } else {
-                        showSuccess('No new badge numbers found to sync.');
-                    }
-                } else {
-                    throw new Error(result.message || 'Sync failed');
-                }
-                
-            } catch (error) {
-                console.error('Error syncing badge numbers:', error);
-                showError(`Failed to sync: ${error.message}`);
-            } finally {
-                const syncBtn = document.getElementById('syncBtn');
-                syncBtn.disabled = false;
-                syncBtn.textContent = '🔄 Sync New IDs';
-            }
-        }
+        // Sync functionality moved to main dashboard import button
 
         function updateStats() {
             document.getElementById('totalEmployees').textContent = thaiNames.length;
@@ -716,6 +740,65 @@
         function hideMessages() {
             hideError();
             hideSuccess();
+        }
+        
+        function toggleShowHidden() {
+            showHidden = !showHidden;
+            const btn = document.getElementById('showHiddenBtn');
+            if (showHidden) {
+                btn.classList.add('active');
+                btn.textContent = '👁️ Hide Hidden';
+            } else {
+                btn.classList.remove('active');
+                btn.textContent = '👁️ Show Hidden';
+            }
+            loadThaiNames();
+        }
+        
+        async function toggleHideEmployee(badgeNumber) {
+            try {
+                const employee = thaiNames.find(e => e.badge_number === badgeNumber);
+                if (!employee) return;
+                
+                const newHiddenStatus = !employee.is_hidden;
+                
+                const response = await fetch(`/api/thai-names/${badgeNumber}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        is_hidden: newHiddenStatus
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to update hidden status: ${response.statusText}`);
+                }
+                
+                // Update local data
+                employee.is_hidden = newHiddenStatus;
+                
+                // Update UI
+                const row = document.querySelector(`tr[data-badge="${badgeNumber}"]`);
+                const hideBtn = row.querySelector('.hide-btn');
+                
+                if (newHiddenStatus) {
+                    row.classList.add('hidden');
+                    hideBtn.classList.add('hidden');
+                    hideBtn.textContent = 'Unhide';
+                } else {
+                    row.classList.remove('hidden');
+                    hideBtn.classList.remove('hidden');
+                    hideBtn.textContent = 'Hide';
+                }
+                
+                showSuccess(`Employee ${badgeNumber} ${newHiddenStatus ? 'hidden' : 'unhidden'} successfully`);
+                
+            } catch (error) {
+                console.error('Error toggling hide status:', error);
+                showError(`Failed to update hidden status: ${error.message}`);
+            }
         }
     </script>
 </body>
