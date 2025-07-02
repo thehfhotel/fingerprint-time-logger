@@ -34,13 +34,16 @@ class Device(DeviceBase):
         from_attributes = True
 
 
-# Employee schemas
+# Employee schemas (unified model)
 class EmployeeBase(BaseModel):
-    employee_id: str
-    name: str
+    badge_number: str
+    english_name: Optional[str] = None
+    thai_name: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None
+    job_role_id: Optional[int] = None
     is_active: bool = True
+    is_hidden: bool = False
 
 
 class EmployeeCreate(EmployeeBase):
@@ -48,14 +51,18 @@ class EmployeeCreate(EmployeeBase):
 
 
 class EmployeeUpdate(BaseModel):
-    name: Optional[str] = None
+    english_name: Optional[str] = None
+    thai_name: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None
+    job_role_id: Optional[int] = None
     is_active: Optional[bool] = None
+    is_hidden: Optional[bool] = None
 
 
 class Employee(EmployeeBase):
     id: int
+    display_name: str
     created_at: datetime
     updated_at: datetime
 
@@ -65,7 +72,7 @@ class Employee(EmployeeBase):
 
 # Attendance Record schemas
 class AttendanceRecordBase(BaseModel):
-    employee_id: str
+    employee_badge_number: str
     device_id: int
     timestamp: datetime
     punch_type: int  # 0=check_in, 1=check_out, 2=break_out, 3=break_in, 4=ot_in, 5=ot_out

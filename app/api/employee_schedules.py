@@ -12,7 +12,7 @@ import calendar
 
 from app.core.database import get_db
 from app.models.models import (
-    JobRole, EmployeeThaiName, EmployeeMonthlySchedule, 
+    JobRole, Employee, EmployeeMonthlySchedule, 
     ReceptionShiftAssignment, WorkShift
 )
 
@@ -178,14 +178,14 @@ async def get_assigned_employees(role_name: str, db: Session = Depends(get_db)):
     badge_numbers = list(set([badge[0] for badge in assigned_badges]))
     
     # Get Thai names
-    employees = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.badge_number.in_(badge_numbers),
-        EmployeeThaiName.is_active == True,
-        EmployeeThaiName.is_hidden == False
+    employees = db.query(Employee).filter(
+        Employee.badge_number.in_(badge_numbers),
+        Employee.is_active == True,
+        Employee.is_hidden == False
     ).all()
     
     return [
-        EmployeeBasic(badge_number=emp.badge_number, thai_name=emp.thai_name)
+        EmployeeBasic(badge_number=emp.badge_number, thai_name=emp.thai_name or emp.display_name)
         for emp in employees
     ]
 
@@ -193,13 +193,13 @@ async def get_assigned_employees(role_name: str, db: Session = Depends(get_db)):
 @router.get("/roles/{role_name}/available-employees", response_model=List[EmployeeBasic])
 async def get_available_employees(role_name: str, db: Session = Depends(get_db)):
     """Get all employees available for assignment to role"""
-    employees = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.is_active == True,
-        EmployeeThaiName.is_hidden == False
+    employees = db.query(Employee).filter(
+        Employee.is_active == True,
+        Employee.is_hidden == False
     ).all()
     
     return [
-        EmployeeBasic(badge_number=emp.badge_number, thai_name=emp.thai_name)
+        EmployeeBasic(badge_number=emp.badge_number, thai_name=emp.thai_name or emp.display_name)
         for emp in employees
     ]
 
@@ -234,16 +234,16 @@ async def get_monthly_schedule(
     # Get Thai names
     employee_schedules = []
     for schedule in schedules:
-        thai_name_obj = db.query(EmployeeThaiName).filter(
-            EmployeeThaiName.badge_number == schedule.employee_badge_number,
-            EmployeeThaiName.is_active == True,
-            EmployeeThaiName.is_hidden == False
+        employee_obj = db.query(Employee).filter(
+            Employee.badge_number == schedule.employee_badge_number,
+            Employee.is_active == True,
+            Employee.is_hidden == False
         ).first()
         
-        if thai_name_obj:
+        if employee_obj:
             employee_schedules.append(EmployeeSchedule(
                 badge_number=schedule.employee_badge_number,
-                thai_name=thai_name_obj.thai_name,
+                thai_name=employee_obj.thai_name or employee_obj.display_name,
                 work_days=schedule.work_days or []
             ))
     
@@ -400,16 +400,16 @@ async def get_reception_monthly_schedule(year: int, month: int, db: Session = De
     # Get Thai names and build response
     assignment_list = []
     for badge_number, shift_assignments in employee_assignments.items():
-        thai_name_obj = db.query(EmployeeThaiName).filter(
-            EmployeeThaiName.badge_number == badge_number,
-            EmployeeThaiName.is_active == True,
-            EmployeeThaiName.is_hidden == False
+        employee_obj = db.query(Employee).filter(
+            Employee.badge_number == badge_number,
+            Employee.is_active == True,
+            Employee.is_hidden == False
         ).first()
         
-        if thai_name_obj:
+        if employee_obj:
             assignment_list.append(ReceptionEmployeeSchedule(
                 badge_number=badge_number,
-                thai_name=thai_name_obj.thai_name,
+                thai_name=employee_obj.thai_name or employee_obj.display_name,
                 shift_assignments=shift_assignments
             ))
     

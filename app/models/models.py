@@ -28,22 +28,36 @@ class Employee(Base):
     __tablename__ = "employees"
 
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(String(50), unique=True, nullable=False, index=True)
-    name = Column(String(100), nullable=False)
-    department = Column(String(100), nullable=True)
-    position = Column(String(100), nullable=True)
-    is_active = Column(Boolean, default=True)
+    badge_number = Column(String(50), unique=True, nullable=False, index=True)  # Unified identifier
+    
+    # Names (consolidated from both models)
+    english_name = Column(String(100), nullable=True)      # From original Employee.name
+    thai_name = Column(String(100), nullable=True)         # From EmployeeThaiName.thai_name
+    display_name = Column(String(100), nullable=False)     # Computed: thai_name or f"พนักงาน {badge_number}"
+    
+    # Organization data
+    department = Column(String(100), nullable=True)        # From original Employee
+    position = Column(String(100), nullable=True)          # From original Employee
+    job_role_id = Column(Integer, ForeignKey("job_roles.id"), nullable=True)  # From EmployeeThaiName
+    
+    # Status and visibility
+    is_active = Column(Boolean, default=True)              # Merged from both models
+    is_hidden = Column(Boolean, default=False)             # From EmployeeThaiName (UI control)
+    
+    # Metadata
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
+    # Relationships
     attendance_records = relationship("AttendanceRecord", back_populates="employee")
+    job_role = relationship("JobRole", back_populates="employees")
 
 
 class AttendanceRecord(Base):
     __tablename__ = "attendance_records"
 
     id = Column(Integer, primary_key=True, index=True)
-    employee_id = Column(String(50), ForeignKey("employees.employee_id"), nullable=False)
+    employee_badge_number = Column(String(50), ForeignKey("employees.badge_number"), nullable=False)
     device_id = Column(Integer, ForeignKey("devices.id"), nullable=False)
     timestamp = Column(DateTime, nullable=False, index=True)
     punch_type = Column(Integer, nullable=False)  # 0=check_in, 1=check_out, 2=break_out, 3=break_in, 4=ot_in, 5=ot_out
@@ -68,20 +82,21 @@ class AttendanceRecord(Base):
     device = relationship("Device", back_populates="attendance_records")
 
 
-class EmployeeThaiName(Base):
-    __tablename__ = "employee_thai_names"
-
-    id = Column(Integer, primary_key=True, index=True)
-    badge_number = Column(String(50), unique=True, nullable=False, index=True)
-    thai_name = Column(String(100), nullable=False)
-    job_role_id = Column(Integer, ForeignKey("job_roles.id"), nullable=True)  # Role assignment
-    is_active = Column(Boolean, default=True)
-    is_hidden = Column(Boolean, default=False)  # Hide employee from normal view
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-    
-    # Relationship
-    job_role = relationship("JobRole", back_populates="employees")
+# DEPRECATED: EmployeeThaiName model consolidated into unified Employee model
+# class EmployeeThaiName(Base):
+#     __tablename__ = "employee_thai_names"
+#
+#     id = Column(Integer, primary_key=True, index=True)
+#     badge_number = Column(String(50), unique=True, nullable=False, index=True)
+#     thai_name = Column(String(100), nullable=False)
+#     job_role_id = Column(Integer, ForeignKey("job_roles.id"), nullable=True)  # Role assignment
+#     is_active = Column(Boolean, default=True)
+#     is_hidden = Column(Boolean, default=False)  # Hide employee from normal view
+#     created_at = Column(DateTime, default=func.now())
+#     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+#     
+#     # Relationship
+#     job_role = relationship("JobRole", back_populates="employees")
 
 
 class SyncLog(Base):
@@ -209,7 +224,7 @@ class JobRole(Base):
     # Relationships
     work_schedules = relationship("WorkSchedule", back_populates="job_role")
     work_shifts = relationship("WorkShift", back_populates="job_role")
-    employees = relationship("EmployeeThaiName", back_populates="job_role")  # Role assignments
+    employees = relationship("Employee", back_populates="job_role")  # Role assignments
 
 
 class WorkSchedule(Base):

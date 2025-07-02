@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.models import JobRole, EmployeeThaiName
+from app.models.models import JobRole, Employee
 from app.schemas.schemas import (
     JobRoleResponse, JobRoleCreate, JobRoleUpdate,
     EmployeeRoleAssignmentResponse, EmployeeRoleAssignmentUpdate,
@@ -94,9 +94,9 @@ async def delete_job_role(role_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Job role not found")
     
     # Check if role has assigned employees
-    assigned_employees = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.job_role_id == role_id,
-        EmployeeThaiName.is_active == True
+    assigned_employees = db.query(Employee).filter(
+        Employee.job_role_id == role_id,
+        Employee.is_active == True
     ).count()
     
     if assigned_employees > 0:
@@ -118,14 +118,14 @@ async def get_employee_role_assignments(
     db: Session = Depends(get_db)
 ):
     """Get employee role assignments"""
-    query = db.query(EmployeeThaiName).filter(EmployeeThaiName.is_active == True)
+    query = db.query(Employee).filter(Employee.is_active == True)
     
     if role_id:
-        query = query.filter(EmployeeThaiName.job_role_id == role_id)
+        query = query.filter(Employee.job_role_id == role_id)
     elif not include_unassigned:
-        query = query.filter(EmployeeThaiName.job_role_id.isnot(None))
+        query = query.filter(Employee.job_role_id.isnot(None))
     
-    employees = query.order_by(EmployeeThaiName.badge_number).all()
+    employees = query.order_by(Employee.badge_number).all()
     
     result = []
     for employee in employees:
@@ -145,9 +145,9 @@ async def get_employee_role_assignments(
 @router.get("/employee-assignments/{badge_number}", response_model=EmployeeRoleAssignmentResponse)
 async def get_employee_role_assignment(badge_number: str, db: Session = Depends(get_db)):
     """Get role assignment for a specific employee"""
-    employee = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.badge_number == badge_number,
-        EmployeeThaiName.is_active == True
+    employee = db.query(Employee).filter(
+        Employee.badge_number == badge_number,
+        Employee.is_active == True
     ).first()
     
     if not employee:
@@ -171,9 +171,9 @@ async def update_employee_role_assignment(
     db: Session = Depends(get_db)
 ):
     """Update role assignment for a specific employee"""
-    employee = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.badge_number == badge_number,
-        EmployeeThaiName.is_active == True
+    employee = db.query(Employee).filter(
+        Employee.badge_number == badge_number,
+        Employee.is_active == True
     ).first()
     
     if not employee:
@@ -213,9 +213,9 @@ async def bulk_assign_roles(
     
     # Validate all employees and roles exist
     badge_numbers = [assignment.badge_number for assignment in assignment_data.assignments]
-    employees = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.badge_number.in_(badge_numbers),
-        EmployeeThaiName.is_active == True
+    employees = db.query(Employee).filter(
+        Employee.badge_number.in_(badge_numbers),
+        Employee.is_active == True
     ).all()
     
     employee_dict = {emp.badge_number: emp for emp in employees}
@@ -280,9 +280,9 @@ async def bulk_assign_roles(
 @router.delete("/employee-assignments/{badge_number}")
 async def remove_employee_role_assignment(badge_number: str, db: Session = Depends(get_db)):
     """Remove role assignment from an employee"""
-    employee = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.badge_number == badge_number,
-        EmployeeThaiName.is_active == True
+    employee = db.query(Employee).filter(
+        Employee.badge_number == badge_number,
+        Employee.is_active == True
     ).first()
     
     if not employee:
@@ -298,14 +298,14 @@ async def remove_employee_role_assignment(badge_number: str, db: Session = Depen
 async def get_role_assignment_statistics(db: Session = Depends(get_db)):
     """Get role assignment statistics"""
     # Total active employees
-    total_employees = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.is_active == True
+    total_employees = db.query(Employee).filter(
+        Employee.is_active == True
     ).count()
     
     # Employees with role assignments
-    assigned_employees = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.is_active == True,
-        EmployeeThaiName.job_role_id.isnot(None)
+    assigned_employees = db.query(Employee).filter(
+        Employee.is_active == True,
+        Employee.job_role_id.isnot(None)
     ).count()
     
     # Employees without role assignments
@@ -315,12 +315,12 @@ async def get_role_assignment_statistics(db: Session = Depends(get_db)):
     role_distribution = db.query(
         JobRole.role_name,
         JobRole.display_name,
-        db.func.count(EmployeeThaiName.id).label('employee_count')
+        db.func.count(Employee.id).label('employee_count')
     ).outerjoin(
-        EmployeeThaiName, 
+        Employee, 
         db.and_(
-            EmployeeThaiName.job_role_id == JobRole.id,
-            EmployeeThaiName.is_active == True
+            Employee.job_role_id == JobRole.id,
+            Employee.is_active == True
         )
     ).filter(
         JobRole.is_active == True

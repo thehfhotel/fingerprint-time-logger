@@ -10,7 +10,7 @@ from datetime import datetime, date, time, timedelta
 import calendar
 
 from app.models.models import (
-    AttendanceRecord, EmployeeThaiName, WorkSchedule, WorkShift, 
+    AttendanceRecord, Employee, WorkSchedule, WorkShift, 
     ReceptionShiftAssignment, JobRole, Holiday, DailyAttendanceSummary,
     MonthlyAttendanceStats, AttendanceStatus, HolidayType
 )
@@ -93,8 +93,8 @@ class AttendanceCalendarService:
         """Get detailed attendance information for specific employee and day"""
         
         # Get employee info
-        employee = self.db.query(EmployeeThaiName).filter(
-            EmployeeThaiName.badge_number == employee_id
+        employee = self.db.query(Employee).filter(
+            Employee.badge_number == employee_id
         ).first()
         
         if not employee:
@@ -234,9 +234,9 @@ class AttendanceCalendarService:
         """Recalculate attendance status for a month"""
         
         # Get employees to recalculate
-        query = self.db.query(EmployeeThaiName).filter(EmployeeThaiName.is_active == True)
+        query = self.db.query(Employee).filter(Employee.is_active == True)
         if employee_ids:
-            query = query.filter(EmployeeThaiName.badge_number.in_(employee_ids))
+            query = query.filter(Employee.badge_number.in_(employee_ids))
         
         employees = query.all()
         days_in_month = calendar.monthrange(year, month)[1]
@@ -318,23 +318,23 @@ class AttendanceCalendarService:
     
     # Private helper methods
     
-    async def _get_filtered_employees(self, filters: CalendarFilters) -> List[EmployeeThaiName]:
+    async def _get_filtered_employees(self, filters: CalendarFilters) -> List[Employee]:
         """Get employees based on filters"""
         
-        query = self.db.query(EmployeeThaiName).join(
-            JobRole, EmployeeThaiName.job_role_id == JobRole.id, isouter=True
+        query = self.db.query(Employee).join(
+            JobRole, Employee.job_role_id == JobRole.id, isouter=True
         )
         
         if not filters.include_inactive:
-            query = query.filter(EmployeeThaiName.is_active == True)
+            query = query.filter(Employee.is_active == True)
         
         if filters.role:
             query = query.filter(JobRole.role_name == filters.role)
         
         if filters.employee_ids:
-            query = query.filter(EmployeeThaiName.badge_number.in_(filters.employee_ids))
+            query = query.filter(Employee.badge_number.in_(filters.employee_ids))
         
-        return query.order_by(EmployeeThaiName.thai_name).all()
+        return query.order_by(Employee.thai_name).all()
     
     async def _get_employee_monthly_attendance(
         self,
@@ -495,8 +495,8 @@ class AttendanceCalendarService:
         """Get employee schedule for specific date"""
         
         # Get employee and role
-        employee = self.db.query(EmployeeThaiName).filter(
-            EmployeeThaiName.badge_number == employee_id
+        employee = self.db.query(Employee).filter(
+            Employee.badge_number == employee_id
         ).first()
         
         if not employee or not employee.job_role:

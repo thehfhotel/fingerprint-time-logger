@@ -12,7 +12,7 @@ import calendar
 
 from app.core.database import get_db
 from app.models.models import (
-    AttendanceRecord, EmployeeThaiName, Holiday, JobRole
+    AttendanceRecord, Employee, Holiday, JobRole
 )
 
 router = APIRouter(prefix="/attendance/calendar", tags=["Attendance Calendar"])
@@ -92,8 +92,8 @@ async def get_monthly_calendar(
                        if d not in holiday_days and d not in weekends]
         
         # Get employees with attendance data
-        employees = db.query(EmployeeThaiName).filter(
-            EmployeeThaiName.is_active == True
+        employees = db.query(Employee).filter(
+            Employee.is_active == True
         ).limit(20).all()  # Limit for demo
         
         # Build employee calendar data
@@ -231,8 +231,8 @@ async def get_employee_day_detail(
             raise HTTPException(status_code=400, detail="Invalid date")
         
         # Get employee info
-        employee = db.query(EmployeeThaiName).filter(
-            EmployeeThaiName.badge_number == employee_id
+        employee = db.query(Employee).filter(
+            Employee.badge_number == employee_id
         ).first()
         
         if not employee:

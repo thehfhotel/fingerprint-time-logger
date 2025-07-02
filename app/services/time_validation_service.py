@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
 from app.models.models import (
-    AttendanceRecord, EmployeeThaiName, JobRole, WorkSchedule, WorkShift,
+    AttendanceRecord, Employee, JobRole, WorkSchedule, WorkShift,
     ReceptionShiftAssignment, EmployeeMonthlySchedule, TimeCheckConfig
 )
 
@@ -81,9 +81,9 @@ class TimeValidationService:
             ScheduleInfo object or None if no schedule found
         """
         # Get employee and their role
-        employee = self.db.query(EmployeeThaiName).filter(
-            EmployeeThaiName.badge_number == badge_number,
-            EmployeeThaiName.is_active == True
+        employee = self.db.query(Employee).filter(
+            Employee.badge_number == badge_number,
+            Employee.is_active == True
         ).first()
         
         if not employee or not employee.job_role_id:
@@ -430,9 +430,9 @@ class TimeValidationService:
         
         for record in late_records:
             # Get employee details
-            employee = self.db.query(EmployeeThaiName).filter(
-                EmployeeThaiName.badge_number == record.employee_id,
-                EmployeeThaiName.is_active == True
+            employee = self.db.query(Employee).filter(
+                Employee.badge_number == record.employee_id,
+                Employee.is_active == True
             ).first()
             
             if not employee:

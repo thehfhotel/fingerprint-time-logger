@@ -11,7 +11,7 @@ from sqlalchemy import and_, desc, func
 from fastapi.responses import StreamingResponse
 import logging
 
-from app.models.models import AttendanceRecord, Employee, Device, EmployeeThaiName
+from app.models.models import AttendanceRecord, Employee, Device
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -90,13 +90,8 @@ class AttendanceExportService:
     ):
         """Build SQLAlchemy query with filters"""
         query = self.db.query(AttendanceRecord)\
-            .join(Employee, AttendanceRecord.employee_id == Employee.employee_id, isouter=True)\
-            .join(Device, AttendanceRecord.device_id == Device.id, isouter=True)\
-            .join(EmployeeThaiName, 
-                  and_(Employee.employee_id == EmployeeThaiName.badge_number,
-                       EmployeeThaiName.is_active == True,
-                       EmployeeThaiName.is_hidden == False), 
-                  isouter=True)
+            .join(Employee, AttendanceRecord.employee_badge_number == Employee.badge_number, isouter=True)\
+            .join(Device, AttendanceRecord.device_id == Device.id, isouter=True)
         
         # Apply date filters
         if start_date:
@@ -108,7 +103,7 @@ class AttendanceExportService:
         
         # Apply employee filter
         if employee_ids:
-            query = query.filter(AttendanceRecord.employee_id.in_(employee_ids))
+            query = query.filter(AttendanceRecord.employee_badge_number.in_(employee_ids))
         
         # Apply device filter
         if device_ids:
@@ -160,13 +155,8 @@ class AttendanceExportService:
             row = [record.employee_id]
             
             if include_employee_names:
-                # Get Thai name directly from EmployeeThaiName table
-                thai_name_obj = self.db.query(EmployeeThaiName).filter(
-                    EmployeeThaiName.badge_number == record.employee_id,
-                    EmployeeThaiName.is_active == True,
-                    EmployeeThaiName.is_hidden == False
-                ).first()
-                thai_name = thai_name_obj.thai_name if thai_name_obj else ''
+                # Get Thai name from unified Employee model
+                thai_name = record.employee.thai_name if record.employee and record.employee.thai_name else record.employee.display_name if record.employee else ''
                 row.append(thai_name)
             
             row.append(record.timestamp.strftime('%Y-%m-%d %H:%M:%S'))
@@ -199,15 +189,10 @@ class AttendanceExportService:
             key = (emp_key, date_key)
             
             if key not in daily_data:
-                # Get Thai name directly from EmployeeThaiName table
+                # Get Thai name from unified Employee model
                 thai_name = ''
                 if include_employee_names:
-                    thai_name_obj = self.db.query(EmployeeThaiName).filter(
-                        EmployeeThaiName.badge_number == record.employee_id,
-                        EmployeeThaiName.is_active == True,
-                        EmployeeThaiName.is_hidden == False
-                    ).first()
-                    thai_name = thai_name_obj.thai_name if thai_name_obj else ''
+                    thai_name = record.employee.thai_name if record.employee and record.employee.thai_name else record.employee.display_name if record.employee else ''
                 
                 daily_data[key] = {
                     'badge_number': emp_key,
@@ -436,13 +421,8 @@ class AttendanceExportService:
                 row = [record.employee_id]
                 
                 if include_employee_names:
-                    # Get Thai name directly from EmployeeThaiName table
-                    thai_name_obj = self.db.query(EmployeeThaiName).filter(
-                        EmployeeThaiName.badge_number == record.employee_id,
-                        EmployeeThaiName.is_active == True,
-                        EmployeeThaiName.is_hidden == False
-                    ).first()
-                    thai_name = thai_name_obj.thai_name if thai_name_obj else ''
+                    # Get Thai name from unified Employee model
+                    thai_name = record.employee.thai_name if record.employee and record.employee.thai_name else record.employee.display_name if record.employee else ''
                     row.append(thai_name)
                 
                 row.append(record.timestamp.strftime('%Y-%m-%d %H:%M:%S'))
@@ -541,15 +521,10 @@ class AttendanceExportService:
                 key = (emp_key, date_key)
                 
                 if key not in daily_data:
-                    # Get Thai name directly from EmployeeThaiName table
+                    # Get Thai name from unified Employee model
                     thai_name = ''
                     if include_employee_names:
-                        thai_name_obj = self.db.query(EmployeeThaiName).filter(
-                            EmployeeThaiName.badge_number == record.employee_id,
-                            EmployeeThaiName.is_active == True,
-                            EmployeeThaiName.is_hidden == False
-                        ).first()
-                        thai_name = thai_name_obj.thai_name if thai_name_obj else ''
+                        thai_name = record.employee.thai_name if record.employee and record.employee.thai_name else record.employee.display_name if record.employee else ''
                     
                     daily_data[key] = {
                         'badge_number': emp_key,

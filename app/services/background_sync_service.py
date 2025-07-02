@@ -19,7 +19,7 @@ import time
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy import create_engine
 
-from app.models.models import Device, AttendanceRecord, Employee, EmployeeThaiName, SyncQueue, ErrorEvent
+from app.models.models import Device, AttendanceRecord, Employee, Employee, SyncQueue, ErrorEvent
 from app.services.sync_queue_manager import SyncQueueManager, SyncOperationType, SyncStatus
 from app.services.connection_manager import DeviceConnectionManager, CircuitBreakerConfig
 from app.services.cache_service import CacheService

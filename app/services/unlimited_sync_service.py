@@ -12,7 +12,7 @@ from dataclasses import dataclass, asdict
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, and_
 
-from app.models.models import Device, AttendanceRecord, EmployeeThaiName, SyncLog
+from app.models.models import Device, AttendanceRecord, Employee, SyncLog
 from app.services.device_service import DeviceService
 
 

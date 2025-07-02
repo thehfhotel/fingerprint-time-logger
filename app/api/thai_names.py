@@ -10,7 +10,7 @@ from sqlalchemy import func
 from pydantic import BaseModel, Field, validator
 
 from app.core.database import get_db
-from app.models.models import EmployeeThaiName, AttendanceRecord
+from app.models.models import Employee, AttendanceRecord
 
 router = APIRouter(prefix="/api/thai-names", tags=["Thai Names"])
 
@@ -83,42 +83,42 @@ def get_all_thai_names(
     Retrieve all Thai name mappings with optional search and pagination
     """
     # Debug: Check total count first
-    total_count = db.query(EmployeeThaiName).count()
-    active_count = db.query(EmployeeThaiName).filter(EmployeeThaiName.is_active == True).count()
+    total_count = db.query(Employee).count()
+    active_count = db.query(Employee).filter(Employee.is_active == True).count()
     print(f"DEBUG: Total Thai names: {total_count}, Active: {active_count}")
     
-    query = db.query(EmployeeThaiName).filter(EmployeeThaiName.is_active == True)
+    query = db.query(Employee).filter(Employee.is_active == True)
     
     # Filter by hidden status
     if not show_hidden:
-        query = query.filter(EmployeeThaiName.is_hidden == False)
+        query = query.filter(Employee.is_hidden == False)
     
     # Add search filter if provided
     if search:
         search_term = f"%{search}%"
         query = query.filter(
-            (EmployeeThaiName.badge_number.ilike(search_term)) |
-            (EmployeeThaiName.thai_name.ilike(search_term))
+            (Employee.badge_number.ilike(search_term)) |
+            (Employee.employee.ilike(search_term))
         )
     
     # Order by badge number (try numeric, fallback to string)
     try:
-        query = query.order_by(func.cast(EmployeeThaiName.badge_number, 'INTEGER').asc())
+        query = query.order_by(func.cast(Employee.badge_number, 'INTEGER').asc())
     except:
-        query = query.order_by(EmployeeThaiName.badge_number.asc())
+        query = query.order_by(Employee.badge_number.asc())
     
     thai_names = query.offset(skip).limit(limit).all()
     
     # Convert datetime to string for JSON serialization
     result = []
-    for thai_name in thai_names:
+    for employee in employees:
         thai_name_dict = {
-            "id": thai_name.id,
-            "badge_number": thai_name.badge_number,
-            "thai_name": thai_name.thai_name,
-            "is_active": thai_name.is_active,
-            "created_at": thai_name.created_at.isoformat() if thai_name.created_at else None,
-            "updated_at": thai_name.updated_at.isoformat() if thai_name.updated_at else None
+            "id": employee.id,
+            "badge_number": employee.badge_number,
+            "thai_name": employee.thai_name or employee.display_name,
+            "is_active": employee.is_active,
+            "created_at": employee.created_at.isoformat() if employee.created_at else None,
+            "updated_at": employee.updated_at.isoformat() if employee.updated_at else None
         }
         result.append(thai_name_dict)
     
@@ -130,25 +130,25 @@ def get_thai_name(badge_number: str, db: Session = Depends(get_db)):
     """
     Get Thai name for a specific badge number
     """
-    thai_name = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.badge_number == badge_number,
-        EmployeeThaiName.is_active == True
+    employee = db.query(Employee).filter(
+        Employee.badge_number == badge_number,
+        Employee.is_active == True
     ).first()
     
-    if not thai_name:
+    if not employee:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Thai name not found for badge number: {badge_number}"
+            detail=f"Employee not found for badge number: {badge_number}"
         )
     
     return {
-        "id": thai_name.id,
-        "badge_number": thai_name.badge_number,
-        "thai_name": thai_name.thai_name,
-        "is_active": thai_name.is_active,
-        "is_hidden": thai_name.is_hidden,
-        "created_at": thai_name.created_at.isoformat() if thai_name.created_at else None,
-        "updated_at": thai_name.updated_at.isoformat() if thai_name.updated_at else None
+        "id": employee.id,
+        "badge_number": employee.badge_number,
+        "thai_name": employee.thai_name or employee.display_name,
+        "is_active": employee.is_active,
+        "is_hidden": employee.is_hidden,
+        "created_at": employee.created_at.isoformat() if employee.created_at else None,
+        "updated_at": employee.updated_at.isoformat() if employee.updated_at else None
     }
 
 
@@ -158,36 +158,37 @@ def create_thai_name(thai_name_data: ThaiNameCreate, db: Session = Depends(get_d
     Create a new Thai name mapping
     """
     # Check if badge number already exists
-    existing = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.badge_number == thai_name_data.badge_number
+    existing = db.query(Employee).filter(
+        Employee.badge_number == thai_name_data.badge_number
     ).first()
     
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Thai name already exists for badge number: {thai_name_data.badge_number}"
+            detail=f"Employee already exists for badge number: {thai_name_data.badge_number}"
         )
     
-    # Create new Thai name record
-    db_thai_name = EmployeeThaiName(
+    # Create new Employee record
+    db_employee = Employee(
         badge_number=thai_name_data.badge_number,
         thai_name=thai_name_data.thai_name,
+        display_name=thai_name_data.thai_name,
         is_active=True,
         is_hidden=thai_name_data.is_hidden if hasattr(thai_name_data, 'is_hidden') else False
     )
     
-    db.add(db_thai_name)
+    db.add(db_employee)
     db.commit()
-    db.refresh(db_thai_name)
+    db.refresh(db_employee)
     
     return {
-        "id": db_thai_name.id,
-        "badge_number": db_thai_name.badge_number,
-        "thai_name": db_thai_name.thai_name,
-        "is_active": db_thai_name.is_active,
-        "is_hidden": db_thai_name.is_hidden,
-        "created_at": db_thai_name.created_at.isoformat() if db_thai_name.created_at else None,
-        "updated_at": db_thai_name.updated_at.isoformat() if db_thai_name.updated_at else None
+        "id": db_employee.id,
+        "badge_number": db_employee.badge_number,
+        "thai_name": db_employee.thai_name,
+        "is_active": db_employee.is_active,
+        "is_hidden": db_employee.is_hidden,
+        "created_at": db_employee.created_at.isoformat() if db_employee.created_at else None,
+        "updated_at": db_employee.updated_at.isoformat() if db_employee.updated_at else None
     }
 
 
@@ -200,12 +201,12 @@ def update_thai_name(
     """
     Update Thai name for a specific badge number
     """
-    thai_name = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.badge_number == badge_number,
-        EmployeeThaiName.is_active == True
+    employee = db.query(Employee).filter(
+        Employee.badge_number == badge_number,
+        Employee.is_active == True
     ).first()
     
-    if not thai_name:
+    if not employee:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thai name not found for badge number: {badge_number}"
@@ -213,23 +214,23 @@ def update_thai_name(
     
     # Update fields if provided
     if thai_name_update.thai_name is not None:
-        thai_name.thai_name = thai_name_update.thai_name
+        employee.thai_name = thai_name_update.thai_name
     if thai_name_update.is_hidden is not None:
-        thai_name.is_hidden = thai_name_update.is_hidden
+        employee.is_hidden = thai_name_update.is_hidden
     
-    thai_name.updated_at = func.now()
+    employee.updated_at = func.now()
     
     db.commit()
     db.refresh(thai_name)
     
     return {
-        "id": thai_name.id,
-        "badge_number": thai_name.badge_number,
-        "thai_name": thai_name.thai_name,
-        "is_active": thai_name.is_active,
-        "is_hidden": thai_name.is_hidden,
-        "created_at": thai_name.created_at.isoformat() if thai_name.created_at else None,
-        "updated_at": thai_name.updated_at.isoformat() if thai_name.updated_at else None
+        "id": employee.id,
+        "badge_number": employee.badge_number,
+        "thai_name": employee.thai_name or employee.display_name,
+        "is_active": employee.is_active,
+        "is_hidden": employee.is_hidden,
+        "created_at": employee.created_at.isoformat() if employee.created_at else None,
+        "updated_at": employee.updated_at.isoformat() if employee.updated_at else None
     }
 
 
@@ -250,18 +251,18 @@ def bulk_update_thai_names(bulk_update: ThaiNameBulkUpdate, db: Session = Depend
     try:
         # Process all updates in a single transaction
         for update in bulk_update.updates:
-            thai_name = db.query(EmployeeThaiName).filter(
-                EmployeeThaiName.badge_number == update.badge_number,
-                EmployeeThaiName.is_active == True
+            employee = db.query(Employee).filter(
+                Employee.badge_number == update.badge_number,
+                Employee.is_active == True
             ).first()
             
             if thai_name:
-                thai_name.thai_name = update.thai_name
-                thai_name.updated_at = func.now()
+                employee.thai_name = update.thai_name
+                employee.updated_at = func.now()
                 updated_count += 1
             else:
                 # Create new record if it doesn't exist
-                new_thai_name = EmployeeThaiName(
+                new_thai_name = Employee(
                     badge_number=update.badge_number,
                     thai_name=update.thai_name,
                     is_active=True
@@ -291,20 +292,20 @@ def delete_thai_name(badge_number: str, db: Session = Depends(get_db)):
     """
     Soft delete a Thai name (mark as inactive)
     """
-    thai_name = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.badge_number == badge_number,
-        EmployeeThaiName.is_active == True
+    employee = db.query(Employee).filter(
+        Employee.badge_number == badge_number,
+        Employee.is_active == True
     ).first()
     
-    if not thai_name:
+    if not employee:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thai name not found for badge number: {badge_number}"
         )
     
     # Soft delete (mark as inactive)
-    thai_name.is_active = False
-    thai_name.updated_at = func.now()
+    employee.is_active = False
+    employee.updated_at = func.now()
     
     db.commit()
     
@@ -325,7 +326,7 @@ def sync_badge_numbers_from_attendance(db: Session = Depends(get_db)):
         attendance_badge_numbers = [row[0] for row in attendance_badge_numbers]
         
         # Get existing badge numbers from Thai names
-        existing_badge_numbers = db.query(EmployeeThaiName.badge_number).all()
+        existing_badge_numbers = db.query(Employee.badge_number).all()
         existing_badge_numbers = [row[0] for row in existing_badge_numbers]
         
         # Find new badge numbers that don't have Thai names
@@ -339,7 +340,7 @@ def sync_badge_numbers_from_attendance(db: Session = Depends(get_db)):
         for badge_number in new_badge_numbers:
             default_thai_name = f"พนักงาน {badge_number}"
             
-            new_thai_name = EmployeeThaiName(
+            new_thai_name = Employee(
                 badge_number=badge_number,
                 thai_name=default_thai_name,
                 is_active=True
@@ -372,13 +373,13 @@ def export_thai_names_csv(db: Session = Depends(get_db)):
     """
     Export Thai names to CSV format for backup
     """
-    thai_names = db.query(EmployeeThaiName).filter(
-        EmployeeThaiName.is_active == True
-    ).order_by(EmployeeThaiName.badge_number).all()
+    thai_names = db.query(Employee).filter(
+        Employee.is_active == True
+    ).order_by(Employee.badge_number).all()
     
     csv_data = "Badgenumber,USERID,ชื่อ\n"
-    for thai_name in thai_names:
-        csv_data += f"{thai_name.badge_number},{thai_name.badge_number},{thai_name.thai_name}\n"
+    for employee in employees:
+        csv_data += f"{employee.badge_number},{employee.badge_number},{employee.thai_name}\n"
     
     return {
         "success": True,
