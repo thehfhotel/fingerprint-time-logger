@@ -1,5 +1,7 @@
 # 🗄️ Database Schema Diagram - Fingerprint Time Logger
 
+> **Updated**: 2025-07-02 - Reflects unified Employee model after migration 6285b7d1c7eb
+
 ## 📊 Entity Relationship Diagram
 
 ```mermaid
@@ -19,19 +21,12 @@ erDiagram
 
     EMPLOYEES {
         int id PK "Primary Key"
-        string employee_id UK "Unique Employee ID"
-        string name "Employee Name"
+        string badge_number UK "Unique Badge Number"
+        string english_name "English Name"
+        string thai_name "Thai Name"
+        string display_name "Display Name (Computed)"
         string department "Department"
         string position "Position"
-        boolean is_active "Active Status"
-        datetime created_at "Created Timestamp"
-        datetime updated_at "Updated Timestamp"
-    }
-
-    EMPLOYEE_THAI_NAMES {
-        int id PK "Primary Key"
-        string badge_number UK "Badge Number"
-        string thai_name "Thai Name"
         int job_role_id FK "Job Role Reference"
         boolean is_active "Active Status"
         boolean is_hidden "Hidden from View"
@@ -53,7 +48,7 @@ erDiagram
     %% Attendance System
     ATTENDANCE_RECORDS {
         int id PK "Primary Key"
-        string employee_id FK "Employee Reference"
+        string employee_badge_number FK "Employee Badge Number"
         int device_id FK "Device Reference"
         datetime timestamp "Punch Timestamp"
         int punch_type "0=in, 1=out, 2=break_out, etc"
@@ -258,8 +253,9 @@ erDiagram
     DEVICES ||--o{ ERROR_EVENTS : "generates errors"
 
     EMPLOYEES ||--o{ ATTENDANCE_RECORDS : "has attendance records"
+    EMPLOYEES }o--|| JOB_ROLES : "belongs to role"
 
-    JOB_ROLES ||--o{ EMPLOYEE_THAI_NAMES : "assigned to employees"
+    JOB_ROLES ||--o{ EMPLOYEES : "assigned to employees"
     JOB_ROLES ||--o{ WORK_SCHEDULES : "has work schedules"
     JOB_ROLES ||--o{ WORK_SHIFTS : "has work shifts"
     JOB_ROLES ||--o{ EMPLOYEE_MONTHLY_SCHEDULES : "has monthly schedules"
@@ -269,10 +265,9 @@ erDiagram
 
 ## 🔍 Schema Summary
 
-### **Core Business Entities (6 tables)**
+### **Core Business Entities (5 tables)**
 - **DEVICES**: ZKTeco fingerprint device configuration
-- **EMPLOYEES**: Basic employee information
-- **EMPLOYEE_THAI_NAMES**: Thai name mapping with role assignments
+- **EMPLOYEES**: Unified employee information (English/Thai names, role assignments)
 - **JOB_ROLES**: Job role definitions (management, office, reception, etc.)
 - **ATTENDANCE_RECORDS**: Real-time punch data with validation
 - **HOLIDAYS**: Holiday calendar management

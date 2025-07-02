@@ -1,0 +1,2314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Work Schedule Configuration</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 2rem;
+            margin: 0;
+        }
+        
+        .header-actions {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            margin-top: 0.75rem;
+        }
+        
+        .action-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .action-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        .tabs-container {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .tabs-header {
+            display: flex;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .tab-button {
+            padding: 1rem 2rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1rem;
+            color: #666;
+            transition: all 0.2s ease;
+            border-bottom: 3px solid transparent;
+        }
+        
+        .tab-button.active {
+            background: white;
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+        
+        .tab-button:hover:not(.active) {
+            background: #e9ecef;
+            color: #333;
+        }
+        
+        .tab-content {
+            padding: 2rem;
+            min-height: 400px;
+        }
+        
+        .schedule-form {
+            max-width: 600px;
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .form-control {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+            transition: border-color 0.2s ease;
+        }
+        
+        .form-control:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+        }
+        
+        .time-inputs {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 1rem;
+            align-items: end;
+        }
+        
+        .working-days {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+        
+        .day-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+        
+        .day-checkbox:hover {
+            background: #f8f9fa;
+        }
+        
+        .day-checkbox.checked {
+            background: #e8f4fd;
+            border-color: #667eea;
+        }
+        
+        .day-checkbox input {
+            margin: 0;
+        }
+        
+        .save-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 0.75rem 2rem;
+            border-radius: 6px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .save-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+        
+        .save-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .shifts-container {
+            display: grid;
+            gap: 1.5rem;
+        }
+        
+        .shift-card {
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 1.5rem;
+            background: #fafbfc;
+        }
+        
+        .shift-header {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+        }
+        
+        .shift-name-display {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .shift-name-text {
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: #333;
+        }
+        
+        .edit-btn {
+            background: transparent;
+            border: 1px solid #667eea;
+            color: #667eea;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .edit-btn:hover {
+            background: #667eea;
+            color: white;
+        }
+        
+        .shift-name-input-group {
+            display: none;
+            gap: 0.5rem;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        
+        .shift-name-input-group.active {
+            display: flex;
+        }
+        
+        .shift-name-display.hidden {
+            display: none;
+        }
+        
+        /* Color Picker Styles */
+        .color-picker-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .color-picker {
+            width: 50px;
+            height: 38px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 0;
+            background: none;
+        }
+        
+        .color-picker::-webkit-color-swatch-wrapper {
+            padding: 0;
+        }
+        
+        .color-picker::-webkit-color-swatch {
+            border: none;
+            border-radius: 3px;
+        }
+        
+        .color-preview {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 2px solid #fff;
+            box-shadow: 0 0 0 1px rgba(0,0,0,0.1);
+            display: inline-block;
+        }
+        
+        .shift-color-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 1px solid rgba(255,255,255,0.3);
+            display: inline-block;
+            margin-left: 0.5rem;
+        }
+        
+        .shift-card {
+            border-left: 4px solid #e9ecef;
+            position: relative;
+        }
+        
+        .shift-card[data-color] {
+            border-left-color: attr(data-color);
+        }
+        
+        /* Shift Legend Styles */
+        .shift-legend {
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .shift-legend h4 {
+            margin: 0 0 1rem 0;
+            color: #495057;
+            font-size: 1rem;
+        }
+        
+        .legend-items {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+            border: 1px solid rgba(0,0,0,0.1);
+            display: inline-block;
+        }
+        
+        .legend-text {
+            color: #495057;
+        }
+        
+        .alert {
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+        }
+        
+        .alert-success {
+            background: #d1eddd;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        
+        .alert-error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        
+        /* Floating alert styles for reliable user feedback */
+        .floating-alert {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 10000;
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            background: white;
+            border: 1px solid #ddd;
+            min-width: 300px;
+            animation: slideInRight 0.3s ease;
+        }
+        
+        .floating-alert.alert-success {
+            border-left: 4px solid #28a745;
+            background: #f8fff8;
+        }
+        
+        .floating-alert.alert-error {
+            border-left: 4px solid #dc3545;
+            background: #fff8f8;
+        }
+        
+        .alert-content {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        
+        .alert-icon {
+            font-size: 1.2rem;
+        }
+        
+        .alert-message {
+            flex: 1;
+            font-weight: 500;
+        }
+        
+        .alert-close {
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: #666;
+            padding: 0;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .alert-close:hover {
+            background: #f0f0f0;
+            border-radius: 50%;
+        }
+        
+        /* Button state styles for immediate feedback */
+        .save-btn.saving {
+            background: #6c757d !important;
+            opacity: 0.8;
+            cursor: wait;
+        }
+        
+        .save-btn.success {
+            background: #28a745 !important;
+        }
+        
+        .save-btn.error {
+            background: #dc3545 !important;
+        }
+        
+        @keyframes slideInRight {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+        
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #666;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+            margin-left: 0.5rem;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Employee Schedule Calendar Styles */
+        .schedule-sections {
+            margin-top: 2rem;
+        }
+        
+        .section-toggle {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            overflow: hidden;
+        }
+        
+        .section-header {
+            background: #667eea;
+            color: white;
+            padding: 1rem;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+        }
+        
+        .section-header:hover {
+            background: #5a67d8;
+        }
+        
+        .section-content {
+            padding: 1.5rem;
+            display: none;
+        }
+        
+        .section-content.active {
+            display: block;
+        }
+        
+        .calendar-grid {
+            overflow-x: auto;
+        }
+        
+        .calendar-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 800px;
+        }
+        
+        .calendar-table th,
+        .calendar-table td {
+            border: 1px solid #e9ecef;
+            padding: 0.5rem;
+            text-align: center;
+            min-width: 40px;
+        }
+        
+        .calendar-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+        }
+        
+        .calendar-table td.employee-name {
+            background: #f8f9fa;
+            text-align: left;
+            font-weight: 600;
+            min-width: 120px;
+            position: sticky;
+            left: 0;
+            z-index: 1;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+        }
+        
+        /* Also make the header's first column sticky */
+        .calendar-table th:first-child {
+            position: sticky;
+            left: 0;
+            z-index: 2;
+            background: #f8f9fa;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+        }
+        
+        .calendar-cell {
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 40px;
+            height: 40px;
+        }
+        
+        .calendar-cell:hover {
+            background: #e8f4fd;
+        }
+        
+        .calendar-cell.marked {
+            background: #667eea;
+            color: white;
+        }
+        
+        .calendar-cell.marked:hover {
+            background: #5a67d8;
+        }
+        
+        .shift-cell {
+            cursor: pointer;
+            padding: 0.25rem;
+            font-size: 0.8rem;
+            transition: all 0.2s ease;
+        }
+        
+        /* Shift Legend Styles */
+        .shift-legend-content {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        
+        .shift-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+        }
+        
+        .shift-legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        
+        .shift-cell:hover {
+            background: #e8f4fd;
+        }
+        
+        .shift-morning { background: #fef3cd; }
+        .shift-day { background: #d1ecf1; }
+        .shift-evening { background: #f8d7da; }
+        .shift-night { background: #d4edda; }
+        
+        .employee-row-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .add-employee-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        
+        .add-employee-btn:hover {
+            background: #218838;
+        }
+        
+        .remove-employee-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+        
+        .remove-employee-btn:hover {
+            background: #c82333;
+        }
+        
+        .employee-select {
+            padding: 0.5rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            min-width: 150px;
+        }
+        
+        .employee-name.confirmed {
+            background-color: #e8f5e8;
+            font-weight: 600;
+            padding: 0.5rem;
+            border-radius: 4px;
+        }
+        
+        .time-config-form {
+            display: flex;
+            gap: 1rem;
+            align-items: end;
+            margin-bottom: 1rem;
+        }
+        
+        .thai-month-header {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 1rem;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            .tabs-header {
+                flex-direction: column;
+            }
+            
+            .tab-content {
+                padding: 1rem;
+            }
+            
+            .time-inputs {
+                grid-template-columns: 1fr;
+            }
+            
+            .working-days {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Work Schedule Configuration</h1>
+        <div class="header-actions">
+            <a href="/" class="action-btn">🏠 Dashboard</a>
+            <a href="/thai-names" class="action-btn">📝 Thai Names</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Role Selection -->
+        <div class="tabs-container">
+            <div class="tabs-header">
+                <button class="tab-button active" data-role="maid">Maid</button>
+                <button class="tab-button" data-role="office">Office</button>
+                <button class="tab-button" data-role="reception">Reception</button>
+                <button class="tab-button" data-role="maintenance">Maintenance</button>
+                <button class="tab-button" data-role="management">Management</button>
+            </div>
+            
+            <!-- Reception-specific tab content (only for shift management) -->
+            <div class="tab-content" id="tabContent" style="display: none;">
+                <div class="loading">Loading reception shift data...</div>
+            </div>
+        </div>
+        
+        <!-- Employee Schedule Sections -->
+        <div class="schedule-sections" id="scheduleSections" style="display: none;">
+            <!-- Time Configuration Section -->
+            <div class="section-toggle">
+                <div class="section-header" onclick="toggleSection('timeConfig')">
+                    <span>⏰ เวลาทำงาน (Time Configuration)</span>
+                    <span id="timeConfigToggle">▼</span>
+                </div>
+                <div class="section-content" id="timeConfigSection">
+                    <div class="time-config-form">
+                        <div id="alert-container"></div>
+                        <div class="time-inputs">
+                            <div class="form-group">
+                                <label class="form-label">เวลาเริ่มงาน (Start Time)</label>
+                                <input type="time" class="form-control" id="roleStartTime" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">เวลาเลิกงาน (End Time)</label>
+                                <input type="time" class="form-control" id="roleEndTime" required>
+                            </div>
+                            <div class="form-group">
+                                <button type="button" class="save-btn" onclick="saveTimeSettings()">💾 บันทึกเวลา</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Monthly Schedule Section -->
+            <div class="section-toggle">
+                <div class="section-header" onclick="toggleSection('monthlySchedule')">
+                    <span>📅 ตารางงานรายเดือน (Monthly Schedule)</span>
+                    <span id="monthlyScheduleToggle">▼</span>
+                </div>
+                <div class="section-content active" id="monthlyScheduleSection">
+                    <div class="thai-month-header" id="monthHeader">มกราคม 2568</div>
+                    
+                    <!-- Shift Legend (only shown for reception role) -->
+                    <div id="shiftLegend" style="display: none; margin-bottom: 1rem; padding: 1rem; background: #f8f9fa; border-radius: 6px; border: 1px solid #e9ecef;">
+                        <h4 style="margin: 0 0 0.5rem 0; color: #495057;">อธิบายสีเวร (Shift Legend)</h4>
+                        <div id="shiftLegendContent" class="shift-legend-content"></div>
+                    </div>
+                    
+                    <div class="calendar-grid">
+                        <table class="calendar-table" id="scheduleCalendar">
+                            <thead id="calendarHeader">
+                                <!-- Headers will be generated by JavaScript -->
+                            </thead>
+                            <tbody id="calendarBody">
+                                <!-- Calendar rows will be generated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div style="margin-top: 1rem;">
+                        <button type="button" class="add-employee-btn" onclick="addEmployeeRow()">➕ เพิ่มพนักงาน</button>
+                        <button type="button" class="save-btn" style="margin-left: 1rem;" onclick="saveMonthlySchedule()">💾 บันทึกตารางงาน</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let jobRolesData = {};
+        let currentRole = 'maid';
+        let availableEmployees = [];
+        let monthlyScheduleData = {};
+        let currentMonth = new Date().getMonth() + 1;
+        let currentYear = new Date().getFullYear();
+        
+        // Thai month names
+        const thaiMonths = [
+            'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+            'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+        ];
+        
+        // Thai day abbreviations
+        const thaiDayAbbr = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+        
+        // Initialize the page
+        document.addEventListener('DOMContentLoaded', function() {
+            loadJobRoles();
+            setupTabSwitching();
+        });
+        
+        async function loadJobRoles() {
+            try {
+                const response = await fetch('/api/work-schedules/job-roles');
+                const data = await response.json();
+                
+                jobRolesData = {};
+                data.forEach(role => {
+                    jobRolesData[role.role_name] = role;
+                });
+                
+                console.log('Job roles loaded:', jobRolesData);
+                
+                // Debug: Check reception shifts colors
+                if (jobRolesData.reception && jobRolesData.reception.work_shifts) {
+                    console.log('Reception shifts with colors:');
+                    jobRolesData.reception.work_shifts.forEach(shift => {
+                        console.log(`- ${shift.shift_name}: ${shift.color}`);
+                    });
+                }
+                
+                showRoleContent(currentRole);
+                
+            } catch (error) {
+                console.error('Error loading job roles:', error);
+                document.getElementById('tabContent').innerHTML = 
+                    '<div class="alert alert-error">Failed to load schedule data. Please try refreshing the page.</div>';
+            }
+        }
+        
+        function setupTabSwitching() {
+            document.querySelectorAll('.tab-button').forEach(button => {
+                button.addEventListener('click', function() {
+                    // Update active tab
+                    document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    
+                    // Switch content
+                    currentRole = this.dataset.role;
+                    showRoleContent(currentRole);
+                });
+            });
+        }
+        
+        function showRoleContent(roleName) {
+            const role = jobRolesData[roleName];
+            if (!role) {
+                return;
+            }
+            
+            // Show/hide tab content based on role type
+            const tabContent = document.getElementById('tabContent');
+            if (role.has_shifts) {
+                // Show tab content for reception (shift management)
+                tabContent.style.display = 'block';
+                showShiftsInterface(role);
+            } else {
+                // Hide tab content for non-shift roles (use time config section only)
+                tabContent.style.display = 'none';
+            }
+            
+            // Control shift legend visibility - only show for reception role
+            const shiftLegend = document.getElementById('shiftLegend');
+            if (role.has_shifts && roleName === 'reception') {
+                shiftLegend.style.display = 'block';
+            } else {
+                shiftLegend.style.display = 'none';
+            }
+            
+            // Show employee schedule sections
+            document.getElementById('scheduleSections').style.display = 'block';
+            loadEmployeeScheduleData(roleName);
+        }
+        
+        function showScheduleInterface(role) {
+            const schedule = role.work_schedule || {
+                start_time: '08:00:00',
+                end_time: '17:00:00',
+                working_days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
+                break_duration_minutes: 60
+            };
+            
+            const content = `
+                <div class="schedule-form">
+                    <h2>${role.display_name} Work Schedule</h2>
+                    <div id="alert-container"></div>
+                    
+                    <form id="scheduleForm">
+                        <div class="time-inputs">
+                            <div class="form-group">
+                                <label class="form-label">Start Time</label>
+                                <input type="time" class="form-control" id="startTime" value="${schedule.start_time.substring(0, 5)}" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">End Time</label>
+                                <input type="time" class="form-control" id="endTime" value="${schedule.end_time.substring(0, 5)}" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Break Duration (minutes)</label>
+                                <input type="number" class="form-control" id="breakDuration" value="${schedule.break_duration_minutes}" min="0" max="480" required>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Working Days</label>
+                            <div class="working-days">
+                                ${['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map(day => `
+                                    <label class="day-checkbox ${schedule.working_days.includes(day) ? 'checked' : ''}">
+                                        <input type="checkbox" value="${day}" ${schedule.working_days.includes(day) ? 'checked' : ''}
+                                               onchange="toggleDayCheckbox(this)">
+                                        <span>${day.substring(0, 3)}</span>
+                                    </label>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <button type="submit" class="save-btn" id="saveScheduleBtn">Save Schedule</button>
+                    </form>
+                </div>
+            `;
+            
+            document.getElementById('tabContent').innerHTML = content;
+            
+            // Setup form submission
+            document.getElementById('scheduleForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                saveSchedule(role.role_name);
+            });
+        }
+        
+        function showShiftsInterface(role) {
+            const shifts = role.work_shifts || [];
+            
+            const content = `
+                <div class="schedule-form">
+                    <h2>${role.display_name} Work Shifts</h2>
+                    <div id="alert-container"></div>
+                    
+                    <form id="shiftsForm">
+                        <div class="shifts-container">
+                            ${shifts.map((shift, index) => {
+                                const shiftColor = shift.color || '#6c757d';
+                                return `
+                                <div class="shift-card" data-color="${shiftColor}" style="border-left-color: ${shiftColor}">
+                                    <div class="shift-header">
+                                        Shift ${index + 1}
+                                        <div class="shift-color-indicator" style="background-color: ${shiftColor}"></div>
+                                    </div>
+                                    <div class="shift-name-display" id="shift_display_${shift.id}">
+                                        <span class="shift-name-text">${shift.shift_name}</span>
+                                        <button type="button" class="edit-btn" onclick="editShiftName(${shift.id})">Edit</button>
+                                    </div>
+                                    <div class="shift-name-input-group" id="shift_edit_${shift.id}">
+                                        <input type="text" class="form-control" id="shift_name_${shift.id}" name="shift_${shift.id}_name" value="${shift.shift_name}" placeholder="e.g., Morning Shift" required>
+                                        <button type="button" class="save-btn" onclick="saveShiftName(${shift.id})" style="padding: 0.5rem 1rem;">Save</button>
+                                        <button type="button" class="edit-btn" onclick="cancelEditShiftName(${shift.id})">Cancel</button>
+                                    </div>
+                                    <div class="time-inputs">
+                                        <div class="form-group">
+                                            <label class="form-label">Start Time</label>
+                                            <input type="time" class="form-control" name="shift_${shift.id}_start" value="${shift.start_time.substring(0, 5)}" required>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-label">End Time</label>
+                                            <input type="time" class="form-control" name="shift_${shift.id}_end" value="${shift.end_time.substring(0, 5)}" required>
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-label">Shift Color</label>
+                                            <div class="color-picker-group">
+                                                <input type="color" 
+                                                       class="color-picker" 
+                                                       name="shift_${shift.id}_color" 
+                                                       value="${shiftColor}" 
+                                                       onchange="updateShiftColor(${shift.id}, this.value)" 
+                                                       title="Choose shift color">
+                                                <span class="color-preview" style="background-color: ${shiftColor}"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                            }).join('')}
+                        </div>
+                        
+                        <button type="submit" class="save-btn" id="saveShiftsBtn">Save All Shifts</button>
+                    </form>
+                </div>
+            `;
+            
+            document.getElementById('tabContent').innerHTML = content;
+            
+            // Setup form submission
+            document.getElementById('shiftsForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                saveShifts(role.role_name);
+            });
+        }
+        
+        function toggleDayCheckbox(checkbox) {
+            const label = checkbox.closest('.day-checkbox');
+            if (checkbox.checked) {
+                label.classList.add('checked');
+            } else {
+                label.classList.remove('checked');
+            }
+        }
+        
+        async function saveSchedule(roleName) {
+            const btn = document.getElementById('saveScheduleBtn');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+            
+            try {
+                const formData = {
+                    start_time: document.getElementById('startTime').value + ':00',
+                    end_time: document.getElementById('endTime').value + ':00',
+                    break_duration_minutes: parseInt(document.getElementById('breakDuration').value),
+                    working_days: Array.from(document.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value)
+                };
+                
+                const response = await fetch(`/api/work-schedules/job-roles/${roleName}/schedule`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+                
+                if (response.ok) {
+                    showAlert('Schedule saved successfully!', 'success');
+                    // Reload data
+                    await loadJobRoles();
+                } else {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to save schedule');
+                }
+                
+            } catch (error) {
+                console.error('Error saving schedule:', error);
+                showAlert('Failed to save schedule: ' + error.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Save Schedule';
+            }
+        }
+        
+        async function saveShifts(roleName) {
+            const btn = document.getElementById('saveShiftsBtn');
+            
+            try {
+                // Immediate button feedback
+                updateButtonState(btn, 'saving', '💾 กำลังบันทึก...');
+                
+                const role = jobRolesData[roleName];
+                const shiftsData = role.work_shifts.map(shift => {
+                    const startInput = document.querySelector(`input[name="shift_${shift.id}_start"]`);
+                    const endInput = document.querySelector(`input[name="shift_${shift.id}_end"]`);
+                    const colorInput = document.querySelector(`input[name="shift_${shift.id}_color"]`);
+                    
+                    return {
+                        shift_name: shift.shift_name,  // Use the shift name from data (updated by edit function)
+                        start_time: startInput.value + ':00',
+                        end_time: endInput.value + ':00',
+                        color: colorInput.value,  // Include color value
+                        break_duration_minutes: 0,  // Reception shifts don't have breaks
+                        working_days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']  // Reception shifts available all days
+                    };
+                });
+                
+                const response = await fetch(`/api/work-schedules/job-roles/${roleName}/shifts`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(shiftsData)
+                });
+                
+                if (response.ok) {
+                    updateButtonState(btn, 'success', '✅ บันทึกสำเร็จ');
+                    showAlert('✅ บันทึกเวรทั้งหมดสำเร็จ', 'success');
+                    // Reload data
+                    await loadJobRoles();
+                    
+                    // Reset button after 2 seconds
+                    setTimeout(() => {
+                        updateButtonState(btn, 'normal', 'Save All Shifts');
+                    }, 2000);
+                } else {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to save shifts');
+                }
+                
+            } catch (error) {
+                console.error('Error saving shifts:', error);
+                updateButtonState(btn, 'error', '❌ บันทึกไม่สำเร็จ');
+                showAlert('❌ บันทึกเวรไม่สำเร็จ: ' + error.message, 'error');
+                
+                // Reset button after 3 seconds
+                setTimeout(() => {
+                    updateButtonState(btn, 'normal', 'Save All Shifts');
+                }, 3000);
+            }
+        }
+        
+        function showAlert(message, type = 'success') {
+            // Try to find active alert container first
+            const activeContainer = findActiveAlertContainer();
+            
+            if (activeContainer) {
+                displayInContainer(activeContainer, message, type);
+            } else {
+                // Fallback: Create floating alert for guaranteed visibility
+                displayFloatingAlert(message, type);
+            }
+        }
+        
+        function findActiveAlertContainer() {
+            const containers = document.querySelectorAll('#alert-container');
+            for (const container of containers) {
+                if (isContainerVisible(container)) {
+                    return container;
+                }
+            }
+            return null;
+        }
+        
+        function isContainerVisible(container) {
+            if (!container) return false;
+            const rect = container.getBoundingClientRect();
+            const style = window.getComputedStyle(container);
+            return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+        }
+        
+        function displayInContainer(container, message, type) {
+            const alertClass = type === 'success' ? 'alert-success' : 'alert-error';
+            
+            container.innerHTML = `
+                <div class="alert ${alertClass}">
+                    ${message}
+                </div>
+            `;
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                if (container) {
+                    container.innerHTML = '';
+                }
+            }, 5000);
+        }
+        
+        function displayFloatingAlert(message, type) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `floating-alert alert-${type}`;
+            alertDiv.innerHTML = `
+                <div class="alert-content">
+                    <span class="alert-icon">${type === 'success' ? '✅' : '❌'}</span>
+                    <span class="alert-message">${message}</span>
+                    <button class="alert-close" onclick="this.parentElement.parentElement.remove()">×</button>
+                </div>
+            `;
+            
+            // Add to body with fixed positioning
+            document.body.appendChild(alertDiv);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                if (alertDiv.parentElement) {
+                    alertDiv.remove();
+                }
+            }, 5000);
+        }
+        
+        function editShiftName(shiftId) {
+            document.getElementById(`shift_display_${shiftId}`).classList.add('hidden');
+            document.getElementById(`shift_edit_${shiftId}`).classList.add('active');
+            document.getElementById(`shift_name_${shiftId}`).focus();
+        }
+        
+        function cancelEditShiftName(shiftId) {
+            document.getElementById(`shift_display_${shiftId}`).classList.remove('hidden');
+            document.getElementById(`shift_edit_${shiftId}`).classList.remove('active');
+            // Reset to original value
+            const role = jobRolesData[currentRole];
+            const shift = role.work_shifts.find(s => s.id === shiftId);
+            if (shift) {
+                document.getElementById(`shift_name_${shiftId}`).value = shift.shift_name;
+            }
+        }
+        
+        function saveShiftName(shiftId) {
+            const nameInput = document.getElementById(`shift_name_${shiftId}`);
+            const newName = nameInput.value.trim();
+            
+            if (!newName) {
+                alert('Shift name cannot be empty');
+                return;
+            }
+            
+            // Update display
+            document.querySelector(`#shift_display_${shiftId} .shift-name-text`).textContent = newName;
+            
+            // Hide edit mode
+            document.getElementById(`shift_display_${shiftId}`).classList.remove('hidden');
+            document.getElementById(`shift_edit_${shiftId}`).classList.remove('active');
+            
+            // Update the data in memory so it's included when saving all shifts
+            const role = jobRolesData[currentRole];
+            const shift = role.work_shifts.find(s => s.id === shiftId);
+            if (shift) {
+                shift.shift_name = newName;
+            }
+        }
+        
+        // Employee Schedule Functions
+        async function loadEmployeeScheduleData(roleName) {
+            try {
+                // Get role data to check if it has shifts
+                const role = jobRolesData[roleName];
+                
+                // Hide/show time configuration section based on role type
+                const timeConfigSection = document.getElementById('timeConfigSection');
+                const timeConfigParent = timeConfigSection.closest('.section-toggle');
+                
+                if (role && role.has_shifts) {
+                    // Hide time configuration for shift-based roles (reception)
+                    timeConfigParent.style.display = 'none';
+                } else {
+                    // Show time configuration for standard roles
+                    timeConfigParent.style.display = 'block';
+                    
+                    // Load time settings for standard roles
+                    const timeResponse = await fetch(`/api/employee-schedules/roles/${roleName}/time-settings`);
+                    if (timeResponse.ok) {
+                        const timeData = await timeResponse.json();
+                        document.getElementById('roleStartTime').value = timeData.start_time;
+                        document.getElementById('roleEndTime').value = timeData.end_time;
+                    }
+                }
+                
+                // Load available employees
+                const employeesResponse = await fetch(`/api/employee-schedules/roles/${roleName}/available-employees`);
+                if (employeesResponse.ok) {
+                    availableEmployees = await employeesResponse.json();
+                }
+                
+                // Load monthly schedule
+                await loadMonthlySchedule(roleName);
+                
+            } catch (error) {
+                console.error('Error loading employee schedule data:', error);
+            }
+        }
+        
+        async function loadMonthlySchedule(roleName) {
+            try {
+                if (roleName === 'reception') {
+                    const response = await fetch(`/api/employee-schedules/reception/monthly/${currentYear}/${currentMonth}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        renderReceptionCalendar(data);
+                    }
+                } else {
+                    const response = await fetch(`/api/employee-schedules/monthly/${currentYear}/${currentMonth}?role=${roleName}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        renderStandardCalendar(data);
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading monthly schedule:', error);
+                renderEmptyCalendar();
+            }
+        }
+        
+        function renderStandardCalendar(data) {
+            const daysInMonth = data.days_in_month;
+            const thaiYear = currentYear + 543;
+            const monthName = thaiMonths[currentMonth - 1];
+            
+            document.getElementById('monthHeader').textContent = `${monthName} ${thaiYear}`;
+            
+            // Generate header
+            let headerHtml = '<tr><th>พนักงาน</th>';
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(currentYear, currentMonth - 1, day);
+                const dayAbbr = thaiDayAbbr[date.getDay()];
+                headerHtml += `<th>${day}<br>${dayAbbr}</th>`;
+            }
+            headerHtml += '<th>จัดการ</th></tr>';
+            
+            document.getElementById('calendarHeader').innerHTML = headerHtml;
+            
+            // Generate employee rows
+            let bodyHtml = '';
+            monthlyScheduleData = {};
+            
+            data.schedules.forEach(employee => {
+                monthlyScheduleData[employee.badge_number] = {
+                    thai_name: employee.thai_name,
+                    work_days: new Set(employee.work_days)
+                };
+                
+                bodyHtml += generateStandardEmployeeRow(employee.badge_number, employee.thai_name, employee.work_days, daysInMonth);
+            });
+            
+            // New employee rows are created on-demand by addEmployeeRow() function
+            
+            document.getElementById('calendarBody').innerHTML = bodyHtml;
+        }
+        
+        function generateStandardEmployeeRow(badgeNumber, thaiName, workDays, daysInMonth) {
+            let rowHtml = `<tr data-badge="${badgeNumber}">`;
+            rowHtml += `<td class="employee-name">${thaiName}</td>`;
+            
+            for (let day = 1; day <= daysInMonth; day++) {
+                const isMarked = workDays.includes(day) ? 'marked' : '';
+                rowHtml += `<td class="calendar-cell ${isMarked}" onclick="toggleWorkDay('${badgeNumber}', ${day})">`;
+                rowHtml += isMarked ? '✓' : '';
+                rowHtml += '</td>';
+            }
+            
+            rowHtml += `<td><button class="remove-employee-btn" onclick="removeEmployeeRow('${badgeNumber}')">🗑️</button></td>`;
+            rowHtml += '</tr>';
+            
+            return rowHtml;
+        }
+        
+        function generateNewEmployeeRow(daysInMonth) {
+            let rowHtml = '<tr id="newEmployeeRow">';
+            rowHtml += '<td class="employee-name">';
+            rowHtml += '<select class="employee-select" id="newEmployeeSelect">';
+            rowHtml += '<option value="">เลือกพนักงาน...</option>';
+            
+            availableEmployees.forEach(emp => {
+                if (!monthlyScheduleData[emp.badge_number]) {
+                    rowHtml += `<option value="${emp.badge_number}">${emp.thai_name}</option>`;
+                }
+            });
+            
+            rowHtml += '</select></td>';
+            
+            for (let day = 1; day <= daysInMonth; day++) {
+                rowHtml += '<td class="calendar-cell" onclick="toggleNewEmployeeDay(' + day + ')"></td>';
+            }
+            
+            rowHtml += '<td><button class="add-employee-btn" onclick="confirmNewEmployee()">✅</button></td>';
+            rowHtml += '</tr>';
+            
+            return rowHtml;
+        }
+        
+        function renderReceptionCalendar(data) {
+            // Reception calendar implementation
+            const daysInMonth = data.days_in_month;
+            const thaiYear = currentYear + 543;
+            const monthName = thaiMonths[currentMonth - 1];
+            
+            document.getElementById('monthHeader').textContent = `${monthName} ${thaiYear} - ตารางเวร`;
+            
+            // Initialize reception assignments tracking
+            window.receptionAssignments = {};
+            
+            // Generate shift legend
+            generateShiftLegend(data.shifts);
+            
+            // Generate header with shifts info
+            let headerHtml = '<tr><th>พนักงาน</th>';
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(currentYear, currentMonth - 1, day);
+                const dayAbbr = thaiDayAbbr[date.getDay()];
+                headerHtml += `<th>${day}<br>${dayAbbr}</th>`;
+            }
+            headerHtml += '<th>จัดการ</th></tr>';
+            
+            document.getElementById('calendarHeader').innerHTML = headerHtml;
+            
+            // Generate reception shift rows and populate assignments
+            let bodyHtml = '';
+            data.assignments.forEach(employee => {
+                // Store shift assignments in global variable
+                window.receptionAssignments[employee.badge_number] = employee.shift_assignments;
+                bodyHtml += generateReceptionEmployeeRow(employee, data.shifts, daysInMonth);
+            });
+            
+            // New reception employee rows are created on-demand by addEmployeeRow() function
+            
+            document.getElementById('calendarBody').innerHTML = bodyHtml;
+        }
+        
+        function generateReceptionEmployeeRow(employee, shifts, daysInMonth) {
+            let rowHtml = `<tr data-badge="${employee.badge_number}">`;
+            rowHtml += `<td class="employee-name">${employee.thai_name}</td>`;
+            
+            for (let day = 1; day <= daysInMonth; day++) {
+                const shiftId = employee.shift_assignments[day.toString()];
+                const shift = shifts.find(s => s.id === shiftId);
+                
+                // Apply color styling for each shift cell
+                let cellStyle = '';
+                let cellText = '';
+                let cellTitle = '';
+                
+                if (shift) {
+                    const backgroundColor = shift.color || '#6c757d';
+                    const textColor = getContrastColor(backgroundColor);
+                    cellStyle = `style="background-color: ${backgroundColor}; color: ${textColor};"`;
+                    cellText = shift.shift_name.split(' ')[0]; // First word
+                    cellTitle = `title="${shift.shift_name} (${shift.start_time} - ${shift.end_time})"`;
+                }
+                
+                rowHtml += `<td class="shift-cell" ${cellStyle} ${cellTitle} onclick="cycleReceptionShift('${employee.badge_number}', ${day})">${cellText}</td>`;
+            }
+            
+            rowHtml += `<td><button class="remove-employee-btn" onclick="removeEmployeeRow('${employee.badge_number}')">🗑️</button></td>`;
+            rowHtml += '</tr>';
+            
+            return rowHtml;
+        }
+        
+        function generateNewReceptionEmployeeRow(shifts, daysInMonth) {
+            let rowHtml = '<tr id="newEmployeeRow">';
+            rowHtml += '<td class="employee-name">';
+            rowHtml += '<select class="employee-select" id="newEmployeeSelect">';
+            rowHtml += '<option value="">เลือกพนักงาน...</option>';
+            
+            availableEmployees.forEach(emp => {
+                rowHtml += `<option value="${emp.badge_number}">${emp.thai_name}</option>`;
+            });
+            
+            rowHtml += '</select></td>';
+            
+            for (let day = 1; day <= daysInMonth; day++) {
+                rowHtml += '<td class="shift-cell"></td>';
+            }
+            
+            rowHtml += '<td><button class="add-employee-btn" onclick="confirmNewEmployee()">✅</button></td>';
+            rowHtml += '</tr>';
+            
+            return rowHtml;
+        }
+        
+        function renderEmptyCalendar() {
+            const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+            const thaiYear = currentYear + 543;
+            const monthName = thaiMonths[currentMonth - 1];
+            
+            document.getElementById('monthHeader').textContent = `${monthName} ${thaiYear}`;
+            
+            // Hide shift legend for non-reception roles (consistent with showRoleContent)
+            const legendContainer = document.getElementById('shiftLegend');
+            if (legendContainer && currentRole !== 'reception') {
+                legendContainer.style.display = 'none';
+            }
+            
+            let headerHtml = '<tr><th>พนักงาน</th>';
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(currentYear, currentMonth - 1, day);
+                const dayAbbr = thaiDayAbbr[date.getDay()];
+                headerHtml += `<th>${day}<br>${dayAbbr}</th>`;
+            }
+            headerHtml += '<th>จัดการ</th></tr>';
+            
+            document.getElementById('calendarHeader').innerHTML = headerHtml;
+            document.getElementById('calendarBody').innerHTML = '';
+        }
+        
+        // Button state management utility for immediate feedback
+        function updateButtonState(button, state, text) {
+            if (!button) return;
+            
+            button.textContent = text;
+            
+            // Remove all state classes first
+            button.classList.remove('saving', 'success', 'error');
+            
+            switch (state) {
+                case 'saving':
+                    button.disabled = true;
+                    button.classList.add('saving');
+                    break;
+                case 'success':
+                    button.disabled = true;
+                    button.classList.add('success');
+                    break;
+                case 'error':
+                    button.disabled = true;
+                    button.classList.add('error');
+                    break;
+                case 'normal':
+                default:
+                    button.disabled = false;
+                    break;
+            }
+        }
+        
+        // Utility functions
+        function toggleSection(sectionName) {
+            const section = document.getElementById(sectionName + 'Section');
+            const toggle = document.getElementById(sectionName + 'Toggle');
+            
+            if (section.classList.contains('active')) {
+                section.classList.remove('active');
+                toggle.textContent = '▶';
+            } else {
+                section.classList.add('active');
+                toggle.textContent = '▼';
+            }
+        }
+        
+        function toggleWorkDay(badgeNumber, day) {
+            if (!monthlyScheduleData[badgeNumber]) {
+                monthlyScheduleData[badgeNumber] = { work_days: new Set() };
+            }
+            
+            const workDays = monthlyScheduleData[badgeNumber].work_days;
+            const cell = document.querySelector(`tr[data-badge="${badgeNumber}"] td:nth-child(${day + 1})`);
+            
+            if (workDays.has(day)) {
+                workDays.delete(day);
+                cell.classList.remove('marked');
+                cell.textContent = '';
+            } else {
+                workDays.add(day);
+                cell.classList.add('marked');
+                cell.textContent = '✓';
+            }
+        }
+        
+        function getShiftClass(shiftName) {
+            const name = shiftName.toLowerCase();
+            if (name.includes('morning') || name.includes('เช้า')) return 'shift-morning';
+            if (name.includes('day') || name.includes('กลางวัน')) return 'shift-day';
+            if (name.includes('evening') || name.includes('เย็น')) return 'shift-evening';
+            if (name.includes('night') || name.includes('ดึก')) return 'shift-night';
+            return '';
+        }
+        
+        async function saveTimeSettings() {
+            const saveBtn = document.querySelector('#timeConfigSection .save-btn');
+            
+            try {
+                console.log('saveTimeSettings called');
+                console.log('currentRole:', currentRole);
+                
+                // Immediate button feedback
+                updateButtonState(saveBtn, 'saving', '💾 กำลังบันทึก...');
+                
+                const startTimeEl = document.getElementById('roleStartTime');
+                const endTimeEl = document.getElementById('roleEndTime');
+                
+                console.log('startTimeEl:', startTimeEl);
+                console.log('endTimeEl:', endTimeEl);
+                
+                if (!startTimeEl || !endTimeEl) {
+                    throw new Error('Time input elements not found');
+                }
+                
+                const startTime = startTimeEl.value;
+                const endTime = endTimeEl.value;
+                
+                console.log('startTime:', startTime);
+                console.log('endTime:', endTime);
+                
+                if (!startTime || !endTime) {
+                    throw new Error('Please enter both start and end times');
+                }
+                
+                // Save time settings for all roles using employee-schedules API
+                const url = `/api/employee-schedules/roles/${currentRole}/time-settings`;
+                console.log('API URL:', url);
+                
+                const response = await fetch(url, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ start_time: startTime, end_time: endTime })
+                });
+                
+                console.log('Response status:', response.status);
+                
+                if (response.ok) {
+                    console.log('Save successful, calling showAlert');
+                    updateButtonState(saveBtn, 'success', '✅ บันทึกสำเร็จ');
+                    showAlert('✅ บันทึกเวลาทำงานสำเร็จ', 'success');
+                    
+                    // Reset button after 2 seconds
+                    setTimeout(() => {
+                        updateButtonState(saveBtn, 'normal', '💾 บันทึกเวลา');
+                    }, 2000);
+                } else {
+                    const errorText = await response.text();
+                    throw new Error(`Failed to save time settings: ${response.status} - ${errorText}`);
+                }
+            } catch (error) {
+                console.error('Error saving time settings:', error);
+                updateButtonState(saveBtn, 'error', '❌ บันทึกไม่สำเร็จ');
+                showAlert('❌ บันทึกเวลาไม่สำเร็จ: ' + error.message, 'error');
+                
+                // Reset button after 3 seconds
+                setTimeout(() => {
+                    updateButtonState(saveBtn, 'normal', '💾 บันทึกเวลา');
+                }, 3000);
+            }
+        }
+        
+        async function saveMonthlySchedule() {
+            const saveBtn = document.querySelector('#monthlyScheduleSection .save-btn');
+            
+            try {
+                console.log('saveMonthlySchedule called');
+                console.log('monthlyScheduleData:', monthlyScheduleData);
+                
+                // Immediate button feedback
+                updateButtonState(saveBtn, 'saving', '💾 กำลังบันทึก...');
+                
+                const schedules = [];
+                
+                if (currentRole === 'reception') {
+                    // For reception, save shift assignments
+                    const employeeRows = document.querySelectorAll('table#scheduleCalendar tbody tr[data-badge]');
+                    console.log('Found reception employee rows:', employeeRows.length);
+                    
+                    employeeRows.forEach(row => {
+                        const badgeNumber = row.getAttribute('data-badge');
+                        const thaiNameEl = row.querySelector('.employee-name');
+                        const thaiName = thaiNameEl ? thaiNameEl.textContent.trim() : '';
+                        
+                        // Get shift assignments from global variable
+                        const shiftAssignments = window.receptionAssignments?.[badgeNumber] || {};
+                        
+                        console.log(`Reception employee ${badgeNumber}: ${Object.keys(shiftAssignments).length} shift assignments`);
+                        
+                        schedules.push({
+                            badge_number: badgeNumber,
+                            thai_name: thaiName,
+                            shift_assignments: shiftAssignments
+                        });
+                    });
+                } else {
+                    // For standard roles, collect marked days from DOM
+                    const employeeRows = document.querySelectorAll('table#scheduleCalendar tbody tr[data-badge]');
+                    console.log('Found employee rows:', employeeRows.length);
+                    
+                    employeeRows.forEach(row => {
+                        const badgeNumber = row.getAttribute('data-badge');
+                        const thaiNameEl = row.querySelector('.employee-name');
+                        const thaiName = thaiNameEl ? thaiNameEl.textContent.trim() : '';
+                        
+                        // Collect marked days from DOM
+                        const markedCells = row.querySelectorAll('.calendar-cell.marked');
+                        const workDays = [];
+                        markedCells.forEach(cell => {
+                            const cellIndex = Array.from(cell.parentNode.children).indexOf(cell);
+                            if (cellIndex > 0) { // Skip first column (employee name)
+                                workDays.push(cellIndex);
+                            }
+                        });
+                        
+                        console.log(`Employee ${badgeNumber}: ${workDays.length} work days`);
+                        
+                        if (workDays.length > 0) {
+                            schedules.push({
+                                badge_number: badgeNumber,
+                                thai_name: thaiName,
+                                work_days: workDays
+                            });
+                        }
+                    });
+                }
+                
+                console.log('Schedules to save:', schedules);
+                
+                if (schedules.length === 0) {
+                    updateButtonState(saveBtn, 'error', '❌ ไม่มีข้อมูล');
+                    showAlert('❌ ไม่มีข้อมูลตารางงานที่จะบันทึก', 'error');
+                    setTimeout(() => {
+                        updateButtonState(saveBtn, 'normal', '💾 บันทึกตารางงาน');
+                    }, 3000);
+                    return;
+                }
+                
+                const url = currentRole === 'reception' 
+                    ? `/api/employee-schedules/reception/monthly/${currentYear}/${currentMonth}`
+                    : `/api/employee-schedules/monthly/${currentYear}/${currentMonth}`;
+                
+                const body = currentRole === 'reception'
+                    ? { assignments: schedules }
+                    : { role_name: currentRole, schedules: schedules };
+                
+                console.log('Save URL:', url);
+                console.log('Save body:', body);
+                
+                const response = await fetch(url, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                
+                console.log('Save response status:', response.status);
+                
+                if (response.ok) {
+                    updateButtonState(saveBtn, 'success', '✅ บันทึกสำเร็จ');
+                    showAlert('✅ บันทึกตารางงานสำเร็จ', 'success');
+                    
+                    if (currentRole === 'reception') {
+                        // Update reception assignments tracking
+                        schedules.forEach(schedule => {
+                            monthlyScheduleData[schedule.badge_number] = {
+                                thai_name: schedule.thai_name,
+                                shift_assignments: schedule.shift_assignments
+                            };
+                        });
+                    } else {
+                        // Update standard work days tracking
+                        schedules.forEach(schedule => {
+                            monthlyScheduleData[schedule.badge_number] = {
+                                thai_name: schedule.thai_name,
+                                work_days: new Set(schedule.work_days)
+                            };
+                        });
+                    }
+                    
+                    // Reset button after 2 seconds
+                    setTimeout(() => {
+                        updateButtonState(saveBtn, 'normal', '💾 บันทึกตารางงาน');
+                    }, 2000);
+                } else {
+                    const errorText = await response.text();
+                    throw new Error(`Failed to save schedule: ${response.status} - ${errorText}`);
+                }
+            } catch (error) {
+                console.error('Error saving monthly schedule:', error);
+                updateButtonState(saveBtn, 'error', '❌ บันทึกไม่สำเร็จ');
+                showAlert('❌ บันทึกตารางงานไม่สำเร็จ: ' + error.message, 'error');
+                
+                // Reset button after 3 seconds
+                setTimeout(() => {
+                    updateButtonState(saveBtn, 'normal', '💾 บันทึกตารางงาน');
+                }, 3000);
+            }
+        }
+        
+        async function saveMonthlyScheduleAfterDelete() {
+            // Similar to saveMonthlySchedule but for auto-save after deletion
+            try {
+                const schedules = [];
+                
+                if (currentRole === 'reception') {
+                    // For reception, use shift assignments
+                    for (const [badgeNumber, data] of Object.entries(monthlyScheduleData)) {
+                        const shiftAssignments = window.receptionAssignments?.[badgeNumber] || {};
+                        
+                        schedules.push({
+                            badge_number: badgeNumber,
+                            thai_name: data.thai_name,
+                            shift_assignments: shiftAssignments
+                        });
+                    }
+                } else {
+                    // Build schedules from remaining employees in monthlyScheduleData
+                    for (const [badgeNumber, data] of Object.entries(monthlyScheduleData)) {
+                        const workDays = Array.from(data.work_days || []).sort((a, b) => a - b);
+                        
+                        schedules.push({
+                            badge_number: badgeNumber,
+                            thai_name: data.thai_name,
+                            work_days: workDays
+                        });
+                    }
+                }
+                
+                const url = currentRole === 'reception' 
+                    ? `/api/employee-schedules/reception/monthly/${currentYear}/${currentMonth}`
+                    : `/api/employee-schedules/monthly/${currentYear}/${currentMonth}`;
+                
+                const body = currentRole === 'reception'
+                    ? { assignments: schedules }
+                    : { role_name: currentRole, schedules: schedules };
+                
+                const response = await fetch(url, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Failed to save schedule: ${response.status} - ${errorText}`);
+                }
+            } catch (error) {
+                console.error('Error saving schedule after delete:', error);
+                throw error;
+            }
+        }
+        
+        function addEmployeeRow() {
+            // This function is called by the "เพิ่มพนักงาน" button
+            try {
+                // Ensure calendar is loaded first
+                if (!currentRole) {
+                    showAlert('กรุณาเลือกประเภทพนักงานก่อน', 'error');
+                    return;
+                }
+                
+                // Always create a new employee row when button is clicked
+                if (currentRole === 'reception') {
+                    createNewReceptionEmployeeRow();
+                } else {
+                    createNewEmployeeRow();
+                }
+                
+            } catch (error) {
+                console.error('Error in addEmployeeRow:', error);
+                showAlert('เกิดข้อผิดพลาดในการเพิ่มพนักงาน', 'error');
+            }
+        }
+        
+        function createNewEmployeeRow() {
+            // Create a new row for employee selection
+            const calendarBody = document.getElementById('calendarBody');
+            if (!calendarBody) {
+                showAlert('ไม่พบตารางงาน กรุณาลองใหม่อีกครั้ง', 'error');
+                return;
+            }
+            
+            // Check if there are available employees
+            const unassignedEmployees = availableEmployees.filter(emp => !monthlyScheduleData[emp.badge_number]);
+            
+            if (unassignedEmployees.length === 0) {
+                showAlert('ไม่มีพนักงานที่สามารถเพิ่มได้ พนักงานทั้งหมดได้รับการมอบหมายแล้ว', 'error');
+                return;
+            }
+            
+            // Get number of days in current month
+            const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+            
+            // Create unique ID for this new row
+            const rowId = 'newEmployeeRow_' + Date.now();
+            
+            // Generate new employee row HTML
+            let rowHtml = `<tr id="${rowId}">`;
+            rowHtml += '<td class="employee-name">';
+            rowHtml += `<select class="employee-select" id="newEmployeeSelect_${rowId}" onchange="autoConfirmEmployee('${rowId}')">`;
+            rowHtml += '<option value="">เลือกพนักงาน...</option>';
+            
+            unassignedEmployees.forEach(emp => {
+                rowHtml += `<option value="${emp.badge_number}">${emp.thai_name}</option>`;
+            });
+            
+            rowHtml += '</select></td>';
+            
+            for (let day = 1; day <= daysInMonth; day++) {
+                rowHtml += `<td class="calendar-cell" onclick="toggleNewEmployeeDay(${day}, '${rowId}')"></td>`;
+            }
+            
+            rowHtml += `<td><button class="remove-employee-btn" onclick="removeNewEmployeeRow('${rowId}')">🗑️</button></td>`;
+            rowHtml += '</tr>';
+            
+            // Add the new row to the calendar body
+            calendarBody.insertAdjacentHTML('beforeend', rowHtml);
+            
+            // Focus on the new dropdown
+            const newSelect = document.getElementById(`newEmployeeSelect_${rowId}`);
+            if (newSelect) {
+                newSelect.focus();
+            }
+        }
+        
+        function autoConfirmEmployee(rowId) {
+            // Auto-confirm employee when dropdown selection changes
+            const select = document.getElementById(`newEmployeeSelect_${rowId}`);
+            const badgeNumber = select.value;
+            
+            if (!badgeNumber) {
+                return; // No selection made
+            }
+            
+            const employee = availableEmployees.find(emp => emp.badge_number === badgeNumber);
+            if (!employee) return;
+            
+            // Collect marked days from this row before confirming
+            const employeeRow = document.getElementById(rowId);
+            const workDays = new Set();
+            
+            if (employeeRow) {
+                const markedCells = employeeRow.querySelectorAll('.calendar-cell.marked');
+                markedCells.forEach(cell => {
+                    const cellIndex = Array.from(cell.parentNode.children).indexOf(cell);
+                    if (cellIndex > 0) { // Skip first column (employee name)
+                        workDays.add(cellIndex);
+                    }
+                });
+            }
+            
+            // Add to monthly data with collected work days
+            monthlyScheduleData[badgeNumber] = {
+                thai_name: employee.thai_name,
+                work_days: workDays
+            };
+            
+            // Replace dropdown with permanent employee name
+            const nameCell = employeeRow.querySelector('.employee-name');
+            nameCell.innerHTML = employee.thai_name;
+            nameCell.classList.add('confirmed');
+            
+            // Update row attributes
+            employeeRow.setAttribute('data-badge', badgeNumber);
+            employeeRow.id = `employeeRow_${badgeNumber}`;
+            
+            // Replace remove button with standard remove functionality
+            const actionCell = employeeRow.querySelector('td:last-child');
+            actionCell.innerHTML = `<button class="remove-employee-btn" onclick="removeEmployeeRow('${badgeNumber}')">🗑️</button>`;
+            
+            // Update cell click handlers to use standard toggle function
+            const cells = employeeRow.querySelectorAll('.calendar-cell');
+            cells.forEach((cell, index) => {
+                // index+1 because days are 1-based, not 0-based
+                cell.setAttribute('onclick', `toggleWorkDay('${badgeNumber}', ${index + 1})`);
+            });
+        }
+        
+        function removeNewEmployeeRow(rowId) {
+            // Remove unconfirmed new employee row
+            const row = document.getElementById(rowId);
+            if (row) {
+                row.remove();
+            }
+        }
+        
+        function createNewReceptionEmployeeRow() {
+            // Create a new row for reception employee selection
+            const calendarBody = document.getElementById('calendarBody');
+            if (!calendarBody) {
+                showAlert('ไม่พบตารางงาน กรุณาลองใหม่อีกครั้ง', 'error');
+                return;
+            }
+            
+            // Check if there are available employees
+            const unassignedEmployees = availableEmployees.filter(emp => {
+                // For reception, check if employee is already in any existing row
+                const existingRows = document.querySelectorAll('tr[data-badge]');
+                for (const row of existingRows) {
+                    if (row.getAttribute('data-badge') === emp.badge_number) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+            
+            if (unassignedEmployees.length === 0) {
+                showAlert('ไม่มีพนักงานที่สามารถเพิ่มได้ พนักงานทั้งหมดได้รับการมอบหมายแล้ว', 'error');
+                return;
+            }
+            
+            // Get number of days in current month
+            const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+            
+            // Create unique ID for this new row
+            const rowId = 'newReceptionEmployeeRow_' + Date.now();
+            
+            // Generate new employee row HTML
+            let rowHtml = `<tr id="${rowId}">`;
+            rowHtml += '<td class="employee-name">';
+            rowHtml += `<select class="employee-select" id="newEmployeeSelect_${rowId}" onchange="autoConfirmReceptionEmployee('${rowId}')">`;
+            rowHtml += '<option value="">เลือกพนักงาน...</option>';
+            
+            unassignedEmployees.forEach(emp => {
+                rowHtml += `<option value="${emp.badge_number}">${emp.thai_name}</option>`;
+            });
+            
+            rowHtml += '</select></td>';
+            
+            for (let day = 1; day <= daysInMonth; day++) {
+                rowHtml += '<td class="shift-cell"></td>';
+            }
+            
+            rowHtml += `<td><button class="remove-employee-btn" onclick="removeNewEmployeeRow('${rowId}')">🗑️</button></td>`;
+            rowHtml += '</tr>';
+            
+            // Add the new row to the calendar body
+            calendarBody.insertAdjacentHTML('beforeend', rowHtml);
+            
+            // Focus on the new dropdown
+            const newSelect = document.getElementById(`newEmployeeSelect_${rowId}`);
+            if (newSelect) {
+                newSelect.focus();
+            }
+        }
+        
+        function autoConfirmReceptionEmployee(rowId) {
+            // Auto-confirm reception employee when dropdown selection changes
+            const select = document.getElementById(`newEmployeeSelect_${rowId}`);
+            const badgeNumber = select.value;
+            
+            if (!badgeNumber) {
+                return; // No selection made
+            }
+            
+            const employee = availableEmployees.find(emp => emp.badge_number === badgeNumber);
+            if (!employee) return;
+            
+            const employeeRow = document.getElementById(rowId);
+            
+            // Replace dropdown with permanent employee name
+            const nameCell = employeeRow.querySelector('.employee-name');
+            nameCell.innerHTML = employee.thai_name;
+            nameCell.classList.add('confirmed');
+            
+            // Update row attributes
+            employeeRow.setAttribute('data-badge', badgeNumber);
+            employeeRow.id = `employeeRow_${badgeNumber}`;
+            
+            // Replace remove button with standard remove functionality
+            const actionCell = employeeRow.querySelector('td:last-child');
+            actionCell.innerHTML = `<button class="remove-employee-btn" onclick="removeEmployeeRow('${badgeNumber}')">🗑️</button>`;
+            
+            // Update cell click handlers for reception shifts
+            const cells = employeeRow.querySelectorAll('.shift-cell');
+            cells.forEach((cell, index) => {
+                cell.setAttribute('onclick', `cycleReceptionShift('${badgeNumber}', ${index + 1})`);
+            });
+        }
+        
+        function confirmNewEmployee() {
+            const select = document.getElementById('newEmployeeSelect');
+            const badgeNumber = select.value;
+            
+            if (!badgeNumber) {
+                alert('กรุณาเลือกพนักงาน');
+                return;
+            }
+            
+            const employee = availableEmployees.find(emp => emp.badge_number === badgeNumber);
+            if (!employee) return;
+            
+            // Collect marked days from new employee row before confirming
+            const newEmployeeRow = document.getElementById('newEmployeeRow');
+            const workDays = new Set();
+            
+            if (newEmployeeRow) {
+                const markedCells = newEmployeeRow.querySelectorAll('.calendar-cell.marked');
+                markedCells.forEach(cell => {
+                    const cellIndex = Array.from(cell.parentNode.children).indexOf(cell);
+                    if (cellIndex > 0) { // Skip first column (employee name)
+                        workDays.add(cellIndex);
+                    }
+                });
+            }
+            
+            // Add to monthly data with collected work days
+            monthlyScheduleData[badgeNumber] = {
+                thai_name: employee.thai_name,
+                work_days: workDays
+            };
+            
+            // Reload calendar
+            loadMonthlySchedule(currentRole);
+        }
+        
+        async function removeEmployeeRow(badgeNumber) {
+            if (confirm('ต้องการลบพนักงานคนนี้ออกจากตารางงานหรือไม่?')) {
+                try {
+                    // Remove from data
+                    delete monthlyScheduleData[badgeNumber];
+                    
+                    // Remove the row from DOM immediately
+                    const row = document.querySelector(`tr[data-badge="${badgeNumber}"]`);
+                    if (row) {
+                        row.remove();
+                    }
+                    
+                    // Immediately save the updated schedule to persist the deletion
+                    await saveMonthlyScheduleAfterDelete();
+                    
+                    // Show success message
+                    showAlert('ลบพนักงานเรียบร้อยแล้ว', 'success');
+                } catch (error) {
+                    console.error('Error removing employee:', error);
+                    showAlert('เกิดข้อผิดพลาดในการลบพนักงาน', 'error');
+                    // Reload to restore the state
+                    loadMonthlySchedule(currentRole);
+                }
+            }
+        }
+        
+        function toggleNewEmployeeDay(day, rowId) {
+            // Handle new employee day toggle functionality for specific row
+            try {
+                const employeeRow = document.getElementById(rowId);
+                if (!employeeRow) {
+                    console.warn(`toggleNewEmployeeDay: row ${rowId} not found`);
+                    return;
+                }
+                
+                const cell = employeeRow.querySelector(`td:nth-child(${day + 1})`);
+                if (!cell) {
+                    console.warn(`toggleNewEmployeeDay: cell for day ${day} not found in row ${rowId}`);
+                    return;
+                }
+                
+                if (cell.classList.contains('marked')) {
+                    cell.classList.remove('marked');
+                    cell.textContent = '';
+                } else {
+                    cell.classList.add('marked');
+                    cell.textContent = '✓';
+                }
+            } catch (error) {
+                console.error('Error in toggleNewEmployeeDay:', error);
+            }
+        }
+        
+        // Color management functions
+        function updateShiftColor(shiftId, color) {
+            try {
+                // Validate hex color format
+                if (!validateHexColor(color)) {
+                    showAlert('รูปแบบสีไม่ถูกต้อง', 'error');
+                    return;
+                }
+                
+                // Update the shift card border color
+                const shiftCard = document.querySelector(`.shift-card[data-color]`).closest(`.shift-card`);
+                if (shiftCard) {
+                    shiftCard.style.borderLeftColor = color;
+                    shiftCard.setAttribute('data-color', color);
+                }
+                
+                // Update color indicator
+                const colorIndicator = document.querySelector(`#shift_display_${shiftId}`)?.closest('.shift-card')?.querySelector('.shift-color-indicator');
+                if (colorIndicator) {
+                    colorIndicator.style.backgroundColor = color;
+                }
+                
+                // Update color preview
+                const colorPreview = document.querySelector(`input[name="shift_${shiftId}_color"]`)?.parentElement?.querySelector('.color-preview');
+                if (colorPreview) {
+                    colorPreview.style.backgroundColor = color;
+                }
+                
+                // Update in memory for current session
+                const role = jobRolesData[currentRole];
+                if (role && role.work_shifts) {
+                    const shift = role.work_shifts.find(s => s.id === shiftId);
+                    if (shift) {
+                        shift.color = color;
+                    }
+                }
+                
+                console.log(`Updated shift ${shiftId} color to ${color}`);
+                
+            } catch (error) {
+                console.error('Error updating shift color:', error);
+                showAlert('เกิดข้อผิดพลาดในการอัปเดตสี', 'error');
+            }
+        }
+        
+        function validateHexColor(color) {
+            const hexRegex = /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/;
+            return hexRegex.test(color);
+        }
+        
+        function getContrastColor(hexColor) {
+            // Convert hex to RGB
+            const r = parseInt(hexColor.substr(1, 2), 16);
+            const g = parseInt(hexColor.substr(3, 2), 16);
+            const b = parseInt(hexColor.substr(5, 2), 16);
+            
+            // Calculate luminance using standard formula
+            const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+            
+            // Return black or white based on luminance
+            return luminance > 0.5 ? '#000000' : '#ffffff';
+        }
+        
+        function applyCellColor(cell, shift) {
+            if (!shift || !shift.color) {
+                // Default/empty state
+                cell.style.backgroundColor = '#f8f9fa';
+                cell.style.color = '#6c757d';
+                cell.textContent = '';
+                cell.removeAttribute('title');
+                return;
+            }
+            
+            // Apply shift color with contrast text
+            cell.style.backgroundColor = shift.color;
+            cell.style.color = getContrastColor(shift.color);
+            cell.textContent = shift.shift_name.split(' ')[0]; // First word
+            cell.setAttribute('title', `${shift.shift_name} (${shift.start_time} - ${shift.end_time})`);
+        }
+        
+        function generateShiftLegend(shifts) {
+            const legendContainer = document.getElementById('shiftLegend');
+            const legendContent = document.getElementById('shiftLegendContent');
+            
+            if (!shifts || shifts.length === 0) {
+                legendContainer.style.display = 'none';
+                return;
+            }
+            
+            let legendHtml = '';
+            shifts.forEach(shift => {
+                const backgroundColor = shift.color || '#6c757d';
+                const textColor = getContrastColor(backgroundColor);
+                
+                legendHtml += `
+                    <div class="shift-legend-item">
+                        <div class="shift-legend-color" style="background-color: ${backgroundColor}; color: ${textColor}; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: bold;">
+                            ${shift.shift_name.split(' ')[0]}
+                        </div>
+                        <span>${shift.shift_name} (${shift.start_time} - ${shift.end_time})</span>
+                    </div>
+                `;
+            });
+            
+            legendContent.innerHTML = legendHtml;
+            legendContainer.style.display = 'block';
+        }
+        
+        function cycleReceptionShift(badgeNumber, day) {
+            // Cycle through available shifts for reception employees
+            try {
+                console.log(`cycleReceptionShift called: ${badgeNumber}, day ${day}`);
+                
+                // Get reception role data
+                const receptionRole = jobRolesData['reception'];
+                if (!receptionRole || !receptionRole.work_shifts) {
+                    console.error('Reception role or shifts not found');
+                    return;
+                }
+                
+                const shifts = receptionRole.work_shifts;
+                if (!shifts || shifts.length === 0) {
+                    console.error('No shifts available for reception');
+                    return;
+                }
+                
+                // Get the cell element
+                const row = document.querySelector(`tr[data-badge="${badgeNumber}"]`);
+                if (!row) {
+                    console.error(`Employee row not found: ${badgeNumber}`);
+                    return;
+                }
+                
+                const cell = row.querySelector(`td:nth-child(${day + 1})`);
+                if (!cell) {
+                    console.error(`Cell not found for day ${day}`);
+                    return;
+                }
+                
+                // Initialize reception assignments if not exists
+                if (!window.receptionAssignments) {
+                    window.receptionAssignments = {};
+                }
+                
+                if (!window.receptionAssignments[badgeNumber]) {
+                    window.receptionAssignments[badgeNumber] = {};
+                }
+                
+                // Get current assignment
+                const currentShiftId = window.receptionAssignments[badgeNumber][day];
+                let nextShiftId = null;
+                let nextShift = null;
+                
+                if (!currentShiftId) {
+                    // No current assignment, assign first shift
+                    nextShift = shifts[0];
+                    nextShiftId = nextShift.id;
+                } else {
+                    // Find current shift index and get next
+                    const currentIndex = shifts.findIndex(s => s.id === currentShiftId);
+                    if (currentIndex === -1 || currentIndex === shifts.length - 1) {
+                        // Current shift not found or is last shift, cycle to empty
+                        nextShiftId = null;
+                        nextShift = null;
+                    } else {
+                        // Move to next shift
+                        nextShift = shifts[currentIndex + 1];
+                        nextShiftId = nextShift.id;
+                    }
+                }
+                
+                // Update assignment
+                if (nextShiftId) {
+                    window.receptionAssignments[badgeNumber][day] = nextShiftId;
+                } else {
+                    delete window.receptionAssignments[badgeNumber][day];
+                }
+                
+                // Update cell display with color
+                applyCellColor(cell, nextShift);
+                
+                console.log(`Updated assignment: ${badgeNumber} day ${day} = ${nextShiftId} (${nextShift?.shift_name || 'empty'})`);
+                
+            } catch (error) {
+                console.error('Error in cycleReceptionShift:', error);
+                showAlert('เกิดข้อผิดพลาดในการเปลี่ยนเวร', 'error');
+            }
+        }
+    </script>
+</body>
+</html>

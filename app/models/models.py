@@ -41,8 +41,8 @@ class Employee(Base):
     job_role_id = Column(Integer, ForeignKey("job_roles.id"), nullable=True)  # From EmployeeThaiName
     
     # Status and visibility
-    is_active = Column(Boolean, default=True)              # Merged from both models
-    is_hidden = Column(Boolean, default=False)             # From EmployeeThaiName (UI control)
+    is_active = Column(Boolean, nullable=False, default=True)              # Merged from both models
+    is_hidden = Column(Boolean, nullable=False, default=False)             # From EmployeeThaiName (UI control)
     
     # Metadata
     created_at = Column(DateTime, default=func.now())

@@ -28,55 +28,81 @@ def upgrade() -> None:
     4. Drop old employee_thai_names table
     """
     
-    # Step 1: Add new columns to employees table
-    op.add_column('employees', sa.Column('badge_number', sa.String(length=50), nullable=True))  # Temporary nullable
-    op.add_column('employees', sa.Column('english_name', sa.String(length=100), nullable=True))
-    op.add_column('employees', sa.Column('thai_name', sa.String(length=100), nullable=True))
-    op.add_column('employees', sa.Column('display_name', sa.String(length=100), nullable=True))  # Temporary nullable
-    op.add_column('employees', sa.Column('job_role_id', sa.Integer(), nullable=True))
-    op.add_column('employees', sa.Column('is_hidden', sa.Boolean(), nullable=True))
-    
-    # Step 2: Migrate existing employee data - copy employee_id to badge_number and name to english_name
+    # SQLite-compatible migration using table recreation approach
+    # Step 1: Create new employees_new table with unified structure
     op.execute("""
-        UPDATE employees 
-        SET badge_number = employee_id,
-            english_name = name,
-            display_name = name,
-            is_hidden = 0
+        CREATE TABLE employees_new (
+            id INTEGER PRIMARY KEY,
+            badge_number VARCHAR(50) NOT NULL UNIQUE,
+            english_name VARCHAR(100),
+            thai_name VARCHAR(100),
+            display_name VARCHAR(100) NOT NULL,
+            department VARCHAR(100),
+            position VARCHAR(100),
+            job_role_id INTEGER,
+            is_active BOOLEAN NOT NULL DEFAULT 1,
+            is_hidden BOOLEAN NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (job_role_id) REFERENCES job_roles(id)
+        )
+    """)
+    
+    # Step 2: Migrate data from employees table
+    op.execute("""
+        INSERT INTO employees_new (
+            id, badge_number, english_name, display_name, department, position, 
+            is_active, is_hidden, created_at, updated_at
+        )
+        SELECT 
+            id,
+            employee_id as badge_number,
+            name as english_name,
+            name as display_name,
+            department,
+            position,
+            is_active,
+            0 as is_hidden,
+            created_at,
+            updated_at
+        FROM employees
     """)
     
     # Step 3: Merge data from employee_thai_names table
     op.execute("""
-        UPDATE employees 
+        UPDATE employees_new 
         SET thai_name = (
             SELECT eth.thai_name 
             FROM employee_thai_names eth 
-            WHERE employees.badge_number = eth.badge_number
+            WHERE employees_new.badge_number = eth.badge_number
         ),
         job_role_id = (
             SELECT eth.job_role_id 
             FROM employee_thai_names eth 
-            WHERE employees.badge_number = eth.badge_number
+            WHERE employees_new.badge_number = eth.badge_number
         ),
         is_hidden = COALESCE((
             SELECT eth.is_hidden 
             FROM employee_thai_names eth 
-            WHERE employees.badge_number = eth.badge_number
+            WHERE employees_new.badge_number = eth.badge_number
         ), 0),
         display_name = COALESCE((
             SELECT eth.thai_name 
             FROM employee_thai_names eth 
-            WHERE employees.badge_number = eth.badge_number
-        ), 'พนักงาน ' || employees.badge_number)
+            WHERE employees_new.badge_number = eth.badge_number
+        ), 'พนักงาน ' || employees_new.badge_number)
         WHERE EXISTS (
             SELECT 1 FROM employee_thai_names eth 
-            WHERE employees.badge_number = eth.badge_number
+            WHERE employees_new.badge_number = eth.badge_number
         )
     """)
     
     # Step 4: Insert employees that only exist in employee_thai_names (orphaned records)
     op.execute("""
-        INSERT INTO employees (badge_number, english_name, thai_name, display_name, job_role_id, is_active, is_hidden, created_at, updated_at)
+        INSERT INTO employees_new (
+            badge_number, english_name, thai_name, display_name, job_role_id, 
+            is_active, is_hidden, created_at, updated_at
+        )
         SELECT 
             eth.badge_number,
             NULL as english_name,
@@ -89,47 +115,65 @@ def upgrade() -> None:
             eth.updated_at
         FROM employee_thai_names eth
         WHERE NOT EXISTS (
-            SELECT 1 FROM employees e 
+            SELECT 1 FROM employees_new e 
             WHERE e.badge_number = eth.badge_number
         )
     """)
     
-    # Step 5: Make badge_number and display_name NOT NULL now that data is migrated
-    op.alter_column('employees', 'badge_number', nullable=False)
-    op.alter_column('employees', 'display_name', nullable=False)
-    
-    # Step 6: Create unique index on badge_number
-    op.create_index(op.f('ix_employees_badge_number'), 'employees', ['badge_number'], unique=True)
-    
-    # Step 7: Create foreign key to job_roles
-    op.create_foreign_key(None, 'employees', 'job_roles', ['job_role_id'], ['id'])
-    
-    # Step 8: Update attendance_records table
-    op.add_column('attendance_records', sa.Column('employee_badge_number', sa.String(length=50), nullable=True))  # Temporary nullable
-    
-    # Copy employee_id to employee_badge_number
+    # Step 5: Create new attendance_records table with updated FK
     op.execute("""
-        UPDATE attendance_records 
-        SET employee_badge_number = employee_id
+        CREATE TABLE attendance_records_new (
+            id INTEGER PRIMARY KEY,
+            employee_badge_number VARCHAR(50) NOT NULL,
+            device_id INTEGER NOT NULL,
+            timestamp DATETIME NOT NULL,
+            punch_type INTEGER NOT NULL,
+            status INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            sync_status VARCHAR(20) DEFAULT 'synced',
+            local_id VARCHAR(36),
+            created_locally BOOLEAN DEFAULT 0,
+            validation_status VARCHAR(20) DEFAULT 'unvalidated',
+            lateness_minutes INTEGER,
+            early_minutes INTEGER,
+            expected_time TIME,
+            schedule_type VARCHAR(20),
+            validation_message TEXT,
+            validated_at DATETIME,
+            FOREIGN KEY (employee_badge_number) REFERENCES employees_new(badge_number),
+            FOREIGN KEY (device_id) REFERENCES devices(id)
+        )
     """)
     
-    # Make employee_badge_number NOT NULL
-    op.alter_column('attendance_records', 'employee_badge_number', nullable=False)
+    # Step 6: Migrate attendance records data
+    op.execute("""
+        INSERT INTO attendance_records_new (
+            id, employee_badge_number, device_id, timestamp, punch_type, status,
+            created_at, sync_status, local_id, created_locally, validation_status,
+            lateness_minutes, early_minutes, expected_time, schedule_type,
+            validation_message, validated_at
+        )
+        SELECT 
+            id, employee_id as employee_badge_number, device_id, timestamp, punch_type, status,
+            created_at, sync_status, local_id, created_locally, validation_status,
+            lateness_minutes, early_minutes, expected_time, schedule_type,
+            validation_message, validated_at
+        FROM attendance_records
+    """)
     
-    # Drop old foreign key and create new one
-    op.drop_constraint(None, 'attendance_records', type_='foreignkey')
-    op.create_foreign_key(None, 'attendance_records', 'employees', ['employee_badge_number'], ['badge_number'])
-    
-    # Step 9: Clean up old columns and tables
-    op.drop_column('attendance_records', 'employee_id')
-    op.drop_index('ix_employees_employee_id', table_name='employees')
-    op.drop_column('employees', 'name')
-    op.drop_column('employees', 'employee_id')
-    
-    # Step 10: Drop employee_thai_names table
-    op.drop_index('ix_employee_thai_names_badge_number', table_name='employee_thai_names')
-    op.drop_index('ix_employee_thai_names_id', table_name='employee_thai_names')
+    # Step 7: Drop old tables and rename new ones
+    op.drop_table('attendance_records')
+    op.drop_table('employees')
     op.drop_table('employee_thai_names')
+    
+    op.execute("ALTER TABLE employees_new RENAME TO employees")
+    op.execute("ALTER TABLE attendance_records_new RENAME TO attendance_records")
+    
+    # Step 8: Create indexes
+    op.create_index(op.f('ix_employees_id'), 'employees', ['id'], unique=False)
+    op.create_index(op.f('ix_employees_badge_number'), 'employees', ['badge_number'], unique=True)
+    op.create_index(op.f('ix_attendance_records_id'), 'attendance_records', ['id'], unique=False)
+    op.create_index(op.f('ix_attendance_records_timestamp'), 'attendance_records', ['timestamp'], unique=False)
     
     # ### end Alembic commands ###
 

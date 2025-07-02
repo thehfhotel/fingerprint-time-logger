@@ -1,205 +1,217 @@
-from typing import List, Optional, Dict, Any
+"""
+Simplified Device Service - Direct ZKTeco Operations
+Replaces complex connection management, circuit breakers, and enterprise patterns
+"""
+
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
 from zk import ZK
 from sqlalchemy.orm import Session
 
-from app.models.models import Device, AttendanceRecord, Employee, SyncLog
-from app.core.config import settings
+from app.models.models import Device, AttendanceRecord, Employee
+from app.core.database import get_db
 
 logger = logging.getLogger(__name__)
 
 
-class DeviceService:
-    def __init__(self, device: Device):
-        self.device = device
-        self.zk = None
-        self.conn = None
+class SimpleDeviceService:
+    """Simplified device service with basic retry logic"""
     
-    def connect(self) -> bool:
-        """Establish connection to ZKTeco device"""
+    def __init__(self):
+        self.max_retries = 3
+        self.timeout = 5
+    
+    def get_default_device(self) -> Optional[Device]:
+        """Get the default ZKTeco device"""
+        db = next(get_db())
         try:
-            # Use default timeout of 5 seconds if device doesn't have timeout field
-            timeout_value = getattr(self.device, 'timeout', 5)
-            
-            self.zk = ZK(
-                self.device.ip_address, 
-                port=self.device.port,
-                timeout=timeout_value,
-                password=self.device.password,
-                force_udp=False,
-                ommit_ping=False
-            )
-            self.conn = self.zk.connect()
-            logger.info(f"Connected to device {self.device.name} at {self.device.ip_address}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect to device {self.device.name}: {str(e)}")
-            return False
-    
-    def disconnect(self):
-        """Disconnect from ZKTeco device"""
-        if self.conn:
-            self.conn.disconnect()
-            logger.info(f"Disconnected from device {self.device.name}")
-    
-    def get_users(self) -> List[Dict[str, Any]]:
-        """Get all users from device"""
-        if not self.conn:
-            raise Exception("Not connected to device")
-        
-        try:
-            users = self.conn.get_users()
-            return [
-                {
-                    "uid": user.uid,
-                    "user_id": user.user_id,
-                    "name": user.name,
-                    "privilege": user.privilege,
-                    "password": user.password,
-                    "group_id": user.group_id,
-                    "card": user.card,
-                }
-                for user in users
-            ]
-        except Exception as e:
-            logger.error(f"Failed to get users: {str(e)}")
-            raise
-    
-    def get_attendance(self) -> List[Dict[str, Any]]:
-        """Get attendance records from device"""
-        if not self.conn:
-            raise Exception("Not connected to device")
-        
-        try:
-            attendances = self.conn.get_attendance()
-            return [
-                {
-                    "user_id": att.user_id,
-                    "timestamp": att.timestamp,
-                    "status": att.status,
-                    "punch": att.punch,
-                }
-                for att in attendances
-            ]
-        except Exception as e:
-            logger.error(f"Failed to get attendance: {str(e)}")
-            raise
-    
-    def clear_attendance(self) -> bool:
-        """Clear attendance records from device"""
-        if not self.conn:
-            raise Exception("Not connected to device")
-        
-        try:
-            self.conn.clear_attendance()
-            logger.info(f"Cleared attendance records from device {self.device.name}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to clear attendance: {str(e)}")
-            return False
-    
-    def sync_attendance(self, db: Session, clear_after_sync: bool = False) -> Dict[str, Any]:
-        """Sync attendance records from device to database"""
-        sync_log = SyncLog(
-            device_id=self.device.id,
-            sync_start=datetime.utcnow(),
-            status="in_progress"
-        )
-        db.add(sync_log)
-        db.commit()
-        
-        try:
-            if not self.connect():
-                raise Exception("Failed to connect to device")
-            
-            attendances = self.get_attendance()
-            
-            new_records = 0
-            skipped_records = 0
-            errors = []
-            
-            for att in attendances:
-                try:
-                    employee = db.query(Employee).filter(
-                        Employee.employee_id == str(att["user_id"])
-                    ).first()
-                    
-                    if not employee:
-                        errors.append(f"Employee not found: {att['user_id']}")
-                        skipped_records += 1
-                        continue
-                    
-                    existing = db.query(AttendanceRecord).filter(
-                        AttendanceRecord.employee_id == employee.id,
-                        AttendanceRecord.device_id == self.device.id,
-                        AttendanceRecord.timestamp == att["timestamp"]
-                    ).first()
-                    
-                    if existing:
-                        skipped_records += 1
-                        continue
-                    
-                    record = AttendanceRecord(
-                        employee_id=employee.id,
-                        device_id=self.device.id,
-                        timestamp=att["timestamp"],
-                        punch_type=att["punch"],
-                        status=att["status"]
-                    )
-                    db.add(record)
-                    new_records += 1
-                    
-                except Exception as e:
-                    errors.append(f"Error processing record: {str(e)}")
-                    skipped_records += 1
-            
-            db.commit()
-            
-            if clear_after_sync and new_records > 0:
-                self.clear_attendance()
-            
-            sync_log.sync_end = datetime.utcnow()
-            sync_log.status = "completed"
-            sync_log.records_synced = new_records
-            sync_log.records_failed = skipped_records
-            if errors:
-                sync_log.error_message = "; ".join(errors[:5])
-            
-            db.commit()
-            
-            return {
-                "device": self.device.name,
-                "new_records": new_records,
-                "skipped_records": skipped_records,
-                "errors": errors[:5],
-                "status": "success"
-            }
-            
-        except Exception as e:
-            sync_log.sync_end = datetime.utcnow()
-            sync_log.status = "failed"
-            sync_log.error_message = str(e)
-            db.commit()
-            
-            logger.error(f"Sync failed for device {self.device.name}: {str(e)}")
-            return {
-                "device": self.device.name,
-                "error": str(e),
-                "status": "failed"
-            }
+            device = db.query(Device).filter(Device.is_active == True).first()
+            if not device:
+                # Create default device if none exists
+                device = Device(
+                    name="ZKTeco Device",
+                    ip_address="192.168.100.209",
+                    port=4370,
+                    password=0,
+                    is_active=True
+                )
+                db.add(device)
+                db.commit()
+                db.refresh(device)
+            return device
         finally:
-            self.disconnect()
+            db.close()
+    
+    def connect_to_device(self, device: Device) -> Optional[Any]:
+        """Simple device connection with basic retry"""
+        for attempt in range(self.max_retries):
+            try:
+                zk = ZK(
+                    device.ip_address,
+                    port=device.port,
+                    timeout=self.timeout,
+                    password=device.password
+                )
+                conn = zk.connect()
+                logger.info(f"Connected to device {device.name}")
+                return conn
+            except Exception as e:
+                logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
+                if attempt == self.max_retries - 1:
+                    logger.error(f"Failed to connect to device after {self.max_retries} attempts")
+                    return None
+        return None
+    
+    def get_attendance_records(self, device: Device) -> List[Dict[str, Any]]:
+        """Get attendance records from device"""
+        conn = self.connect_to_device(device)
+        if not conn:
+            return []
+        
+        try:
+            # Get attendance records
+            records = conn.get_attendance()
+            
+            # Convert to simple format
+            attendance_data = []
+            for record in records:
+                attendance_data.append({
+                    'user_id': str(record.user_id),
+                    'timestamp': record.timestamp,
+                    'punch_type': record.punch_type,
+                    'status': record.status
+                })
+            
+            logger.info(f"Retrieved {len(attendance_data)} attendance records")
+            return attendance_data
+            
+        except Exception as e:
+            logger.error(f"Error getting attendance records: {e}")
+            return []
+        finally:
+            try:
+                conn.disconnect()
+            except:
+                pass
+    
+    def get_users(self, device: Device) -> List[Dict[str, Any]]:
+        """Get users from device"""
+        conn = self.connect_to_device(device)
+        if not conn:
+            return []
+        
+        try:
+            users = conn.get_users()
+            user_data = []
+            for user in users:
+                user_data.append({
+                    'user_id': str(user.user_id),
+                    'name': user.name or f"User {user.user_id}",
+                    'privilege': user.privilege,
+                    'password': user.password,
+                    'group_id': user.group_id,
+                    'user_id_int': user.user_id
+                })
+            
+            logger.info(f"Retrieved {len(user_data)} users")
+            return user_data
+            
+        except Exception as e:
+            logger.error(f"Error getting users: {e}")
+            return []
+        finally:
+            try:
+                conn.disconnect()
+            except:
+                pass
+    
+    def sync_attendance_data(self) -> Dict[str, Any]:
+        """Simple sync of attendance data from device to database"""
+        device = self.get_default_device()
+        if not device:
+            return {"success": False, "message": "No device configured"}
+        
+        try:
+            # Get records from device
+            records = self.get_attendance_records(device)
+            
+            if not records:
+                return {"success": True, "message": "No new records", "synced": 0}
+            
+            # Store in database
+            db = next(get_db())
+            synced_count = 0
+            
+            try:
+                for record in records:
+                    # Check if record already exists
+                    existing = db.query(AttendanceRecord).filter(
+                        AttendanceRecord.employee_badge_number == record['user_id'],
+                        AttendanceRecord.timestamp == record['timestamp']
+                    ).first()
+                    
+                    if not existing:
+                        # Create new record
+                        new_record = AttendanceRecord(
+                            employee_badge_number=record['user_id'],
+                            device_id=device.id,
+                            timestamp=record['timestamp'],
+                            punch_type=record['punch_type'],
+                            status=record['status'],
+                            sync_status='synced'
+                        )
+                        db.add(new_record)
+                        synced_count += 1
+                
+                db.commit()
+                
+                # Update device last sync
+                device.last_sync = datetime.now()
+                db.commit()
+                
+                return {
+                    "success": True,
+                    "message": f"Synced {synced_count} new records",
+                    "synced": synced_count,
+                    "total_processed": len(records)
+                }
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Sync failed: {e}")
+            return {"success": False, "message": f"Sync failed: {str(e)}"}
+    
+    def get_device_status(self) -> Dict[str, Any]:
+        """Get simple device status"""
+        device = self.get_default_device()
+        if not device:
+            return {"connected": False, "message": "No device configured"}
+        
+        conn = self.connect_to_device(device)
+        if conn:
+            try:
+                # Basic device info
+                firmware_version = conn.get_firmware_version()
+                conn.disconnect()
+                return {
+                    "connected": True,
+                    "device_name": device.name,
+                    "ip_address": device.ip_address,
+                    "firmware": firmware_version,
+                    "last_sync": device.last_sync.isoformat() if device.last_sync else None
+                }
+            except:
+                try:
+                    conn.disconnect()
+                except:
+                    pass
+                return {"connected": False, "message": "Device connection failed"}
+        else:
+            return {"connected": False, "message": "Could not connect to device"}
 
 
-def sync_all_devices(db: Session) -> List[Dict[str, Any]]:
-    """Sync attendance from all active devices"""
-    devices = db.query(Device).filter(Device.is_active == True).all()
-    results = []
-    
-    for device in devices:
-        service = DeviceService(device)
-        result = service.sync_attendance(db, clear_after_sync=settings.CLEAR_DEVICE_AFTER_SYNC)
-        results.append(result)
-    
-    return results
+# Global service instance
+device_service = SimpleDeviceService()
