@@ -1,6 +1,7 @@
 from datetime import datetime, time, date
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
+from enum import Enum
 
 
 # Device schemas
@@ -397,3 +398,129 @@ class EmployeeScheduleInfo(BaseModel):
     schedule_type: str  # 'STANDARD' or 'SHIFT'
     role_name: str
     is_working_day: bool
+
+
+# ============================================================================
+# CALENDAR & ATTENDANCE SCHEMAS (consolidated from attendance_calendar_schemas.py)
+# ============================================================================
+
+class AttendanceStatusEnum(str, Enum):
+    """Attendance status for API responses"""
+    PERFECT = "perfect"
+    MINOR_ISSUE = "minor_issue"
+    MAJOR_VIOLATION = "violation"
+    ABSENT = "absent"
+    NON_WORKING_DAY = "non_working"
+    PARTIAL = "partial"
+
+
+class HolidayTypeEnum(str, Enum):
+    """Holiday types"""
+    NATIONAL = "national"
+    COMPANY = "company"
+    RELIGIOUS = "religious"
+    PERSONAL = "personal"
+
+
+class CalendarFilters(BaseModel):
+    """Filters for calendar data requests"""
+    role: Optional[str] = None
+    department: Optional[str] = None
+    employee_ids: Optional[List[str]] = None
+    include_inactive: Optional[bool] = False
+
+
+class CalendarConfigResponse(BaseModel):
+    """Calendar configuration and metadata"""
+    violation_threshold_minutes: int = 15
+    minor_issue_threshold_minutes: int = 1
+    weekend_days: List[int] = [6, 0]  # Saturday, Sunday
+    status_colors: Dict[str, str]
+    status_symbols: Optional[Dict[str, str]] = None
+    roles: List[str] = []
+    months: List[Dict[str, Any]] = []
+
+
+class HolidayResponse(BaseModel):
+    """Holiday information"""
+    id: int
+    date: str
+    name: str
+    holiday_type: HolidayTypeEnum
+    applies_to_all: bool = True
+    applicable_roles: Optional[List[str]] = None
+
+
+class CalendarStatisticsResponse(BaseModel):
+    """Monthly calendar statistics"""
+    total_employees: int
+    total_working_days: int
+    perfect_attendance_rate: float
+    punctuality_rate: float
+    average_late_minutes: float
+    violation_count: int
+    absent_count: int
+
+
+class EmployeeDayDetailResponse(BaseModel):
+    """Detailed attendance for specific employee and day"""
+    employee_id: str
+    employee_name: str
+    date: str
+    status: AttendanceStatusEnum
+    
+    # Time information
+    check_in: Optional[datetime] = None
+    check_out: Optional[datetime] = None
+    scheduled_start: Optional[time] = None
+    scheduled_end: Optional[time] = None
+    
+    # Calculations
+    late_minutes: int = 0
+    early_departure_minutes: int = 0
+    work_hours: Optional[float] = None
+    
+    # Context
+    is_weekend: bool = False
+    is_holiday: bool = False
+    holiday_name: Optional[str] = None
+    job_role: Optional[str] = None
+    notes: Optional[str] = None
+
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None,
+            time: lambda v: v.strftime("%H:%M:%S") if v else None
+        }
+
+
+class MonthlyCalendarResponse(BaseModel):
+    """Complete monthly calendar response"""
+    year: int
+    month: int
+    month_name: str
+    days_in_month: int
+    employees: List[Dict[str, Any]]  # Simplified to avoid circular imports
+    holidays: List[int] = []
+    weekends: List[int] = []
+    working_days: List[int] = []
+    statistics: CalendarStatisticsResponse
+
+
+# ============================================================================
+# GENERIC RESPONSE SCHEMAS
+# ============================================================================
+
+class SuccessResponse(BaseModel):
+    """Standard success response"""
+    success: bool = True
+    message: str
+    data: Optional[Dict[str, Any]] = None
+
+
+class ErrorResponse(BaseModel):
+    """Standard error response"""
+    success: bool = False
+    error: str
+    detail: Optional[str] = None
+    code: Optional[str] = None
