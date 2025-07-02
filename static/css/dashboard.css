@@ -1,0 +1,114 @@
+/* Dashboard specific styles */
+
+/* Employee grid */
+#employeeContainer {
+    display: grid;
+    gap: 1rem;
+}
+
+/* Employee cards */
+.employee-card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    overflow: hidden;
+    transition: all 0.2s ease;
+}
+
+.employee-card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transform: translateY(-2px);
+}
+
+.employee-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 1rem;
+    font-weight: 600;
+    font-size: 1.1rem;
+}
+
+.consolidated-view .employee-header {
+    background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+}
+
+/* Attendance lists */
+.attendance-list {
+    padding: 0.5rem;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.consolidated-list {
+    max-height: 80vh;
+}
+
+.attendance-entry {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background-color 0.2s ease;
+}
+
+.attendance-entry:hover {
+    background-color: #f8f9fa;
+}
+
+.attendance-entry:last-child {
+    border-bottom: none;
+}
+
+/* Employee info */
+.employee-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.employee-name {
+    font-weight: 500;
+    color: #333;
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Time information */
+.time-info {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    margin: 0 1rem;
+}
+
+.attendance-time {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: #333;
+}
+
+.attendance-date {
+    font-size: 0.85rem;
+    color: #666;
+}
+
+/* Attendance status badges */
+.attendance-status {
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.status-checkin {
+    background-color: #e8f5e9;
+    color: #2e7d32;
+}
+
+.status-checkout {
+    background-color: #fff3e0;
+    color: #f57c00;
+}

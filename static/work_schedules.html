@@ -813,7 +813,7 @@
         
         async function loadJobRoles() {
             try {
-                const response = await fetch('/api/work-schedules/job-roles');
+                const response = await fetch('/api/legacy/work-schedules/job-roles');
                 const data = await response.json();
                 
                 jobRolesData = {};
@@ -1030,7 +1030,7 @@
                     working_days: Array.from(document.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value)
                 };
                 
-                const response = await fetch(`/api/work-schedules/job-roles/${roleName}/schedule`, {
+                const response = await fetch(`/api/legacy/work-schedules/job-roles/${roleName}/schedule`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1079,7 +1079,7 @@
                     };
                 });
                 
-                const response = await fetch(`/api/work-schedules/job-roles/${roleName}/shifts`, {
+                const response = await fetch(`/api/legacy/work-schedules/job-roles/${roleName}/shifts`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'

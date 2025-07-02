@@ -360,7 +360,7 @@ class OfflineManager {
     
     async checkSyncStatus() {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/api/sync/health`, {
+            const response = await fetch(`${this.apiBaseUrl}/api/devices/health`, {
                 timeout: 5000
             });
             
@@ -615,7 +615,7 @@ class OfflineManager {
         
         try {
             // Use direct API call to the API server (port 8000)
-            const response = await fetch('http://localhost:8000/api/control/devices/sync-all', {
+            const response = await fetch('/api/devices/sync/attendance', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             });

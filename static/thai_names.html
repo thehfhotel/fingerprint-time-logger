@@ -467,7 +467,7 @@
         async function loadThaiNames() {
             try {
                 showLoading();
-                const url = showHidden ? '/api/thai-names/?show_hidden=true' : '/api/thai-names/';
+                const url = showHidden ? '/api/employees/thai-names/?show_hidden=true' : '/api/employees/thai-names/';
                 const response = await fetch(url);
                 
                 if (!response.ok) {
@@ -628,7 +628,7 @@
                     }
                 });
                 
-                const response = await fetch('/api/thai-names/', {
+                const response = await fetch('/api/employees/thai-names/', {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'
@@ -762,7 +762,7 @@
                 
                 const newHiddenStatus = !employee.is_hidden;
                 
-                const response = await fetch(`/api/thai-names/${badgeNumber}`, {
+                const response = await fetch(`/api/employees/thai-names/${badgeNumber}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'
