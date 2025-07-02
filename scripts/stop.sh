@@ -1,6 +1,6 @@
 #!/bin/bash
-# Self-correcting stop script for Fingerprint Time Logger
-# Gracefully shuts down services with forced cleanup
+# Updated stop script for unified FastAPI server architecture
+# Simplified from dual-server to single unified server
 
 # Source common functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,12 +9,11 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 setup_error_handling
 
-# Configuration
-API_SERVICE="api"
-DASHBOARD_SERVICE="dashboard"
-SERVICE_TO_STOP="${1:-}"  # Optional: "api", "dashboard", or empty for both
+# Configuration for unified server
+SERVICE="unified_server"
+SERVICE_TO_STOP="${1:-}"  # Optional: specify service or empty for default
 
-# Stop a specific service
+# Stop the unified service
 stop_service() {
     local service=$1
     local pid_file="$PID_DIR/${service}.pid"
@@ -28,11 +27,6 @@ stop_service() {
     local pid=$(cat "$pid_file")
     log_info "Stopping $service (PID: $pid)..."
     
-    # Special handling for dashboard background threads
-    if [ "$service" = "$DASHBOARD_SERVICE" ]; then
-        stop_dashboard_threads "$pid"
-    fi
-    
     # Kill process gracefully
     if kill_process_graceful "$pid" 10; then
         log_success "$service stopped successfully"
@@ -42,26 +36,6 @@ stop_service() {
         log_error "Failed to stop $service gracefully"
         return 1
     fi
-}
-
-# Stop dashboard background threads
-stop_dashboard_threads() {
-    local main_pid=$1
-    log_info "Stopping dashboard background threads..."
-    
-    # Find all child processes
-    local child_pids=$(pgrep -P "$main_pid" 2>/dev/null || true)
-    
-    # Stop child processes first
-    if [ -n "$child_pids" ]; then
-        for child_pid in $child_pids; do
-            log_info "Stopping child process: $child_pid"
-            kill_process_graceful "$child_pid" 5
-        done
-    fi
-    
-    # Give main process time to clean up
-    sleep 2
 }
 
 # Cleanup processes by pattern (fallback)
@@ -105,7 +79,7 @@ final_cleanup() {
     log_success "Cleanup completed"
 }
 
-# Verify services are stopped
+# Verify service is stopped
 verify_stop() {
     local service=$1
     local pattern=$2
@@ -126,79 +100,42 @@ verify_stop() {
 
 # Main execution
 main() {
-    echo "🛑 Fingerprint Time Logger - Stopping Application"
+    echo "🛑 Fingerprint Time Logger - Stopping Unified Server"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "📁 Project Root: $PROJECT_ROOT"
     
     ensure_directories
     
     case "$SERVICE_TO_STOP" in
-        "api")
-            log_info "Stopping API server only..."
+        "")
+            log_info "Stopping unified server..."
             
-            if stop_service "$API_SERVICE"; then
-                cleanup_by_pattern "uvicorn.*app.main:app" "API Server"
-                
-                if verify_stop "$API_SERVICE" "uvicorn.*app.main:app"; then
-                    log_success "API server stopped successfully"
-                else
-                    log_warn "Some API processes may still be running"
-                fi
+            local server_stopped=false
+            
+            # Stop unified server
+            if stop_service "$SERVICE"; then
+                server_stopped=true
             fi
-            ;;
             
-        "dashboard")
-            log_info "Stopping dashboard only..."
+            # Cleanup remaining processes
+            cleanup_by_pattern "uvicorn.*app.main_unified" "Unified Server"
             
-            if stop_service "$DASHBOARD_SERVICE"; then
-                cleanup_by_pattern "python.*dashboard_app.py" "Dashboard"
-                
-                if verify_stop "$DASHBOARD_SERVICE" "python.*dashboard_app.py"; then
-                    log_success "Dashboard stopped successfully"
+            # Verify service stopped
+            if verify_stop "$SERVICE" "uvicorn.*app.main_unified"; then
+                if [ "$server_stopped" = true ]; then
+                    log_success "Unified server stopped successfully"
                 else
-                    log_warn "Some dashboard processes may still be running"
+                    log_success "No running server found, system is clean"
                 fi
+            else
+                log_warn "Some server processes may still be running"
             fi
             ;;
             
         *)
-            log_info "Stopping all services..."
-            
-            local api_stopped=false
-            local dashboard_stopped=false
-            
-            # Stop API service
-            if stop_service "$API_SERVICE"; then
-                api_stopped=true
-            fi
-            
-            # Stop dashboard service
-            if stop_service "$DASHBOARD_SERVICE"; then
-                dashboard_stopped=true
-            fi
-            
-            # Cleanup remaining processes
-            cleanup_by_pattern "uvicorn.*app.main:app" "API Server"
-            cleanup_by_pattern "python.*dashboard_app.py" "Dashboard"
-            
-            # Verify all services stopped
-            local all_stopped=true
-            
-            if ! verify_stop "$API_SERVICE" "uvicorn.*app.main:app"; then
-                log_error "API server may still be running"
-                all_stopped=false
-            fi
-            
-            if ! verify_stop "$DASHBOARD_SERVICE" "python.*dashboard_app.py"; then
-                log_error "Dashboard may still be running"
-                all_stopped=false
-            fi
-            
-            if [ "$all_stopped" = true ]; then
-                log_success "All services stopped successfully"
-            else
-                log_warn "Some services may still be running"
-            fi
+            log_error "Unknown service: $SERVICE_TO_STOP"
+            log_info "Usage: $0 [no arguments to stop unified server]"
+            exit 1
             ;;
     esac
     
@@ -209,6 +146,7 @@ main() {
     echo "📋 Management Commands:"
     echo "   Start:   ./scripts/start.sh"
     echo "   Status:  ./scripts/status.sh"
+    echo "   Restart: ./scripts/restart.sh"
     echo ""
 }
 

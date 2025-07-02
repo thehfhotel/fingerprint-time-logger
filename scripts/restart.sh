@@ -1,125 +1,93 @@
 #!/bin/bash
-set -e
+# Restart script for unified FastAPI server architecture
+# Safely stops and starts the unified server
 
-# Fingerprint Time Logger - Unified Restart Script
-# Safely restarts both API server and Dashboard with health verification
+# Source common functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+setup_error_handling
 
 # Configuration
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SERVICE="unified_server"
 RESTART_DELAY=3
 
-# Ensure we're in the project root
-cd "$PROJECT_ROOT"
-
-# Parse command line arguments
-SERVICE_TO_RESTART="$1"  # Optional: "api", "dashboard", or empty for both
-SKIP_HEALTH_CHECK="$2"   # Optional: "quick" to skip health checks
-
-echo -e "${BLUE}🔄 Fingerprint Time Logger - Restarting Application${NC}"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo -e "${BLUE}📁 Project Root:${NC} $PROJECT_ROOT"
-echo -e "${BLUE}🕐 Timestamp:${NC} $(date '+%Y-%m-%d %H:%M:%S')"
-
-case "$SERVICE_TO_RESTART" in
-    "api")
-        echo -e "${BLUE}🔧 Restarting API Server only...${NC}"
-        echo
-        
-        # Stop API Server
-        echo -e "${YELLOW}🛑 Stopping API Server...${NC}"
-        "$PROJECT_ROOT/scripts/stop.sh" api
-        
-        # Wait before restart
-        echo -e "${YELLOW}⏳ Waiting $RESTART_DELAY seconds before restart...${NC}"
-        sleep $RESTART_DELAY
-        
-        # Start API Server
-        echo -e "${YELLOW}🚀 Starting API Server...${NC}"
-        "$PROJECT_ROOT/scripts/start.sh"
-        ;;
-        
-    "dashboard")
-        echo -e "${BLUE}🖥️  Restarting Dashboard only...${NC}"
-        echo
-        
-        # Stop Dashboard
-        echo -e "${YELLOW}🛑 Stopping Dashboard...${NC}"
-        "$PROJECT_ROOT/scripts/stop.sh" dashboard
-        
-        # Wait before restart
-        echo -e "${YELLOW}⏳ Waiting $RESTART_DELAY seconds before restart...${NC}"
-        sleep $RESTART_DELAY
-        
-        # Start Dashboard (this will also start API if not running)
-        echo -e "${YELLOW}🚀 Starting Dashboard...${NC}"
-        "$PROJECT_ROOT/scripts/start.sh"
-        ;;
-        
-    "quick")
-        echo -e "${BLUE}⚡ Quick restart (minimal health checks)...${NC}"
-        echo
-        
-        # Stop all services
-        echo -e "${YELLOW}🛑 Stopping all services...${NC}"
-        "$PROJECT_ROOT/scripts/stop.sh"
-        
-        # Minimal wait
-        echo -e "${YELLOW}⏳ Waiting 2 seconds...${NC}"
-        sleep 2
-        
-        # Start all services
-        echo -e "${YELLOW}🚀 Starting all services...${NC}"
-        "$PROJECT_ROOT/scripts/start.sh"
-        ;;
-        
-    *)
-        echo -e "${BLUE}🔄 Full application restart...${NC}"
-        echo
-        
-        # Show current status
-        if [ "$SKIP_HEALTH_CHECK" != "quick" ]; then
-            echo -e "${YELLOW}📊 Current status:${NC}"
-            "$PROJECT_ROOT/scripts/status.sh" | head -20
-            echo
+# Main execution
+main() {
+    echo "🔄 Fingerprint Time Logger - Restarting Unified Server"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📁 Project Root: $PROJECT_ROOT"
+    echo "🕐 Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo ""
+    
+    # Check if server is currently running
+    local was_running=false
+    if is_process_running "$SERVICE"; then
+        was_running=true
+        log_info "Unified server is currently running"
+    else
+        log_info "Unified server is not currently running"
+    fi
+    
+    # Stop the server
+    log_info "Stopping unified server..."
+    if "$SCRIPT_DIR/stop.sh"; then
+        if [ "$was_running" = true ]; then
+            log_success "Server stopped successfully"
+        else
+            log_success "System cleanup completed"
         fi
+    else
+        log_error "Failed to stop server cleanly"
+        echo "   Attempting to continue with restart..."
+    fi
+    
+    # Wait for cleanup
+    log_info "Waiting ${RESTART_DELAY} seconds for cleanup..."
+    sleep $RESTART_DELAY
+    
+    # Verify server is stopped
+    if is_process_running "$SERVICE"; then
+        log_warn "Server still running, attempting force cleanup..."
         
-        # Stop all services
-        echo -e "${YELLOW}🛑 Stopping all services...${NC}"
-        "$PROJECT_ROOT/scripts/stop.sh"
-        
-        # Wait before restart
-        echo -e "${YELLOW}⏳ Waiting $RESTART_DELAY seconds before restart...${NC}"
-        sleep $RESTART_DELAY
-        
-        # Start all services
-        echo -e "${YELLOW}🚀 Starting all services...${NC}"
-        "$PROJECT_ROOT/scripts/start.sh"
-        ;;
-esac
+        # Force cleanup any remaining processes
+        local remaining_pids=$(pgrep -f "uvicorn.*app.main_unified" 2>/dev/null || true)
+        if [ -n "$remaining_pids" ]; then
+            log_info "Force stopping remaining processes: $remaining_pids"
+            for pid in $remaining_pids; do
+                kill -KILL "$pid" 2>/dev/null || true
+            done
+            sleep 2
+        fi
+    fi
+    
+    # Start the server
+    log_info "Starting unified server..."
+    if "$SCRIPT_DIR/start.sh"; then
+        log_success "Restart completed successfully!"
+        echo ""
+        echo "🌐 Server Access:"
+        echo "   📊 Dashboard: http://localhost:5000"
+        echo "   🔌 API Health: http://localhost:5000/api/devices/health"
+        echo "   📖 API Docs: http://localhost:5000/docs"
+        echo ""
+        echo "📋 Management Commands:"
+        echo "   Status: ./scripts/status.sh"
+        echo "   Stop:   ./scripts/stop.sh"
+        echo ""
+        exit 0
+    else
+        log_error "Failed to start server after restart"
+        echo ""
+        echo "🔧 Troubleshooting:"
+        echo "   - Check logs: tail -f logs/unified_server.log"
+        echo "   - Manual start: ./scripts/start.sh"
+        echo "   - Check status: ./scripts/status.sh"
+        echo ""
+        exit 1
+    fi
+}
 
-echo
-echo -e "${GREEN}🎉 Restart operation completed!${NC}"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-# Show post-restart status unless quick mode
-if [ "$SKIP_HEALTH_CHECK" != "quick" ] && [ "$SERVICE_TO_RESTART" != "quick" ]; then
-    echo -e "${BLUE}📊 Post-restart status:${NC}"
-    echo
-    "$PROJECT_ROOT/scripts/status.sh"
-else
-    echo -e "${YELLOW}💡 Run './scripts/status.sh' to check detailed status${NC}"
-fi
-
-echo
-echo -e "${BLUE}💡 Available commands:${NC}"
-echo -e "   Status:       ${YELLOW}./scripts/status.sh${NC}"
-echo -e "   Stop:         ${YELLOW}./scripts/stop.sh${NC}"
-echo -e "   Quick restart: ${YELLOW}./scripts/restart.sh quick${NC}"
-echo
+# Execute main function
+main "$@"

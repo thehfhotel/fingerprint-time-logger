@@ -6,17 +6,20 @@ Fingerprint time logger for ZKTeco biometric devices.
 
 ```bash
 # Start unified server
-./scripts/start_simple.sh
+./scripts/start.sh
 
 # Use application
 # Dashboard: http://localhost:5000
 # API: Same server on port 5000
 
 # Stop application  
-./scripts/stop_simple.sh
+./scripts/stop.sh
 
 # Check status
-./scripts/status_simple.sh
+./scripts/status.sh
+
+# Restart server
+./scripts/restart.sh
 ```
 
 ## Development

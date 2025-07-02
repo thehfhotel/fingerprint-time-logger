@@ -1,6 +1,6 @@
 #!/bin/bash
-# Self-correcting status script for Fingerprint Time Logger
-# Comprehensive health checks with diagnostics and recovery recommendations
+# Updated status script for unified FastAPI server architecture
+# Comprehensive health checks for single unified server
 
 # Source common functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,9 +9,9 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 setup_error_handling
 
-# Configuration
-API_SERVICE="api"
-DASHBOARD_SERVICE="dashboard"
+# Configuration for unified server
+SERVICE="unified_server"
+PORT=5000
 
 # Exit codes for monitoring integration
 EXIT_CODE_OK=0
@@ -148,7 +148,7 @@ check_dependencies() {
     if [ -f "$VENV_PATH/bin/pip" ]; then
         local missing_deps=false
         
-        for pkg in fastapi uvicorn flask pyzk sqlalchemy alembic; do
+        for pkg in fastapi uvicorn pyzk sqlalchemy alembic pydantic; do
             if "$VENV_PATH/bin/pip" show "$pkg" >/dev/null 2>&1; then
                 local version=$("$VENV_PATH/bin/pip" show "$pkg" | grep Version | cut -d' ' -f2)
                 echo "   ✅ $pkg: $version"
@@ -176,13 +176,15 @@ network_check() {
     local network_ip=$(ip route get 8.8.8.8 2>/dev/null | grep -oP 'src \K\S+' | head -1 || echo "unknown")
     
     echo "   Local access:"
-    echo "     Dashboard: http://localhost:$DASHBOARD_PORT"
-    echo "     API: http://localhost:$API_PORT"
+    echo "     Dashboard: http://localhost:$PORT"
+    echo "     API Health: http://localhost:$PORT/api/devices/health"
+    echo "     API Docs: http://localhost:$PORT/docs"
     
     if [ "$network_ip" != "unknown" ]; then
         echo "   Network access:"
-        echo "     Dashboard: http://$network_ip:$DASHBOARD_PORT"
-        echo "     API: http://$network_ip:$API_PORT"
+        echo "     Dashboard: http://$network_ip:$PORT"
+        echo "     API Health: http://$network_ip:$PORT/api/devices/health"
+        echo "     API Docs: http://$network_ip:$PORT/docs"
     fi
 }
 
@@ -206,23 +208,17 @@ performance_metrics() {
 
 # Recovery recommendations
 provide_recommendations() {
-    local api_healthy=$1
-    local dashboard_healthy=$2
-    local system_healthy=$3
+    local server_healthy=$1
+    local system_healthy=$2
     
     echo ""
     echo "💡 Recommendations:"
     
-    if [ "$api_healthy" = false ]; then
-        echo "   🔧 API Server Issues:"
-        echo "     - Check logs: tail -f $LOG_DIR/api.log"
-        echo "     - Restart API: ./scripts/stop.sh api && ./scripts/start.sh"
-    fi
-    
-    if [ "$dashboard_healthy" = false ]; then
-        echo "   🖥️  Dashboard Issues:"
-        echo "     - Check logs: tail -f $LOG_DIR/dashboard.log"
-        echo "     - Restart Dashboard: ./scripts/stop.sh dashboard && ./scripts/start.sh"
+    if [ "$server_healthy" = false ]; then
+        echo "   🔧 Unified Server Issues:"
+        echo "     - Check logs: tail -f $LOG_DIR/unified_server.log"
+        echo "     - Restart server: ./scripts/restart.sh"
+        echo "     - Full restart: ./scripts/stop.sh && ./scripts/start.sh"
     fi
     
     if [ "$system_healthy" = false ]; then
@@ -232,20 +228,19 @@ provide_recommendations() {
         echo "     - Check database: ls -la attendance.db"
     fi
     
-    if [ "$api_healthy" = false ] || [ "$dashboard_healthy" = false ]; then
-        echo "   🔄 Full restart: ./scripts/stop.sh && ./scripts/start.sh"
+    if [ "$server_healthy" = true ] && [ "$system_healthy" = true ]; then
+        echo "   ✅ All systems healthy - no action required"
     fi
 }
 
 # Determine overall exit code
 determine_exit_code() {
-    local api_healthy=$1
-    local dashboard_healthy=$2
-    local system_healthy=$3
+    local server_healthy=$1
+    local system_healthy=$2
     
-    if [ "$api_healthy" = true ] && [ "$dashboard_healthy" = true ] && [ "$system_healthy" = true ]; then
+    if [ "$server_healthy" = true ] && [ "$system_healthy" = true ]; then
         return $EXIT_CODE_OK
-    elif [ "$api_healthy" = true ] || [ "$dashboard_healthy" = true ]; then
+    elif [ "$server_healthy" = true ]; then
         return $EXIT_CODE_WARNING
     else
         return $EXIT_CODE_CRITICAL
@@ -254,7 +249,7 @@ determine_exit_code() {
 
 # Main execution
 main() {
-    echo "📊 Fingerprint Time Logger - System Status"
+    echo "📊 Fingerprint Time Logger - Unified Server Status"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "📁 Project Root: $PROJECT_ROOT"
     echo "🕐 Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
@@ -262,22 +257,15 @@ main() {
     
     ensure_directories
     
-    local api_healthy=false
-    local dashboard_healthy=false
+    local server_healthy=false
     local system_healthy=false
     
-    # Check API service
+    # Check unified server
     echo "🔧 Service Status:"
     echo ""
-    echo "📡 API Server:"
-    if check_service_detailed "$API_SERVICE" "$API_PORT" "/docs"; then
-        api_healthy=true
-    fi
-    
-    echo ""
-    echo "🖥️  Dashboard:"
-    if check_service_detailed "$DASHBOARD_SERVICE" "$DASHBOARD_PORT" "/"; then
-        dashboard_healthy=true
+    echo "🖥️  Unified FastAPI Server:"
+    if check_service_detailed "$SERVICE" "$PORT" "/api/devices/health"; then
+        server_healthy=true
     fi
     
     # System health checks
@@ -293,27 +281,17 @@ main() {
     echo ""
     echo "📈 Recent Activity (Last 5 Log Entries):"
     echo ""
-    echo "API Server:"
-    if [ -f "$LOG_DIR/api.log" ]; then
-        tail -5 "$LOG_DIR/api.log" 2>/dev/null | while read -r line; do
+    echo "Unified Server:"
+    if [ -f "$LOG_DIR/unified_server.log" ]; then
+        tail -5 "$LOG_DIR/unified_server.log" 2>/dev/null | while read -r line; do
             echo "   > $line"
         done
     else
-        echo "   No API log file found"
-    fi
-    
-    echo ""
-    echo "Dashboard:"
-    if [ -f "$LOG_DIR/dashboard.log" ]; then
-        tail -5 "$LOG_DIR/dashboard.log" 2>/dev/null | while read -r line; do
-            echo "   > $line"
-        done
-    else
-        echo "   No Dashboard log file found"
+        echo "   No unified server log file found"
     fi
     
     # Provide recommendations
-    provide_recommendations "$api_healthy" "$dashboard_healthy" "$system_healthy"
+    provide_recommendations "$server_healthy" "$system_healthy"
     
     echo ""
     echo "📋 Management Commands:"
@@ -323,16 +301,16 @@ main() {
     echo ""
     
     # Overall status
-    if [ "$api_healthy" = true ] && [ "$dashboard_healthy" = true ] && [ "$system_healthy" = true ]; then
+    if [ "$server_healthy" = true ] && [ "$system_healthy" = true ]; then
         log_success "Status check completed! All systems healthy."
-    elif [ "$api_healthy" = true ] || [ "$dashboard_healthy" = true ]; then
-        log_warn "Status check completed with warnings. Some issues detected."
+    elif [ "$server_healthy" = true ]; then
+        log_warn "Status check completed with warnings. Server running but system issues detected."
     else
         log_error "Status check completed with errors. Critical issues detected."
     fi
     
     # Return appropriate exit code for monitoring
-    determine_exit_code "$api_healthy" "$dashboard_healthy" "$system_healthy"
+    determine_exit_code "$server_healthy" "$system_healthy"
 }
 
 # Execute main function

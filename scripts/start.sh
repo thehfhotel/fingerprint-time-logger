@@ -1,6 +1,6 @@
 #!/bin/bash
-# Self-correcting start script for Fingerprint Time Logger
-# Handles port conflicts, environment issues, and automatic recovery
+# Updated start script for unified FastAPI server architecture
+# Simplified from dual-server to single unified server
 
 # Source common functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,49 +9,49 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 setup_error_handling
 
-# Configuration
-API_SERVICE="api"
-DASHBOARD_SERVICE="dashboard"
+# Configuration for unified server
+SERVICE="unified_server"
+PORT=5000
 
-# Start API server
-start_api_server() {
-    log_info "Starting API server..."
+# Start unified server
+start_unified_server() {
+    log_info "Starting unified FastAPI server..."
     
     # Resolve port conflicts
-    local api_port
-    api_port=$(resolve_port_conflict "$API_PORT" "$API_SERVICE")
+    local server_port
+    server_port=$(resolve_port_conflict "$PORT" "$SERVICE")
     if [ $? -ne 0 ]; then
-        log_error "Failed to resolve API port conflict"
+        log_error "Failed to resolve port conflict"
         return 1
     fi
     
-    # Start API server
-    local api_pid_file="$PID_DIR/${API_SERVICE}.pid"
-    local api_log_file="$LOG_DIR/api.log"
+    # Start unified server
+    local pid_file="$PID_DIR/${SERVICE}.pid"
+    local log_file="$LOG_DIR/unified_server.log"
     
     cd "$PROJECT_ROOT"
-    nohup "$VENV_PATH/bin/uvicorn" app.main:app \
+    nohup "$VENV_PATH/bin/uvicorn" app.main_unified:app \
         --host 0.0.0.0 \
-        --port "$api_port" \
+        --port "$server_port" \
         --reload \
-        > "$api_log_file" 2>&1 &
+        > "$log_file" 2>&1 &
     
-    local api_pid=$!
-    echo "$api_pid" > "$api_pid_file"
+    local pid=$!
+    echo "$pid" > "$pid_file"
     
-    # Wait for API to start
-    log_info "Waiting for API server to start (PID: $api_pid, Port: $api_port)..."
+    # Wait for server to start
+    log_info "Waiting for unified server to start (PID: $pid, Port: $server_port)..."
     local attempts=0
     while [ $attempts -lt 30 ]; do
-        if check_service_health "$API_SERVICE" "$api_port" "/docs"; then
-            log_success "API server started successfully on port $api_port"
+        if check_service_health "$SERVICE" "$server_port" "/api/devices/health"; then
+            log_success "Unified server started successfully on port $server_port"
             return 0
         fi
         
         # Check if process is still running
-        if ! kill -0 "$api_pid" 2>/dev/null; then
-            log_error "API server process died"
-            cat "$api_log_file" | tail -10
+        if ! kill -0 "$pid" 2>/dev/null; then
+            log_error "Unified server process died"
+            cat "$log_file" | tail -10
             return 1
         fi
         
@@ -59,60 +59,7 @@ start_api_server() {
         attempts=$((attempts + 1))
     done
     
-    log_error "API server failed to start within 60 seconds"
-    return 1
-}
-
-# Start dashboard
-start_dashboard() {
-    log_info "Starting dashboard..."
-    
-    # Resolve port conflicts
-    local dashboard_port
-    dashboard_port=$(resolve_port_conflict "$DASHBOARD_PORT" "$DASHBOARD_SERVICE")
-    if [ $? -ne 0 ]; then
-        log_error "Failed to resolve dashboard port conflict"
-        return 1
-    fi
-    
-    # Start dashboard
-    local dashboard_pid_file="$PID_DIR/${DASHBOARD_SERVICE}.pid"
-    local dashboard_log_file="$LOG_DIR/dashboard.log"
-    
-    cd "$PROJECT_ROOT"
-    
-    # Set dashboard port environment variable if different
-    if [ "$dashboard_port" != "$DASHBOARD_PORT" ]; then
-        export DASHBOARD_PORT="$dashboard_port"
-    fi
-    
-    nohup "$VENV_PATH/bin/python" dashboard_app.py \
-        > "$dashboard_log_file" 2>&1 &
-    
-    local dashboard_pid=$!
-    echo "$dashboard_pid" > "$dashboard_pid_file"
-    
-    # Wait for dashboard to start
-    log_info "Waiting for dashboard to start (PID: $dashboard_pid, Port: $dashboard_port)..."
-    local attempts=0
-    while [ $attempts -lt 30 ]; do
-        if check_service_health "$DASHBOARD_SERVICE" "$dashboard_port" "/"; then
-            log_success "Dashboard started successfully on port $dashboard_port"
-            return 0
-        fi
-        
-        # Check if process is still running
-        if ! kill -0 "$dashboard_pid" 2>/dev/null; then
-            log_error "Dashboard process died"
-            cat "$dashboard_log_file" | tail -10
-            return 1
-        fi
-        
-        sleep 2
-        attempts=$((attempts + 1))
-    done
-    
-    log_error "Dashboard failed to start within 60 seconds"
+    log_error "Unified server failed to start within 60 seconds"
     return 1
 }
 
@@ -121,10 +68,10 @@ pre_flight_checks() {
     log_info "Running pre-flight checks..."
     
     # Check if already running
-    if is_process_running "$API_SERVICE" && is_process_running "$DASHBOARD_SERVICE"; then
-        log_warn "Both services are already running"
+    if is_process_running "$SERVICE"; then
+        log_warn "Unified server is already running"
         log_info "Use './scripts/status.sh' to check status"
-        log_info "Use './scripts/stop.sh' to stop services first"
+        log_info "Use './scripts/stop.sh' to stop service first"
         return 1
     fi
     
@@ -165,32 +112,15 @@ pre_flight_checks() {
 post_start_validation() {
     log_info "Running post-start validation..."
     
-    local api_healthy=false
-    local dashboard_healthy=false
-    
-    # Check API health
-    if check_service_health "$API_SERVICE" "$API_PORT" "/docs"; then
-        api_healthy=true
-        log_success "API server is healthy"
-    else
-        log_error "API server health check failed"
-    fi
-    
-    # Check dashboard health  
-    if check_service_health "$DASHBOARD_SERVICE" "$DASHBOARD_PORT" "/"; then
-        dashboard_healthy=true
-        log_success "Dashboard is healthy"
-    else
-        log_error "Dashboard health check failed"
-    fi
-    
-    if [ "$api_healthy" = true ] && [ "$dashboard_healthy" = true ]; then
-        log_success "All services are healthy and running"
-        log_info "API: http://localhost:$API_PORT"
-        log_info "Dashboard: http://localhost:$DASHBOARD_PORT"
+    # Check unified server health
+    if check_service_health "$SERVICE" "$PORT" "/api/devices/health"; then
+        log_success "Unified server is healthy"
+        log_info "Dashboard: http://localhost:$PORT"
+        log_info "API Health: http://localhost:$PORT/api/devices/health"
+        log_info "API Docs: http://localhost:$PORT/docs"
         return 0
     else
-        log_error "Some services failed health checks"
+        log_error "Unified server health check failed"
         return 1
     fi
 }
@@ -215,7 +145,7 @@ attempt_recovery() {
 
 # Main execution
 main() {
-    echo "🚀 Fingerprint Time Logger - Starting Application"
+    echo "🚀 Fingerprint Time Logger - Starting Unified Server"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "📁 Project Root: $PROJECT_ROOT"
     
@@ -225,32 +155,30 @@ main() {
         exit 1
     fi
     
-    # Start services with recovery
+    # Start service with recovery
     local start_attempts=0
     local max_start_attempts=2
     
     while [ $start_attempts -lt $max_start_attempts ]; do
-        log_info "Starting services (attempt $((start_attempts + 1))/$max_start_attempts)..."
+        log_info "Starting unified server (attempt $((start_attempts + 1))/$max_start_attempts)..."
         
-        # Start API server
-        if start_api_server; then
-            # Start dashboard
-            if start_dashboard; then
-                # Validate both services
-                if post_start_validation; then
-                    log_success "Application started successfully!"
-                    echo ""
-                    echo "🌐 Access URLs:"
-                    echo "   📊 Dashboard: http://localhost:$DASHBOARD_PORT"
-                    echo "   🔌 API Server: http://localhost:$API_PORT"
-                    echo "   📖 API Docs: http://localhost:$API_PORT/docs"
-                    echo ""
-                    echo "📋 Management Commands:"
-                    echo "   Status: ./scripts/status.sh"
-                    echo "   Stop:   ./scripts/stop.sh"
-                    echo ""
-                    exit 0
-                fi
+        # Start unified server
+        if start_unified_server; then
+            # Validate service
+            if post_start_validation; then
+                log_success "Application started successfully!"
+                echo ""
+                echo "🌐 Access URLs:"
+                echo "   📊 Dashboard: http://localhost:$PORT"
+                echo "   🔌 API Health: http://localhost:$PORT/api/devices/health"
+                echo "   📖 API Docs: http://localhost:$PORT/docs"
+                echo ""
+                echo "📋 Management Commands:"
+                echo "   Status: ./scripts/status.sh"
+                echo "   Stop:   ./scripts/stop.sh"
+                echo "   Restart: ./scripts/restart.sh"
+                echo ""
+                exit 0
             fi
         fi
         
