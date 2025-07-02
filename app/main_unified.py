@@ -12,6 +12,11 @@ from datetime import datetime
 from app.core.config import settings
 from app.core.database import engine, Base
 from app.api import (
+    consolidated_attendance, consolidated_devices, consolidated_employees, 
+    consolidated_export
+)
+# Legacy APIs for backward compatibility (will be removed in Phase 4 cleanup)
+from app.api import (
     attendance, devices, employees, sync, thai_names, diagnostics, 
     control, work_schedules, employee_schedules, unlimited_sync, 
     roles, time_check, calendar_api, employees_unified
@@ -92,21 +97,27 @@ app.add_middleware(
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Include API routers
-app.include_router(attendance.router, prefix="/api/attendance", tags=["attendance"])
-app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
-app.include_router(employees_unified.router, prefix="/api/employees-unified", tags=["employees-unified"])
-app.include_router(employees.router, prefix="/api/employees-legacy", tags=["employees-legacy"])
-app.include_router(thai_names.router, prefix="/api/thai-names", tags=["thai-names"])
-app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
-app.include_router(diagnostics.router, prefix="/api/diagnostics", tags=["diagnostics"])
-app.include_router(control.router, prefix="/api/control", tags=["control"])
-app.include_router(work_schedules.router, prefix="/api/work-schedules", tags=["work-schedules"])
-app.include_router(employee_schedules.router, prefix="/api/employee-schedules", tags=["employee-schedules"])
-app.include_router(unlimited_sync.router, prefix="/api/unlimited-sync", tags=["unlimited-sync"])
-app.include_router(roles.router, prefix="/api/roles", tags=["roles"])
-app.include_router(time_check.router, prefix="/api/time-check", tags=["time-check"])
-app.include_router(calendar_api.router, prefix="/api/calendar", tags=["calendar"])
+# Include Consolidated API routers - Phase 4 Simplification
+app.include_router(consolidated_attendance.router, prefix="/api/attendance", tags=["attendance"])
+app.include_router(consolidated_devices.router, prefix="/api/devices", tags=["devices"])
+app.include_router(consolidated_employees.router, prefix="/api/employees", tags=["employees"])
+app.include_router(consolidated_export.router, prefix="/api/export", tags=["export"])
+
+# Legacy API routers for backward compatibility (Phase 4 cleanup will remove these)
+app.include_router(attendance.router, prefix="/api/legacy/attendance", tags=["legacy-attendance"])
+app.include_router(devices.router, prefix="/api/legacy/devices", tags=["legacy-devices"])
+app.include_router(employees_unified.router, prefix="/api/legacy/employees-unified", tags=["legacy-employees-unified"])
+app.include_router(employees.router, prefix="/api/legacy/employees", tags=["legacy-employees"])
+app.include_router(thai_names.router, prefix="/api/legacy/thai-names", tags=["legacy-thai-names"])
+app.include_router(sync.router, prefix="/api/legacy/sync", tags=["legacy-sync"])
+app.include_router(diagnostics.router, prefix="/api/legacy/diagnostics", tags=["legacy-diagnostics"])
+app.include_router(control.router, prefix="/api/legacy/control", tags=["legacy-control"])
+app.include_router(work_schedules.router, prefix="/api/legacy/work-schedules", tags=["legacy-work-schedules"])
+app.include_router(employee_schedules.router, prefix="/api/legacy/employee-schedules", tags=["legacy-employee-schedules"])
+app.include_router(unlimited_sync.router, prefix="/api/legacy/unlimited-sync", tags=["legacy-unlimited-sync"])
+app.include_router(roles.router, prefix="/api/legacy/roles", tags=["legacy-roles"])
+app.include_router(time_check.router, prefix="/api/legacy/time-check", tags=["legacy-time-check"])
+app.include_router(calendar_api.router, prefix="/api/legacy/calendar", tags=["legacy-calendar"])
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")
