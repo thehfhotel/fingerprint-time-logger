@@ -5,15 +5,18 @@ Fingerprint time logger for ZKTeco biometric devices.
 ## Quick Start
 
 ```bash
-# Start application
-./scripts/start.sh
+# Start unified server
+./scripts/start_simple.sh
 
 # Use application
 # Dashboard: http://localhost:5000
-# API: http://localhost:8000
+# API: Same server on port 5000
 
 # Stop application  
-./scripts/stop.sh
+./scripts/stop_simple.sh
+
+# Check status
+./scripts/status_simple.sh
 ```
 
 ## Development
@@ -31,8 +34,8 @@ python3 -m pytest
 
 ## Architecture
 
-- **FastAPI API (8000)**: Attendance data, device management
-- **Flask Dashboard (5000)**: Web interface
+- **Unified FastAPI Server (5000)**: All functionality in single process
+- **Static Dashboard**: HTML/CSS/JS served by FastAPI  
 - **SQLite Database**: Local storage
 - **ZKTeco Integration**: pyzk library
 
@@ -56,18 +59,15 @@ python3 -m pytest
 ## Development Commands
 
 ```bash
-# API server
-uvicorn app.main:app --reload --port 8000
-
-# Dashboard
-python dashboard_app.py
+# Unified server
+uvicorn app.main_unified:app --reload --port 5000
 
 # Database
 alembic revision --autogenerate -m "description"
 alembic upgrade head
 
 # Tests
-pytest -v
+python3 -m pytest -v
 ```
 
 ## Environment
