@@ -1,8 +1,10 @@
-# Core API & Web Server
+# ============================================================================
+# ESSENTIAL DEPENDENCIES - Unified FastAPI Fingerprint Time Logger
+# ============================================================================
+
+# Core API & Web Server (FastAPI only - Flask removed)
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-flask==3.0.0
-flask-socketio==5.3.6
 
 # Database & ORM (SQLite-focused for single-user)
 sqlalchemy==2.0.23
@@ -24,12 +26,18 @@ python-dotenv==1.0.0
 pytest==7.4.3
 pytest-asyncio==0.21.1
 
-# Production Server (REQUIRED for production deployment)
-gunicorn==23.0.0
-eventlet==0.40.1
+# ============================================================================
+# REMOVED DEPENDENCIES (Post-Simplification)
+# ============================================================================
+# flask==3.0.0                 # Removed: Dual server eliminated, using FastAPI only
+# flask-socketio==5.3.6        # Removed: Using FastAPI WebSocket instead
+# gunicorn==23.0.0             # Removed: Using uvicorn for ASGI, gunicorn for WSGI not needed
+# eventlet==0.40.1             # Removed: Flask-SocketIO dependency, not needed with FastAPI WebSocket
 
-# Optional: Remove if not using PostgreSQL/Redis/Celery
-# psycopg2-binary==2.9.9  # Only needed for PostgreSQL
-# redis==5.0.1            # Only needed for caching
-# celery==5.3.4           # Only needed for background tasks
-# websockets==12.0        # Only needed for advanced WebSocket features
+# ============================================================================
+# OPTIONAL DEPENDENCIES (Not currently used)
+# ============================================================================
+# psycopg2-binary==2.9.9      # Only needed for PostgreSQL (using SQLite)
+# redis==5.0.1                # Only needed for caching (not implemented)
+# celery==5.3.4               # Only needed for background tasks (simplified to basic async)
+# websockets==12.0            # Only needed for advanced WebSocket features (FastAPI built-in sufficient)

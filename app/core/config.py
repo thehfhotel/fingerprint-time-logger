@@ -1,48 +1,131 @@
+"""
+Unified Configuration for Fingerprint Time Logger
+Simplified configuration management for the unified FastAPI system
+"""
+
 from pydantic_settings import BaseSettings
+from typing import Optional
 
 
 class Settings(BaseSettings):
+    """
+    Unified settings for the fingerprint time logger application.
+    All configuration values are centralized here with clear defaults.
+    """
+    
+    # ========================================================================
+    # DATABASE CONFIGURATION
+    # ========================================================================
     database_url: str = "sqlite:///./attendance.db"
     
-    zkteco_host: str = "192.168.1.201"
+    # ========================================================================
+    # ZKTECO DEVICE CONFIGURATION  
+    # ========================================================================
+    zkteco_host: str = "192.168.100.209"  # Updated to current working device
     zkteco_port: int = 4370
     zkteco_password: int = 0
     zkteco_timeout: int = 5
+    zkteco_max_retries: int = 3
     
-    redis_url: str = "redis://localhost:6379/0"
+    # ========================================================================
+    # SERVER CONFIGURATION (Unified FastAPI)
+    # ========================================================================
+    server_host: str = "0.0.0.0"
+    server_port: int = 5000  # Unified server port (was dual 5000/8000)
+    secret_key: str = "fingerprint-time-logger-2025"
     
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
-    secret_key: str = "your-secret-key-change-this"
-    
-    sync_interval: int = 30
-    max_retries: int = 3
-    
+    # ========================================================================
+    # LOGGING CONFIGURATION
+    # ========================================================================
     log_level: str = "INFO"
     
-    # Clear device attendance after successful sync
-    CLEAR_DEVICE_AFTER_SYNC: bool = False
+    # ========================================================================
+    # SYNC & PERFORMANCE SETTINGS
+    # ========================================================================
+    sync_interval_seconds: int = 30
+    clear_device_after_sync: bool = False
     
-    # Feature flags for sync system redesign
-    feature_error_classification: bool = False
-    feature_enhanced_circuit_breaker: bool = False
-    feature_multi_dimensional_health: bool = False
-    feature_auto_error_recovery: bool = False
-    feature_graduated_states_ui: bool = False
+    # ========================================================================
+    # EXPORT SETTINGS (Simplified)
+    # ========================================================================
+    export_max_records: int = 50000
+    export_timeout_seconds: int = 300
+    export_default_format: str = "csv"
     
-    # CSV Export Configuration
-    csv_export_streaming_threshold: int = 10000  # Auto-enable streaming above this count
-    csv_export_max_batch_size: int = 10000  # Maximum batch size for exports
-    csv_export_default_batch_size: int = 1000  # Default batch size
-    csv_export_timeout: int = 300  # Export timeout in seconds (5 minutes)
-    csv_export_chunk_size: int = 8192  # Response chunk size in bytes
+    # ========================================================================
+    # DEVELOPMENT vs PRODUCTION
+    # ========================================================================
+    environment: str = "development"  # development, production
+    debug: bool = True
+    
+    @property
+    def is_production(self) -> bool:
+        """Check if running in production environment"""
+        return self.environment.lower() == "production"
+    
+    @property
+    def is_development(self) -> bool:
+        """Check if running in development environment"""
+        return self.environment.lower() == "development"
 
     class Config:
         env_file = ".env"
+        env_prefix = "FINGERPRINT_"  # Environment variables prefix
+        case_sensitive = False
 
 
+# Global settings instance
 settings = Settings()
 
-def get_settings():
-    """Get settings instance"""
+
+def get_settings() -> Settings:
+    """
+    Get the global settings instance.
+    This function provides dependency injection for FastAPI endpoints.
+    """
     return settings
+
+
+def get_database_url() -> str:
+    """Get the database URL for SQLAlchemy"""
+    return settings.database_url
+
+
+def get_device_config() -> dict:
+    """Get ZKTeco device configuration as a dictionary"""
+    return {
+        "host": settings.zkteco_host,
+        "port": settings.zkteco_port, 
+        "password": settings.zkteco_password,
+        "timeout": settings.zkteco_timeout,
+        "max_retries": settings.zkteco_max_retries,
+    }
+
+
+def get_server_config() -> dict:
+    """Get server configuration for uvicorn"""
+    return {
+        "host": settings.server_host,
+        "port": settings.server_port,
+        "log_level": settings.log_level.lower(),
+        "reload": settings.is_development,
+    }
+
+
+# ============================================================================
+# REMOVED CONFIGURATIONS (Post-Simplification)
+# ============================================================================
+# The following configurations were removed during simplification:
+#
+# - redis_url: Redis caching eliminated 
+# - api_host/api_port: Dual server eliminated, using server_host/server_port
+# - feature_error_classification: Complex error handling simplified
+# - feature_enhanced_circuit_breaker: Circuit breaker pattern removed
+# - feature_multi_dimensional_health: Complex health monitoring simplified  
+# - feature_auto_error_recovery: Auto-recovery complexity removed
+# - feature_graduated_states_ui: UI state complexity simplified
+# - csv_export_streaming_threshold: Streaming complexity removed
+# - csv_export_max_batch_size: Batch processing simplified
+# - csv_export_default_batch_size: Default export handling simplified
+# - csv_export_chunk_size: Response chunking handled by FastAPI
+# ============================================================================
