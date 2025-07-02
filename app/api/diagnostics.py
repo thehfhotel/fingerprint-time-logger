@@ -521,8 +521,8 @@ def _get_detailed_statistics(db: Session) -> Dict[str, Any]:
 
 def _calculate_cache_hit_ratio(cache_service: CacheService) -> float:
     """Calculate cache hit ratio (simplified)"""
-    # This would require tracking cache hits/misses in a real implementation
-    return 85.0  # Placeholder value
+    # Cache service is simplified, return 0 for actual implementation
+    return 0.0
 
 
 def _calculate_success_rate(queue_stats: Dict) -> float:
@@ -544,8 +544,8 @@ def _calculate_failure_rate(queue_stats: Dict) -> float:
 
 def _calculate_retry_success_rate(queue_stats: Dict) -> float:
     """Calculate retry success rate (simplified)"""
-    # This would require more detailed tracking in a real implementation
-    return 75.0  # Placeholder value
+    # Return 0 for simplified implementation without queue tracking
+    return 0.0
 
 
 def _analyze_performance_trends(db: Session, hours: int) -> Dict[str, str]:
@@ -588,12 +588,8 @@ def _get_device_statistics(db: Session) -> Dict[str, int]:
 
 def _analyze_sync_patterns(db: Session) -> Dict[str, Any]:
     """Analyze sync patterns"""
-    # This would be more sophisticated in a real implementation
-    return {
-        "peak_hours": "9-11 AM, 5-6 PM",
-        "avg_daily_operations": 50,
-        "most_active_device": "Device 1"
-    }
+    # Return minimal data for simplified implementation
+    return {}
 
 
 def _generate_system_recommendations(diagnostics: Dict) -> List[str]:

@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 from typing import Dict, List, Optional
 from datetime import datetime, date, time
+
+from app.models.models import Employee
 import calendar
 
 from app.core.database import get_db
@@ -170,19 +172,10 @@ async def get_monthly_calendar(
         total_employees = len(employee_calendar_data)
         total_working_days = len(working_days)
         
+        # Calculate actual statistics from database
         statistics = {
             "total_employees": total_employees,
-            "total_working_days": total_working_days,
-            "perfect_attendance_rate": 85.0,  # Mock data
-            "punctuality_rate": 92.0,         # Mock data
-            "average_late_minutes": 12.5,     # Mock data
-            "violation_count": 15,            # Mock data
-            "absent_count": 8,                # Mock data
-            "role_breakdown": [
-                {"role_name": "maid", "employee_count": 5, "punctuality_rate": 90.0},
-                {"role_name": "office", "employee_count": 3, "punctuality_rate": 95.0},
-                {"role_name": "maintenance", "employee_count": 2, "punctuality_rate": 88.0}
-            ]
+            "total_working_days": total_working_days
         }
         
         return {
@@ -327,13 +320,11 @@ async def get_monthly_statistics(
     db: Session = Depends(get_db)
 ):
     """Get monthly statistics"""
+    # Get actual employee count
+    employees = db.query(Employee).filter(Employee.is_active == True).count()
+    
     return {
         "year": year,
         "month": month,
-        "total_employees": 10,
-        "perfect_attendance_rate": 85.0,
-        "punctuality_rate": 92.0,
-        "average_late_minutes": 12.5,
-        "violation_count": 15,
-        "absent_count": 8
+        "total_employees": employees
     }

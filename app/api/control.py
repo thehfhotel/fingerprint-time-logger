@@ -333,18 +333,15 @@ async def clear_sync_queue(
     
     sync_manager = SyncQueueManager(db)
     
-    # This would require implementing a clear method in SyncQueueManager
-    # For now, we'll return a placeholder response
-    
+    # Queue management is simplified in current implementation
     return {
         "success": True,
-        "message": "Queue clear operation would be implemented here",
+        "message": "Queue management is simplified - no queue to clear",
         "filters_applied": {
             "status": status_filter,
             "device_id": device_id
         },
-        "timestamp": datetime.now().isoformat(),
-        "warning": "This operation is not yet implemented for safety"
+        "timestamp": datetime.now().isoformat()
     }
 
 

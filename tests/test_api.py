@@ -29,7 +29,10 @@ def test_attendance_endpoint():
     response = client.get("/api/attendance/")
     assert response.status_code == 200
     data = response.json()
-    assert isinstance(data, list)
+    assert isinstance(data, dict)
+    assert "records" in data
+    assert "total" in data
+    assert isinstance(data["records"], list)
 
 
 def test_employees_endpoint():
@@ -45,8 +48,10 @@ def test_export_formats_endpoint():
     response = client.get("/api/export/formats")
     assert response.status_code == 200
     data = response.json()
-    assert isinstance(data, list)
-    assert "csv" in data
+    assert isinstance(data, dict)
+    assert "formats" in data
+    assert "available_exports" in data
+    assert "csv" in data["formats"]
 
 
 def test_404_endpoint():

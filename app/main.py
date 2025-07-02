@@ -62,33 +62,4 @@ async def health_check():
     return {"status": "healthy"}
 
 
-# Direct calendar endpoints for testing
-@app.get("/api/attendance/calendar/config")
-async def get_calendar_config_direct():
-    """Direct calendar config endpoint"""
-    return {
-        "status": "working",
-        "message": "Direct calendar config endpoint",
-        "violation_threshold_minutes": 15,
-        "status_colors": {
-            "perfect": "#22c55e",
-            "minor_issue": "#eab308", 
-            "violation": "#ef4444",
-            "absent": "#9ca3af",
-            "non_working": "#3b82f6"
-        }
-    }
-
-
-@app.get("/api/attendance/calendar/{year}/{month}")
-async def get_calendar_data_direct(year: int, month: int):
-    """Direct calendar data endpoint"""
-    return {
-        "status": "working",
-        "message": "Direct calendar data endpoint",
-        "year": year,
-        "month": month,
-        "employees": [],
-        "holidays": [],
-        "weekends": []
-    }
+# These endpoints are handled by the calendar API router

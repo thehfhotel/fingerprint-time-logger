@@ -209,8 +209,7 @@ async def export_device_status_report():
                 
                 report["device_data"] = {
                     "users_count": len(users),
-                    "records_count": len(records),
-                    "sample_users": users[:5] if users else [],  # First 5 users as sample
+                    "records_count": len(records)
                 }
         except Exception as e:
             report["device_data_error"] = str(e)
