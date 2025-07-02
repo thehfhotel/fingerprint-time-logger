@@ -79,3 +79,9 @@ ZKTECO_PORT=4370
 ```
 
 **Focus**: Simple, functional single-user system.
+
+## Development Workflow
+
+**Commit Strategy**: Follow `COMMIT_STRATEGY.md` for granular commits at every development step.
+
+**Database Schema**: See `database_schema.md` for complete ERD and table documentation.
