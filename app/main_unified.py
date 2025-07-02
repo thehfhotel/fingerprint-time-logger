@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.database import engine, Base
 from app.api import (
     consolidated_attendance, consolidated_devices, consolidated_employees, 
-    consolidated_export
+    consolidated_export, employee_management
 )
 # Legacy APIs for backward compatibility (will be removed in Phase 4 cleanup)
 from app.api import (
@@ -102,6 +102,7 @@ app.include_router(consolidated_attendance.router, prefix="/api/attendance", tag
 app.include_router(consolidated_devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(consolidated_employees.router, prefix="/api/employees", tags=["employees"])
 app.include_router(consolidated_export.router, prefix="/api/export", tags=["export"])
+app.include_router(employee_management.router, prefix="/api/employees/management", tags=["employee-management"])
 
 # Legacy API routers for backward compatibility (Phase 4 cleanup will remove these)
 app.include_router(attendance.router, prefix="/api/legacy/attendance", tags=["legacy-attendance"])
@@ -160,6 +161,10 @@ async def serve_dashboard():
 @app.get("/thai-names")
 async def serve_thai_names():
     return FileResponse("static/thai_names.html")
+
+@app.get("/employee-management")
+async def serve_employee_management():
+    return FileResponse("static/employee_management.html")
 
 @app.get("/work-schedules")
 async def serve_work_schedules():
