@@ -262,17 +262,17 @@
 </head>
 <body>
     <div class="header">
-        <div class="nav-container">
-            <div class="logo">
-                <h1>🕐 Fingerprint Time Logger</h1>
+        <div class="header-row-1">
+            <h1>System Status Dashboard</h1>
+        </div>
+        <div class="header-row-2">
+            <div class="header-actions">
+                <a href="/" class="action-btn">📊 Dashboard</a>
+                <a href="/employee-management" class="action-btn">👥 Employee Management</a>
+                <a href="/work-schedules" class="action-btn">⏰ Work Schedules</a>
+                <a href="/attendance-calendar" class="action-btn">📅 Attendance Calendar</a>
+                <a href="/status" class="action-btn" style="background: #4299e1; color: white;">🔍 Status</a>
             </div>
-            <nav class="main-nav">
-                <a href="/">Dashboard</a>
-                <a href="/employee-management">Employee Management</a>
-                <a href="/work-schedules">Work Schedules</a>
-                <a href="/attendance-calendar">Calendar</a>
-                <a href="/status" class="active">Status</a>
-            </nav>
         </div>
     </div>
 
@@ -320,6 +320,10 @@
                     <div class="metric-row">
                         <span class="metric-label">Firmware</span>
                         <span class="metric-value" id="device-firmware">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Device Clock</span>
+                        <span class="metric-value" id="device-clock">Loading...</span>
                     </div>
                 </div>
             </div>
@@ -532,6 +536,44 @@
                     deviceHealth.ip_address || 'N/A';
                 document.getElementById('device-firmware').textContent = 
                     deviceHealth.firmware || 'N/A';
+                
+                // Load device clock separately
+                this.loadDeviceClock();
+            }
+
+            async loadDeviceClock() {
+                try {
+                    const response = await fetch('/api/devices/time');
+                    const data = await response.json();
+                    const deviceClockElement = document.getElementById('device-clock');
+                    
+                    if (data.success) {
+                        const deviceTime = new Date(data.device_time);
+                        const timeString = deviceTime.toLocaleString('en-US', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric'
+                        });
+                        
+                        // Add sync indicator
+                        const syncIcon = data.synchronized ? '🟢' : '🔴';
+                        deviceClockElement.innerHTML = `${syncIcon} ${timeString}`;
+                        deviceClockElement.title = data.synchronized 
+                            ? 'Device clock is synchronized' 
+                            : `Device clock is ${Math.abs(data.time_difference_seconds).toFixed(0)}s off`;
+                    } else {
+                        deviceClockElement.innerHTML = '❌ Unavailable';
+                        deviceClockElement.title = data.message || 'Device clock unavailable';
+                    }
+                } catch (error) {
+                    console.error('Error loading device clock:', error);
+                    const deviceClockElement = document.getElementById('device-clock');
+                    deviceClockElement.innerHTML = '❌ Error';
+                    deviceClockElement.title = 'Error loading device clock';
+                }
             }
 
             updateDatabaseHealth(dbHealth) {
