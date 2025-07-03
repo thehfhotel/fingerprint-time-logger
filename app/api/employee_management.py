@@ -92,7 +92,7 @@ async def get_all_employees(
     query = db.query(Employee).options(
         joinedload(Employee.job_role),
         joinedload(Employee.attendance_records)
-    ).filter(Employee.is_active == True)
+    )
     
     # Apply filters
     if not show_hidden:
@@ -192,14 +192,13 @@ async def get_employee_by_badge(badge_number: str, db: Session = Depends(get_db)
     employee = db.query(Employee).options(
         joinedload(Employee.job_role)
     ).filter(
-        Employee.badge_number == badge_number,
-        Employee.is_active == True
+        Employee.badge_number == badge_number
     ).first()
     
     if not employee:
         raise HTTPException(
             status_code=404, 
-            detail=f"Employee not found for badge number: {badge_number}"
+            detail=f"Employee not found for badge number: {badge_number}. The employee may not exist in the database."
         )
     
     # Get latest attendance
@@ -240,14 +239,13 @@ async def update_employee(
     Update individual employee information
     """
     employee = db.query(Employee).filter(
-        Employee.badge_number == badge_number,
-        Employee.is_active == True
+        Employee.badge_number == badge_number
     ).first()
     
     if not employee:
         raise HTTPException(
             status_code=404,
-            detail=f"Employee not found for badge number: {badge_number}"
+            detail=f"Employee not found for badge number: {badge_number}. The employee may not exist in the database."
         )
     
     # Update fields if provided
@@ -294,8 +292,7 @@ async def bulk_update_employees(
     
     # Verify all employees exist
     employees = db.query(Employee).filter(
-        Employee.badge_number.in_(bulk_request.badge_numbers),
-        Employee.is_active == True
+        Employee.badge_number.in_(bulk_request.badge_numbers)
     ).all()
     
     found_badges = [emp.badge_number for emp in employees]

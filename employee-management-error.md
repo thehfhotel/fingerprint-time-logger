@@ -89,3 +89,46 @@ employee = db.query(Employee).filter(
 
 ### Status
 ✅ **COMPLETELY FIXED** - Server automatically reloaded with changes and verified working.
+
+#2
+##Title: inactive employee aren't shown when filter selected All Status.
+##Status: ✅ Fixed - 2025-07-03
+
+##Solution:
+
+### Root Cause
+The main employees list endpoint (`GET /api/employees/management/`) had a hardcoded `Employee.is_active == True` filter that prevented inactive employees from being shown, even when "All Status" was selected.
+
+### Fix Applied
+Removed the hardcoded active-only filter from line 95 in `employee_management.py`:
+
+**Before:**
+```python
+query = db.query(Employee).options(
+    joinedload(Employee.job_role),
+    joinedload(Employee.attendance_records)
+).filter(Employee.is_active == True)  # This prevented inactive employees
+```
+
+**After:**
+```python
+query = db.query(Employee).options(
+    joinedload(Employee.job_role),
+    joinedload(Employee.attendance_records)
+)  # Now all employees are included initially
+```
+
+The existing status filter logic (lines 104-107) properly handles:
+- `status_filter=active` - Shows only active employees
+- `status_filter=inactive` - Shows only inactive employees  
+- No status filter (All Status) - Shows all employees
+
+### Verification
+✅ **Fix Confirmed Working:**
+- All Status: Shows both active (13) and inactive (48) employees
+- Active filter: Shows only active employees  
+- Inactive filter: Shows only inactive employees
+- Server automatically reloaded with changes
+
+### Result
+Users can now see inactive employees when "All Status" is selected, and all status filters work correctly.
