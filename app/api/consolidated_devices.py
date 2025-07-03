@@ -267,6 +267,31 @@ async def get_device_time():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/time/sync")
+async def sync_device_time():
+    """Sync device time to current server time"""
+    try:
+        result = device_service.set_device_time()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/time/set")
+async def set_device_time(target_time: str):
+    """Set device time to specific timestamp (ISO format)"""
+    try:
+        from datetime import datetime
+        # Parse the ISO timestamp
+        target_datetime = datetime.fromisoformat(target_time.replace('Z', '+00:00'))
+        result = device_service.set_device_time(target_datetime)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid timestamp format: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # DEVICE CONFIGURATION
 # ============================================================================

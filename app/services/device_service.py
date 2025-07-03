@@ -245,6 +245,51 @@ class SimpleDeviceService:
                 return {"success": False, "message": f"Failed to get device time: {str(e)}"}
         else:
             return {"success": False, "message": "Could not connect to device"}
+    
+    def set_device_time(self, target_time: Optional[datetime] = None) -> Dict[str, Any]:
+        """Set device clock time"""
+        device = self.get_default_device()
+        if not device:
+            return {"success": False, "message": "No device configured"}
+        
+        # Use current server time if no target time specified
+        if target_time is None:
+            target_time = datetime.now()
+        
+        conn = self.connect_to_device(device)
+        if conn:
+            try:
+                # Get current device time before setting
+                old_device_time = conn.get_time()
+                
+                # Set new device time
+                conn.set_time(target_time)
+                
+                # Verify the time was set by reading it back
+                new_device_time = conn.get_time()
+                
+                # Calculate time difference
+                time_diff = (new_device_time - target_time).total_seconds()
+                
+                conn.disconnect()
+                return {
+                    "success": True,
+                    "message": "Device time updated successfully",
+                    "old_time": old_device_time.isoformat(),
+                    "target_time": target_time.isoformat(),
+                    "new_time": new_device_time.isoformat(),
+                    "time_difference_seconds": time_diff,
+                    "synchronized": abs(time_diff) < 5  # Consider synchronized if within 5 seconds
+                }
+            except Exception as e:
+                logger.error(f"Failed to set device time: {e}")
+                try:
+                    conn.disconnect()
+                except:
+                    pass
+                return {"success": False, "message": f"Failed to set device time: {str(e)}"}
+        else:
+            return {"success": False, "message": "Could not connect to device"}
 
 
 # Global service instance

@@ -235,6 +235,28 @@
             font-style: italic;
         }
 
+        .sync-btn {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .sync-btn:hover {
+            background: #2563eb;
+            transform: translateY(-1px);
+        }
+
+        .sync-btn:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            transform: none;
+        }
+
         select {
             padding: 0.25rem 0.5rem;
             border: 1px solid #d1d5db;
@@ -324,6 +346,10 @@
                     <div class="metric-row">
                         <span class="metric-label">Device Clock</span>
                         <span class="metric-value" id="device-clock">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Time Sync</span>
+                        <button id="sync-device-time" class="sync-btn" onclick="syncDeviceTime()">🔄 Sync to Server Time</button>
                     </div>
                 </div>
             </div>
@@ -691,6 +717,70 @@
             showError(message) {
                 console.error(message);
                 // Could show toast notification here
+            }
+        }
+
+        // Function to sync device time
+        async function syncDeviceTime() {
+            const syncBtn = document.getElementById('sync-device-time');
+            const deviceClockElement = document.getElementById('device-clock');
+            
+            // Disable button and show loading state
+            syncBtn.disabled = true;
+            syncBtn.textContent = '⏳ Syncing...';
+            
+            try {
+                const response = await fetch('/api/devices/time/sync', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Show success message
+                    syncBtn.textContent = '✅ Synced!';
+                    syncBtn.style.background = '#10b981';
+                    
+                    // Update device clock display
+                    const newTime = new Date(result.new_time);
+                    const timeString = newTime.toLocaleString('en-US', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric'
+                    });
+                    const syncIcon = result.synchronized ? '🟢' : '🔴';
+                    deviceClockElement.innerHTML = `${syncIcon} ${timeString}`;
+                    deviceClockElement.title = result.synchronized 
+                        ? 'Device clock is synchronized' 
+                        : `Device clock is ${Math.abs(result.time_difference_seconds).toFixed(0)}s off`;
+                    
+                    // Reset button after 3 seconds
+                    setTimeout(() => {
+                        syncBtn.textContent = '🔄 Sync to Server Time';
+                        syncBtn.style.background = '#3b82f6';
+                        syncBtn.disabled = false;
+                    }, 3000);
+                } else {
+                    throw new Error(result.message || 'Sync failed');
+                }
+                
+            } catch (error) {
+                console.error('Error syncing device time:', error);
+                syncBtn.textContent = '❌ Failed';
+                syncBtn.style.background = '#ef4444';
+                
+                // Reset button after 3 seconds
+                setTimeout(() => {
+                    syncBtn.textContent = '🔄 Sync to Server Time';
+                    syncBtn.style.background = '#3b82f6';
+                    syncBtn.disabled = false;
+                }, 3000);
             }
         }
 
