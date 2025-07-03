@@ -37,6 +37,11 @@ class SimpleAttendanceService:
             if employee_badge:
                 query = query.filter(AttendanceRecord.employee_badge_number == employee_badge)
             
+            # Filter out future dates (year 2065 and beyond)
+            current_year = datetime.now().year
+            max_year = current_year + 5  # Allow up to 5 years in the future for clock skew
+            query = query.filter(AttendanceRecord.timestamp < datetime(max_year, 1, 1))
+            
             # Order by timestamp (most recent first) and limit
             records = query.order_by(desc(AttendanceRecord.timestamp)).limit(limit).all()
             return records
@@ -47,8 +52,11 @@ class SimpleAttendanceService:
         """Get simple attendance summary for dashboard"""
         db = next(get_db())
         try:
-            # Get recent records (last 100)
+            # Get recent records (last 100), filtering out future dates
+            current_year = datetime.now().year
+            max_year = current_year + 5  # Allow up to 5 years in the future for clock skew
             records = db.query(AttendanceRecord)\
+                       .filter(AttendanceRecord.timestamp < datetime(max_year, 1, 1))\
                        .order_by(desc(AttendanceRecord.timestamp))\
                        .limit(100)\
                        .all()

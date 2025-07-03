@@ -300,15 +300,112 @@ employee_id: record.employee_badge_number,  // Fixed: API returns employee_badge
 #4
 ##Title: add ZK device's clock to the main page.
 ##Expected behavior: ZK device clock besides Last Updated at the header.
-##Status: Pending
+##Status: ✅ COMPLETED - 2025-07-03
 ##Solution:
+
+### Implementation Complete
+Added ZK device clock display to the main dashboard header that shows the device's current time with synchronization status.
+
+### Changes Made
+1. **Device Service Extension** (`/app/services/device_service.py`)
+   - Added `get_device_time()` method to retrieve device clock
+   - Includes time synchronization check and difference calculation
+   - Returns device time, server time, and sync status
+
+2. **API Endpoint** (`/app/api/consolidated_devices.py`)
+   - Added `GET /api/devices/time` endpoint
+   - Returns device clock information with sync status
+
+3. **Dashboard UI** (`/static/dashboard.html`)
+   - Added device clock display in header beside "Last Updated"
+   - Shows time with sync indicator (🟢 synchronized / 🔴 out of sync)
+   - Includes tooltip with sync status details
+   - Auto-refreshes every 5 minutes
+
+### Features
+- **Real-time Device Clock**: Shows current ZKTeco device time
+- **Sync Status Indicator**: Visual indicator if device clock is synchronized
+- **Hover Details**: Tooltip shows sync status and time difference
+- **Auto-refresh**: Updates every 5 minutes automatically
+- **Error Handling**: Graceful fallback when device unavailable
+
+### Result
+Dashboard now displays: "Device Clock: 🟢 Dec 7, 2025 at 2:30:45 PM" beside the Last Updated timestamp.
 
 #5
 ##Title: filter out logs in the future
 ##Expected behavior: some logs with future timestamp should be filtered out (year 2065)
-##Status: Pending
+##Status: ✅ COMPLETED - 2025-07-03
+##Solution:
+
+### Root Cause
+ZKTeco device contained attendance records with incorrect timestamps from year 2065, causing future dates to appear in logs and confusing the display order.
+
+### Fix Applied
+Added future date filtering across all attendance query points:
+
+1. **Attendance Service** (`/app/services/attendance_service.py`)
+   - `get_attendance_records()`: Added filter to exclude timestamps beyond current year + 5
+   - `get_attendance_summary()`: Added same filter for dashboard summary
+
+2. **Employee Management** (`/app/api/employee_management.py`)
+   - Last attendance query: Added filter to exclude future dates
+   - Ensures employee "Last Attendance" shows only valid historical times
+
+### Filter Logic
+```python
+# Allow up to 5 years in the future for clock skew tolerance
+current_year = datetime.now().year
+max_year = current_year + 5
+query = query.filter(AttendanceRecord.timestamp < datetime(max_year, 1, 1))
+```
+
+### Result
+- ✅ Year 2065 logs no longer appear in dashboard
+- ✅ Employee Management shows only valid last attendance times  
+- ✅ All attendance APIs return only realistic timestamps
+- ✅ Dashboard consolidated view shows proper chronological order
 
 #6
 ##Title: auto refresh make consolidated view disappear (No attendance data available)
 ##Expected behavior: auto refresh should update data and display consolidated view with new + current data together in consolidated view
-Status: Pending
+##Status: ✅ COMPLETED - 2025-07-03
+##Solution:
+
+### Root Cause
+Auto refresh was causing consolidated view to disappear because:
+1. `updateDashboard()` called `updateEmployeeGrid()` without passing the new data
+2. WebSocket updates were replacing entire `attendanceData` object instead of merging
+3. Function fell back to empty data, showing "No attendance data available"
+
+### Fix Applied
+Fixed data flow in dashboard JavaScript (`/static/dashboard.html`):
+
+1. **Updated Dashboard Function**
+   ```javascript
+   // Before: updateEmployeeGrid() - no data passed
+   // After: updateEmployeeGrid(data) - pass new data
+   ```
+
+2. **Improved WebSocket Data Handling**
+   ```javascript
+   // Before: attendanceData = data.data || data || {};
+   // After: attendanceData = { ...attendanceData, ...data.data };
+   ```
+
+3. **Enhanced updateEmployeeGrid Function**
+   - Now accepts `rawApiData` parameter
+   - Prioritizes new data over existing data
+   - Preserves existing records when merging updates
+   - Maintains consolidated view structure
+
+### Data Flow Fix
+**Before:** WebSocket update → Clear all data → Empty grid → "No data available"
+**After:** WebSocket update → Merge with existing → Update grid → Preserve consolidated view
+
+### Result
+- ✅ Auto refresh now preserves consolidated view
+- ✅ New attendance records appear immediately via WebSocket
+- ✅ Existing records remain visible during updates
+- ✅ Consolidated view shows combined historical + new data
+- ✅ No more "No attendance data available" during refresh

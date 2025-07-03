@@ -19,6 +19,9 @@
             <h1>Employee Time Log Dashboard</h1>
             <div class="last-update-display">
                 Last Update: <span id="lastUpdate">Never</span>
+                <div style="margin-top: 5px; font-size: 0.9em; color: #666;">
+                    Device Clock: <span id="deviceClock">Loading...</span>
+                </div>
             </div>
         </div>
         <div class="header-row-2">
@@ -97,7 +100,10 @@
         
         socket.on('attendance_update', function(data) {
             console.log('Received attendance update:', data);
-            attendanceData = data.data || data || {};
+            // Preserve existing data structure and merge with new data
+            if (data.data) {
+                attendanceData = { ...attendanceData, ...data.data };
+            }
             updateDashboard(data);
         });
         
@@ -123,8 +129,8 @@
             
             lastUpdate.textContent = data.last_update || data.timestamp || new Date().toLocaleString();
             
-            // Update employee grid
-            updateEmployeeGrid();
+            // Update employee grid with new data
+            updateEmployeeGrid(data);
         }
         
         // Load Thai names data
@@ -320,6 +326,46 @@
         // Add event listener for import button
         document.getElementById('importButton').addEventListener('click', importFingerprintLog);
         
+        // Load device clock
+        async function loadDeviceClock() {
+            try {
+                const response = await fetch('/api/devices/time');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                const deviceClockElement = document.getElementById('deviceClock');
+                
+                if (data.success) {
+                    const deviceTime = new Date(data.device_time);
+                    const timeString = deviceTime.toLocaleString('en-US', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric'
+                    });
+                    
+                    // Add sync indicator
+                    const syncIcon = data.synchronized ? '🟢' : '🔴';
+                    deviceClockElement.innerHTML = `${syncIcon} ${timeString}`;
+                    deviceClockElement.title = data.synchronized 
+                        ? 'Device clock is synchronized' 
+                        : `Device clock is ${Math.abs(data.time_difference_seconds).toFixed(0)}s off`;
+                } else {
+                    deviceClockElement.innerHTML = '❌ Unavailable';
+                    deviceClockElement.title = data.message || 'Device clock unavailable';
+                }
+            } catch (error) {
+                console.error('Error loading device clock:', error);
+                const deviceClockElement = document.getElementById('deviceClock');
+                deviceClockElement.innerHTML = '❌ Error';
+                deviceClockElement.title = 'Error loading device clock';
+            }
+        }
+        
         // Initial load with offline fallback
         async function loadInitialData() {
             try {
@@ -328,6 +374,9 @@
                 // Load Thai names first
                 await loadThaiNames();
                 console.log('Thai names loaded');
+                
+                // Load device clock
+                loadDeviceClock();
                 
                 // Then load attendance data
                 const response = await fetch('/api/attendance');
@@ -352,6 +401,9 @@
                 lastUpdate.textContent = new Date().toLocaleString();
                 
                 console.log('Initial data load completed successfully');
+                
+                // Set up periodic device clock refresh (every 5 minutes)
+                setInterval(loadDeviceClock, 300000);
                 
             } catch (error) {
                 console.error('Error loading initial data:', error);

@@ -257,6 +257,16 @@ async def preview_attendance_data():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/time")
+async def get_device_time():
+    """Get device clock time"""
+    try:
+        result = device_service.get_device_time()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # DEVICE CONFIGURATION
 # ============================================================================

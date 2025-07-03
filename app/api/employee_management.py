@@ -127,8 +127,13 @@ async def get_all_employees(
     result = []
     for employee in employees:
         # Get latest attendance record
+        # Get latest attendance, filtering out future dates
+        from datetime import datetime
+        current_year = datetime.now().year
+        max_year = current_year + 5  # Allow up to 5 years in the future for clock skew
         latest_attendance = db.query(AttendanceRecord)\
             .filter(AttendanceRecord.employee_badge_number == employee.badge_number)\
+            .filter(AttendanceRecord.timestamp < datetime(max_year, 1, 1))\
             .order_by(desc(AttendanceRecord.timestamp))\
             .first()
         

@@ -211,6 +211,40 @@ class SimpleDeviceService:
                 return {"connected": False, "message": "Device connection failed"}
         else:
             return {"connected": False, "message": "Could not connect to device"}
+    
+    def get_device_time(self) -> Dict[str, Any]:
+        """Get device clock time"""
+        device = self.get_default_device()
+        if not device:
+            return {"success": False, "message": "No device configured"}
+        
+        conn = self.connect_to_device(device)
+        if conn:
+            try:
+                # Get device time
+                device_time = conn.get_time()
+                server_time = datetime.now()
+                
+                # Calculate time difference
+                time_diff = (device_time - server_time).total_seconds()
+                
+                conn.disconnect()
+                return {
+                    "success": True,
+                    "device_time": device_time.isoformat(),
+                    "server_time": server_time.isoformat(),
+                    "time_difference_seconds": time_diff,
+                    "synchronized": abs(time_diff) < 60  # Consider synchronized if within 1 minute
+                }
+            except Exception as e:
+                logger.error(f"Failed to get device time: {e}")
+                try:
+                    conn.disconnect()
+                except:
+                    pass
+                return {"success": False, "message": f"Failed to get device time: {str(e)}"}
+        else:
+            return {"success": False, "message": "Could not connect to device"}
 
 
 # Global service instance
