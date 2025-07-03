@@ -258,7 +258,7 @@ async def preview_attendance_data():
 
 
 @router.get("/time")
-async def get_device_time(auto_sync: bool = Query(True, description="Automatically sync if difference > 3 minutes")):
+async def get_device_time(auto_sync: bool = Query(True, description="Automatically sync if difference > 30 seconds")):
     """Get device clock time with optional auto-sync"""
     try:
         result = device_service.get_device_time(auto_sync=auto_sync)

@@ -660,7 +660,7 @@
                             : `Device clock is ${Math.abs(data.time_difference_seconds).toFixed(0)}s off`;
                         
                         if (data.auto_synced) {
-                            tooltipText += ' (Auto-synchronized due to >3min difference)';
+                            tooltipText += ' (Auto-synchronized due to >30s difference)';
                         }
                         
                         deviceClockElement.title = tooltipText;

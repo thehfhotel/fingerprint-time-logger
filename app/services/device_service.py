@@ -213,7 +213,7 @@ class SimpleDeviceService:
             return {"connected": False, "message": "Could not connect to device"}
     
     def get_device_time(self, auto_sync: bool = True) -> Dict[str, Any]:
-        """Get device clock time with optional auto-sync when difference > 3 minutes"""
+        """Get device clock time with optional auto-sync when difference > 30 seconds"""
         device = self.get_default_device()
         if not device:
             return {"success": False, "message": "No device configured"}
@@ -230,8 +230,8 @@ class SimpleDeviceService:
                 original_time_diff = time_diff  # Store original difference
                 auto_synced = False
                 
-                # Auto-sync if difference is more than 3 minutes (180 seconds)
-                if auto_sync and abs(time_diff) > 180:
+                # Auto-sync if difference is more than 30 seconds
+                if auto_sync and abs(time_diff) > 30:
                     logger.warning(f"Device time differs by {time_diff:.1f} seconds. Auto-syncing...")
                     try:
                         # Set device time to server time
