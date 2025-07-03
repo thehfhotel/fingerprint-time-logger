@@ -212,8 +212,8 @@ class SimpleDeviceService:
         else:
             return {"connected": False, "message": "Could not connect to device"}
     
-    def get_device_time(self) -> Dict[str, Any]:
-        """Get device clock time"""
+    def get_device_time(self, auto_sync: bool = True) -> Dict[str, Any]:
+        """Get device clock time with optional auto-sync when difference > 3 minutes"""
         device = self.get_default_device()
         if not device:
             return {"success": False, "message": "No device configured"}
@@ -227,15 +227,46 @@ class SimpleDeviceService:
                 
                 # Calculate time difference
                 time_diff = (device_time - server_time).total_seconds()
+                original_time_diff = time_diff  # Store original difference
+                auto_synced = False
+                
+                # Auto-sync if difference is more than 3 minutes (180 seconds)
+                if auto_sync and abs(time_diff) > 180:
+                    logger.warning(f"Device time differs by {time_diff:.1f} seconds. Auto-syncing...")
+                    try:
+                        # Set device time to server time
+                        conn.set_time(server_time)
+                        
+                        # Verify the sync
+                        new_device_time = conn.get_time()
+                        new_time_diff = (new_device_time - server_time).total_seconds()
+                        
+                        logger.info(f"Auto-sync completed. New difference: {new_time_diff:.1f} seconds")
+                        auto_synced = True
+                        
+                        # Update variables with new values
+                        device_time = new_device_time
+                        time_diff = new_time_diff
+                        
+                    except Exception as sync_error:
+                        logger.error(f"Auto-sync failed: {sync_error}")
+                        # Continue with original values if sync fails
                 
                 conn.disconnect()
-                return {
+                result = {
                     "success": True,
                     "device_time": device_time.isoformat(),
                     "server_time": server_time.isoformat(),
                     "time_difference_seconds": time_diff,
-                    "synchronized": abs(time_diff) < 60  # Consider synchronized if within 1 minute
+                    "synchronized": abs(time_diff) < 60,  # Consider synchronized if within 1 minute
+                    "auto_synced": auto_synced
                 }
+                
+                if auto_synced:
+                    result["message"] = f"Device time was automatically synchronized (was {original_time_diff:.1f}s off)"
+                
+                return result
+                
             except Exception as e:
                 logger.error(f"Failed to get device time: {e}")
                 try:

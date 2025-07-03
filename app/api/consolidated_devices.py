@@ -4,7 +4,7 @@ Replaces: devices.py, sync.py, unlimited_sync.py, control.py, diagnostics.py
 """
 
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -258,10 +258,10 @@ async def preview_attendance_data():
 
 
 @router.get("/time")
-async def get_device_time():
-    """Get device clock time"""
+async def get_device_time(auto_sync: bool = Query(True, description="Automatically sync if difference > 3 minutes")):
+    """Get device clock time with optional auto-sync"""
     try:
-        result = device_service.get_device_time()
+        result = device_service.get_device_time(auto_sync=auto_sync)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -277,13 +277,16 @@ async def sync_device_time():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class SetTimeRequest(BaseModel):
+    target_time: str
+
 @router.post("/time/set")
-async def set_device_time(target_time: str):
+async def set_device_time(request: SetTimeRequest):
     """Set device time to specific timestamp (ISO format)"""
     try:
         from datetime import datetime
         # Parse the ISO timestamp
-        target_datetime = datetime.fromisoformat(target_time.replace('Z', '+00:00'))
+        target_datetime = datetime.fromisoformat(request.target_time.replace('Z', '+00:00'))
         result = device_service.set_device_time(target_datetime)
         return result
     except ValueError as e:
