@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Status - Fingerprint Time Logger</title>
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/modal.css">
+    <style>
+        .status-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .status-header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+
+        .status-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e5e7eb;
+            overflow: hidden;
+        }
+
+        .status-card-header {
+            background: #f9fafb;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid #e5e7eb;
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .status-card-content {
+            padding: 1.5rem;
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .status-healthy {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .status-warning {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .status-error {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .dot-green {
+            background-color: #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        .dot-yellow {
+            background-color: #f59e0b;
+        }
+
+        .dot-red {
+            background-color: #ef4444;
+        }
+
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid #f3f4f6;
+        }
+
+        .metric-row:last-child {
+            border-bottom: none;
+        }
+
+        .metric-label {
+            color: #6b7280;
+            font-size: 0.875rem;
+        }
+
+        .metric-value {
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .logs-section {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e5e7eb;
+            margin-top: 2rem;
+        }
+
+        .logs-header {
+            background: #f9fafb;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logs-controls {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .logs-content {
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 1rem;
+        }
+
+        .log-entry {
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+            padding: 0.5rem;
+            border-bottom: 1px solid #f3f4f6;
+            display: flex;
+            gap: 1rem;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-timestamp {
+            color: #6b7280;
+            white-space: nowrap;
+        }
+
+        .log-level {
+            font-weight: 600;
+            min-width: 60px;
+        }
+
+        .log-level.INFO {
+            color: #059669;
+        }
+
+        .log-level.WARNING {
+            color: #d97706;
+        }
+
+        .log-level.ERROR {
+            color: #dc2626;
+        }
+
+        .log-message {
+            color: #374151;
+            word-break: break-all;
+        }
+
+        .refresh-button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: background-color 0.2s;
+        }
+
+        .refresh-button:hover {
+            background: #2563eb;
+        }
+
+        .refresh-button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: #6b7280;
+        }
+
+        .loading-spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f4f6;
+            border-top: 2px solid #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .empty-logs {
+            text-align: center;
+            color: #6b7280;
+            padding: 2rem;
+            font-style: italic;
+        }
+
+        select {
+            padding: 0.25rem 0.5rem;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 0.875rem;
+        }
+
+        @media (max-width: 768px) {
+            .status-container {
+                padding: 1rem;
+            }
+            
+            .status-grid {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+            
+            .logs-controls {
+                flex-direction: column;
+                gap: 0.5rem;
+                align-items: stretch;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="nav-container">
+            <div class="logo">
+                <h1>🕐 Fingerprint Time Logger</h1>
+            </div>
+            <nav class="main-nav">
+                <a href="/">Dashboard</a>
+                <a href="/employee-management">Employee Management</a>
+                <a href="/work-schedules">Work Schedules</a>
+                <a href="/attendance-calendar">Calendar</a>
+                <a href="/status" class="active">Status</a>
+            </nav>
+        </div>
+    </div>
+
+    <div class="status-container">
+        <div class="status-header">
+            <h1>System Status</h1>
+            <p>Comprehensive system health monitoring and operational logs</p>
+        </div>
+
+        <!-- Status Cards Grid -->
+        <div class="status-grid">
+            <!-- Overall System Health -->
+            <div class="status-card">
+                <div class="status-card-header">
+                    <span>🔍 System Health</span>
+                </div>
+                <div class="status-card-content">
+                    <div style="text-align: center; margin-bottom: 1rem;">
+                        <span id="overall-status" class="status-indicator status-healthy">
+                            <span class="status-dot dot-green"></span>
+                            System Healthy
+                        </span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Last Check</span>
+                        <span class="metric-value" id="last-check">Loading...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Device Health -->
+            <div class="status-card">
+                <div class="status-card-header">
+                    <span>📱 Device Connection</span>
+                </div>
+                <div class="status-card-content">
+                    <div class="metric-row">
+                        <span class="metric-label">ZKTeco Device</span>
+                        <span class="metric-value" id="device-status">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">IP Address</span>
+                        <span class="metric-value" id="device-ip">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Firmware</span>
+                        <span class="metric-value" id="device-firmware">Loading...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Database Health -->
+            <div class="status-card">
+                <div class="status-card-header">
+                    <span>🗄️ Database</span>
+                </div>
+                <div class="status-card-content">
+                    <div class="metric-row">
+                        <span class="metric-label">Connection</span>
+                        <span class="metric-value" id="db-status">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Total Employees</span>
+                        <span class="metric-value" id="total-employees">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Attendance Records</span>
+                        <span class="metric-value" id="total-records">Loading...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Resources -->
+            <div class="status-card">
+                <div class="status-card-header">
+                    <span>💾 System Resources</span>
+                </div>
+                <div class="status-card-content">
+                    <div class="metric-row">
+                        <span class="metric-label">Disk Usage</span>
+                        <span class="metric-value" id="disk-usage">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Disk Free</span>
+                        <span class="metric-value" id="disk-free">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Total Disk</span>
+                        <span class="metric-value" id="disk-total">Loading...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Application Statistics -->
+            <div class="status-card">
+                <div class="status-card-header">
+                    <span>📊 Application Stats</span>
+                </div>
+                <div class="status-card-content">
+                    <div class="metric-row">
+                        <span class="metric-label">Active Employees</span>
+                        <span class="metric-value" id="active-employees">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Today's Records</span>
+                        <span class="metric-value" id="today-records">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Last Record</span>
+                        <span class="metric-value" id="last-record">Loading...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Performance Metrics -->
+            <div class="status-card">
+                <div class="status-card-header">
+                    <span>⚡ Performance</span>
+                </div>
+                <div class="status-card-content">
+                    <div class="metric-row">
+                        <span class="metric-label">DB Query Time</span>
+                        <span class="metric-value" id="query-time">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">API Status</span>
+                        <span class="metric-value" id="api-status">Loading...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Recent Activity</span>
+                        <span class="metric-value" id="recent-activity">Loading...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Logs Section -->
+        <div class="logs-section">
+            <div class="logs-header">
+                <h2>📋 System Logs</h2>
+                <div class="logs-controls">
+                    <select id="log-filter">
+                        <option value="all">All Logs</option>
+                        <option value="connection">Connection</option>
+                        <option value="sync">Sync</option>
+                        <option value="error">Errors</option>
+                        <option value="api">API</option>
+                    </select>
+                    <button id="refresh-logs" class="refresh-button">
+                        <span id="refresh-icon">🔄</span> Refresh
+                    </button>
+                    <div class="auto-refresh">
+                        <input type="checkbox" id="auto-refresh" checked>
+                        <label for="auto-refresh">Auto-refresh (30s)</label>
+                    </div>
+                </div>
+            </div>
+            <div class="logs-content" id="logs-content">
+                <div class="empty-logs">Loading system logs...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class StatusPage {
+            constructor() {
+                this.autoRefreshInterval = null;
+                this.isLoading = false;
+                this.init();
+            }
+
+            init() {
+                this.setupEventListeners();
+                this.loadSystemHealth();
+                this.loadLogs();
+                this.startAutoRefresh();
+            }
+
+            setupEventListeners() {
+                document.getElementById('refresh-logs').addEventListener('click', () => {
+                    this.loadLogs();
+                });
+
+                document.getElementById('log-filter').addEventListener('change', () => {
+                    this.loadLogs();
+                });
+
+                document.getElementById('auto-refresh').addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        this.startAutoRefresh();
+                    } else {
+                        this.stopAutoRefresh();
+                    }
+                });
+            }
+
+            async loadSystemHealth() {
+                try {
+                    const response = await fetch('/api/system/health');
+                    const data = await response.json();
+
+                    this.updateOverallStatus(data);
+                    this.updateDeviceHealth(data.device_health || {});
+                    this.updateDatabaseHealth(data.database_health || {});
+                    this.updateSystemResources(data.system_resources || {});
+                    this.updateApplicationStats(data.application_stats || {});
+
+                    // Load performance metrics separately
+                    await this.loadPerformanceMetrics();
+
+                } catch (error) {
+                    console.error('Failed to load system health:', error);
+                    this.showError('Failed to load system health');
+                }
+            }
+
+            async loadPerformanceMetrics() {
+                try {
+                    const response = await fetch('/api/system/metrics');
+                    const data = await response.json();
+
+                    this.updatePerformanceMetrics(data);
+                } catch (error) {
+                    console.error('Failed to load performance metrics:', error);
+                }
+            }
+
+            updateOverallStatus(data) {
+                const statusElement = document.getElementById('overall-status');
+                const lastCheckElement = document.getElementById('last-check');
+
+                const status = data.overall_status || 'unknown';
+                const timestamp = new Date(data.timestamp).toLocaleString();
+
+                // Update status indicator
+                statusElement.className = 'status-indicator';
+                statusElement.innerHTML = '';
+
+                if (status === 'healthy') {
+                    statusElement.classList.add('status-healthy');
+                    statusElement.innerHTML = '<span class="status-dot dot-green"></span>System Healthy';
+                } else if (status === 'degraded') {
+                    statusElement.classList.add('status-warning');
+                    statusElement.innerHTML = '<span class="status-dot dot-yellow"></span>System Degraded';
+                } else {
+                    statusElement.classList.add('status-error');
+                    statusElement.innerHTML = '<span class="status-dot dot-red"></span>System Error';
+                }
+
+                lastCheckElement.textContent = timestamp;
+            }
+
+            updateDeviceHealth(deviceHealth) {
+                document.getElementById('device-status').textContent = 
+                    deviceHealth.connected ? '✅ Connected' : '❌ Disconnected';
+                document.getElementById('device-ip').textContent = 
+                    deviceHealth.ip_address || 'N/A';
+                document.getElementById('device-firmware').textContent = 
+                    deviceHealth.firmware || 'N/A';
+            }
+
+            updateDatabaseHealth(dbHealth) {
+                document.getElementById('db-status').textContent = 
+                    dbHealth.accessible ? '✅ Connected' : '❌ Error';
+                document.getElementById('total-employees').textContent = 
+                    dbHealth.total_employees || '0';
+                document.getElementById('total-records').textContent = 
+                    (dbHealth.total_attendance_records || 0).toLocaleString();
+            }
+
+            updateSystemResources(resources) {
+                document.getElementById('disk-usage').textContent = 
+                    `${resources.disk_usage_percent || 0}%`;
+                document.getElementById('disk-free').textContent = 
+                    `${resources.disk_free_gb || 0} GB`;
+                document.getElementById('disk-total').textContent = 
+                    `${resources.disk_total_gb || 0} GB`;
+            }
+
+            updateApplicationStats(appStats) {
+                const employees = appStats.employees || {};
+                const attendance = appStats.attendance || {};
+
+                document.getElementById('active-employees').textContent = 
+                    `${employees.active || 0} / ${employees.total || 0}`;
+                document.getElementById('today-records').textContent = 
+                    attendance.today_records || '0';
+                document.getElementById('last-record').textContent = 
+                    attendance.last_record_time ? 
+                        new Date(attendance.last_record_time).toLocaleString() : 
+                        'No records';
+            }
+
+            updatePerformanceMetrics(metrics) {
+                const apiPerf = metrics.api_performance || {};
+                const activity = metrics.activity_metrics || {};
+
+                document.getElementById('query-time').textContent = 
+                    `${apiPerf.db_query_time_ms || 0}ms`;
+                document.getElementById('api-status').textContent = 
+                    apiPerf.status === 'healthy' ? '✅ Fast' : '⚠️ Slow';
+                
+                const last24h = activity.last_24_hours || {};
+                document.getElementById('recent-activity').textContent = 
+                    `${last24h.attendance_records || 0} records`;
+            }
+
+            async loadLogs() {
+                if (this.isLoading) return;
+                
+                this.isLoading = true;
+                const refreshButton = document.getElementById('refresh-logs');
+                const refreshIcon = document.getElementById('refresh-icon');
+                
+                refreshButton.disabled = true;
+                refreshIcon.innerHTML = '<div class="loading-spinner"></div>';
+
+                try {
+                    const logType = document.getElementById('log-filter').value;
+                    const response = await fetch(`/api/system/logs?log_type=${logType}&limit=50`);
+                    const data = await response.json();
+
+                    this.displayLogs(data.logs || []);
+                } catch (error) {
+                    console.error('Failed to load logs:', error);
+                    this.displayLogs([]);
+                } finally {
+                    this.isLoading = false;
+                    refreshButton.disabled = false;
+                    refreshIcon.textContent = '🔄';
+                }
+            }
+
+            displayLogs(logs) {
+                const logsContent = document.getElementById('logs-content');
+                
+                if (logs.length === 0) {
+                    logsContent.innerHTML = '<div class="empty-logs">No logs found for the selected filter.</div>';
+                    return;
+                }
+
+                const logsHtml = logs.map(log => `
+                    <div class="log-entry">
+                        <span class="log-timestamp">${new Date(log.timestamp).toLocaleTimeString()}</span>
+                        <span class="log-level ${log.level}">${log.level}</span>
+                        <span class="log-message">${this.escapeHtml(log.message)}</span>
+                    </div>
+                `).join('');
+
+                logsContent.innerHTML = logsHtml;
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            startAutoRefresh() {
+                this.stopAutoRefresh();
+                this.autoRefreshInterval = setInterval(() => {
+                    this.loadSystemHealth();
+                    this.loadLogs();
+                }, 30000); // 30 seconds
+            }
+
+            stopAutoRefresh() {
+                if (this.autoRefreshInterval) {
+                    clearInterval(this.autoRefreshInterval);
+                    this.autoRefreshInterval = null;
+                }
+            }
+
+            showError(message) {
+                console.error(message);
+                // Could show toast notification here
+            }
+        }
+
+        // Initialize status page when DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            new StatusPage();
+        });
+    </script>
+</body>
+</html>

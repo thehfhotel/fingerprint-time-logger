@@ -488,6 +488,9 @@
             </div>
             <div class="nav-buttons">
                 <a href="/" class="nav-btn">🏠 Dashboard</a>
+                <a href="/work-schedules" class="nav-btn">⏰ Work Schedules</a>
+                <a href="/attendance-calendar" class="nav-btn">📅 Calendar</a>
+                <a href="/status" class="nav-btn">🔍 Status</a>
             </div>
         </div>
     </div>
@@ -704,7 +707,7 @@
                 attendanceDisplay = `
                     <div class="last-attendance">
                         <div class="attendance-time">${attendanceDate.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})}</div>
-                        <div class="attendance-date">${attendanceDate.toLocaleDateString('en-US', {month: 'short', day: 'numeric'})}</div>
+                        <div class="attendance-date">${attendanceDate.toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'})}</div>
                         <span class="attendance-type ${typeClass}">${employee.last_attendance_type}</span>
                     </div>
                 `;

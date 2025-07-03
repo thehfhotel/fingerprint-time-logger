@@ -26,6 +26,7 @@
                 <a href="/employee-management" class="action-btn thai-names-btn">👥 Employee Management</a>
                 <a href="/work-schedules" class="action-btn">⏰ Work Schedules</a>
                 <a href="/attendance-calendar" class="action-btn">📅 Attendance Calendar</a>
+                <a href="/status" class="action-btn">🔍 Status</a>
                 <button id="exportButton" class="action-btn export-btn">📊 Export CSV</button>
                 <button id="importButton" class="action-btn import-btn">📥 Import Fingerprint Log</button>
             </div>
@@ -170,7 +171,7 @@
                     const status = record.punch_type === 0 ? 'Check-in' : 'Check-out';
                     
                     return {
-                        employee_id: record.employee_id,
+                        employee_id: record.employee_badge_number,  // Fixed: API returns employee_badge_number
                         time: timestamp.toLocaleTimeString('en-US', {hour12: false}),
                         date: timestamp.toLocaleDateString(),
                         status: status,

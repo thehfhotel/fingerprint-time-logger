@@ -79,7 +79,7 @@ class SimpleDeviceService:
                 attendance_data.append({
                     'user_id': str(record.user_id),
                     'timestamp': record.timestamp,
-                    'punch_type': record.punch_type,
+                    'punch_type': record.punch,  # ZKTeco library uses 'punch' not 'punch_type'
                     'status': record.status
                 })
             

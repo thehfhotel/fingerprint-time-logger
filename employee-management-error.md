@@ -132,3 +132,29 @@ The existing status filter logic (lines 104-107) properly handles:
 
 ### Result
 Users can now see inactive employees when "All Status" is selected, and all status filters work correctly.
+
+#3
+##Title: Last Attendance should show time and date with year
+##Expected behavior:
+07:05 AM
+Oct 13, 2025
+instead of
+07:05 AM
+Oct 13
+##Status: ✅ Fixed - 2025-07-03
+
+##Solution:
+Modified the date formatting in `employee_management.html` line 710 to include the year:
+
+**Before:**
+```javascript
+<div class="attendance-date">${attendanceDate.toLocaleDateString('en-US', {month: 'short', day: 'numeric'})}</div>
+```
+
+**After:**
+```javascript
+<div class="attendance-date">${attendanceDate.toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'})}</div>
+```
+
+Now the Last Attendance column displays dates with the year (e.g., "Oct 13, 2025") as requested.
+

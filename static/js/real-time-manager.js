@@ -17,7 +17,7 @@ class RealTimeManager {
     
     init() {
         this.setupEventListeners();
-        this.createStatusUI();
+        // Status UI moved to dedicated /status page
         this.startHealthMonitoring();
         this.startPeriodicRefresh();
     }
@@ -44,156 +44,13 @@ class RealTimeManager {
         });
     }
     
-    createStatusUI() {
-        // Create status bar
-        const statusBar = document.createElement('div');
-        statusBar.id = 'connection-status';
-        statusBar.className = 'connection-status';
-        statusBar.innerHTML = `
-            <div class="status-indicator">
-                <span class="status-dot online" id="status-dot"></span>
-                <span class="status-text" id="status-text">Connected</span>
-            </div>
-            <button id="refresh-btn" class="refresh-btn" onclick="realTimeManager.refreshData()">
-                <span class="refresh-icon">⟳</span> Refresh
-            </button>
-        `;
-        
-        document.body.appendChild(statusBar);
-        
-        // Add CSS styles
-        this.addStatusStyles();
-    }
+    // Status UI removed - now available on dedicated /status page
     
-    addStatusStyles() {
-        const styles = document.createElement('style');
-        styles.textContent = `
-            .connection-status {
-                position: fixed;
-                top: 10px;
-                right: 10px;
-                background: rgba(0, 0, 0, 0.8);
-                color: white;
-                padding: 0.5rem;
-                border-radius: 8px;
-                z-index: 1000;
-                display: flex;
-                align-items: center;
-                gap: 1rem;
-                font-size: 0.85rem;
-                backdrop-filter: blur(10px);
-            }
-            
-            .status-indicator {
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-            }
-            
-            .status-dot {
-                width: 8px;
-                height: 8px;
-                border-radius: 50%;
-                display: inline-block;
-            }
-            
-            .status-dot.online {
-                background-color: #4caf50;
-                animation: pulse 2s infinite;
-            }
-            
-            .status-dot.offline {
-                background-color: #f44336;
-                animation: none;
-            }
-            
-            .status-dot.connecting {
-                background-color: #ff9800;
-                animation: spin 1s linear infinite;
-            }
-            
-            .refresh-btn {
-                background: rgba(255, 255, 255, 0.2);
-                border: 1px solid rgba(255, 255, 255, 0.3);
-                color: white;
-                padding: 0.25rem 0.5rem;
-                border-radius: 4px;
-                font-size: 0.8rem;
-                cursor: pointer;
-                transition: all 0.2s ease;
-            }
-            
-            .refresh-btn:hover {
-                background: rgba(255, 255, 255, 0.3);
-                transform: translateY(-1px);
-            }
-            
-            .refresh-btn:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
-                transform: none;
-            }
-            
-            @keyframes pulse {
-                0% { opacity: 1; }
-                50% { opacity: 0.7; }
-                100% { opacity: 1; }
-            }
-            
-            @keyframes spin {
-                0% { transform: rotate(0deg); }
-                100% { transform: rotate(360deg); }
-            }
-            
-            .notification {
-                position: fixed;
-                top: 70px;
-                right: 10px;
-                background: rgba(0, 0, 0, 0.9);
-                color: white;
-                padding: 1rem;
-                border-radius: 8px;
-                z-index: 1001;
-                max-width: 300px;
-                backdrop-filter: blur(10px);
-                transform: translateX(100%);
-                transition: transform 0.3s ease;
-            }
-            
-            .notification.show {
-                transform: translateX(0);
-            }
-            
-            .notification.success {
-                border-left: 4px solid #4caf50;
-            }
-            
-            .notification.error {
-                border-left: 4px solid #f44336;
-            }
-            
-            .notification.warning {
-                border-left: 4px solid #ff9800;
-            }
-        `;
-        
-        document.head.appendChild(styles);
-    }
+    // Status styles removed - styling now in dedicated /status page
     
     updateConnectionStatus() {
-        const statusDot = document.getElementById('status-dot');
-        const statusText = document.getElementById('status-text');
-        const refreshBtn = document.getElementById('refresh-btn');
-        
-        if (this.isOnline) {
-            statusDot.className = 'status-dot online';
-            statusText.textContent = 'Connected';
-            refreshBtn.disabled = false;
-        } else {
-            statusDot.className = 'status-dot offline';
-            statusText.textContent = 'Offline';
-            refreshBtn.disabled = true;
-        }
+        // Connection status now tracked on dedicated /status page
+        // This method kept for compatibility but no longer updates UI elements
     }
     
     showOfflineNotification() {
@@ -273,13 +130,8 @@ class RealTimeManager {
             return;
         }
         
-        const statusDot = document.getElementById('status-dot');
-        const refreshBtn = document.getElementById('refresh-btn');
-        
         try {
-            // Show connecting state
-            statusDot.className = 'status-dot connecting';
-            refreshBtn.disabled = true;
+            // Status UI removed - functionality moved to /status page
             
             // Refresh attendance data
             if (window.updateDashboard) {
@@ -315,9 +167,7 @@ class RealTimeManager {
                 'error'
             );
         } finally {
-            // Restore online state
-            statusDot.className = 'status-dot online';
-            refreshBtn.disabled = false;
+            // Status management moved to /status page
         }
     }
     
@@ -330,11 +180,7 @@ class RealTimeManager {
             clearInterval(this.refreshInterval);
         }
         
-        // Remove UI elements
-        const statusBar = document.getElementById('connection-status');
-        if (statusBar) {
-            statusBar.remove();
-        }
+        // UI elements now managed by /status page
         
         // Remove event listeners
         window.removeEventListener('online', this.updateConnectionStatus);

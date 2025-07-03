@@ -104,6 +104,10 @@ app.include_router(consolidated_employees.router, prefix="/api/employees", tags=
 app.include_router(consolidated_export.router, prefix="/api/export", tags=["export"])
 app.include_router(employee_management.router, prefix="/api/employees/management", tags=["employee-management"])
 
+# System Status API - New comprehensive status monitoring
+from app.api import system_status
+app.include_router(system_status.router, prefix="/api/system", tags=["system-status"])
+
 # Legacy API routers for backward compatibility (Phase 4 cleanup will remove these)
 app.include_router(attendance.router, prefix="/api/legacy/attendance", tags=["legacy-attendance"])
 app.include_router(devices.router, prefix="/api/legacy/devices", tags=["legacy-devices"])
@@ -173,6 +177,10 @@ async def serve_work_schedules():
 @app.get("/attendance-calendar")
 async def serve_attendance_calendar():
     return FileResponse("static/attendance_calendar.html")
+
+@app.get("/status")
+async def serve_status():
+    return FileResponse("static/status.html")
 
 @app.get("/health")
 async def health_check():
