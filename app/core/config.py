@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # ========================================================================
     # DATABASE CONFIGURATION
     # ========================================================================
-    database_url: str = "sqlite:///./attendance.db"
+    database_url: str = "sqlite:///./database/attendance.db"
     
     # ========================================================================
     # ZKTECO DEVICE CONFIGURATION  

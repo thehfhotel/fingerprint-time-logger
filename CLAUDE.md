@@ -29,7 +29,7 @@ Fingerprint time logger for ZKTeco biometric devices.
 pip install -r requirements.txt
 
 # Database migrations
-alembic upgrade head
+alembic -c database/alembic.ini upgrade head
 
 # Run tests
 python3 -m pytest
@@ -66,8 +66,8 @@ python3 -m pytest
 uvicorn app.main_unified:app --reload --port 5000
 
 # Database
-alembic revision --autogenerate -m "description"
-alembic upgrade head
+alembic -c database/alembic.ini revision --autogenerate -m "description"
+alembic -c database/alembic.ini upgrade head
 
 # Tests
 python3 -m pytest -v
@@ -76,7 +76,7 @@ python3 -m pytest -v
 ## Environment
 
 ```env
-DATABASE_URL=sqlite:///./attendance.db
+DATABASE_URL=sqlite:///./database/attendance.db
 ZKTECO_HOST=192.168.100.209
 ZKTECO_PORT=4370
 ```
@@ -87,4 +87,4 @@ ZKTECO_PORT=4370
 
 **Commit Strategy**: Follow `COMMIT_STRATEGY.md` for granular commits at every development step.
 
-**Database Schema**: See `database_schema.md` for complete ERD and table documentation.
+**Database Schema**: See `database/database_schema.md` for complete ERD and table documentation.
