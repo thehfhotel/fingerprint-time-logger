@@ -4,7 +4,7 @@
 # Configuration
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PID_FILE="$PROJECT_ROOT/pids/unified_server.pid"
-LOG_FILE="$PROJECT_ROOT/unified_server.log"
+LOG_FILE="$PROJECT_ROOT/logs/unified_server.log"
 PORT=5000
 
 # Colors for output

@@ -227,7 +227,7 @@ check_disk_space() {
 
 # Check database file
 check_database() {
-    local db_file="$PROJECT_ROOT/attendance.db"
+    local db_file="$PROJECT_ROOT/database/attendance.db"
     if [ ! -f "$db_file" ]; then
         log_warn "Database file not found at $db_file"
         return 1

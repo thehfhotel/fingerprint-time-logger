@@ -225,7 +225,7 @@ provide_recommendations() {
         echo "   🔧 System Issues:"
         echo "     - Check disk space: df -h"
         echo "     - Reinstall dependencies: pip install -r requirements.txt"
-        echo "     - Check database: ls -la attendance.db"
+        echo "     - Check database: ls -la database/attendance.db"
     fi
     
     if [ "$server_healthy" = true ] && [ "$system_healthy" = true ]; then

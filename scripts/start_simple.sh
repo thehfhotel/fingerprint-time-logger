@@ -5,7 +5,7 @@
 # Configuration
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_PATH="$PROJECT_ROOT/venv"
-LOG_FILE="$PROJECT_ROOT/unified_server.log"
+LOG_FILE="$PROJECT_ROOT/logs/unified_server.log"
 PID_FILE="$PROJECT_ROOT/pids/unified_server.pid"
 PORT=5000
 

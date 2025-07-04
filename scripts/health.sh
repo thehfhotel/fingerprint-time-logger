@@ -12,10 +12,8 @@ NC='\033[0m' # No Color
 # Configuration
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIDS_DIR="$PROJECT_ROOT/pids"
-API_PORT=8000
-DASHBOARD_PORT=5000
-API_PID_FILE="$PIDS_DIR/api.pid"
-DASHBOARD_PID_FILE="$PIDS_DIR/dashboard.pid"
+PORT=5000
+PID_FILE="$PIDS_DIR/unified_server.pid"
 
 # Exit codes
 EXIT_OK=0
@@ -24,7 +22,7 @@ EXIT_CRITICAL=2
 
 # Counters
 HEALTHY_SERVICES=0
-TOTAL_SERVICES=2
+TOTAL_SERVICES=1
 
 # Function to check service health
 check_service_health() {
@@ -39,7 +37,7 @@ check_service_health() {
         
         if kill -0 "$pid" 2>/dev/null; then
             # Process is running, check HTTP endpoint
-            if curl -s -f "http://localhost:$port/health" >/dev/null 2>&1 || \
+            if curl -s -f "http://localhost:$port/api/devices/health" >/dev/null 2>&1 || \
                curl -s -f "http://localhost:$port/" >/dev/null 2>&1; then
                 echo -e "${GREEN}✅ $service_name: Healthy${NC}"
                 ((HEALTHY_SERVICES++))
@@ -61,34 +59,21 @@ check_service_health() {
 # Quick mode (just exit codes, no output)
 if [ "$1" = "--quiet" ] || [ "$1" = "-q" ]; then
     # Silent health check
-    api_healthy=0
-    dashboard_healthy=0
+    server_healthy=0
     
-    # Check API
-    if [ -f "$API_PID_FILE" ]; then
-        pid=$(cat "$API_PID_FILE")
+    # Check unified server
+    if [ -f "$PID_FILE" ]; then
+        pid=$(cat "$PID_FILE")
         if kill -0 "$pid" 2>/dev/null; then
-            if curl -s -f "http://localhost:$API_PORT/health" >/dev/null 2>&1; then
-                api_healthy=1
-            fi
-        fi
-    fi
-    
-    # Check Dashboard
-    if [ -f "$DASHBOARD_PID_FILE" ]; then
-        pid=$(cat "$DASHBOARD_PID_FILE")
-        if kill -0 "$pid" 2>/dev/null; then
-            if curl -s -f "http://localhost:$DASHBOARD_PORT/" >/dev/null 2>&1; then
-                dashboard_healthy=1
+            if curl -s -f "http://localhost:$PORT/api/devices/health" >/dev/null 2>&1; then
+                server_healthy=1
             fi
         fi
     fi
     
     # Exit with appropriate code
-    if [ $api_healthy -eq 1 ] && [ $dashboard_healthy -eq 1 ]; then
+    if [ $server_healthy -eq 1 ]; then
         exit $EXIT_OK
-    elif [ $api_healthy -eq 1 ] || [ $dashboard_healthy -eq 1 ]; then
-        exit $EXIT_WARNING
     else
         exit $EXIT_CRITICAL
     fi
@@ -98,9 +83,8 @@ fi
 echo "🏥 Quick Health Check - $(date '+%H:%M:%S')"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# Check services
-check_service_health "$API_PID_FILE" "$API_PORT" "API Server"
-check_service_health "$DASHBOARD_PID_FILE" "$DASHBOARD_PORT" "Dashboard"
+# Check unified server
+check_service_health "$PID_FILE" "$PORT" "Unified Server"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
