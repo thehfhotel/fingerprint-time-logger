@@ -27,9 +27,9 @@ For each attendance record:
 2. Find expected work period (start_time to end_time)  
 3. Look at employee's previous punches for that day
 4. Determine punch intent:
-   - First punch near start_time = CHECK_IN
-   - Next punch near end_time = CHECK_OUT
-   - Handle break punches, overtime, etc.
+   - First punch close to start_time (usually with 15 mins, no more than 30 mins) = CHECK_IN
+   - Next punch after end_time = CHECK_OUT
+   - [rejected feature - do not implement this] Handle break punches, overtime, etc. 
 ```
 
 ### 1.2 Schedule-Based Punch Classifier (`app/services/punch_classifier.py`)
@@ -43,11 +43,10 @@ class PunchClassifier:
 ```
 
 **Classification Rules**:
-1. **First punch within work period** → CHECK_IN
-2. **Subsequent punch near end time** → CHECK_OUT  
-3. **Multiple punches** → Alternate IN/OUT pattern
-4. **Outside work hours** → Overtime or irregular
-5. **Break times** → BREAK_OUT/BREAK_IN (if configured)
+1. **First punch before work period start time (or no more later than 30 mins)** → CHECK_IN
+2. **Last punch after end time (never before)** → CHECK_OUT  
+3. **Multiple punches** → punches within work period are blank, except last punch. last punch within work period is counted as CHECK_OUT. 
+4. **Outside work hours** → No overtime. leave blank.
 
 ## Milestone #2: Data Model Enhancement
 
@@ -75,7 +74,7 @@ class AttendanceRecord:
 
 **Modified sync process**:
 1. Fetch raw attendance from ZK device (unchanged)
-2. Store raw `punch_type` as `raw_device_punch`
+[reject - do not implement this] 2. Store raw `punch_type` as `raw_device_punch`
 3. **NEW**: Run classification algorithm
 4. Store classified result in `classified_punch_type`
 5. Use classified type for all application logic
@@ -85,7 +84,6 @@ class AttendanceRecord:
 #### A. Standard Schedule Logic
 - Use `WorkSchedule.start_time/end_time` as reference points
 - Check `working_days` for valid work days
-- Apply `EmployeeMonthlySchedule` overrides if exists
 
 #### B. Shift Schedule Logic  
 - Get daily shift from `ReceptionShiftAssignment`
@@ -93,10 +91,9 @@ class AttendanceRecord:
 - Use shift-specific start/end times
 
 #### C. Grace Period & Tolerance
-- **Early punch tolerance**: 30 minutes before start_time
-- **Late punch tolerance**: 60 minutes after start_time  
-- **End time tolerance**: ±30 minutes around end_time
-- Configurable thresholds per job role
+[reject, employee can punch in early as much as possible] - **Early punch tolerance**: 30 minutes before start_time
+- **Late punch tolerance**: 30 minutes after start_time  
+[reject, employee can punch later than end time but never before end time for it to count as valid CHECK_OUT] - **End time tolerance**: ±30 minutes around end_time
 
 ## Milestone #4: Edge Case Handling
 
@@ -104,8 +101,8 @@ class AttendanceRecord:
 ```
 Timeline approach:
 09:00 (near start) → CHECK_IN
-12:00 (break time) → BREAK_OUT  
-13:00 (break time) → BREAK_IN
+12:00 (break time) → blank  
+13:00 (break time) → blank
 17:00 (near end)   → CHECK_OUT
 ```
 
