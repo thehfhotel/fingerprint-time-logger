@@ -30,11 +30,22 @@
             margin: 0;
         }
         
+        .header-row-1 {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+        
+        .header-row-2 {
+            display: flex;
+            justify-content: flex-end;
+        }
+        
         .header-actions {
             display: flex;
             gap: 1rem;
             align-items: center;
-            margin-top: 0.75rem;
         }
         
         .action-btn {
@@ -701,12 +712,15 @@
 </head>
 <body>
     <div class="header">
-        <h1>Work Schedule Configuration</h1>
-        <div class="header-actions">
-            <a href="/" class="action-btn">🏠 Dashboard</a>
-            <a href="/employee-management" class="action-btn">👥 Employee Management</a>
-            <a href="/attendance-calendar" class="action-btn">📅 Calendar</a>
-            <a href="/status" class="action-btn">🔍 Status</a>
+        <div class="header-row-1">
+            <h1>Work Schedule Configuration</h1>
+        </div>
+        <div class="header-row-2">
+            <div class="header-actions">
+                <a href="/" class="action-btn">🏠 Dashboard</a>
+                <a href="/employee-management" class="action-btn">👥 Employee Management</a>
+                <a href="/attendance-calendar" class="action-btn">📅 Calendar</a>
+            </div>
         </div>
     </div>
 
