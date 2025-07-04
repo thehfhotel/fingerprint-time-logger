@@ -5,7 +5,7 @@ import logging
 
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.api import attendance, devices, employees, sync, thai_names, diagnostics, control, work_schedules, employee_schedules, unlimited_sync, roles, time_check, calendar_api, employees_unified
+from app.api import attendance, devices, employees, sync, diagnostics, control, work_schedules, employee_schedules, unlimited_sync, roles, time_check, calendar_api, employees_unified
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,7 +40,6 @@ app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(employees_unified.router, prefix="/api/employees-unified", tags=["employees-unified"])
 # DEPRECATED APIs - Kept for backward compatibility during transition
 app.include_router(employees.router, prefix="/api/employees-legacy", tags=["employees-legacy"])
-app.include_router(thai_names.router, tags=["thai-names-legacy"])
 app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
 app.include_router(diagnostics.router, prefix="/api/diagnostics", tags=["diagnostics"])
 app.include_router(control.router, prefix="/api/control", tags=["control"])

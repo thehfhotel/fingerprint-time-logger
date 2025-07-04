@@ -135,7 +135,7 @@
         // Load Thai names data
         async function loadThaiNames() {
             try {
-                const response = await fetch('/api/employees/thai-names/');
+                const response = await fetch('/api/employees/management/');
                 if (response.ok) {
                     const thaiNames = await response.json();
                     thaiNamesData = {};

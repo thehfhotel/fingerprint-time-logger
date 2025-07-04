@@ -390,7 +390,7 @@
         // Load Thai names data
         async function loadThaiNames() {
             try {
-                const response = await fetch('/api/thai-names/');
+                const response = await fetch('/api/employees/management/');
                 if (response.ok) {
                     const thaiNames = await response.json();
                     thaiNamesData = {};
@@ -541,7 +541,7 @@
                 console.log('Step 2: Discovering new employees...');
                 importBtn.textContent = '📥 Processing employees...';
                 
-                const syncResponse = await fetch('/api/thai-names/sync', { 
+                const syncResponse = await fetch('/api/employees/management/sync', { 
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'

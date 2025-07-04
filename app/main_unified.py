@@ -17,7 +17,7 @@ from app.api import (
 )
 # Legacy APIs for backward compatibility (will be removed in Phase 4 cleanup)
 from app.api import (
-    attendance, devices, employees, sync, thai_names, diagnostics, 
+    attendance, devices, employees, sync, diagnostics, 
     control, work_schedules, employee_schedules, unlimited_sync, 
     roles, time_check, calendar_api, employees_unified
 )
@@ -113,7 +113,6 @@ app.include_router(attendance.router, prefix="/api/legacy/attendance", tags=["le
 app.include_router(devices.router, prefix="/api/legacy/devices", tags=["legacy-devices"])
 app.include_router(employees_unified.router, prefix="/api/legacy/employees-unified", tags=["legacy-employees-unified"])
 app.include_router(employees.router, prefix="/api/legacy/employees", tags=["legacy-employees"])
-app.include_router(thai_names.router, prefix="/api/legacy/thai-names", tags=["legacy-thai-names"])
 app.include_router(sync.router, prefix="/api/legacy/sync", tags=["legacy-sync"])
 app.include_router(diagnostics.router, prefix="/api/legacy/diagnostics", tags=["legacy-diagnostics"])
 app.include_router(control.router, prefix="/api/legacy/control", tags=["legacy-control"])
@@ -162,9 +161,6 @@ async def websocket_endpoint(websocket: WebSocket):
 async def serve_dashboard():
     return FileResponse("static/dashboard.html")
 
-@app.get("/thai-names")
-async def serve_thai_names():
-    return FileResponse("static/thai_names.html")
 
 @app.get("/employee-management")
 async def serve_employee_management():
