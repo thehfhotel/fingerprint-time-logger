@@ -137,7 +137,8 @@
             try {
                 const response = await fetch('/api/employees/');
                 if (response.ok) {
-                    const employees = await response.json();
+                    const data = await response.json();
+                    const employees = data.employees || data; // Handle both formats
                     thaiNamesData = {};
                     employees.forEach(item => {
                         thaiNamesData[item.badge_number] = item.display_name || item.name || item.thai_name;
