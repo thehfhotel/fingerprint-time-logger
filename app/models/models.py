@@ -82,21 +82,6 @@ class AttendanceRecord(Base):
     device = relationship("Device", back_populates="attendance_records")
 
 
-# DEPRECATED: EmployeeThaiName model consolidated into unified Employee model
-# class EmployeeThaiName(Base):
-#     __tablename__ = "employee_thai_names"
-#
-#     id = Column(Integer, primary_key=True, index=True)
-#     badge_number = Column(String(50), unique=True, nullable=False, index=True)
-#     thai_name = Column(String(100), nullable=False)
-#     job_role_id = Column(Integer, ForeignKey("job_roles.id"), nullable=True)  # Role assignment
-#     is_active = Column(Boolean, default=True)
-#     is_hidden = Column(Boolean, default=False)  # Hide employee from normal view
-#     created_at = Column(DateTime, default=func.now())
-#     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-#     
-#     # Relationship
-#     job_role = relationship("JobRole", back_populates="employees")
 
 
 class SyncLog(Base):

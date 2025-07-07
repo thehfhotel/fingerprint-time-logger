@@ -4,22 +4,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 import logging
-import asyncio
 from typing import List
 import json
 from datetime import datetime
 
-from app.core.config import settings
 from app.core.database import engine, Base
 from app.api import (
     consolidated_attendance, consolidated_devices, consolidated_employees, 
     consolidated_export
-)
-# Legacy APIs for backward compatibility 
-from app.api import (
-    attendance, devices, sync, diagnostics, 
-    control, unlimited_sync, 
-    roles, time_check
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -58,25 +50,8 @@ manager = ConnectionManager()
 async def lifespan(app: FastAPI):
     logger.info("Starting up unified server...")
     Base.metadata.create_all(bind=engine)
-    
-    # Start background sync service
-    asyncio.create_task(background_sync_loop())
-    
     yield
-    
     logger.info("Shutting down unified server...")
-
-async def background_sync_loop():
-    """Background loop for device synchronization"""
-    while True:
-        try:
-            # For now, just sleep - we'll implement device sync later
-            # This prevents the server from doing real device operations during testing
-            await asyncio.sleep(120)  # 2 minutes
-            
-        except Exception as e:
-            logger.error(f"Background sync error: {e}")
-            await asyncio.sleep(60)  # Retry after 1 minute on error
 
 app = FastAPI(
     title="Fingerprint Time Logger - Unified",
@@ -107,15 +82,6 @@ app.include_router(consolidated_export.router, prefix="/api/export", tags=["expo
 from app.api import system_status
 app.include_router(system_status.router, prefix="/api/system", tags=["system-status"])
 
-# Legacy API routers for backward compatibility (Phase 4 cleanup will remove these)
-app.include_router(attendance.router, prefix="/api/legacy/attendance", tags=["legacy-attendance"])
-app.include_router(devices.router, prefix="/api/legacy/devices", tags=["legacy-devices"])
-app.include_router(sync.router, prefix="/api/legacy/sync", tags=["legacy-sync"])
-app.include_router(diagnostics.router, prefix="/api/legacy/diagnostics", tags=["legacy-diagnostics"])
-app.include_router(control.router, prefix="/api/legacy/control", tags=["legacy-control"])
-app.include_router(unlimited_sync.router, prefix="/api/legacy/unlimited-sync", tags=["legacy-unlimited-sync"])
-app.include_router(roles.router, prefix="/api/legacy/roles", tags=["legacy-roles"])
-app.include_router(time_check.router, prefix="/api/legacy/time-check", tags=["legacy-time-check"])
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")

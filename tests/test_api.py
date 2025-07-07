@@ -37,10 +37,11 @@ def test_attendance_endpoint():
 
 def test_employees_endpoint():
     """Test employees endpoint"""
-    response = client.get("/api/employees/thai-names/")
+    response = client.get("/api/employees/")
     assert response.status_code == 200
     data = response.json()
-    assert isinstance(data, list)
+    assert "employees" in data
+    assert isinstance(data["employees"], list)
 
 
 def test_export_formats_endpoint():
