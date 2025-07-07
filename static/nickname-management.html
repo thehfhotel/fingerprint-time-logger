@@ -110,6 +110,55 @@
             background-color: #f8d7da;
             color: #721c24;
         }
+
+        .status-hidden {
+            background-color: #e2e3e5;
+            color: #383d41;
+        }
+
+        .toggle-btn {
+            padding: 4px 8px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-right: 5px;
+        }
+
+        .toggle-btn:hover {
+            background-color: #0056b3;
+        }
+
+        .toggle-btn.inactive {
+            background-color: #6c757d;
+        }
+
+        .toggle-btn.hidden {
+            background-color: #ffc107;
+            color: #212529;
+        }
+
+        .show-hidden-btn {
+            padding: 8px 16px;
+            background-color: #17a2b8;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+
+        .show-hidden-btn:hover {
+            background-color: #138496;
+        }
+
+        .show-hidden-btn.active {
+            background-color: #ffc107;
+            color: #212529;
+        }
     </style>
 </head>
 <body>
@@ -134,6 +183,7 @@
                 <div class="card-body">
                     <div class="search-box">
                         <input type="text" id="searchInput" class="search-input" placeholder="Search by Badge ID or Nickname...">
+                        <button id="showHiddenBtn" class="show-hidden-btn" onclick="toggleShowHidden()">Show Hidden</button>
                     </div>
                     
                     <div id="loadingDiv" class="loading">Loading employee data...</div>
@@ -144,6 +194,7 @@
                                 <th>Badge ID</th>
                                 <th>Nickname</th>
                                 <th>Status</th>
+                                <th>Hidden</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
@@ -158,11 +209,13 @@
 
     <script>
         let employees = [];
+        let showHidden = false;
 
         // Load employees on page load
         async function loadEmployees() {
             try {
-                const response = await fetch('/api/employees/');
+                const url = showHidden ? '/api/employees/?include_hidden=true' : '/api/employees/';
+                const response = await fetch(url);
                 if (!response.ok) throw new Error('Failed to load employees');
                 
                 const data = await response.json();
@@ -186,6 +239,8 @@
                 const row = document.createElement('tr');
                 const statusClass = employee.is_active ? 'status-active' : 'status-inactive';
                 const statusText = employee.is_active ? 'Active' : 'Inactive';
+                const hiddenClass = employee.is_hidden ? 'status-hidden' : 'status-active';
+                const hiddenText = employee.is_hidden ? 'Hidden' : 'Visible';
                 
                 row.innerHTML = `
                     <td>${employee.badge_number}</td>
@@ -193,12 +248,23 @@
                         <input type="text" 
                                class="nickname-input" 
                                id="nickname-${employee.badge_number}"
-                               value="${employee.name || ''}" 
-                               data-original="${employee.name || ''}"
+                               value="${employee.display_name || ''}" 
+                               data-original="${employee.display_name || ''}"
                                placeholder="Enter nickname">
                     </td>
                     <td>
+                        <button class="toggle-btn ${employee.is_active ? '' : 'inactive'}" 
+                                onclick="toggleStatus('${employee.badge_number}', ${!employee.is_active})">
+                            ${employee.is_active ? 'Set Inactive' : 'Set Active'}
+                        </button>
                         <span class="status-badge ${statusClass}">${statusText}</span>
+                    </td>
+                    <td>
+                        <button class="toggle-btn ${employee.is_hidden ? 'hidden' : ''}" 
+                                onclick="toggleHidden('${employee.badge_number}', ${!employee.is_hidden})">
+                            ${employee.is_hidden ? 'Show' : 'Hide'}
+                        </button>
+                        <span class="status-badge ${hiddenClass}">${hiddenText}</span>
                     </td>
                     <td>
                         <button class="save-btn" 
@@ -258,7 +324,7 @@
                 // Update the employee in our local array
                 const employee = employees.find(e => e.badge_number === badgeNumber);
                 if (employee) {
-                    employee.name = input.value;
+                    employee.display_name = input.value;
                 }
             } catch (error) {
                 console.error('Error saving nickname:', error);
@@ -274,17 +340,94 @@
             }
         }
 
-        // Search functionality
-        document.getElementById('searchInput').addEventListener('input', function() {
-            const searchTerm = this.value.toLowerCase();
+        // Toggle employee status (active/inactive)
+        async function toggleStatus(badgeNumber, newStatus) {
+            try {
+                const response = await fetch(`/api/employees/${badgeNumber}/status`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        is_active: newStatus
+                    })
+                });
+                
+                if (!response.ok) throw new Error('Failed to update status');
+                
+                // Update the employee in our local array
+                const employee = employees.find(e => e.badge_number === badgeNumber);
+                if (employee) {
+                    employee.is_active = newStatus;
+                }
+                
+                // Refresh the display
+                displayEmployees(getFilteredEmployees());
+            } catch (error) {
+                console.error('Error updating status:', error);
+                alert('Failed to update employee status');
+            }
+        }
+
+        // Toggle employee hidden status
+        async function toggleHidden(badgeNumber, newHiddenStatus) {
+            try {
+                const response = await fetch(`/api/employees/${badgeNumber}/hidden`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        is_hidden: newHiddenStatus
+                    })
+                });
+                
+                if (!response.ok) throw new Error('Failed to update hidden status');
+                
+                // Update the employee in our local array
+                const employee = employees.find(e => e.badge_number === badgeNumber);
+                if (employee) {
+                    employee.is_hidden = newHiddenStatus;
+                }
+                
+                // Refresh the display
+                displayEmployees(getFilteredEmployees());
+            } catch (error) {
+                console.error('Error updating hidden status:', error);
+                alert('Failed to update employee hidden status');
+            }
+        }
+
+        // Toggle show hidden employees
+        function toggleShowHidden() {
+            showHidden = !showHidden;
+            const btn = document.getElementById('showHiddenBtn');
             
-            const filteredEmployees = employees.filter(employee => {
+            if (showHidden) {
+                btn.textContent = 'Hide Hidden';
+                btn.classList.add('active');
+            } else {
+                btn.textContent = 'Show Hidden';
+                btn.classList.remove('active');
+            }
+            
+            loadEmployees();
+        }
+
+        // Get filtered employees based on search and hidden status
+        function getFilteredEmployees() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            
+            return employees.filter(employee => {
                 const badgeMatch = employee.badge_number.toLowerCase().includes(searchTerm);
-                const nameMatch = (employee.name || '').toLowerCase().includes(searchTerm);
+                const nameMatch = (employee.display_name || '').toLowerCase().includes(searchTerm);
                 return badgeMatch || nameMatch;
             });
-            
-            displayEmployees(filteredEmployees);
+        }
+
+        // Search functionality
+        document.getElementById('searchInput').addEventListener('input', function() {
+            displayEmployees(getFilteredEmployees());
         });
 
         // Load employees when page loads

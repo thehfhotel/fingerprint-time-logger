@@ -82,9 +82,68 @@ async def update_employee_nickname(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/{badge_number}/status")
+async def update_employee_status(
+    badge_number: str,
+    status_data: dict,
+    db: Session = Depends(get_db)
+):
+    """Update employee active/inactive status"""
+    try:
+        employee = db.query(Employee).filter(Employee.badge_number == badge_number).first()
+        if not employee:
+            raise HTTPException(status_code=404, detail="Employee not found")
+        
+        # Update status
+        employee.is_active = status_data.get("is_active", employee.is_active)
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"Employee status updated to {'active' if employee.is_active else 'inactive'}",
+            "badge_number": badge_number,
+            "is_active": employee.is_active
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{badge_number}/hidden")
+async def update_employee_hidden_status(
+    badge_number: str,
+    hidden_data: dict,
+    db: Session = Depends(get_db)
+):
+    """Update employee hidden/visible status"""
+    try:
+        employee = db.query(Employee).filter(Employee.badge_number == badge_number).first()
+        if not employee:
+            raise HTTPException(status_code=404, detail="Employee not found")
+        
+        # Update hidden status
+        employee.is_hidden = hidden_data.get("is_hidden", employee.is_hidden)
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"Employee visibility updated to {'hidden' if employee.is_hidden else 'visible'}",
+            "badge_number": badge_number,
+            "is_hidden": employee.is_hidden
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/")
 async def get_employees(
     include_hidden: bool = False,
+    include_inactive: bool = False,
     role_id: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
@@ -95,10 +154,13 @@ async def get_employees(
         if not include_hidden:
             query = query.filter(Employee.is_hidden == False)
         
+        if not include_inactive:
+            query = query.filter(Employee.is_active == True)
+            
         if role_id:
             query = query.filter(Employee.job_role_id == role_id)
         
-        employees = query.filter(Employee.is_active == True).all()
+        employees = query.all()
         
         result = []
         for emp in employees:
