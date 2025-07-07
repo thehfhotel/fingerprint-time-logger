@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Export Data - Fingerprint Time Logger</title>
+    <link rel="stylesheet" href="/static/css/base.css">
+    <style>
+        .export-container {
+            max-width: 600px;
+            margin: 2rem auto;
+            padding: 2rem;
+        }
+        
+        .export-card {
+            background: white;
+            border-radius: 8px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: #374151;
+        }
+        
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 1rem;
+        }
+        
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        .date-range {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+        
+        .btn {
+            padding: 0.75rem 2rem;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 1rem;
+            transition: all 0.2s;
+            width: 100%;
+        }
+        
+        .btn-primary {
+            background-color: #3b82f6;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background-color: #2563eb;
+        }
+        
+        .btn-primary:disabled {
+            background-color: #9ca3af;
+            cursor: not-allowed;
+        }
+        
+        .export-status {
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: 6px;
+            display: none;
+        }
+        
+        .export-status.success {
+            background-color: #dcfce7;
+            border: 1px solid #bbf7d0;
+            color: #166534;
+        }
+        
+        .export-status.error {
+            background-color: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #dc2626;
+        }
+        
+        .export-status.loading {
+            background-color: #fef3c7;
+            border: 1px solid #fde68a;
+            color: #92400e;
+        }
+        
+        .navigation {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        
+        .nav-link {
+            color: #3b82f6;
+            text-decoration: none;
+            margin: 0 1rem;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+        
+        .nav-link:hover {
+            background-color: #f3f4f6;
+        }
+        
+        .info-text {
+            background-color: #f0f9ff;
+            border: 1px solid #bae6fd;
+            border-radius: 6px;
+            padding: 1rem;
+            color: #0c4a6e;
+            margin-bottom: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="navigation">
+        <a href="/" class="nav-link">Dashboard</a>
+        <a href="/device-status" class="nav-link">Device Status</a>
+        <a href="/export" class="nav-link">Export Data</a>
+    </div>
+
+    <div class="export-container">
+        <h1>Export Attendance Data</h1>
+        
+        <div class="info-text">
+            Export your attendance records to CSV format for external analysis or reporting.
+        </div>
+        
+        <div class="export-card">
+            <h2>CSV Export Options</h2>
+            
+            <form id="exportForm">
+                <div class="form-group">
+                    <label for="startDate">Start Date:</label>
+                    <input type="date" id="startDate" name="startDate" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="endDate">End Date:</label>
+                    <input type="date" id="endDate" name="endDate" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="format">Export Format:</label>
+                    <select id="format" name="format">
+                        <option value="detailed">Detailed (includes employee names)</option>
+                        <option value="simple">Simple (badges and times only)</option>
+                        <option value="summary">Summary (daily totals)</option>
+                    </select>
+                </div>
+                
+                <button type="submit" class="btn btn-primary" id="exportBtn">
+                    Export to CSV
+                </button>
+                
+                <div class="export-status" id="exportStatus"></div>
+            </form>
+        </div>
+        
+        <div class="export-card">
+            <h2>Quick Export Options</h2>
+            
+            <div style="display: grid; gap: 1rem;">
+                <button class="btn btn-primary" onclick="quickExport('today')">
+                    Export Today's Records
+                </button>
+                <button class="btn btn-primary" onclick="quickExport('week')">
+                    Export This Week
+                </button>
+                <button class="btn btn-primary" onclick="quickExport('month')">
+                    Export This Month
+                </button>
+                <button class="btn btn-primary" onclick="quickExport('all')">
+                    Export All Records
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Set default dates
+        document.addEventListener('DOMContentLoaded', () => {
+            const today = new Date();
+            const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+            
+            document.getElementById('startDate').value = firstDayOfMonth.toISOString().split('T')[0];
+            document.getElementById('endDate').value = today.toISOString().split('T')[0];
+        });
+        
+        document.getElementById('exportForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            const format = document.getElementById('format').value;
+            
+            await exportData(startDate, endDate, format);
+        });
+        
+        async function exportData(startDate, endDate, format = 'detailed') {
+            const exportBtn = document.getElementById('exportBtn');
+            const statusDiv = document.getElementById('exportStatus');
+            
+            try {
+                // Show loading status
+                showStatus('Loading...', 'loading');
+                exportBtn.disabled = true;
+                exportBtn.textContent = 'Exporting...';
+                
+                // Build export URL
+                const params = new URLSearchParams({
+                    start_date: startDate,
+                    end_date: endDate,
+                    format: format
+                });
+                
+                const response = await fetch(`/api/attendance/export/csv?${params}`);
+                
+                if (!response.ok) {
+                    throw new Error(`Export failed: ${response.statusText}`);
+                }
+                
+                // Create download
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = `attendance_export_${startDate}_to_${endDate}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                
+                showStatus('Export completed successfully!', 'success');
+                
+            } catch (error) {
+                console.error('Export error:', error);
+                showStatus(`Export failed: ${error.message}`, 'error');
+            } finally {
+                exportBtn.disabled = false;
+                exportBtn.textContent = 'Export to CSV';
+            }
+        }
+        
+        async function quickExport(period) {
+            const today = new Date();
+            let startDate, endDate;
+            
+            switch (period) {
+                case 'today':
+                    startDate = endDate = today.toISOString().split('T')[0];
+                    break;
+                case 'week':
+                    const weekStart = new Date(today);
+                    weekStart.setDate(today.getDate() - today.getDay());
+                    startDate = weekStart.toISOString().split('T')[0];
+                    endDate = today.toISOString().split('T')[0];
+                    break;
+                case 'month':
+                    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+                    startDate = monthStart.toISOString().split('T')[0];
+                    endDate = today.toISOString().split('T')[0];
+                    break;
+                case 'all':
+                    startDate = '2020-01-01'; // Far back date
+                    endDate = today.toISOString().split('T')[0];
+                    break;
+            }
+            
+            await exportData(startDate, endDate, 'detailed');
+        }
+        
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('exportStatus');
+            statusDiv.textContent = message;
+            statusDiv.className = `export-status ${type}`;
+            statusDiv.style.display = 'block';
+            
+            if (type === 'success' || type === 'error') {
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 5000);
+            }
+        }
+    </script>
+</body>
+</html>

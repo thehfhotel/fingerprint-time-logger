@@ -13,13 +13,13 @@ from app.core.config import settings
 from app.core.database import engine, Base
 from app.api import (
     consolidated_attendance, consolidated_devices, consolidated_employees, 
-    consolidated_export, employee_management
+    consolidated_export
 )
-# Legacy APIs for backward compatibility (will be removed in Phase 4 cleanup)
+# Legacy APIs for backward compatibility 
 from app.api import (
     attendance, devices, employees, sync, diagnostics, 
-    control, work_schedules, employee_schedules, unlimited_sync, 
-    roles, time_check, calendar_api, employees_unified, attendance_calendar
+    control, unlimited_sync, 
+    roles, time_check, employees_unified
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -102,7 +102,6 @@ app.include_router(consolidated_attendance.router, prefix="/api/attendance", tag
 app.include_router(consolidated_devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(consolidated_employees.router, prefix="/api/employees", tags=["employees"])
 app.include_router(consolidated_export.router, prefix="/api/export", tags=["export"])
-app.include_router(employee_management.router, prefix="/api/employees/management", tags=["employee-management"])
 
 # System Status API - New comprehensive status monitoring
 from app.api import system_status
@@ -116,13 +115,9 @@ app.include_router(employees.router, prefix="/api/legacy/employees", tags=["lega
 app.include_router(sync.router, prefix="/api/legacy/sync", tags=["legacy-sync"])
 app.include_router(diagnostics.router, prefix="/api/legacy/diagnostics", tags=["legacy-diagnostics"])
 app.include_router(control.router, prefix="/api/legacy/control", tags=["legacy-control"])
-app.include_router(work_schedules.router, prefix="/api/legacy/work-schedules", tags=["legacy-work-schedules"])
-app.include_router(employee_schedules.router, prefix="/api/legacy/employee-schedules", tags=["legacy-employee-schedules"])
 app.include_router(unlimited_sync.router, prefix="/api/legacy/unlimited-sync", tags=["legacy-unlimited-sync"])
 app.include_router(roles.router, prefix="/api/legacy/roles", tags=["legacy-roles"])
 app.include_router(time_check.router, prefix="/api/legacy/time-check", tags=["legacy-time-check"])
-app.include_router(calendar_api.router, prefix="/api/legacy/calendar", tags=["legacy-calendar"])
-app.include_router(attendance_calendar.router, prefix="/api", tags=["attendance-calendar"])
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")
@@ -163,17 +158,14 @@ async def serve_dashboard():
     return FileResponse("static/dashboard.html")
 
 
-@app.get("/employee-management")
-async def serve_employee_management():
-    return FileResponse("static/employee_management.html")
 
-@app.get("/work-schedules")
-async def serve_work_schedules():
-    return FileResponse("static/work_schedules.html")
+@app.get("/device-status")
+async def serve_device_status():
+    return FileResponse("static/device-status.html")
 
-@app.get("/attendance-calendar")
-async def serve_attendance_calendar():
-    return FileResponse("static/attendance_calendar.html")
+@app.get("/export")
+async def serve_export():
+    return FileResponse("static/export.html")
 
 @app.get("/status")
 async def serve_status():

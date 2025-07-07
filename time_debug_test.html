@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Time Input Debugging Test</title>
+</head>
+<body>
+    <h1>Time Input Debugging Test</h1>
+    <p>This is a simple test page to demonstrate the time input debugging system.</p>
+    
+    <form>
+        <label for="testTime1">Test Time Input 1:</label>
+        <input type="time" id="testTime1" name="testTime1">
+        <br><br>
+        
+        <label for="testTime2">Test Time Input 2:</label>
+        <input type="time" id="testTime2" name="testTime2">
+        <br><br>
+        
+        <button type="button" onclick="addTimeInput()">Add Dynamic Time Input</button>
+        <div id="dynamicInputs"></div>
+    </form>
+
+    <script>
+        // Simple function to add dynamic time inputs for testing
+        function addTimeInput() {
+            const container = document.getElementById('dynamicInputs');
+            const div = document.createElement('div');
+            div.innerHTML = `
+                <br>
+                <label for="dynamic${Date.now()}">Dynamic Time Input:</label>
+                <input type="time" id="dynamic${Date.now()}" name="dynamic${Date.now()}">
+            `;
+            container.appendChild(div);
+        }
+
+        console.log('Test page loaded. Open work_schedules.html to see the full debugging system.');
+    </script>
+</body>
+</html>
