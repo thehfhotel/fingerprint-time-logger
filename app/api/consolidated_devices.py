@@ -197,6 +197,15 @@ async def test_device_connection():
 # DATA SYNCHRONIZATION
 # ============================================================================
 
+@router.post("/sync-time")
+async def sync_device_time():
+    """Sync system time to device"""
+    try:
+        result = device_service.sync_time_to_device()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Time sync failed: {str(e)}")
+
 @router.post("/sync/attendance")
 async def sync_attendance():
     """Sync attendance data from device"""
@@ -397,23 +406,46 @@ async def get_device_diagnostics():
 
 @router.get("/health")
 async def devices_health_check():
-    """Health check for device system"""
+    """Lightweight health check to avoid device overload"""
     try:
         device = device_service.get_default_device()
         if not device:
             return {
-                "status": "warning",
+                "status": "warning", 
+                "device_connected": False,
                 "message": "No device configured"
             }
         
-        status = device_service.get_device_status()
+        # Lightweight check - just test basic connectivity without data retrieval
+        try:
+            conn = device_service.connect_to_device(device)
+            if conn:
+                # Just verify connection and disconnect immediately
+                conn.disconnect()
+                connected = True
+            else:
+                connected = False
+        except Exception:
+            connected = False
         
-        return {
-            "status": "healthy" if status.get("connected") else "unhealthy",
-            "device_connected": status.get("connected", False),
+        response = {
+            "status": "healthy" if connected else "unhealthy",
+            "device_connected": connected,
             "device_name": device.name,
+            "ip": device.ip_address,
             "last_sync": device.last_sync.isoformat() if device.last_sync else None
         }
+        
+        # Add lightweight device info without overwhelming queries
+        if connected:
+            response.update({
+                "users_count": "Available via sync",
+                "records_count": "Available via sync", 
+                "device_time": "Available via time endpoint",
+                "info_note": "Lightweight health check - use sync operations for detailed info"
+            })
+        
+        return response
     except Exception as e:
         return {
             "status": "unhealthy",

@@ -131,20 +131,21 @@
             updateEmployeeGrid(data);
         }
         
-        // Load Thai names data
+        // Load Thai names data (simplified - use basic employee data)
         async function loadThaiNames() {
             try {
-                const response = await fetch('/api/employees/management/');
+                const response = await fetch('/api/employees/');
                 if (response.ok) {
                     const employees = await response.json();
                     thaiNamesData = {};
                     employees.forEach(item => {
-                        thaiNamesData[item.badge_number] = item.nickname;
+                        thaiNamesData[item.badge_number] = item.display_name || item.name || item.thai_name;
                     });
                     console.log('Thai names loaded:', Object.keys(thaiNamesData).length);
                 }
             } catch (error) {
-                console.error('Failed to load Thai names:', error);
+                console.log('Thai names not available in simplified mode');
+                thaiNamesData = {}; // Use empty object so the rest works
             }
         }
 
@@ -424,10 +425,13 @@
         
         loadInitialData();
         
-        // Export functionality
-        document.getElementById('exportButton').addEventListener('click', function() {
-            showExportModal();
-        });
+        // Export functionality (simplified - redirect to export page)
+        const exportButton = document.getElementById('exportButton');
+        if (exportButton) {
+            exportButton.addEventListener('click', function() {
+                window.location.href = '/export';
+            });
+        }
         
         function showExportModal() {
             document.getElementById('exportModal').style.display = 'block';

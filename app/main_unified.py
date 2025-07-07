@@ -175,6 +175,26 @@ async def serve_status():
 async def health_check():
     return {"status": "healthy", "server": "unified"}
 
+# Redirect old routes to new simplified interface
+from fastapi import HTTPException
+from fastapi.responses import RedirectResponse
+
+@app.get("/employee-management")
+async def redirect_employee_management():
+    return RedirectResponse(url="/", status_code=301)
+
+@app.get("/work-schedules") 
+async def redirect_work_schedules():
+    return RedirectResponse(url="/", status_code=301)
+
+@app.get("/attendance-calendar")
+async def redirect_attendance_calendar():
+    return RedirectResponse(url="/", status_code=301)
+
+@app.get("/favicon.ico")
+async def favicon():
+    return {"status": "no favicon"}
+
 # Legacy API endpoint for manual refresh (from dashboard)
 @app.post("/api/refresh")
 async def manual_refresh():

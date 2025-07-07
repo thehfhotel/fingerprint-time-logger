@@ -173,7 +173,7 @@
             const indicator = document.getElementById('deviceIndicator');
             const infoDiv = document.getElementById('deviceInfo');
             
-            if (deviceStatus.connected) {
+            if (deviceStatus.device_connected || deviceStatus.connected) {
                 indicator.className = 'status-indicator status-connected';
                 infoDiv.innerHTML = `
                     <div class="info-item">
@@ -182,7 +182,7 @@
                     </div>
                     <div class="info-item">
                         <span>Device Model:</span>
-                        <span>${deviceStatus.model || 'ZKTeco Device'}</span>
+                        <span>${deviceStatus.device_name || deviceStatus.model || 'ZKTeco Device'}</span>
                     </div>
                     <div class="info-item">
                         <span>IP Address:</span>

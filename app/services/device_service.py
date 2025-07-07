@@ -322,6 +322,10 @@ class SimpleDeviceService:
         else:
             return {"success": False, "message": "Could not connect to device"}
 
+    def sync_time_to_device(self) -> Dict[str, Any]:
+        """Sync current system time to device"""
+        return self.set_device_time()
+
 
 # Global service instance
 device_service = SimpleDeviceService()

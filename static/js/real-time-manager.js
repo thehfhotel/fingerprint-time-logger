@@ -108,7 +108,7 @@ class RealTimeManager {
                     this.updateConnectionStatus();
                 }
             }
-        }, 15000); // Check every 15 seconds
+        }, 60000); // Check every 60 seconds (reduced load)
     }
     
     startPeriodicRefresh() {
@@ -117,7 +117,7 @@ class RealTimeManager {
             if (this.isOnline && !document.hidden) {
                 this.refreshData();
             }
-        }, 30000); // 30 seconds
+        }, 120000); // 120 seconds (reduced load)
     }
     
     async refreshData() {
