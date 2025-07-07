@@ -137,10 +137,10 @@
             try {
                 const response = await fetch('/api/employees/management/');
                 if (response.ok) {
-                    const thaiNames = await response.json();
+                    const employees = await response.json();
                     thaiNamesData = {};
-                    thaiNames.forEach(item => {
-                        thaiNamesData[item.badge_number] = item.thai_name;
+                    employees.forEach(item => {
+                        thaiNamesData[item.badge_number] = item.nickname;
                     });
                     console.log('Thai names loaded:', Object.keys(thaiNamesData).length);
                 }
@@ -149,10 +149,10 @@
             }
         }
 
-        // Get Thai name or fallback to employee ID
+        // Get employee nickname or fallback to badge number
         function getDisplayName(employeeId) {
-            const thaiName = thaiNamesData[employeeId];
-            return thaiName ? `${thaiName} (${employeeId})` : `Employee ${employeeId}`;
+            const nickname = thaiNamesData[employeeId];
+            return nickname ? `${nickname} (${employeeId})` : `Badge ${employeeId}`;
         }
 
         function updateEmployeeGrid(rawApiData = null) {
@@ -176,7 +176,7 @@
                     const status = record.punch_type === 0 ? 'Check-in' : 'Check-out';
                     
                     return {
-                        employee_id: record.employee_badge_number,  // Fixed: API returns employee_badge_number
+                        employee_id: record.employee_badge_number || record.employee_id,  // Handle both field names
                         time: timestamp.toLocaleTimeString('en-US', {hour12: false}),
                         date: timestamp.toLocaleDateString(),
                         status: status,
@@ -491,16 +491,46 @@
                 const fileNameMatch = contentDisposition && contentDisposition.match(/filename="(.+)"/);
                 const fileName = fileNameMatch ? fileNameMatch[1] : `attendance_export_${startDate}_to_${endDate}.csv`;
                 
-                // Download file
+                // Download file using modern approach
                 const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = fileName;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
+                
+                // Try using the modern download approach first
+                if ('showSaveFilePicker' in window && false) { // Disabled for now due to browser compatibility
+                    try {
+                        const handle = await window.showSaveFilePicker({
+                            suggestedName: fileName,
+                            types: [{
+                                description: 'CSV Files',
+                                accept: { 'text/csv': ['.csv'] }
+                            }]
+                        });
+                        const writable = await handle.createWritable();
+                        await writable.write(blob);
+                        await writable.close();
+                    } catch (err) {
+                        // User cancelled or not supported, fallback to traditional method
+                        downloadUsingAnchor(blob, fileName);
+                    }
+                } else {
+                    // Use traditional download method
+                    downloadUsingAnchor(blob, fileName);
+                }
+                
+                function downloadUsingAnchor(blob, fileName) {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    
+                    // Delay revoking the URL to ensure download starts
+                    setTimeout(() => {
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                    }, 100);
+                }
                 
                 document.getElementById('exportMessage').textContent = 'Export completed!';
                 document.getElementById('exportProgressBar').style.width = '100%';

@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 class SimpleExportService:
     """Simplified export service for CSV generation"""
     
+    STREAMING_THRESHOLD = 10000  # Threshold for enabling streaming
+    
+    def __init__(self, db=None):
+        """Initialize with optional database session"""
+        self.db = db
+    
     def export_attendance_csv(self, 
                             start_date: Optional[date] = None,
                             end_date: Optional[date] = None,
@@ -178,6 +184,207 @@ class SimpleExportService:
         except Exception as e:
             logger.error(f"Export stats failed: {e}")
             return {"error": str(e)}
+    
+    def count_records(self, start_date=None, end_date=None, employee_ids=None, 
+                     device_ids=None, punch_types=None):
+        """Count records matching the filters"""
+        try:
+            # For simplicity, get all records and count
+            records = attendance_service.get_attendance_records(
+                start_date=start_date,
+                end_date=end_date,
+                limit=50000
+            )
+            
+            # Apply additional filters if needed
+            filtered_records = records
+            if employee_ids:
+                filtered_records = [r for r in filtered_records 
+                                  if r.employee_badge_number in employee_ids]
+            if device_ids:
+                filtered_records = [r for r in filtered_records 
+                                  if r.device_id in device_ids]
+            if punch_types is not None:
+                filtered_records = [r for r in filtered_records 
+                                  if r.punch_type in punch_types]
+            
+            return len(filtered_records)
+        except Exception as e:
+            logger.error(f"Count records failed: {e}")
+            return 0
+    
+    def export_to_csv(self, start_date=None, end_date=None, employee_ids=None,
+                     device_ids=None, punch_types=None, format_type="detailed",
+                     include_employee_names=True, include_device_names=True):
+        """Export to CSV and return as streaming response"""
+        from fastapi.responses import StreamingResponse
+        
+        try:
+            # Get attendance records
+            records = attendance_service.get_attendance_records(
+                start_date=start_date,
+                end_date=end_date,
+                limit=50000
+            )
+            
+            # Apply additional filters
+            if employee_ids:
+                records = [r for r in records if r.employee_badge_number in employee_ids]
+            if device_ids:
+                records = [r for r in records if r.device_id in device_ids]
+            if punch_types is not None:
+                records = [r for r in records if r.punch_type in punch_types]
+            
+            # Create CSV in memory
+            output = io.StringIO()
+            writer = csv.writer(output)
+            
+            # Write header based on format
+            if format_type == "detailed":
+                headers = ['Employee Badge', 'Employee Name', 'Date', 'Time', 
+                          'Action', 'Status', 'Device ID']
+            else:
+                headers = ['Employee Badge', 'Date', 'Time', 'Action']
+            writer.writerow(headers)
+            
+            # Get employee names
+            employees = {emp.badge_number: emp.display_name 
+                        for emp in attendance_service.get_employee_list()}
+            
+            # Write records
+            for record in records:
+                employee_name = employees.get(record.employee_badge_number, 
+                                           f"Employee {record.employee_badge_number}")
+                action = 'Check-in' if record.punch_type == 0 else 'Check-out'
+                
+                if format_type == "detailed":
+                    status_text = 'Normal'
+                    if hasattr(record, 'status'):
+                        if record.status == 1:
+                            status_text = 'Late'
+                        elif record.status == 2:
+                            status_text = 'Early'
+                    
+                    row = [
+                        record.employee_badge_number,
+                        employee_name if include_employee_names else record.employee_badge_number,
+                        record.timestamp.strftime('%Y-%m-%d'),
+                        record.timestamp.strftime('%H:%M:%S'),
+                        action,
+                        status_text,
+                        record.device_id if include_device_names else ''
+                    ]
+                else:
+                    row = [
+                        record.employee_badge_number,
+                        record.timestamp.strftime('%Y-%m-%d'),
+                        record.timestamp.strftime('%H:%M:%S'),
+                        action
+                    ]
+                
+                writer.writerow(row)
+            
+            # Get CSV content
+            output.seek(0)
+            
+            # Generate filename
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"attendance_{format_type}_{timestamp}.csv"
+            
+            return StreamingResponse(
+                io.StringIO(output.getvalue()),
+                media_type="text/csv",
+                headers={
+                    "Content-Disposition": f"attachment; filename={filename}",
+                    "Content-Type": "text/csv; charset=utf-8"
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"CSV export failed: {e}")
+            raise
+    
+    def export_to_csv_streaming(self, start_date=None, end_date=None, employee_ids=None,
+                               device_ids=None, punch_types=None, format_type="detailed",
+                               include_employee_names=True, include_device_names=True,
+                               batch_size=1000, max_records=None):
+        """Export to CSV with streaming for large datasets"""
+        try:
+            # Get all records
+            records = attendance_service.get_attendance_records(
+                start_date=start_date,
+                end_date=end_date,
+                limit=max_records or 100000
+            )
+            
+            # Apply filters
+            if employee_ids:
+                records = [r for r in records if r.employee_badge_number in employee_ids]
+            if device_ids:
+                records = [r for r in records if r.device_id in device_ids]
+            if punch_types is not None:
+                records = [r for r in records if r.punch_type in punch_types]
+            
+            # Get employee names once
+            employees = {emp.badge_number: emp.display_name 
+                        for emp in attendance_service.get_employee_list()}
+            
+            # Write header
+            if format_type == "detailed":
+                headers = ['Employee Badge', 'Employee Name', 'Date', 'Time', 
+                          'Action', 'Status', 'Device ID']
+            else:
+                headers = ['Employee Badge', 'Date', 'Time', 'Action']
+            
+            yield ','.join(headers) + '\n'
+            
+            # Stream records in batches
+            for i in range(0, len(records), batch_size):
+                batch = records[i:i + batch_size]
+                output = io.StringIO()
+                writer = csv.writer(output)
+                
+                for record in batch:
+                    employee_name = employees.get(record.employee_badge_number, 
+                                               f"Employee {record.employee_badge_number}")
+                    action = 'Check-in' if record.punch_type == 0 else 'Check-out'
+                    
+                    if format_type == "detailed":
+                        status_text = 'Normal'
+                        if hasattr(record, 'status'):
+                            if record.status == 1:
+                                status_text = 'Late'
+                            elif record.status == 2:
+                                status_text = 'Early'
+                        
+                        row = [
+                            record.employee_badge_number,
+                            employee_name if include_employee_names else record.employee_badge_number,
+                            record.timestamp.strftime('%Y-%m-%d'),
+                            record.timestamp.strftime('%H:%M:%S'),
+                            action,
+                            status_text,
+                            record.device_id if include_device_names else ''
+                        ]
+                    else:
+                        row = [
+                            record.employee_badge_number,
+                            record.timestamp.strftime('%Y-%m-%d'),
+                            record.timestamp.strftime('%H:%M:%S'),
+                            action
+                        ]
+                    
+                    writer.writerow(row)
+                
+                # Yield this batch
+                output.seek(0)
+                content = output.getvalue()
+                if content:
+                    yield content
+                    
+        except Exception as e:
+            logger.error(f"Streaming CSV export failed: {e}")
+            yield f"ERROR: {str(e)}\n"
 
 
 # Global service instance

@@ -16,7 +16,7 @@ from app.schemas.schemas import (
 )
 from app.services.cache_service import CacheService
 from app.services.sync_queue_manager import SyncQueueManager, SyncOperationType
-from app.services.export_service import AttendanceExportService
+from app.services.export_service import SimpleExportService as AttendanceExportService
 
 router = APIRouter()
 

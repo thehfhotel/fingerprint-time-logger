@@ -268,7 +268,8 @@ const refreshBtn = document.getElementById('refresh-btn');
 #4
 ##Title: 🏢 All Employees - Consolidated View (Most Recent First) not showing nickname but showed Employee undefined instead.
 ##Expected behavior: each log should show employee nickname.
-##Status: ✅ FIXED - 2025-07-03
+##Status:
+1. ✅ FIXED - 2025-07-03
 ##Solution:
 
 ### Root Cause  
@@ -409,3 +410,34 @@ Fixed data flow in dashboard JavaScript (`/static/dashboard.html`):
 - ✅ Existing records remain visible during updates
 - ✅ Consolidated view shows combined historical + new data
 - ✅ No more "No attendance data available" during refresh
+
+#7
+##Title: 🏢 All Employees - Consolidated View (Most Recent First) not showing nickname but showed Employee badge id instead.
+##Expected behavior: each log should show employee nickname.
+##Status: ✅ FIXED - 2025-07-04
+##Solution:
+
+### Root Cause
+Dashboard was trying to access `item.thai_name` field from the employee management API, but the API actually returns `item.nickname` field. This caused the nickname mapping to fail, resulting in badge IDs being shown instead.
+
+### Fix Applied
+**File:** `/home/nut/fingerprint-time-logger/static/dashboard.html`
+
+**Changes:**
+1. **Line 143**: Changed `item.thai_name` to `item.nickname` to correctly map employee nicknames
+   ```javascript
+   // Before: thaiNamesData[item.badge_number] = item.thai_name;
+   // After: thaiNamesData[item.badge_number] = item.nickname;
+   ```
+
+2. **Line 153-155**: Updated function comment and fallback text for clarity
+   ```javascript
+   // Before: "Get Thai name or fallback to employee ID" → "Employee ${employeeId}"
+   // After: "Get employee nickname or fallback to badge number" → "Badge ${employeeId}"
+   ```
+
+### Result
+- ✅ Dashboard now shows employee nicknames: "ทิพย์ (22)", "จิ๋ม (37)", "รีวิว (2537)" etc.
+- ✅ Nicknames are pulled from Employee Management system
+- ✅ Fallback shows "Badge [number]" for employees without nicknames
+- ✅ Consolidated view properly displays all employee nicknames

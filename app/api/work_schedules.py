@@ -5,13 +5,14 @@ Work Schedule Management API - Job roles, schedules, and shifts
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.core.database import get_db
 from app.models.models import JobRole, WorkSchedule, WorkShift
 from app.schemas.schemas import (
     JobRoleWithSchedule, JobRole as JobRoleSchema,
     WorkSchedule as WorkScheduleSchema, WorkScheduleUpdate,
-    WorkShift as WorkShiftSchema, WorkShiftUpdate
+    WorkShift as WorkShiftSchema, WorkShiftCreate, WorkShiftUpdate
 )
 
 router = APIRouter()
@@ -274,3 +275,85 @@ async def update_all_shifts(
         db.refresh(shift)
     
     return updated_shifts
+
+
+@router.post("/job-roles/{role_name}/shifts", response_model=WorkShiftSchema)
+async def create_work_shift(
+    role_name: str,
+    shift_create: WorkShiftCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new work shift for a role
+    """
+    role = db.query(JobRole).filter(
+        JobRole.role_name == role_name,
+        JobRole.is_active == True
+    ).first()
+    
+    if not role:
+        raise HTTPException(status_code=404, detail="Job role not found")
+    
+    if not role.has_shifts:
+        raise HTTPException(
+            status_code=400,
+            detail="This role uses schedules, not shifts."
+        )
+    
+    # Get the next sort order
+    max_sort_order = db.query(func.max(WorkShift.sort_order)).filter(
+        WorkShift.job_role_id == role.id,
+        WorkShift.is_active == True
+    ).scalar() or 0
+    
+    # Create new shift
+    new_shift = WorkShift(
+        job_role_id=role.id,
+        shift_name=shift_create.shift_name,
+        start_time=shift_create.start_time,
+        end_time=shift_create.end_time,
+        break_duration_minutes=shift_create.break_duration_minutes or 0,
+        working_days=shift_create.working_days,
+        color=shift_create.color,
+        sort_order=max_sort_order + 1,
+        is_active=True
+    )
+    
+    db.add(new_shift)
+    db.commit()
+    db.refresh(new_shift)
+    
+    return new_shift
+
+
+@router.delete("/job-roles/{role_name}/shifts/{shift_id}")
+async def delete_work_shift(
+    role_name: str,
+    shift_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a work shift
+    """
+    role = db.query(JobRole).filter(
+        JobRole.role_name == role_name,
+        JobRole.is_active == True
+    ).first()
+    
+    if not role:
+        raise HTTPException(status_code=404, detail="Job role not found")
+    
+    shift = db.query(WorkShift).filter(
+        WorkShift.id == shift_id,
+        WorkShift.job_role_id == role.id,
+        WorkShift.is_active == True
+    ).first()
+    
+    if not shift:
+        raise HTTPException(status_code=404, detail="Work shift not found")
+    
+    # Soft delete by setting is_active to False
+    shift.is_active = False
+    db.commit()
+    
+    return {"detail": "Work shift deleted successfully"}

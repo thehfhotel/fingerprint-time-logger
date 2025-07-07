@@ -6,12 +6,16 @@ Replaces: attendance.py, attendance_calendar.py, calendar_api.py, simple_calenda
 from datetime import datetime, date
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+import csv
+import io
 
 from app.core.database import get_db
 from app.models.models import AttendanceRecord, Employee
 from app.services.attendance_service import attendance_service
 from app.services.device_service import device_service
+from app.services.export_service import export_service
 
 router = APIRouter()
 
@@ -260,6 +264,50 @@ async def get_sync_status():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# EXPORT FUNCTIONALITY
+# ============================================================================
+
+@router.get("/export/csv")
+async def export_attendance_csv(
+    start_date: Optional[date] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[date] = Query(None, description="End date (YYYY-MM-DD)"),
+    streaming: bool = Query(False, description="Enable streaming for large datasets"),
+    batch_size: int = Query(1000, description="Batch size for streaming"),
+    db: Session = Depends(get_db)
+):
+    """Export attendance records as CSV file"""
+    try:
+        # Create export service instance
+        service = export_service.__class__(db)
+        
+        # Convert dates to datetime for compatibility
+        start_datetime = datetime.combine(start_date, datetime.min.time()) if start_date else None
+        end_datetime = datetime.combine(end_date, datetime.max.time()) if end_date else None
+        
+        # Count records
+        total_records = service.count_records(
+            start_date=start_datetime,
+            end_date=end_datetime
+        )
+        
+        # Generate filename
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"attendance_export_{timestamp}.csv"
+        
+        # Return CSV response
+        return service.export_to_csv(
+            start_date=start_datetime,
+            end_date=end_datetime,
+            format_type="detailed",
+            include_employee_names=True,
+            include_device_names=True
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 # ============================================================================

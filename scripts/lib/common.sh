@@ -10,8 +10,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-API_PORT=${API_PORT:-8000}
-DASHBOARD_PORT=${DASHBOARD_PORT:-5000}
+UNIFIED_PORT=${UNIFIED_PORT:-5000}  # Single unified server port
 PYTHON_CMD=${PYTHON_CMD:-python3}
 VENV_PATH="$PROJECT_ROOT/venv"
 LOG_DIR="$PROJECT_ROOT/logs"
