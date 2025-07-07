@@ -154,9 +154,9 @@ class RealTimeManager {
                 }
             }
             
-            // Refresh Thai names if on thai-names page
-            if (window.loadThaiNames) {
-                window.loadThaiNames();
+            // Refresh employee display names if on nickname management page
+            if (window.loadEmployeeDisplayNames) {
+                window.loadEmployeeDisplayNames();
             }
             
         } catch (error) {

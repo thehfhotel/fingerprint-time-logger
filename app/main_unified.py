@@ -17,9 +17,9 @@ from app.api import (
 )
 # Legacy APIs for backward compatibility 
 from app.api import (
-    attendance, devices, employees, sync, diagnostics, 
+    attendance, devices, sync, diagnostics, 
     control, unlimited_sync, 
-    roles, time_check, employees_unified
+    roles, time_check
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -110,8 +110,6 @@ app.include_router(system_status.router, prefix="/api/system", tags=["system-sta
 # Legacy API routers for backward compatibility (Phase 4 cleanup will remove these)
 app.include_router(attendance.router, prefix="/api/legacy/attendance", tags=["legacy-attendance"])
 app.include_router(devices.router, prefix="/api/legacy/devices", tags=["legacy-devices"])
-app.include_router(employees_unified.router, prefix="/api/legacy/employees-unified", tags=["legacy-employees-unified"])
-app.include_router(employees.router, prefix="/api/legacy/employees", tags=["legacy-employees"])
 app.include_router(sync.router, prefix="/api/legacy/sync", tags=["legacy-sync"])
 app.include_router(diagnostics.router, prefix="/api/legacy/diagnostics", tags=["legacy-diagnostics"])
 app.include_router(control.router, prefix="/api/legacy/control", tags=["legacy-control"])
