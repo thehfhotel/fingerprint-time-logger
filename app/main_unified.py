@@ -19,7 +19,7 @@ from app.api import (
 from app.api import (
     attendance, devices, employees, sync, diagnostics, 
     control, work_schedules, employee_schedules, unlimited_sync, 
-    roles, time_check, calendar_api, employees_unified
+    roles, time_check, calendar_api, employees_unified, attendance_calendar
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -122,6 +122,7 @@ app.include_router(unlimited_sync.router, prefix="/api/legacy/unlimited-sync", t
 app.include_router(roles.router, prefix="/api/legacy/roles", tags=["legacy-roles"])
 app.include_router(time_check.router, prefix="/api/legacy/time-check", tags=["legacy-time-check"])
 app.include_router(calendar_api.router, prefix="/api/legacy/calendar", tags=["legacy-calendar"])
+app.include_router(attendance_calendar.router, prefix="/api", tags=["attendance-calendar"])
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")

@@ -9,7 +9,7 @@ class AttendanceCalendar {
         this.currentMonth = new Date().getMonth() + 1;
         this.attendanceData = null;
         this.config = null;
-        this.apiBaseUrl = `http://${window.location.hostname}:8000`; // API server port
+        this.apiBaseUrl = `http://${window.location.hostname}:5000`; // API server port
         
         // DOM elements
         this.loadingOverlay = document.getElementById('loadingOverlay');
@@ -179,15 +179,114 @@ class AttendanceCalendar {
         this.renderTableHeader();
         
         // Render employee rows
-        this.attendanceData.employees.forEach(employee => {
-            const row = this.createEmployeeRow(employee);
-            this.tableBody.appendChild(row);
-        });
+        let employees = [];
         
-        // Handle empty state
-        if (this.attendanceData.employees.length === 0) {
+        if (this.attendanceData.employees && Array.isArray(this.attendanceData.employees)) {
+            // New format with employees array
+            employees = this.attendanceData.employees;
+        } else if (this.attendanceData.calendar_data) {
+            // Existing format with calendar_data object - convert to employee array
+            employees = this.convertCalendarDataToEmployees(this.attendanceData.calendar_data);
+        }
+        
+        if (employees.length > 0) {
+            employees.forEach(employee => {
+                const row = this.createEmployeeRow(employee);
+                this.tableBody.appendChild(row);
+            });
+        } else {
             this.renderEmptyState();
         }
+    }
+    
+    convertCalendarDataToEmployees(calendarData) {
+        // Convert calendar_data object structure to employees array format
+        const employees = [];
+        const maidBadges = ['22', '37', '2522', '106', '10468']; // Known maid employee badges
+        const employeeNames = {
+            '22': 'ทิพย์',
+            '37': 'จิ๋ม', 
+            '2522': 'หมวย',
+            '106': 'พราว',
+            '10468': 'ตะวัน'
+        };
+        
+        // Focus on maid employees
+        for (const badge of maidBadges) {
+            if (calendarData[badge]) {
+                const employeeData = {
+                    badge_number: badge,
+                    name: employeeNames[badge] || `Employee ${badge}`,
+                    role: 'maid',
+                    daily_attendance: {}
+                };
+                
+                // Convert daily records to expected format
+                const employeeRecords = calendarData[badge];
+                for (let day = 1; day <= (this.attendanceData.days_in_month || 31); day++) {
+                    const dayStr = String(day);
+                    const dateStr = `${this.currentYear}-${String(this.currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    
+                    if (employeeRecords[dateStr]) {
+                        const dayRecords = employeeRecords[dateStr];
+                        const checkIn = dayRecords.find(r => r.type === 'check-in');
+                        const checkOut = dayRecords.find(r => r.type === 'check-out');
+                        
+                        // Determine status based on check-in time for maid schedule (7:00 AM)
+                        let status = 'perfect';
+                        let notes = 'On time';
+                        
+                        if (checkIn) {
+                            const checkInTime = checkIn.time;
+                            const [hours, minutes] = checkInTime.split(':').map(Number);
+                            
+                            if (hours > 7 || (hours === 7 && minutes > 15)) {
+                                status = 'violation'; // More than 15 min late
+                                notes = `Late: ${checkInTime}`;
+                            } else if (hours > 7 || minutes > 0) {
+                                status = 'minor_issue'; // 1-15 min late
+                                notes = `Slightly late: ${checkInTime}`;
+                            }
+                        }
+                        
+                        if (!checkOut) {
+                            if (status === 'perfect') status = 'minor_issue';
+                            notes += notes ? '; No check-out' : 'No check-out';
+                        }
+                        
+                        employeeData.daily_attendance[dayStr] = {
+                            status: status,
+                            check_in: checkIn ? checkIn.time : null,
+                            check_out: checkOut ? checkOut.time : null,
+                            notes: notes
+                        };
+                    } else {
+                        // Check if it's a weekend
+                        const dayOfWeek = new Date(this.currentYear, this.currentMonth - 1, day).getDay();
+                        if (dayOfWeek === 0 || dayOfWeek === 6) { // Sunday or Saturday
+                            employeeData.daily_attendance[dayStr] = {
+                                status: 'non_working',
+                                check_in: null,
+                                check_out: null,
+                                notes: 'Weekend'
+                            };
+                        } else {
+                            employeeData.daily_attendance[dayStr] = {
+                                status: 'absent',
+                                check_in: null,
+                                check_out: null,
+                                notes: 'No attendance record'
+                            };
+                        }
+                    }
+                }
+                
+                employees.push(employeeData);
+            }
+        }
+        
+        console.log(`Converted calendar data to ${employees.length} maid employees`);
+        return employees;
     }
     
     renderTableHeader() {
@@ -401,12 +500,18 @@ class AttendanceCalendar {
     }
     
     renderStatistics() {
-        const stats = this.attendanceData.statistics;
+        const stats = this.attendanceData.statistics || {};
         
-        document.getElementById('perfectRate').textContent = `${stats.perfect_attendance_rate.toFixed(1)}%`;
-        document.getElementById('punctualityRate').textContent = `${stats.punctuality_rate.toFixed(1)}%`;
-        document.getElementById('violationCount').textContent = stats.violation_count;
-        document.getElementById('avgLateTime').textContent = `${stats.average_late_minutes.toFixed(1)} min`;
+        // Use safe access with fallback values
+        const perfectRate = stats.perfect_attendance_rate || stats.average_attendance_rate || 0;
+        const punctualityRate = stats.punctuality_rate || perfectRate || 0;
+        const violationCount = stats.violation_count || 0;
+        const avgLateTime = stats.average_late_minutes || 0;
+        
+        document.getElementById('perfectRate').textContent = `${perfectRate.toFixed(1)}%`;
+        document.getElementById('punctualityRate').textContent = `${punctualityRate.toFixed(1)}%`;
+        document.getElementById('violationCount').textContent = violationCount;
+        document.getElementById('avgLateTime').textContent = `${avgLateTime.toFixed(1)} min`;
     }
     
     async navigateMonth(direction) {

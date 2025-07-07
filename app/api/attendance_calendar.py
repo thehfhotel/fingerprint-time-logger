@@ -11,7 +11,7 @@ from datetime import datetime, date
 import calendar
 
 from app.core.database import get_db
-from app.schemas.attendance_calendar_schemas import (
+from app.schemas.schemas import (
     MonthlyCalendarResponse,
     EmployeeDayDetailResponse,
     CalendarFilters,
