@@ -94,21 +94,4 @@
     color: #666;
 }
 
-/* Attendance status badges */
-.attendance-status {
-    padding: 0.25rem 0.75rem;
-    border-radius: 20px;
-    font-size: 0.85rem;
-    font-weight: 500;
-    white-space: nowrap;
-}
-
-.status-checkin {
-    background-color: #e8f5e9;
-    color: #2e7d32;
-}
-
-.status-checkout {
-    background-color: #fff3e0;
-    color: #f57c00;
-}
+/* Removed attendance status badges - no longer showing check-in/check-out */

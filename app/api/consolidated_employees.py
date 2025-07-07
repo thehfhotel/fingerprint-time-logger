@@ -53,7 +53,36 @@ class RoleCreate(BaseModel):
 # EMPLOYEE MANAGEMENT - Basic CRUD
 # ============================================================================
 
-@router.get("/", response_model=List[Dict[str, Any]])
+@router.put("/{badge_number}/nickname")
+async def update_employee_nickname(
+    badge_number: str,
+    nickname_data: dict,
+    db: Session = Depends(get_db)
+):
+    """Update employee nickname only"""
+    try:
+        employee = db.query(Employee).filter(Employee.badge_number == badge_number).first()
+        if not employee:
+            raise HTTPException(status_code=404, detail="Employee not found")
+        
+        # Update nickname (use display_name for nickname storage)
+        employee.display_name = nickname_data.get("nickname", "")
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "Nickname updated successfully",
+            "badge_number": badge_number,
+            "nickname": employee.display_name
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/")
 async def get_employees(
     include_hidden: bool = False,
     role_id: Optional[int] = None,
@@ -75,6 +104,7 @@ async def get_employees(
         for emp in employees:
             result.append({
                 "badge_number": emp.badge_number,
+                "name": emp.display_name or "",  # Use display_name for nickname
                 "english_name": emp.english_name,
                 "thai_name": emp.thai_name,
                 "display_name": emp.display_name,
@@ -86,7 +116,7 @@ async def get_employees(
                 "created_at": emp.created_at.isoformat() if emp.created_at else None
             })
         
-        return result
+        return {"employees": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

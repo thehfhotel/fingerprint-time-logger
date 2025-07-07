@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employee Nickname Management - Fingerprint Time Logger</title>
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/modal.css">
+    <style>
+        .nickname-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .nickname-table th,
+        .nickname-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .nickname-table th {
+            background-color: #f5f5f5;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .nickname-table tr:hover {
+            background-color: #f9f9f9;
+        }
+
+        .nickname-input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .nickname-input:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+
+        .save-btn {
+            padding: 6px 12px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .save-btn:hover {
+            background-color: #218838;
+        }
+
+        .save-btn:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+
+        .search-box {
+            margin-bottom: 20px;
+        }
+
+        .search-input {
+            width: 300px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .success-message {
+            color: #28a745;
+            font-size: 12px;
+            margin-left: 10px;
+            display: none;
+        }
+
+        .error-message {
+            color: #dc3545;
+            font-size: 12px;
+            margin-left: 10px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1>Employee Nickname Management</h1>
+            <nav>
+                <a href="/" class="nav-link">Dashboard</a>
+                <a href="/device-status" class="nav-link">Device Status</a>
+                <a href="/nickname-management" class="nav-link active">Nicknames</a>
+                <a href="/export" class="nav-link">Export CSV</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Manage Employee Nicknames</h2>
+                </div>
+                <div class="card-body">
+                    <div class="search-box">
+                        <input type="text" id="searchInput" class="search-input" placeholder="Search by Badge ID or Nickname...">
+                    </div>
+                    
+                    <div id="loadingDiv" class="loading">Loading employee data...</div>
+                    
+                    <table class="nickname-table" id="nicknameTable" style="display: none;">
+                        <thead>
+                            <tr>
+                                <th>Badge ID</th>
+                                <th>Nickname</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="nicknameTableBody">
+                            <!-- Table rows will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let employees = [];
+
+        // Load employees on page load
+        async function loadEmployees() {
+            try {
+                const response = await fetch('/api/employees/');
+                if (!response.ok) throw new Error('Failed to load employees');
+                
+                const data = await response.json();
+                employees = data.employees || [];
+                
+                displayEmployees(employees);
+                document.getElementById('loadingDiv').style.display = 'none';
+                document.getElementById('nicknameTable').style.display = 'table';
+            } catch (error) {
+                console.error('Error loading employees:', error);
+                document.getElementById('loadingDiv').innerHTML = 'Failed to load employee data';
+            }
+        }
+
+        // Display employees in table
+        function displayEmployees(employeeList) {
+            const tbody = document.getElementById('nicknameTableBody');
+            tbody.innerHTML = '';
+            
+            employeeList.forEach(employee => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${employee.badge_number}</td>
+                    <td>
+                        <input type="text" 
+                               class="nickname-input" 
+                               id="nickname-${employee.badge_number}"
+                               value="${employee.name || ''}" 
+                               data-original="${employee.name || ''}"
+                               placeholder="Enter nickname">
+                    </td>
+                    <td>
+                        <button class="save-btn" 
+                                onclick="saveNickname('${employee.badge_number}')"
+                                id="save-${employee.badge_number}"
+                                disabled>
+                            Save
+                        </button>
+                        <span class="success-message" id="success-${employee.badge_number}">Saved!</span>
+                        <span class="error-message" id="error-${employee.badge_number}">Failed to save</span>
+                    </td>
+                `;
+                tbody.appendChild(row);
+                
+                // Add event listener for input changes
+                const input = document.getElementById(`nickname-${employee.badge_number}`);
+                input.addEventListener('input', function() {
+                    const saveBtn = document.getElementById(`save-${employee.badge_number}`);
+                    saveBtn.disabled = this.value === this.getAttribute('data-original');
+                });
+            });
+        }
+
+        // Save nickname
+        async function saveNickname(badgeNumber) {
+            const input = document.getElementById(`nickname-${badgeNumber}`);
+            const saveBtn = document.getElementById(`save-${badgeNumber}`);
+            const successMsg = document.getElementById(`success-${badgeNumber}`);
+            const errorMsg = document.getElementById(`error-${badgeNumber}`);
+            
+            saveBtn.disabled = true;
+            successMsg.style.display = 'none';
+            errorMsg.style.display = 'none';
+            
+            try {
+                const response = await fetch(`/api/employees/${badgeNumber}/nickname`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        nickname: input.value
+                    })
+                });
+                
+                if (!response.ok) throw new Error('Failed to save nickname');
+                
+                // Update the original value
+                input.setAttribute('data-original', input.value);
+                
+                // Show success message
+                successMsg.style.display = 'inline';
+                setTimeout(() => {
+                    successMsg.style.display = 'none';
+                }, 3000);
+                
+                // Update the employee in our local array
+                const employee = employees.find(e => e.badge_number === badgeNumber);
+                if (employee) {
+                    employee.name = input.value;
+                }
+            } catch (error) {
+                console.error('Error saving nickname:', error);
+                errorMsg.style.display = 'inline';
+                setTimeout(() => {
+                    errorMsg.style.display = 'none';
+                }, 3000);
+                
+                // Re-enable save button if there's still a change
+                if (input.value !== input.getAttribute('data-original')) {
+                    saveBtn.disabled = false;
+                }
+            }
+        }
+
+        // Search functionality
+        document.getElementById('searchInput').addEventListener('input', function() {
+            const searchTerm = this.value.toLowerCase();
+            
+            const filteredEmployees = employees.filter(employee => {
+                const badgeMatch = employee.badge_number.toLowerCase().includes(searchTerm);
+                const nameMatch = (employee.name || '').toLowerCase().includes(searchTerm);
+                return badgeMatch || nameMatch;
+            });
+            
+            displayEmployees(filteredEmployees);
+        });
+
+        // Load employees when page loads
+        loadEmployees();
+    </script>
+</body>
+</html>

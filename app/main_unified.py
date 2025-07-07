@@ -167,6 +167,10 @@ async def serve_device_status():
 async def serve_export():
     return FileResponse("static/export.html")
 
+@app.get("/nickname-management")
+async def serve_nickname_management():
+    return FileResponse("static/nickname-management.html")
+
 @app.get("/status")
 async def serve_status():
     return FileResponse("static/status.html")
