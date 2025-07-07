@@ -4,6 +4,7 @@ Replaces: devices.py, sync.py, unlimited_sync.py, control.py, diagnostics.py
 """
 
 from typing import List, Dict, Any, Optional
+import os
 from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -331,6 +332,39 @@ async def get_device_config():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# CONFIGURATION API
+# ============================================================================
+
+@router.get("/app-config")
+async def get_app_configuration():
+    """Get application configuration for frontend"""
+    return {
+        "api": {
+            "baseUrl": "/api",
+            "timeout": int(os.getenv('API_TIMEOUT', '30000')),
+            "retryAttempts": int(os.getenv('API_RETRY_ATTEMPTS', '3'))
+        },
+        "websocket": {
+            "reconnectAttempts": int(os.getenv('WS_RECONNECT_ATTEMPTS', '5')),
+            "reconnectDelay": int(os.getenv('WS_RECONNECT_DELAY', '1000')),
+            "pingInterval": int(os.getenv('WS_PING_INTERVAL', '30000'))
+        },
+        "ui": {
+            "refreshInterval": int(os.getenv('UI_REFRESH_INTERVAL', '120000')),
+            "healthCheckInterval": int(os.getenv('UI_HEALTH_CHECK_INTERVAL', '60000')),
+            "dateFormat": os.getenv('UI_DATE_FORMAT', 'en-US'),
+            "timeFormat": {
+                "hour12": os.getenv('UI_TIME_HOUR12', 'false').lower() == 'true'
+            }
+        },
+        "device": {
+            "defaultTimeout": int(os.getenv('DEVICE_TIMEOUT', '5')),
+            "maxRetries": int(os.getenv('DEVICE_MAX_RETRIES', '3'))
+        }
+    }
 
 
 # ============================================================================

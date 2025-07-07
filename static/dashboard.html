@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/static/css/modal.css">
     
     <!-- JavaScript Files -->
+    <script src="/static/js/config.js"></script>
     <script src="/static/js/websocket-adapter.js"></script>
     <script src="/static/js/real-time-manager.js"></script>
 </head>
@@ -397,7 +398,13 @@
                 console.log('Initial data load completed successfully');
                 
                 // Set up periodic device clock refresh (every 5 minutes)
-                setInterval(loadDeviceClock, 300000);
+                // Use configurable interval
+                appConfig.loadConfig().then(() => {
+                    const interval = appConfig.get('ui.refreshInterval') || 300000;
+                    setInterval(loadDeviceClock, interval);
+                }).catch(() => {
+                    setInterval(loadDeviceClock, 300000); // fallback
+                });
                 
             } catch (error) {
                 console.error('Error loading initial data:', error);

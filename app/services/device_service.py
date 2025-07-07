@@ -6,6 +6,7 @@ Replaces complex connection management, circuit breakers, and enterprise pattern
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
+import os
 from zk import ZK
 from sqlalchemy.orm import Session
 
@@ -19,8 +20,8 @@ class SimpleDeviceService:
     """Simplified device service with basic retry logic"""
     
     def __init__(self):
-        self.max_retries = 3
-        self.timeout = 5
+        self.max_retries = int(os.getenv('DEVICE_MAX_RETRIES', '3'))
+        self.timeout = int(os.getenv('DEVICE_TIMEOUT', '5'))
     
     def get_default_device(self) -> Optional[Device]:
         """Get the default ZKTeco device"""
@@ -30,10 +31,10 @@ class SimpleDeviceService:
             if not device:
                 # Create default device if none exists
                 device = Device(
-                    name="ZKTeco Device",
-                    ip_address="192.168.100.209",
-                    port=4370,
-                    password=0,
+                    name=os.getenv('DEVICE_NAME', 'ZKTeco Device'),
+                    ip_address=os.getenv('ZKTECO_HOST', '192.168.100.209'),
+                    port=int(os.getenv('ZKTECO_PORT', '4370')),
+                    password=int(os.getenv('ZKTECO_PASSWORD', '0')),
                     is_active=True
                 )
                 db.add(device)

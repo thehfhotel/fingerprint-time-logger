@@ -8,13 +8,26 @@ class WebSocketAdapter {
         this.ws = null;
         this.connected = false;
         this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
-        this.reconnectDelay = 1000;
+        this.maxReconnectAttempts = 5; // Will be updated from config
+        this.reconnectDelay = 1000; // Will be updated from config
+        this.pingInterval = 30000; // Will be updated from config
         this.eventHandlers = {};
         this.connectionHandlers = {
             connect: [],
             disconnect: []
         };
+        this.initConfig();
+    }
+
+    async initConfig() {
+        try {
+            await appConfig.loadConfig();
+            this.maxReconnectAttempts = appConfig.get('websocket.reconnectAttempts') || 5;
+            this.reconnectDelay = appConfig.get('websocket.reconnectDelay') || 1000;
+            this.pingInterval = appConfig.get('websocket.pingInterval') || 30000;
+        } catch (error) {
+            console.warn('Failed to load WebSocket config, using defaults');
+        }
     }
 
     connect() {
@@ -69,7 +82,7 @@ class WebSocketAdapter {
                 if (this.connected && this.ws.readyState === WebSocket.OPEN) {
                     this.ws.send(JSON.stringify({ type: 'ping' }));
                 }
-            }, 30000); // Every 30 seconds
+            }, this.pingInterval); // Configurable ping interval
 
         } catch (e) {
             console.error('Failed to create WebSocket:', e);
