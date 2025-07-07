@@ -324,7 +324,24 @@ class SimpleDeviceService:
 
     def sync_time_to_device(self) -> Dict[str, Any]:
         """Sync current system time to device"""
-        return self.set_device_time()
+        result = self.set_device_time()
+        if result.get("success"):
+            self.update_last_sync()
+        return result
+    
+    def update_last_sync(self):
+        """Update the device's last sync timestamp"""
+        try:
+            device = self.get_default_device()
+            if device:
+                db = next(get_db())
+                try:
+                    device.last_sync = datetime.now()
+                    db.commit()
+                finally:
+                    db.close()
+        except Exception as e:
+            logger.warning(f"Failed to update last sync time: {e}")
 
 
 # Global service instance

@@ -438,11 +438,30 @@ async def devices_health_check():
         
         # Add lightweight device info without overwhelming queries
         if connected:
+            # Get device time efficiently (lightweight operation)
+            try:
+                time_info = device_service.get_device_time(auto_sync=False)
+                device_time = time_info.get("device_time", "Unknown")
+            except Exception:
+                device_time = "Unavailable"
+            
+            # Get actual counts from database for better accuracy
+            db = next(get_db())
+            try:
+                from app.models.models import Employee, AttendanceRecord
+                users_count = db.query(Employee).count()
+                records_count = db.query(AttendanceRecord).count()
+            except Exception:
+                users_count = "Unknown"
+                records_count = "Unknown"
+            finally:
+                db.close()
+            
             response.update({
-                "users_count": "Available via sync",
-                "records_count": "Available via sync", 
-                "device_time": "Available via time endpoint",
-                "info_note": "Lightweight health check - use sync operations for detailed info"
+                "users_count": users_count,
+                "records_count": records_count,
+                "device_time": device_time,
+                "info_note": "Counts from database - sync for latest device data"
             })
         
         return response
