@@ -93,6 +93,23 @@
             margin-left: 10px;
             display: none;
         }
+
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-active {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .status-inactive {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
     </style>
 </head>
 <body>
@@ -126,6 +143,7 @@
                             <tr>
                                 <th>Badge ID</th>
                                 <th>Nickname</th>
+                                <th>Status</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
@@ -166,6 +184,9 @@
             
             employeeList.forEach(employee => {
                 const row = document.createElement('tr');
+                const statusClass = employee.is_active ? 'status-active' : 'status-inactive';
+                const statusText = employee.is_active ? 'Active' : 'Inactive';
+                
                 row.innerHTML = `
                     <td>${employee.badge_number}</td>
                     <td>
@@ -175,6 +196,9 @@
                                value="${employee.name || ''}" 
                                data-original="${employee.name || ''}"
                                placeholder="Enter nickname">
+                    </td>
+                    <td>
+                        <span class="status-badge ${statusClass}">${statusText}</span>
                     </td>
                     <td>
                         <button class="save-btn" 
