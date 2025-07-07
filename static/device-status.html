@@ -149,6 +149,22 @@
         </div>
         
         <div class="status-card">
+            <div class="status-header">
+                <div class="status-indicator" id="autoImportIndicator"></div>
+                <h2>Auto-Import Service</h2>
+            </div>
+            
+            <div class="device-info" id="autoImportInfo">
+                <div class="loading">Loading auto-import status...</div>
+            </div>
+            
+            <div class="action-buttons">
+                <button class="btn btn-primary" onclick="triggerManualImport()">Import Now</button>
+                <button class="btn btn-secondary" onclick="refreshAutoImportStatus()">Refresh Status</button>
+            </div>
+        </div>
+        
+        <div class="status-card">
             <h2>Recent Sync Activity</h2>
             <div class="sync-log" id="syncLog">
                 <div class="loading">Loading sync log...</div>
@@ -301,13 +317,113 @@
             `;
         }
         
+        // Auto-import functions
+        let autoImportStatus = {};
+        
+        async function loadAutoImportStatus() {
+            try {
+                const response = await fetch('/api/auto-import/status');
+                autoImportStatus = await response.json();
+                updateAutoImportDisplay();
+            } catch (error) {
+                console.error('Failed to load auto-import status:', error);
+                showAutoImportError('Failed to load auto-import status');
+            }
+        }
+        
+        function updateAutoImportDisplay() {
+            const indicator = document.getElementById('autoImportIndicator');
+            const infoDiv = document.getElementById('autoImportInfo');
+            
+            if (autoImportStatus.enabled && autoImportStatus.task_status === 'running') {
+                indicator.className = 'status-indicator status-connected';
+                infoDiv.innerHTML = `
+                    <div class="info-item">
+                        <span>Status:</span>
+                        <span style="color: #22c55e; font-weight: 500;">Active</span>
+                    </div>
+                    <div class="info-item">
+                        <span>Import Interval:</span>
+                        <span>${autoImportStatus.interval_minutes} minutes</span>
+                    </div>
+                    <div class="info-item">
+                        <span>Next Import:</span>
+                        <span>${autoImportStatus.next_import_estimate}</span>
+                    </div>
+                    <div class="info-item">
+                        <span>Task Status:</span>
+                        <span style="color: #22c55e;">${autoImportStatus.task_status}</span>
+                    </div>
+                `;
+            } else {
+                indicator.className = 'status-indicator status-disconnected';
+                infoDiv.innerHTML = `
+                    <div class="info-item">
+                        <span>Status:</span>
+                        <span style="color: #ef4444; font-weight: 500;">Inactive</span>
+                    </div>
+                    <div class="info-item">
+                        <span>Task Status:</span>
+                        <span style="color: #ef4444;">${autoImportStatus.task_status || 'stopped'}</span>
+                    </div>
+                    <div class="info-item">
+                        <span>Configured Interval:</span>
+                        <span>${autoImportStatus.interval_minutes || 30} minutes</span>
+                    </div>
+                `;
+            }
+        }
+        
+        async function triggerManualImport() {
+            try {
+                const indicator = document.getElementById('autoImportIndicator');
+                indicator.className = 'status-indicator status-syncing';
+                
+                const response = await fetch('/api/auto-import/trigger', { method: 'POST' });
+                const result = await response.json();
+                
+                if (result.success) {
+                    addSyncLog(`Manual import successful: ${result.synced || 0} records synced`);
+                    loadDeviceStatus();
+                    loadAutoImportStatus();
+                } else {
+                    addSyncLog('Manual import failed: ' + result.message);
+                }
+            } catch (error) {
+                addSyncLog('Manual import error: ' + error.message);
+                loadAutoImportStatus();
+            }
+        }
+        
+        function refreshAutoImportStatus() {
+            loadAutoImportStatus();
+            addSyncLog('Auto-import status refreshed');
+        }
+        
+        function showAutoImportError(message) {
+            const indicator = document.getElementById('autoImportIndicator');
+            indicator.className = 'status-indicator status-disconnected';
+            
+            const infoDiv = document.getElementById('autoImportInfo');
+            infoDiv.innerHTML = `
+                <div class="info-item">
+                    <span>Error:</span>
+                    <span style="color: #ef4444;">${message}</span>
+                </div>
+            `;
+        }
+        
         // Initialize page
         document.addEventListener('DOMContentLoaded', () => {
             loadDeviceStatus();
+            loadAutoImportStatus();
             addSyncLog('Device status page loaded');
             
             // Auto-refresh every 30 seconds
-            setInterval(loadDeviceStatus, 30000);
+            setInterval(() => {
+                loadDeviceStatus();
+                loadAutoImportStatus();
+            }, 30000);
         });
     </script>
 </body>
