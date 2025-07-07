@@ -59,22 +59,42 @@ async def update_employee_nickname(
     nickname_data: dict,
     db: Session = Depends(get_db)
 ):
-    """Update employee nickname only"""
+    """Update employee nickname only - creates employee if not exists"""
     try:
         employee = db.query(Employee).filter(Employee.badge_number == badge_number).first()
+        
         if not employee:
-            raise HTTPException(status_code=404, detail="Employee not found")
-        
-        # Update nickname (use display_name for nickname storage)
-        employee.display_name = nickname_data.get("nickname", "")
-        db.commit()
-        
-        return {
-            "success": True,
-            "message": "Nickname updated successfully",
-            "badge_number": badge_number,
-            "nickname": employee.display_name
-        }
+            # Create new employee if doesn't exist (from ZK device)
+            display_name = nickname_data.get("nickname", f"User {badge_number}")
+            employee = Employee(
+                badge_number=badge_number,
+                display_name=display_name,
+                is_active=True,
+                is_hidden=False
+            )
+            db.add(employee)
+            db.commit()
+            db.refresh(employee)
+            
+            return {
+                "success": True,
+                "message": "Employee created and nickname set successfully",
+                "badge_number": badge_number,
+                "nickname": employee.display_name,
+                "created": True
+            }
+        else:
+            # Update existing employee nickname
+            employee.display_name = nickname_data.get("nickname", "")
+            db.commit()
+            
+            return {
+                "success": True,
+                "message": "Nickname updated successfully",
+                "badge_number": badge_number,
+                "nickname": employee.display_name,
+                "created": False
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -88,15 +108,26 @@ async def update_employee_status(
     status_data: dict,
     db: Session = Depends(get_db)
 ):
-    """Update employee active/inactive status"""
+    """Update employee active/inactive status - creates employee if not exists"""
     try:
         employee = db.query(Employee).filter(Employee.badge_number == badge_number).first()
-        if not employee:
-            raise HTTPException(status_code=404, detail="Employee not found")
         
-        # Update status
-        employee.is_active = status_data.get("is_active", employee.is_active)
-        db.commit()
+        if not employee:
+            # Create new employee if doesn't exist (from ZK device)
+            is_active = status_data.get("is_active", True)
+            employee = Employee(
+                badge_number=badge_number,
+                display_name=f"User {badge_number}",
+                is_active=is_active,
+                is_hidden=False
+            )
+            db.add(employee)
+            db.commit()
+            db.refresh(employee)
+        else:
+            # Update existing employee status
+            employee.is_active = status_data.get("is_active", employee.is_active)
+            db.commit()
         
         return {
             "success": True,
@@ -117,15 +148,26 @@ async def update_employee_hidden_status(
     hidden_data: dict,
     db: Session = Depends(get_db)
 ):
-    """Update employee hidden/visible status"""
+    """Update employee hidden/visible status - creates employee if not exists"""
     try:
         employee = db.query(Employee).filter(Employee.badge_number == badge_number).first()
-        if not employee:
-            raise HTTPException(status_code=404, detail="Employee not found")
         
-        # Update hidden status
-        employee.is_hidden = hidden_data.get("is_hidden", employee.is_hidden)
-        db.commit()
+        if not employee:
+            # Create new employee if doesn't exist (from ZK device)
+            is_hidden = hidden_data.get("is_hidden", False)
+            employee = Employee(
+                badge_number=badge_number,
+                display_name=f"User {badge_number}",
+                is_active=True,
+                is_hidden=is_hidden
+            )
+            db.add(employee)
+            db.commit()
+            db.refresh(employee)
+        else:
+            # Update existing employee hidden status
+            employee.is_hidden = hidden_data.get("is_hidden", employee.is_hidden)
+            db.commit()
         
         return {
             "success": True,
@@ -144,11 +186,16 @@ async def update_employee_hidden_status(
 async def get_employees(
     include_hidden: bool = False,
     include_inactive: bool = False,
+    from_device: bool = False,
     role_id: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all employees with optional filtering"""
+    """Get all employees with optional filtering, including from ZK device"""
     try:
+        if from_device:
+            # Get users from ZK device and merge with database records
+            return await get_employees_from_device(include_hidden, include_inactive, db)
+        
         query = db.query(Employee)
         
         if not include_hidden:
@@ -175,12 +222,90 @@ async def get_employees(
                 "job_role_id": emp.job_role_id,
                 "is_active": emp.is_active,
                 "is_hidden": emp.is_hidden,
-                "created_at": emp.created_at.isoformat() if emp.created_at else None
+                "created_at": emp.created_at.isoformat() if emp.created_at else None,
+                "in_database": True
             })
         
         return {"employees": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+async def get_employees_from_device(include_hidden: bool, include_inactive: bool, db: Session) -> Dict[str, Any]:
+    """Get employees from ZK device and merge with database records"""
+    try:
+        # Get users from ZK device
+        device = device_service.get_default_device()
+        if not device:
+            raise HTTPException(status_code=400, detail="No device configured")
+        
+        zk_users = device_service.get_users(device)
+        
+        # Get all employees from database for merging
+        db_employees = {}
+        query = db.query(Employee)
+        if not include_hidden:
+            query = query.filter(Employee.is_hidden == False)
+        if not include_inactive:
+            query = query.filter(Employee.is_active == True)
+        
+        for emp in query.all():
+            db_employees[emp.badge_number] = emp
+        
+        # Merge ZK users with database records
+        result = []
+        
+        for zk_user in zk_users:
+            badge_number = zk_user['user_id']
+            db_employee = db_employees.get(badge_number)
+            
+            if db_employee:
+                # Employee exists in database - use database data
+                if not include_hidden and db_employee.is_hidden:
+                    continue
+                if not include_inactive and not db_employee.is_active:
+                    continue
+                    
+                result.append({
+                    "badge_number": db_employee.badge_number,
+                    "name": db_employee.display_name or "",
+                    "english_name": db_employee.english_name,
+                    "thai_name": db_employee.thai_name, 
+                    "display_name": db_employee.display_name,
+                    "department": db_employee.department,
+                    "position": db_employee.position,
+                    "job_role_id": db_employee.job_role_id,
+                    "is_active": db_employee.is_active,
+                    "is_hidden": db_employee.is_hidden,
+                    "created_at": db_employee.created_at.isoformat() if db_employee.created_at else None,
+                    "in_database": True,
+                    "zk_name": zk_user.get('name', '')
+                })
+            else:
+                # Employee only exists in ZK device - create new record representation
+                result.append({
+                    "badge_number": badge_number,
+                    "name": zk_user.get('name', ''),
+                    "english_name": None,
+                    "thai_name": None,
+                    "display_name": zk_user.get('name', f"User {badge_number}"),
+                    "department": None,
+                    "position": None,
+                    "job_role_id": None,
+                    "is_active": True,  # Assume active if in ZK device
+                    "is_hidden": False, # Default to visible
+                    "created_at": None,
+                    "in_database": False,
+                    "zk_name": zk_user.get('name', '')
+                })
+        
+        # Sort by badge number (numeric sort)
+        result.sort(key=lambda x: int(x['badge_number']) if x['badge_number'].isdigit() else float('inf'))
+        
+        return {"employees": result}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching from device: {str(e)}")
 
 
 @router.get("/{badge_number}")

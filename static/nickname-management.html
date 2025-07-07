@@ -214,7 +214,12 @@
         // Load employees on page load
         async function loadEmployees() {
             try {
-                const url = showHidden ? '/api/employees/?include_hidden=true' : '/api/employees/';
+                const params = new URLSearchParams({
+                    from_device: 'true',  // Always fetch from ZK device
+                    include_hidden: showHidden.toString()
+                });
+                
+                const url = `/api/employees/?${params}`;
                 const response = await fetch(url);
                 if (!response.ok) throw new Error('Failed to load employees');
                 
@@ -226,7 +231,7 @@
                 document.getElementById('nicknameTable').style.display = 'table';
             } catch (error) {
                 console.error('Error loading employees:', error);
-                document.getElementById('loadingDiv').innerHTML = 'Failed to load employee data';
+                document.getElementById('loadingDiv').innerHTML = 'Failed to load employee data. Make sure ZK device is connected.';
             }
         }
 
@@ -242,15 +247,19 @@
                 const hiddenClass = employee.is_hidden ? 'status-hidden' : 'status-active';
                 const hiddenText = employee.is_hidden ? 'Hidden' : 'Visible';
                 
+                // Add visual indicator for employees not in database
+                const notInDbIndicator = !employee.in_database ? 
+                    '<span style="color: #ffc107; font-size: 12px; margin-left: 5px;" title="From ZK Device - not in database yet">📋</span>' : '';
+                
                 row.innerHTML = `
-                    <td>${employee.badge_number}</td>
+                    <td>${employee.badge_number}${notInDbIndicator}</td>
                     <td>
                         <input type="text" 
                                class="nickname-input" 
                                id="nickname-${employee.badge_number}"
                                value="${employee.display_name || ''}" 
                                data-original="${employee.display_name || ''}"
-                               placeholder="Enter nickname">
+                               placeholder="${employee.in_database ? 'Enter nickname' : 'Enter nickname (will create employee)'}">
                     </td>
                     <td>
                         <button class="toggle-btn ${employee.is_active ? '' : 'inactive'}" 
@@ -271,7 +280,7 @@
                                 onclick="saveNickname('${employee.badge_number}')"
                                 id="save-${employee.badge_number}"
                                 disabled>
-                            Save
+                            ${employee.in_database ? 'Save' : 'Create & Save'}
                         </button>
                         <span class="success-message" id="success-${employee.badge_number}">Saved!</span>
                         <span class="error-message" id="error-${employee.badge_number}">Failed to save</span>
@@ -325,6 +334,16 @@
                 const employee = employees.find(e => e.badge_number === badgeNumber);
                 if (employee) {
                     employee.display_name = input.value;
+                    employee.in_database = true; // Now in database
+                }
+                
+                // Check if employee was created
+                const result = await response.json();
+                if (result.created) {
+                    // Update button text since employee is now in database
+                    saveBtn.textContent = 'Save';
+                    // Refresh the row to remove the "not in database" indicator
+                    displayEmployees(getFilteredEmployees());
                 }
             } catch (error) {
                 console.error('Error saving nickname:', error);
