@@ -332,14 +332,17 @@ class SimpleDeviceService:
     def update_last_sync(self):
         """Update the device's last sync timestamp"""
         try:
-            device = self.get_default_device()
-            if device:
-                db = next(get_db())
-                try:
+            db = next(get_db())
+            try:
+                device = db.query(Device).filter(Device.is_active == True).first()
+                if device:
                     device.last_sync = datetime.now()
                     db.commit()
-                finally:
-                    db.close()
+                    logger.info(f"Updated last sync time for device {device.name}")
+                else:
+                    logger.warning("No active device found to update sync time")
+            finally:
+                db.close()
         except Exception as e:
             logger.warning(f"Failed to update last sync time: {e}")
 
