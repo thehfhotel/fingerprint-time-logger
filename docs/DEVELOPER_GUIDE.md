@@ -219,7 +219,6 @@ CREATE TABLE employees (
     display_name VARCHAR(100) NOT NULL,
     department VARCHAR(100),
     position VARCHAR(100),
-    job_role_id INTEGER,
     is_active BOOLEAN DEFAULT TRUE,
     is_hidden BOOLEAN DEFAULT FALSE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -238,17 +237,7 @@ CREATE TABLE attendance_records (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Job roles table
-CREATE TABLE job_roles (
-    id INTEGER PRIMARY KEY,
-    role_name VARCHAR(50) UNIQUE NOT NULL,
-    display_name VARCHAR(100) NOT NULL,
-    description TEXT,
-    has_shifts BOOLEAN DEFAULT FALSE,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+-- Job roles table removed - simplifying employee management
 ```
 
 ### Migration Management

@@ -486,7 +486,7 @@ GET /api/employees/
 **Query Parameters:**
 - `include_inactive` (optional): Include inactive employees (default: false)
 - `include_hidden` (optional): Include hidden employees (default: false)
-- `role_id` (optional): Filter by job role ID
+- `from_device` (optional): Fetch directly from ZK device (default: false)
 
 **Response:**
 ```json
@@ -500,7 +500,6 @@ GET /api/employees/
       "display_name": "จอห์น โด",
       "department": "IT",
       "position": "Developer",
-      "job_role_id": 1,
       "is_active": true,
       "is_hidden": false,
       "created_at": "2025-01-01T00:00:00",
@@ -528,7 +527,6 @@ GET /api/employees/{badge_number}
   "display_name": "จอห์น โด",
   "department": "IT",
   "position": "Developer",
-  "job_role_id": 1,
   "is_active": true,
   "is_hidden": false,
   "created_at": "2025-01-01T00:00:00",
@@ -548,7 +546,6 @@ PUT /api/employees/{badge_number}
   "thai_name": "จอห์น สมิธ",
   "department": "HR",
   "position": "Manager",
-  "job_role_id": 2,
   "is_active": true,
   "is_hidden": false
 }
@@ -679,69 +676,9 @@ PUT /api/employees/thai-names/{badge_number}
 }
 ```
 
-#### Get Job Roles
-```http
-GET /api/employees/roles/
-```
+#### Role Management Removed
 
-**Response:**
-```json
-{
-  "roles": [
-    {
-      "id": 1,
-      "role_name": "developer",
-      "display_name": "Developer",
-      "description": "Software development role",
-      "has_shifts": false,
-      "is_active": true,
-      "employee_count": 10
-    }
-  ]
-}
-```
-
-#### Create Job Role
-```http
-POST /api/employees/roles/
-```
-
-**Request Body:**
-```json
-{
-  "role_name": "manager",
-  "display_name": "Manager",
-  "description": "Management role",
-  "has_shifts": false,
-  "is_active": true
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Job role created successfully",
-  "role": {...}
-}
-```
-
-#### Get Employees by Role
-```http
-GET /api/employees/by-role/{role_id}
-```
-
-**Response:**
-```json
-{
-  "role": {
-    "id": 1,
-    "role_name": "developer",
-    "display_name": "Developer"
-  },
-  "employees": [...]
-}
-```
+Job role management functionality has been removed to simplify employee management. Employees are now managed directly without role assignments.
 
 #### Get Employee Statistics
 ```http
@@ -756,10 +693,12 @@ GET /api/employees/stats/summary
   "inactive_employees": 5,
   "hidden_employees": 2,
   "employees_with_thai_names": 40,
-  "employees_by_role": {
-    "developer": 10,
-    "manager": 5
-  }
+  "departments": {
+    "IT": 25,
+    "HR": 10,
+    "Finance": 15
+  },
+  "completion_rate": 80.0
 }
 ```
 

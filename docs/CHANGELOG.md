@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2025-01-09
+
+### 🧹 Simplification - Job Role Removal
+
+**Major Simplification**: Complete removal of job role functionality to streamline employee management.
+
+### ♻️ Removed
+- **Job Role Management**: Removed entire role system for simplified employee handling
+- **JobRole Model**: Eliminated job_role_id foreign key from employees table
+- **Role Endpoints**: Removed `/api/employees/roles/` and `/api/employees/by-role/{role_id}` endpoints
+- **Role Schemas**: Removed all job role related Pydantic schemas
+- **Database Tables**: Dropped job_roles table via migration 736245057be5
+
+### 🔄 Changed
+- **Employee API**: Simplified responses without job_role_id fields
+- **Export Service**: Removed job_role_id from CSV export headers
+- **API Documentation**: Updated OpenAPI spec and API reference docs
+- **Database Schema**: Cleaner employee table without role dependencies
+
+### 📊 Impact
+- **Code Reduction**: ~15% reduction in role-related code complexity
+- **Simplified Workflows**: Streamlined employee management process
+- **Database Cleanup**: Removed unused role assignment functionality
+- **API Simplification**: Cleaner employee endpoints without role references
+
+### 🔧 Technical Changes
+- Migration: `736245057be5_remove_job_roles_simplify_employee_`
+- Updated schemas: Employee, EmployeeUpdate, EmployeeCreate
+- Removed endpoints: GET/POST /api/employees/roles/, GET /api/employees/by-role/{role_id}
+- Updated documentation: API_REFERENCE.md, DEVELOPER_GUIDE.md, openapi.yaml
+
 ## [2.0.0] - 2025-01-09
 
 ### 🎉 Major Release - Codebase Cleanup & Modernization

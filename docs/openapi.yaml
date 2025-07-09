@@ -125,10 +125,6 @@ components:
           type: string
           nullable: true
           description: Employee position
-        job_role_id:
-          type: integer
-          nullable: true
-          description: Associated job role ID
         is_active:
           type: boolean
           default: true
@@ -213,50 +209,7 @@ components:
         - sync_status
         - created_at
 
-    JobRole:
-      type: object
-      properties:
-        id:
-          type: integer
-          description: Unique job role identifier
-        role_name:
-          type: string
-          description: Role name (system identifier)
-        display_name:
-          type: string
-          description: Role display name
-        description:
-          type: string
-          nullable: true
-          description: Role description
-        has_shifts:
-          type: boolean
-          default: false
-          description: Whether role supports shift scheduling
-        is_active:
-          type: boolean
-          default: true
-          description: Role active status
-        created_at:
-          type: string
-          format: date-time
-          description: Role creation timestamp
-        updated_at:
-          type: string
-          format: date-time
-          description: Role last update timestamp
-        employee_count:
-          type: integer
-          nullable: true
-          description: Number of employees with this role
-      required:
-        - id
-        - role_name
-        - display_name
-        - has_shifts
-        - is_active
-        - created_at
-        - updated_at
+    # JobRole schema removed - simplifying employee management
 
     # Request/Response Models
     SuccessResponse:
@@ -481,10 +434,6 @@ components:
           type: string
           nullable: true
           description: Employee position
-        job_role_id:
-          type: integer
-          nullable: true
-          description: Job role ID
         is_active:
           type: boolean
           nullable: true
@@ -1022,12 +971,6 @@ paths:
           schema:
             type: boolean
             default: false
-        - name: role_id
-          in: query
-          description: Filter by job role ID
-          required: false
-          schema:
-            type: integer
       responses:
         200:
           description: Employees retrieved successfully
@@ -1267,75 +1210,7 @@ paths:
         500:
           $ref: '#/components/responses/InternalServerError'
 
-  /api/employees/roles/:
-    get:
-      tags:
-        - Employees
-      summary: Get job roles
-      description: Get all job roles
-      responses:
-        200:
-          description: Job roles retrieved successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  roles:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/JobRole'
-        500:
-          $ref: '#/components/responses/InternalServerError'
-
-    post:
-      tags:
-        - Employees
-      summary: Create job role
-      description: Create a new job role
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                role_name:
-                  type: string
-                  description: Role name (system identifier)
-                display_name:
-                  type: string
-                  description: Role display name
-                description:
-                  type: string
-                  description: Role description
-                has_shifts:
-                  type: boolean
-                  default: false
-                  description: Whether role supports shifts
-                is_active:
-                  type: boolean
-                  default: true
-                  description: Role active status
-              required:
-                - role_name
-                - display_name
-      responses:
-        201:
-          description: Job role created successfully
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      role:
-                        $ref: '#/components/schemas/JobRole'
-        422:
-          $ref: '#/components/responses/UnprocessableEntity'
-        500:
-          $ref: '#/components/responses/InternalServerError'
+  # Job role endpoints removed - simplifying employee management
 
   /api/employees/health:
     get:
