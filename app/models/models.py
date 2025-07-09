@@ -19,9 +19,7 @@ class Device(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     attendance_records = relationship("AttendanceRecord", back_populates="device")
-    sync_logs = relationship("SyncLog", back_populates="device")
-    status_logs = relationship("DeviceStatusLog", back_populates="device")
-    error_events = relationship("ErrorEvent", back_populates="device")
+    # Removed relationships to deleted models: sync_logs, status_logs, error_events
 
 
 class Employee(Base):
@@ -84,65 +82,16 @@ class AttendanceRecord(Base):
 
 
 
-class SyncLog(Base):
-    __tablename__ = "sync_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    device_id = Column(Integer, ForeignKey("devices.id"), nullable=False)
-    sync_type = Column(String(50), nullable=False)  # 'employees', 'attendance', 'full'
-    status = Column(String(20), nullable=False)  # 'success', 'failed', 'partial'
-    records_synced = Column(Integer, default=0)
-    error_message = Column(Text, nullable=True)
-    started_at = Column(DateTime, nullable=False)
-    completed_at = Column(DateTime, nullable=True)
-
-    device = relationship("Device", back_populates="sync_logs")
+# SyncLog model removed - not used by application
 
 
-class SyncQueue(Base):
-    """Queue for background sync operations - offline-first enhancement"""
-    __tablename__ = "sync_queue"
-
-    id = Column(Integer, primary_key=True, index=True)
-    operation_type = Column(String(20), nullable=False)  # 'sync_attendance', 'sync_users', etc.
-    target_table = Column(String(50), nullable=False)
-    record_id = Column(String(100), nullable=True)
-    payload = Column(Text, nullable=True)  # JSON data stored as text
-    status = Column(String(20), nullable=False, default='pending')  # 'pending', 'processing', 'completed', 'failed'
-    retry_count = Column(Integer, default=0)
-    max_retries = Column(Integer, default=3)
-    last_error = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=func.now())
-    scheduled_at = Column(DateTime, default=func.now())
-    completed_at = Column(DateTime, nullable=True)
+# SyncQueue model removed - not used by application
 
 
-class DeviceStatusLog(Base):
-    """Log of device connectivity status - offline-first enhancement"""
-    __tablename__ = "device_status_log"
-
-    id = Column(Integer, primary_key=True, index=True)
-    device_id = Column(Integer, ForeignKey("devices.id"), nullable=False)
-    status = Column(String(20), nullable=False)  # 'online', 'offline', 'error'
-    last_successful_sync = Column(DateTime, nullable=True)
-    last_attempt = Column(DateTime, nullable=True)
-    error_message = Column(Text, nullable=True)
-    device_metadata = Column(Text, nullable=True)  # JSON metadata stored as text
-    created_at = Column(DateTime, default=func.now())
-
-    device = relationship("Device", back_populates="status_logs")
+# DeviceStatusLog model removed - not used by application
 
 
-class DataCache(Base):
-    """Cache for offline data storage - offline-first enhancement"""
-    __tablename__ = "data_cache"
-
-    id = Column(Integer, primary_key=True, index=True)
-    cache_key = Column(String(100), unique=True, nullable=False, index=True)
-    cache_data = Column(Text, nullable=False)  # JSON data stored as text
-    expires_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+# DataCache model removed - not used by application
 
 
 class ErrorEvent(Base):
