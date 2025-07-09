@@ -446,35 +446,10 @@ async def update_thai_name(badge_number: str, thai_name: str, db: Session = Depe
 
 
 # ============================================================================
-# CSV IMPORT/EXPORT
+# CSV IMPORT/EXPORT - REMOVED
 # ============================================================================
 
-@router.post("/import-csv")
-async def import_employees_from_csv():
-    """Import employees from userid.csv file"""
-    try:
-        result = attendance_service.import_from_csv("userid.csv")
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/sync-from-device")
-async def sync_employees_from_device():
-    """Sync employees discovered from ZKTeco device"""
-    try:
-        device = device_service.get_default_device()
-        if not device:
-            raise HTTPException(status_code=400, detail="No device configured")
-        
-        users = device_service.get_users(device)
-        result = attendance_service.sync_employees_from_device(users)
-        
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Import/export endpoints removed - not used by frontend
 
 
 # ============================================================================
