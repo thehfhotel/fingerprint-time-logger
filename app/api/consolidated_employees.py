@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.models.models import Employee, JobRole
+from app.models.models import Employee
 from app.services.attendance_service import attendance_service
 from app.services.device_service import device_service
 
@@ -26,7 +26,6 @@ class EmployeeCreate(BaseModel):
     thai_name: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None
-    job_role_id: Optional[int] = None
     is_active: bool = True
     is_hidden: bool = False
 
@@ -36,17 +35,11 @@ class EmployeeUpdate(BaseModel):
     thai_name: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None
-    job_role_id: Optional[int] = None
     is_active: Optional[bool] = None
     is_hidden: Optional[bool] = None
 
 
-class RoleCreate(BaseModel):
-    role_name: str
-    display_name: str
-    description: Optional[str] = None
-    has_shifts: bool = False
-    is_active: bool = True
+# Role schemas removed - simplifying employee management
 
 
 # ============================================================================
@@ -187,7 +180,6 @@ async def get_employees(
     include_hidden: bool = False,
     include_inactive: bool = False,
     from_device: bool = False,
-    role_id: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     """Get all employees with optional filtering, including from ZK device"""
@@ -203,9 +195,6 @@ async def get_employees(
         
         if not include_inactive:
             query = query.filter(Employee.is_active == True)
-            
-        if role_id:
-            query = query.filter(Employee.job_role_id == role_id)
         
         employees = query.all()
         
@@ -219,7 +208,6 @@ async def get_employees(
                 "display_name": emp.display_name,
                 "department": emp.department,
                 "position": emp.position,
-                "job_role_id": emp.job_role_id,
                 "is_active": emp.is_active,
                 "is_hidden": emp.is_hidden,
                 "created_at": emp.created_at.isoformat() if emp.created_at else None,
@@ -274,8 +262,7 @@ async def get_employees_from_device(include_hidden: bool, include_inactive: bool
                     "display_name": db_employee.display_name,
                     "department": db_employee.department,
                     "position": db_employee.position,
-                    "job_role_id": db_employee.job_role_id,
-                    "is_active": db_employee.is_active,
+                        "is_active": db_employee.is_active,
                     "is_hidden": db_employee.is_hidden,
                     "created_at": db_employee.created_at.isoformat() if db_employee.created_at else None,
                     "in_database": True,
@@ -291,8 +278,7 @@ async def get_employees_from_device(include_hidden: bool, include_inactive: bool
                     "display_name": zk_user.get('name', f"User {badge_number}"),
                     "department": None,
                     "position": None,
-                    "job_role_id": None,
-                    "is_active": True,  # Assume active if in ZK device
+                        "is_active": True,  # Assume active if in ZK device
                     "is_hidden": False, # Default to visible
                     "created_at": None,
                     "in_database": False,
@@ -354,8 +340,6 @@ async def update_employee(badge_number: str, employee_data: EmployeeUpdate, db: 
             employee.department = employee_data.department
         if employee_data.position is not None:
             employee.position = employee_data.position
-        if employee_data.job_role_id is not None:
-            employee.job_role_id = employee_data.job_role_id
         if employee_data.is_active is not None:
             employee.is_active = employee_data.is_active
         if employee_data.is_hidden is not None:
@@ -414,8 +398,7 @@ async def get_thai_names(db: Session = Depends(get_db)):
             {
                 "badge_number": emp.badge_number,
                 "thai_name": emp.thai_name,
-                "display_name": emp.display_name,
-                "job_role_id": emp.job_role_id
+                "display_name": emp.display_name
             }
             for emp in employees
         ]
@@ -452,84 +435,7 @@ async def update_thai_name(badge_number: str, thai_name: str, db: Session = Depe
 # Import/export endpoints removed - not used by frontend
 
 
-# ============================================================================
-# ROLE MANAGEMENT - Simplified
-# ============================================================================
-
-@router.get("/roles/")
-async def get_roles(db: Session = Depends(get_db)):
-    """Get all job roles"""
-    try:
-        roles = db.query(JobRole).filter(JobRole.is_active == True).all()
-        return [
-            {
-                "id": role.id,
-                "role_name": role.role_name,
-                "display_name": role.display_name,
-                "description": role.description,
-                "has_shifts": role.has_shifts,
-                "is_active": role.is_active
-            }
-            for role in roles
-        ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/roles/")
-async def create_role(role_data: RoleCreate, db: Session = Depends(get_db)):
-    """Create a new job role"""
-    try:
-        # Check if role already exists
-        existing = db.query(JobRole).filter(JobRole.role_name == role_data.role_name).first()
-        if existing:
-            raise HTTPException(status_code=400, detail="Role with this name already exists")
-        
-        role = JobRole(
-            role_name=role_data.role_name,
-            display_name=role_data.display_name,
-            description=role_data.description,
-            has_shifts=role_data.has_shifts,
-            is_active=role_data.is_active
-        )
-        
-        db.add(role)
-        db.commit()
-        db.refresh(role)
-        
-        return {
-            "success": True,
-            "message": "Role created successfully",
-            "role_id": role.id
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/by-role/{role_id}")
-async def get_employees_by_role(role_id: int, db: Session = Depends(get_db)):
-    """Get all employees with a specific role"""
-    try:
-        employees = db.query(Employee).filter(
-            Employee.job_role_id == role_id,
-            Employee.is_active == True
-        ).all()
-        
-        return [
-            {
-                "badge_number": emp.badge_number,
-                "display_name": emp.display_name,
-                "thai_name": emp.thai_name,
-                "english_name": emp.english_name,
-                "department": emp.department,
-                "position": emp.position
-            }
-            for emp in employees
-        ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Role management removed - simplifying employee management
 
 
 # ============================================================================

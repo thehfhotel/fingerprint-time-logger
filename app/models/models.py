@@ -36,7 +36,6 @@ class Employee(Base):
     # Organization data
     department = Column(String(100), nullable=True)        # From original Employee
     position = Column(String(100), nullable=True)          # From original Employee
-    job_role_id = Column(Integer, ForeignKey("job_roles.id"), nullable=True)  # From EmployeeThaiName
     
     # Status and visibility
     is_active = Column(Boolean, nullable=False, default=True)              # Merged from both models
@@ -48,7 +47,6 @@ class Employee(Base):
 
     # Relationships
     attendance_records = relationship("AttendanceRecord", back_populates="employee")
-    job_role = relationship("JobRole", back_populates="employees")
 
 
 class AttendanceRecord(Base):
@@ -98,23 +96,7 @@ class AttendanceRecord(Base):
 
 # Work Schedule Management Models - Added for schedule management feature
 
-class JobRole(Base):
-    """Job roles for employees with work schedule configuration"""
-    __tablename__ = "job_roles"
-
-    id = Column(Integer, primary_key=True, index=True)
-    role_name = Column(String(50), unique=True, nullable=False, index=True)
-    display_name = Column(String(100), nullable=False)
-    description = Column(Text, nullable=True)
-    has_shifts = Column(Boolean, default=False)  # True for reception (shift-based), False for others
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-
-    # Relationships
-    # work_schedules relationship removed - WorkSchedule model deleted
-    # work_shifts relationship removed - WorkShift model deleted
-    employees = relationship("Employee", back_populates="job_role")  # Role assignments
+# JobRole model removed - simplifying employee management
 
 
 # WorkSchedule model removed - not used by application

@@ -106,7 +106,6 @@ class SimpleExportService:
                 'English Name',
                 'Department',
                 'Position',
-                'Job Role ID',
                 'Active',
                 'Hidden',
                 'Created Date'
@@ -121,7 +120,6 @@ class SimpleExportService:
                     employee.english_name or '',
                     employee.department or '',
                     employee.position or '',
-                    employee.job_role_id or '',
                     'Yes' if employee.is_active else 'No',
                     'Yes' if employee.is_hidden else 'No',
                     employee.created_at.strftime('%Y-%m-%d %H:%M:%S') if employee.created_at else ''
