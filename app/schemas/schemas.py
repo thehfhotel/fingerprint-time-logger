@@ -100,35 +100,14 @@ class AttendanceRecord(AttendanceRecordBase):
 
 
 # Sync Log schemas
-class SyncLogBase(BaseModel):
-    device_id: int
-    sync_type: str  # 'employees', 'attendance', 'full'
-    status: str  # 'success', 'failed', 'partial'
-    records_synced: int = 0
-    error_message: Optional[str] = None
-    started_at: datetime
-    completed_at: Optional[datetime] = None
+# SyncLogBase schema removed - not used by application
 
-
-class SyncLog(SyncLogBase):
-    id: int
-    device: Optional[Device] = None
-
-    class Config:
-        from_attributes = True
-
+# SyncLog schema removed - not used by application
 
 # Additional request/response schemas
-class SyncRequest(BaseModel):
-    device_id: int
-    sync_type: str = "full"  # 'employees', 'attendance', 'full'
+# SyncRequest schema removed - not used by application
 
-
-class SyncResponse(BaseModel):
-    message: str
-    sync_log_id: Optional[int] = None
-    records_synced: Optional[int] = None
-
+# SyncResponse schema removed - not used by application
 
 class AttendanceFilter(BaseModel):
     employee_id: Optional[str] = None
@@ -235,24 +214,10 @@ class WorkShift(WorkShiftBase):
 
 
 # Combined response schemas for job roles with their schedules/shifts
-class JobRoleWithSchedule(JobRole):
-    work_schedule: Optional[WorkSchedule] = None
-    work_shifts: List[WorkShift] = []
-
+# JobRoleWithSchedule schema removed - not used by application
 
 # Employee Role Assignment Schemas
-class EmployeeRoleAssignmentResponse(BaseModel):
-    badge_number: str
-    thai_name: str
-    job_role_id: Optional[int] = None
-    role_name: Optional[str] = None
-    role_display_name: Optional[str] = None
-    is_active: bool
-    is_hidden: bool
-
-    class Config:
-        from_attributes = True
-
+# EmployeeRoleAssignmentResponse schema removed - not used by application
 
 class EmployeeRoleAssignmentUpdate(BaseModel):
     job_role_id: Optional[int] = None
@@ -263,9 +228,7 @@ class RoleAssignment(BaseModel):
     job_role_id: Optional[int] = None
 
 
-class BulkRoleAssignmentRequest(BaseModel):
-    assignments: List[RoleAssignment]
-
+# BulkRoleAssignmentRequest schema removed - not used by application
 
 class BulkRoleAssignmentResponse(BaseModel):
     total_requested: int
@@ -281,231 +244,55 @@ class JobRoleResponse(JobRole):
 
 
 # Time Checking Schemas
-class TimeCheckConfigBase(BaseModel):
-    warning_threshold_minutes: int = 15
-    late_threshold_minutes: int = 15
-    early_departure_threshold_minutes: int = 15
-    auto_validate_on_punch: bool = True
-    grace_period_enabled: bool = True
-    overnight_shift_handling: bool = True
+# TimeCheckConfigBase schema removed - not used by application
 
+# TimeCheckConfigUpdate schema removed - not used by application
 
-class TimeCheckConfigUpdate(BaseModel):
-    warning_threshold_minutes: Optional[int] = None
-    late_threshold_minutes: Optional[int] = None
-    early_departure_threshold_minutes: Optional[int] = None
-    auto_validate_on_punch: Optional[bool] = None
-    grace_period_enabled: Optional[bool] = None
-    overnight_shift_handling: Optional[bool] = None
-
-
-class TimeCheckConfigResponse(TimeCheckConfigBase):
-    id: int
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
+# TimeCheckConfigResponse schema removed - not used by application
 
 # Attendance Validation Schemas
-class AttendanceValidationResponse(BaseModel):
-    record_id: int
-    employee_id: str
-    timestamp: datetime
-    punch_type: int
-    validation_status: str
-    lateness_minutes: Optional[int] = None
-    early_minutes: Optional[int] = None
-    expected_time: Optional[time] = None
-    message: str
-    validated_at: Optional[datetime] = None
+# AttendanceValidationResponse schema removed - not used by application
 
 
-class BulkValidationRequest(BaseModel):
-    start_date: date
-    end_date: date
-    badge_numbers: Optional[List[str]] = None
+# BulkValidationRequest schema removed - not used by application
 
 
-class BulkValidationResponse(BaseModel):
-    total_records: int
-    validated_records: int
-    on_time: int
-    warnings: int
-    late: int
-    early: int
-    no_schedule: int
-    errors: List[Dict[str, Any]]
-
+# BulkValidationResponse schema removed - not used by application
 
 # Late Employee Report Schemas
-class LateEmployeeInfo(BaseModel):
-    badge_number: str
-    thai_name: str
-    role_name: str
-    expected_time: str
-    actual_time: str
-    lateness_minutes: int
-    status: str
-    message: str
-    timestamp: datetime
+# LateEmployeeInfo schema removed - not used by application
 
-
-class LateEmployeeReportResponse(BaseModel):
-    report_date: date
-    total_employees: int
-    total_late: int
-    total_warnings: int
-    average_lateness_minutes: float
-    employees: List[LateEmployeeInfo]
-
+# LateEmployeeReportResponse schema removed - not used by application
 
 # Punctuality Report Schemas
-class DailyPunctualityStats(BaseModel):
-    date: date
-    on_time: int
-    warning: int
-    late: int
-    total: int
+# DailyPunctualityStats schema removed - not used by application
 
+# PunctualitySummary schema removed - not used by application
 
-class PunctualitySummary(BaseModel):
-    total_check_ins: int
-    on_time: int
-    warnings: int
-    late: int
-    on_time_percentage: float
-    warning_percentage: float
-    late_percentage: float
-    average_lateness_minutes: float
-
-
-class PunctualityReportResponse(BaseModel):
-    start_date: date
-    end_date: date
-    badge_number: Optional[str] = None
-    summary: PunctualitySummary
-    daily_breakdown: List[DailyPunctualityStats]
-
+# PunctualityReportResponse schema removed - not used by application
 
 # Employee Schedule Info Schema
-class EmployeeScheduleInfo(BaseModel):
-    badge_number: str
-    date: date
-    start_time: time
-    end_time: time
-    schedule_type: str  # 'STANDARD' or 'SHIFT'
-    role_name: str
-    is_working_day: bool
-
+# EmployeeScheduleInfo schema removed - not used by application
 
 # ============================================================================
 # CALENDAR & ATTENDANCE SCHEMAS (consolidated from attendance_calendar_schemas.py)
 # ============================================================================
 
-class AttendanceStatusEnum(str, Enum):
-    """Attendance status for API responses"""
-    PERFECT = "perfect"
-    MINOR_ISSUE = "minor_issue"
-    MAJOR_VIOLATION = "violation"
-    ABSENT = "absent"
-    NON_WORKING_DAY = "non_working"
-    PARTIAL = "partial"
+# AttendanceStatusEnum enum removed - not used by application
 
+# HolidayTypeEnum enum removed - not used by application
 
-class HolidayTypeEnum(str, Enum):
-    """Holiday types"""
-    NATIONAL = "national"
-    COMPANY = "company"
-    RELIGIOUS = "religious"
-    PERSONAL = "personal"
+# CalendarFilters schema removed - not used by application
 
+# CalendarConfigResponse schema removed - not used by application
 
-class CalendarFilters(BaseModel):
-    """Filters for calendar data requests"""
-    role: Optional[str] = None
-    department: Optional[str] = None
-    employee_ids: Optional[List[str]] = None
-    include_inactive: Optional[bool] = False
+# HolidayResponse schema removed - not used by application
 
+# CalendarStatisticsResponse schema removed - not used by application
 
-class CalendarConfigResponse(BaseModel):
-    """Calendar configuration and metadata"""
-    violation_threshold_minutes: int = 15
-    minor_issue_threshold_minutes: int = 1
-    weekend_days: List[int] = [6, 0]  # Saturday, Sunday
-    status_colors: Dict[str, str]
-    status_symbols: Optional[Dict[str, str]] = None
-    roles: List[str] = []
-    months: List[Dict[str, Any]] = []
+# EmployeeDayDetailResponse schema removed - not used by application
 
-
-class HolidayResponse(BaseModel):
-    """Holiday information"""
-    id: int
-    date: str
-    name: str
-    holiday_type: HolidayTypeEnum
-    applies_to_all: bool = True
-    applicable_roles: Optional[List[str]] = None
-
-
-class CalendarStatisticsResponse(BaseModel):
-    """Monthly calendar statistics"""
-    total_employees: int
-    total_working_days: int
-    perfect_attendance_rate: float
-    punctuality_rate: float
-    average_late_minutes: float
-    violation_count: int
-    absent_count: int
-
-
-class EmployeeDayDetailResponse(BaseModel):
-    """Detailed attendance for specific employee and day"""
-    employee_id: str
-    employee_name: str
-    date: str
-    status: AttendanceStatusEnum
-    
-    # Time information
-    check_in: Optional[datetime] = None
-    check_out: Optional[datetime] = None
-    scheduled_start: Optional[time] = None
-    scheduled_end: Optional[time] = None
-    
-    # Calculations
-    late_minutes: int = 0
-    early_departure_minutes: int = 0
-    work_hours: Optional[float] = None
-    
-    # Context
-    is_weekend: bool = False
-    is_holiday: bool = False
-    holiday_name: Optional[str] = None
-    job_role: Optional[str] = None
-    notes: Optional[str] = None
-
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat() if v else None,
-            time: lambda v: v.strftime("%H:%M:%S") if v else None
-        }
-
-
-class MonthlyCalendarResponse(BaseModel):
-    """Complete monthly calendar response"""
-    year: int
-    month: int
-    month_name: str
-    days_in_month: int
-    employees: List[Dict[str, Any]]  # Simplified to avoid circular imports
-    holidays: List[int] = []
-    weekends: List[int] = []
-    working_days: List[int] = []
-    statistics: CalendarStatisticsResponse
-
+# MonthlyCalendarResponse schema removed - not used by application
 
 # ============================================================================
 # GENERIC RESPONSE SCHEMAS
