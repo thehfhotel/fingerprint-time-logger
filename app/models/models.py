@@ -76,8 +76,34 @@ class AttendanceRecord(Base):
 
     employee = relationship("Employee", back_populates="attendance_records")
     device = relationship("Device", back_populates="attendance_records")
+    adjustments = relationship("AttendanceAdjustment", back_populates="attendance_record", cascade="all, delete-orphan")
 
 
+
+
+class AttendanceAdjustment(Base):
+    """Manual adjustments to attendance records (late marking, corrections, etc.)"""
+    __tablename__ = "attendance_adjustments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    attendance_record_id = Column(Integer, ForeignKey("attendance_records.id"), nullable=False)
+    
+    # Adjustment details
+    adjustment_type = Column(String(20), nullable=False)  # 'late_marking', 'correction', 'manual_entry'
+    is_marked_late = Column(Boolean, nullable=False, default=False)  # Manual late marking
+    late_reason = Column(String(200), nullable=True)  # Reason for late marking
+    
+    # Audit fields
+    adjusted_by = Column(String(50), nullable=True)  # Who made the adjustment (for future user management)
+    adjustment_timestamp = Column(DateTime, default=func.now(), nullable=False)
+    notes = Column(Text, nullable=True)  # Additional notes
+    
+    # Metadata
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    attendance_record = relationship("AttendanceRecord", back_populates="adjustments")
 
 
 # SyncLog model removed - not used by application

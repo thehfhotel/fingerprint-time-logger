@@ -92,6 +92,39 @@ class AttendanceRecord(AttendanceRecordBase):
     created_at: datetime
     employee: Optional[Employee] = None
     device: Optional[Device] = None
+    adjustments: Optional[List['AttendanceAdjustment']] = None
+
+    class Config:
+        from_attributes = True
+
+
+# Attendance Adjustment schemas
+class AttendanceAdjustmentBase(BaseModel):
+    attendance_record_id: int
+    adjustment_type: str  # 'late_marking', 'correction', 'manual_entry'
+    is_marked_late: bool = False
+    late_reason: Optional[str] = None
+    adjusted_by: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AttendanceAdjustmentCreate(AttendanceAdjustmentBase):
+    pass
+
+
+class AttendanceAdjustmentUpdate(BaseModel):
+    adjustment_type: Optional[str] = None
+    is_marked_late: Optional[bool] = None
+    late_reason: Optional[str] = None
+    adjusted_by: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AttendanceAdjustment(AttendanceAdjustmentBase):
+    id: int
+    adjustment_timestamp: datetime
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True

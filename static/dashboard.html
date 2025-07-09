@@ -177,10 +177,14 @@
                 allRecords = rawApiData.records.map(record => {
                     const timestamp = new Date(record.timestamp);
                     return {
+                        id: record.id,
                         employee_id: record.employee_badge_number || record.employee_id,  // Handle both field names
                         time: timestamp.toLocaleTimeString('en-US', {hour12: false}),
                         date: timestamp.toLocaleDateString(),
-                        timestamp: record.timestamp
+                        timestamp: record.timestamp,
+                        is_marked_late: record.is_marked_late || false,
+                        late_reason: record.late_reason || null,
+                        adjustment_id: record.adjustment_id || null
                     };
                 });
             } else if (Object.keys(attendanceData).length > 0) {
@@ -210,18 +214,31 @@
                 return timeB - timeA;
             });
             
-            // Create consolidated attendance entries with Thai names
+            // Create consolidated attendance entries with Thai names and late toggle
             const attendanceEntries = allRecords.map(record => {
                 const displayName = getDisplayName(record.employee_id);
+                const recordId = record.id || record.record_id;
+                const isMarkedLate = record.is_marked_late || false;
+                const lateReason = record.late_reason || '';
                 
                 return `
-                    <div class="attendance-entry">
+                    <div class="attendance-entry" data-record-id="${recordId}">
                         <div class="employee-info">
                             <span class="employee-name">${displayName}</span>
                         </div>
                         <div class="time-info">
                             <span class="attendance-time">${record.time}</span>
                             <span class="attendance-date">${record.date_display || record.date}</span>
+                        </div>
+                        <div class="late-toggle-container">
+                            <label class="late-toggle">
+                                <input type="checkbox" 
+                                       ${isMarkedLate ? 'checked' : ''} 
+                                       onchange="toggleLateStatus(${recordId}, this.checked)">
+                                <span class="late-toggle-slider"></span>
+                                <span class="late-toggle-label">Late</span>
+                            </label>
+                            ${isMarkedLate && lateReason ? `<div class="late-reason">${lateReason}</div>` : ''}
                         </div>
                     </div>
                 `;
@@ -433,6 +450,129 @@
             exportButton.addEventListener('click', function() {
                 window.location.href = '/export';
             });
+        }
+        
+        // Late marking functionality
+        async function toggleLateStatus(recordId, isLate) {
+            try {
+                const reason = isLate ? prompt('Please enter reason for late marking (optional):') : '';
+                if (isLate && reason === null) {
+                    // User cancelled the prompt, revert checkbox
+                    const checkbox = document.querySelector(`[data-record-id="${recordId}"] input[type="checkbox"]`);
+                    if (checkbox) checkbox.checked = false;
+                    return;
+                }
+                
+                const response = await fetch(`/api/attendance/records/${recordId}/mark-late`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        attendance_record_id: recordId,
+                        adjustment_type: 'late_marking',
+                        is_marked_late: isLate,
+                        late_reason: reason || null,
+                        adjusted_by: 'Dashboard User',
+                        notes: isLate ? 'Marked late via dashboard toggle' : 'Late marking removed via dashboard toggle'
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Update the UI to show late reason if provided
+                    const recordElement = document.querySelector(`[data-record-id="${recordId}"]`);
+                    const existingReason = recordElement.querySelector('.late-reason');
+                    
+                    if (isLate && reason) {
+                        if (existingReason) {
+                            existingReason.textContent = reason;
+                        } else {
+                            const lateToggleContainer = recordElement.querySelector('.late-toggle-container');
+                            const reasonDiv = document.createElement('div');
+                            reasonDiv.className = 'late-reason';
+                            reasonDiv.textContent = reason;
+                            lateToggleContainer.appendChild(reasonDiv);
+                        }
+                    } else if (!isLate && existingReason) {
+                        existingReason.remove();
+                    }
+                    
+                    // Show success notification
+                    showNotification(
+                        'Late Status Updated',
+                        `Record ${isLate ? 'marked as late' : 'unmarked as late'} successfully`,
+                        'success'
+                    );
+                } else {
+                    throw new Error(result.message || 'Failed to update late status');
+                }
+            } catch (error) {
+                console.error('Error updating late status:', error);
+                
+                // Revert checkbox state on error
+                const checkbox = document.querySelector(`[data-record-id="${recordId}"] input[type="checkbox"]`);
+                if (checkbox) checkbox.checked = !isLate;
+                
+                // Show error notification
+                showNotification(
+                    'Error',
+                    `Failed to update late status: ${error.message}`,
+                    'error'
+                );
+            }
+        }
+        
+        // Notification function
+        function showNotification(title, message, type = 'info') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 16px 20px;
+                border-radius: 8px;
+                color: white;
+                font-weight: bold;
+                z-index: 1000;
+                max-width: 300px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+                transform: translateX(100%);
+                transition: transform 0.3s ease;
+            `;
+            
+            // Set background color based on type
+            const colors = {
+                success: '#28a745',
+                error: '#dc3545',
+                warning: '#ffc107',
+                info: '#17a2b8'
+            };
+            notification.style.backgroundColor = colors[type] || colors.info;
+            
+            notification.innerHTML = `
+                <div style="font-size: 14px; margin-bottom: 4px;">${title}</div>
+                <div style="font-size: 12px; opacity: 0.9;">${message}</div>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Show notification
+            setTimeout(() => {
+                notification.style.transform = 'translateX(0)';
+            }, 100);
+            
+            // Auto hide after 4 seconds
+            setTimeout(() => {
+                notification.style.transform = 'translateX(100%)';
+                setTimeout(() => notification.remove(), 300);
+            }, 4000);
         }
         
         function showExportModal() {

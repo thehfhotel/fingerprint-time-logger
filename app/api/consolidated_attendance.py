@@ -12,10 +12,11 @@ import csv
 import io
 
 from app.core.database import get_db
-from app.models.models import AttendanceRecord, Employee
+from app.models.models import AttendanceRecord, Employee, AttendanceAdjustment
 from app.services.attendance_service import attendance_service
 from app.services.device_service import device_service
 from app.services.export_service import export_service
+from app.schemas.schemas import AttendanceAdjustmentCreate, AttendanceAdjustmentUpdate
 
 router = APIRouter()
 
@@ -43,6 +44,11 @@ async def get_attendance_records(
         # Convert to list format for API response
         record_list = []
         for record in records:
+            # Check if record has late marking adjustment
+            late_adjustment = None
+            if hasattr(record, 'adjustments') and record.adjustments:
+                late_adjustment = next((adj for adj in record.adjustments if adj.adjustment_type == 'late_marking'), None)
+            
             record_list.append({
                 "id": record.id,
                 "employee_badge_number": record.employee_badge_number,
@@ -50,7 +56,10 @@ async def get_attendance_records(
                 "punch_type": record.punch_type,
                 "status": record.status,
                 "device_id": record.device_id,
-                "sync_status": record.sync_status
+                "sync_status": record.sync_status,
+                "is_marked_late": late_adjustment.is_marked_late if late_adjustment else False,
+                "late_reason": late_adjustment.late_reason if late_adjustment else None,
+                "adjustment_id": late_adjustment.id if late_adjustment else None
             })
         
         return {
@@ -313,3 +322,138 @@ async def attendance_health_check():
             "status": "unhealthy",
             "error": str(e)
         }
+
+
+# ============================================================================
+# LATE MARKING & ADJUSTMENTS
+# ============================================================================
+
+@router.post("/records/{record_id}/mark-late")
+async def mark_attendance_late(
+    record_id: int,
+    adjustment_data: AttendanceAdjustmentCreate,
+    db: Session = Depends(get_db)
+):
+    """Mark an attendance record as late"""
+    try:
+        # Verify attendance record exists
+        record = db.query(AttendanceRecord).filter(AttendanceRecord.id == record_id).first()
+        if not record:
+            raise HTTPException(status_code=404, detail="Attendance record not found")
+        
+        # Check if late marking already exists
+        existing_adjustment = db.query(AttendanceAdjustment).filter(
+            AttendanceAdjustment.attendance_record_id == record_id,
+            AttendanceAdjustment.adjustment_type == 'late_marking'
+        ).first()
+        
+        if existing_adjustment:
+            # Update existing adjustment
+            existing_adjustment.is_marked_late = adjustment_data.is_marked_late
+            existing_adjustment.late_reason = adjustment_data.late_reason
+            existing_adjustment.notes = adjustment_data.notes
+            existing_adjustment.adjusted_by = adjustment_data.adjusted_by
+            existing_adjustment.adjustment_timestamp = datetime.now()
+            db.commit()
+            
+            return {
+                "success": True,
+                "message": "Late marking updated successfully",
+                "adjustment_id": existing_adjustment.id,
+                "record_id": record_id
+            }
+        else:
+            # Create new adjustment
+            adjustment = AttendanceAdjustment(
+                attendance_record_id=record_id,
+                adjustment_type='late_marking',
+                is_marked_late=adjustment_data.is_marked_late,
+                late_reason=adjustment_data.late_reason,
+                adjusted_by=adjustment_data.adjusted_by,
+                adjustment_timestamp=datetime.now(),
+                notes=adjustment_data.notes
+            )
+            
+            db.add(adjustment)
+            db.commit()
+            db.refresh(adjustment)
+            
+            return {
+                "success": True,
+                "message": "Late marking created successfully",
+                "adjustment_id": adjustment.id,
+                "record_id": record_id
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/records/{record_id}/adjustments")
+async def get_attendance_adjustments(
+    record_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get all adjustments for an attendance record"""
+    try:
+        # Verify attendance record exists
+        record = db.query(AttendanceRecord).filter(AttendanceRecord.id == record_id).first()
+        if not record:
+            raise HTTPException(status_code=404, detail="Attendance record not found")
+        
+        adjustments = db.query(AttendanceAdjustment).filter(
+            AttendanceAdjustment.attendance_record_id == record_id
+        ).all()
+        
+        return {
+            "record_id": record_id,
+            "adjustments": [
+                {
+                    "id": adj.id,
+                    "adjustment_type": adj.adjustment_type,
+                    "is_marked_late": adj.is_marked_late,
+                    "late_reason": adj.late_reason,
+                    "adjusted_by": adj.adjusted_by,
+                    "adjustment_timestamp": adj.adjustment_timestamp.isoformat(),
+                    "notes": adj.notes,
+                    "created_at": adj.created_at.isoformat()
+                }
+                for adj in adjustments
+            ]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/records/{record_id}/adjustments/{adjustment_id}")
+async def delete_attendance_adjustment(
+    record_id: int,
+    adjustment_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete an attendance adjustment"""
+    try:
+        adjustment = db.query(AttendanceAdjustment).filter(
+            AttendanceAdjustment.id == adjustment_id,
+            AttendanceAdjustment.attendance_record_id == record_id
+        ).first()
+        
+        if not adjustment:
+            raise HTTPException(status_code=404, detail="Adjustment not found")
+        
+        db.delete(adjustment)
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "Adjustment deleted successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

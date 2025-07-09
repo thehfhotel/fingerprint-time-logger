@@ -5,12 +5,12 @@ Replaces complex validation, conflict resolution, and enterprise patterns
 
 from typing import List, Dict, Any, Optional
 from datetime import datetime, date
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, desc
 import csv
 import logging
 
-from app.models.models import AttendanceRecord, Employee, Device
+from app.models.models import AttendanceRecord, Employee, Device, AttendanceAdjustment
 from app.core.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class SimpleAttendanceService:
         """Get attendance records with basic filtering"""
         db = next(get_db())
         try:
-            query = db.query(AttendanceRecord)
+            query = db.query(AttendanceRecord).options(joinedload(AttendanceRecord.adjustments))
             
             # Apply filters
             if start_date:

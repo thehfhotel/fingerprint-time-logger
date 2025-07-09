@@ -55,6 +55,7 @@
     padding: 0.75rem 1rem;
     border-bottom: 1px solid #f0f0f0;
     transition: background-color 0.2s ease;
+    gap: 1rem;
 }
 
 .attendance-entry:hover {
@@ -100,3 +101,95 @@
 }
 
 /* Removed attendance status badges - no longer showing check-in/check-out */
+
+/* Late toggle styling */
+.late-toggle-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 80px;
+}
+
+.late-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #666;
+    transition: color 0.2s ease;
+}
+
+.late-toggle:hover {
+    color: #333;
+}
+
+.late-toggle input[type="checkbox"] {
+    display: none;
+}
+
+.late-toggle-slider {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    background-color: #ccc;
+    border-radius: 20px;
+    transition: background-color 0.3s ease;
+}
+
+.late-toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background-color: white;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.late-toggle input[type="checkbox"]:checked + .late-toggle-slider {
+    background-color: #dc3545;
+}
+
+.late-toggle input[type="checkbox"]:checked + .late-toggle-slider::before {
+    transform: translateX(16px);
+}
+
+.late-toggle-label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.late-reason {
+    font-size: 0.75rem;
+    color: #dc3545;
+    text-align: center;
+    font-style: italic;
+    max-width: 120px;
+    word-wrap: break-word;
+    line-height: 1.2;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .attendance-entry {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+    
+    .time-info {
+        align-items: flex-start;
+        margin: 0;
+    }
+    
+    .late-toggle-container {
+        align-self: flex-end;
+        margin-top: 0.5rem;
+    }
+}
