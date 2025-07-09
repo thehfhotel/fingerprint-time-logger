@@ -202,6 +202,14 @@ async def serve_nickname_management():
 async def serve_status():
     return FileResponse("static/status.html")
 
+@app.get("/docs")
+async def serve_api_docs():
+    return FileResponse("static/swagger.html")
+
+@app.get("/docs/openapi.yaml")
+async def serve_openapi_spec():
+    return FileResponse("docs/openapi.yaml")
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "server": "unified"}

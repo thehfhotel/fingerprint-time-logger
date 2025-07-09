@@ -1,0 +1,1618 @@
+openapi: 3.0.3
+info:
+  title: Fingerprint Time Logger API
+  description: |
+    Comprehensive API for managing ZKTeco biometric devices, employee records, and attendance tracking.
+    
+    ## Features
+    - **ZKTeco Device Integration**: Direct fingerprint device communication
+    - **Employee Management**: Unified employee records with Thai/English names
+    - **Attendance Tracking**: Real-time punch data collection and display
+    - **System Monitoring**: Health checks, diagnostics, and performance metrics
+    - **Data Export**: CSV export with flexible filtering options
+    - **Background Tasks**: Automated data synchronization
+    
+    ## Authentication
+    Currently, the API does not require authentication. It's designed for single-user local installations.
+    
+    ## Real-time Updates
+    The system supports WebSocket connections for real-time updates at `ws://localhost:5000/ws`.
+    
+    ## Error Handling
+    All endpoints return consistent error responses with appropriate HTTP status codes.
+    
+  version: 2.0.0
+  contact:
+    name: API Support
+    url: https://github.com/your-org/fingerprint-time-logger
+  license:
+    name: MIT License
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:5000
+    description: Local development server
+  - url: https://your-domain.com
+    description: Production server
+
+tags:
+  - name: Attendance
+    description: Attendance record management and tracking
+  - name: Devices
+    description: ZKTeco device connectivity and management
+  - name: Employees
+    description: Employee data and Thai name management
+  - name: Export
+    description: Data export functionality
+  - name: System
+    description: System health and monitoring
+
+components:
+  schemas:
+    # Core Data Models
+    Device:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Unique device identifier
+        name:
+          type: string
+          description: Device display name
+        ip_address:
+          type: string
+          format: ipv4
+          description: Device IP address
+        port:
+          type: integer
+          default: 4370
+          description: Device port number
+        password:
+          type: integer
+          default: 0
+          description: Device password
+        is_active:
+          type: boolean
+          default: true
+          description: Device active status
+        last_sync:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last synchronization timestamp
+        created_at:
+          type: string
+          format: date-time
+          description: Device creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Device last update timestamp
+      required:
+        - id
+        - name
+        - ip_address
+        - port
+        - is_active
+        - created_at
+        - updated_at
+
+    Employee:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Unique employee identifier
+        badge_number:
+          type: string
+          description: Employee badge number (unique identifier)
+        english_name:
+          type: string
+          nullable: true
+          description: Employee English name
+        thai_name:
+          type: string
+          nullable: true
+          description: Employee Thai name
+        display_name:
+          type: string
+          description: Employee display name (computed from Thai name or badge)
+        department:
+          type: string
+          nullable: true
+          description: Employee department
+        position:
+          type: string
+          nullable: true
+          description: Employee position
+        job_role_id:
+          type: integer
+          nullable: true
+          description: Associated job role ID
+        is_active:
+          type: boolean
+          default: true
+          description: Employee active status
+        is_hidden:
+          type: boolean
+          default: false
+          description: Employee visibility status
+        created_at:
+          type: string
+          format: date-time
+          description: Employee creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Employee last update timestamp
+      required:
+        - id
+        - badge_number
+        - display_name
+        - is_active
+        - is_hidden
+        - created_at
+        - updated_at
+
+    AttendanceRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Unique attendance record identifier
+        employee_badge_number:
+          type: string
+          description: Employee badge number
+        device_id:
+          type: integer
+          description: Device ID that recorded the punch
+        timestamp:
+          type: string
+          format: date-time
+          description: Punch timestamp
+        punch_type:
+          type: integer
+          enum: [0, 1, 2, 3, 4, 5]
+          description: |
+            Punch type:
+            - 0: Check In
+            - 1: Check Out
+            - 2: Break Out
+            - 3: Break In
+            - 4: Overtime In
+            - 5: Overtime Out
+        status:
+          type: integer
+          enum: [0, 1, 2]
+          default: 0
+          description: |
+            Punch status:
+            - 0: Normal
+            - 1: Late
+            - 2: Early
+        sync_status:
+          type: string
+          enum: [synced, pending, failed]
+          default: synced
+          description: Synchronization status
+        created_at:
+          type: string
+          format: date-time
+          description: Record creation timestamp
+        employee:
+          $ref: '#/components/schemas/Employee'
+        device:
+          $ref: '#/components/schemas/Device'
+      required:
+        - id
+        - employee_badge_number
+        - device_id
+        - timestamp
+        - punch_type
+        - status
+        - sync_status
+        - created_at
+
+    JobRole:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Unique job role identifier
+        role_name:
+          type: string
+          description: Role name (system identifier)
+        display_name:
+          type: string
+          description: Role display name
+        description:
+          type: string
+          nullable: true
+          description: Role description
+        has_shifts:
+          type: boolean
+          default: false
+          description: Whether role supports shift scheduling
+        is_active:
+          type: boolean
+          default: true
+          description: Role active status
+        created_at:
+          type: string
+          format: date-time
+          description: Role creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Role last update timestamp
+        employee_count:
+          type: integer
+          nullable: true
+          description: Number of employees with this role
+      required:
+        - id
+        - role_name
+        - display_name
+        - has_shifts
+        - is_active
+        - created_at
+        - updated_at
+
+    # Request/Response Models
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          default: true
+          description: Operation success status
+        message:
+          type: string
+          description: Success message
+        data:
+          type: object
+          nullable: true
+          description: Response data
+      required:
+        - success
+        - message
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          default: false
+          description: Operation success status
+        error:
+          type: string
+          description: Error message
+        detail:
+          type: string
+          nullable: true
+          description: Detailed error information
+        code:
+          type: string
+          nullable: true
+          description: Error code
+      required:
+        - success
+        - error
+
+    AttendanceFilter:
+      type: object
+      properties:
+        start_date:
+          type: string
+          format: date-time
+          nullable: true
+          description: Filter start date
+        end_date:
+          type: string
+          format: date-time
+          nullable: true
+          description: Filter end date
+        employee_badge:
+          type: string
+          nullable: true
+          description: Filter by employee badge number
+        limit:
+          type: integer
+          default: 100
+          description: Number of records to return
+        offset:
+          type: integer
+          default: 0
+          description: Record offset for pagination
+
+    AttendanceResponse:
+      type: object
+      properties:
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttendanceRecord'
+        total:
+          type: integer
+          description: Total number of records
+        filters:
+          type: object
+          properties:
+            start_date:
+              type: string
+              format: date-time
+              nullable: true
+            end_date:
+              type: string
+              format: date-time
+              nullable: true
+            employee_badge:
+              type: string
+              nullable: true
+      required:
+        - records
+        - total
+        - filters
+
+    DeviceStatus:
+      type: object
+      properties:
+        device_id:
+          type: integer
+          description: Device identifier
+        connected:
+          type: boolean
+          description: Connection status
+        ip_address:
+          type: string
+          format: ipv4
+          description: Device IP address
+        port:
+          type: integer
+          description: Device port
+        firmware:
+          type: string
+          nullable: true
+          description: Device firmware version
+        users_count:
+          type: integer
+          nullable: true
+          description: Number of users on device
+        records_count:
+          type: integer
+          nullable: true
+          description: Number of records on device
+        last_connection:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last successful connection
+        response_time_ms:
+          type: integer
+          nullable: true
+          description: Response time in milliseconds
+      required:
+        - device_id
+        - connected
+        - ip_address
+        - port
+
+    SystemHealth:
+      type: object
+      properties:
+        overall_status:
+          type: string
+          enum: [healthy, degraded, critical]
+          description: Overall system status
+        timestamp:
+          type: string
+          format: date-time
+          description: Health check timestamp
+        device_health:
+          type: object
+          properties:
+            connected:
+              type: boolean
+            ip_address:
+              type: string
+            firmware:
+              type: string
+            response_time_ms:
+              type: integer
+        database_health:
+          type: object
+          properties:
+            accessible:
+              type: boolean
+            total_employees:
+              type: integer
+            total_attendance_records:
+              type: integer
+        system_resources:
+          type: object
+          properties:
+            disk_usage_percent:
+              type: number
+              format: float
+            disk_free_gb:
+              type: number
+              format: float
+            disk_total_gb:
+              type: number
+              format: float
+        application_stats:
+          type: object
+          properties:
+            employees:
+              type: object
+              properties:
+                total:
+                  type: integer
+                active:
+                  type: integer
+            attendance:
+              type: object
+              properties:
+                today_records:
+                  type: integer
+                last_record_time:
+                  type: string
+                  format: date-time
+      required:
+        - overall_status
+        - timestamp
+
+    EmployeeUpdate:
+      type: object
+      properties:
+        english_name:
+          type: string
+          nullable: true
+          description: Employee English name
+        thai_name:
+          type: string
+          nullable: true
+          description: Employee Thai name
+        department:
+          type: string
+          nullable: true
+          description: Employee department
+        position:
+          type: string
+          nullable: true
+          description: Employee position
+        job_role_id:
+          type: integer
+          nullable: true
+          description: Job role ID
+        is_active:
+          type: boolean
+          nullable: true
+          description: Employee active status
+        is_hidden:
+          type: boolean
+          nullable: true
+          description: Employee visibility status
+
+    DeviceTimeResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Operation success status
+        device_time:
+          type: string
+          format: date-time
+          description: Current device time
+        server_time:
+          type: string
+          format: date-time
+          description: Current server time
+        synchronized:
+          type: boolean
+          description: Whether device time is synchronized
+        time_difference_seconds:
+          type: number
+          format: float
+          description: Time difference in seconds
+        auto_synced:
+          type: boolean
+          description: Whether auto-sync occurred
+        message:
+          type: string
+          description: Status message
+      required:
+        - success
+        - device_time
+        - server_time
+        - synchronized
+        - time_difference_seconds
+        - auto_synced
+        - message
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnprocessableEntity:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+paths:
+  # Attendance Endpoints
+  /api/attendance/:
+    get:
+      tags:
+        - Attendance
+      summary: Get attendance records
+      description: Retrieve attendance records with optional filtering and pagination
+      parameters:
+        - name: start_date
+          in: query
+          description: Filter start date (ISO format)
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          description: Filter end date (ISO format)
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: employee_badge
+          in: query
+          description: Filter by employee badge number
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Number of records to return
+          required: false
+          schema:
+            type: integer
+            default: 100
+        - name: offset
+          in: query
+          description: Record offset for pagination
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        200:
+          description: Attendance records retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceResponse'
+        400:
+          $ref: '#/components/responses/BadRequest'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/attendance/summary:
+    get:
+      tags:
+        - Attendance
+      summary: Get attendance summary
+      description: Get attendance summary statistics for dashboard
+      responses:
+        200:
+          description: Attendance summary retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_records:
+                    type: integer
+                  today_records:
+                    type: integer
+                  last_sync:
+                    type: string
+                    format: date-time
+                  employees_today:
+                    type: integer
+                  device_status:
+                    type: string
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/attendance/employee/{employee_badge}:
+    get:
+      tags:
+        - Attendance
+      summary: Get employee attendance
+      description: Get attendance records for specific employee
+      parameters:
+        - name: employee_badge
+          in: path
+          description: Employee badge number
+          required: true
+          schema:
+            type: string
+        - name: days
+          in: query
+          description: Number of days to retrieve
+          required: false
+          schema:
+            type: integer
+            default: 30
+      responses:
+        200:
+          description: Employee attendance retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  employee:
+                    $ref: '#/components/schemas/Employee'
+                  records:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AttendanceRecord'
+                  summary:
+                    type: object
+                    properties:
+                      total_records:
+                        type: integer
+                      check_ins:
+                        type: integer
+                      check_outs:
+                        type: integer
+        404:
+          $ref: '#/components/responses/NotFound'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/attendance/today:
+    get:
+      tags:
+        - Attendance
+      summary: Get today's attendance
+      description: Get attendance records for today
+      responses:
+        200:
+          description: Today's attendance retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  date:
+                    type: string
+                    format: date
+                  records:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AttendanceRecord'
+                  summary:
+                    type: object
+                    properties:
+                      total_records:
+                        type: integer
+                      unique_employees:
+                        type: integer
+                      check_ins:
+                        type: integer
+                      check_outs:
+                        type: integer
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/attendance/sync:
+    post:
+      tags:
+        - Attendance
+      summary: Sync attendance data
+      description: Synchronize attendance data from ZKTeco device
+      responses:
+        200:
+          description: Attendance sync completed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      records_imported:
+                        type: integer
+                      employees_updated:
+                        type: integer
+                      sync_duration:
+                        type: string
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/attendance/export/csv:
+    get:
+      tags:
+        - Attendance
+      summary: Export attendance CSV
+      description: Export attendance records as CSV file
+      parameters:
+        - name: start_date
+          in: query
+          description: Filter start date (ISO format)
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          description: Filter end date (ISO format)
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: employee_badge
+          in: query
+          description: Filter by employee badge number
+          required: false
+          schema:
+            type: string
+      responses:
+        200:
+          description: CSV file download
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        400:
+          $ref: '#/components/responses/BadRequest'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/attendance/health:
+    get:
+      tags:
+        - Attendance
+      summary: Attendance health check
+      description: Check attendance system health
+      responses:
+        200:
+          description: Attendance system health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  database_accessible:
+                    type: boolean
+                  last_record_time:
+                    type: string
+                    format: date-time
+                  total_records:
+                    type: integer
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  # Device Endpoints
+  /api/devices/:
+    get:
+      tags:
+        - Devices
+      summary: Get all devices
+      description: Retrieve all registered ZKTeco devices
+      responses:
+        200:
+          description: Devices retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Device'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/devices/default:
+    get:
+      tags:
+        - Devices
+      summary: Get default device
+      description: Get the default ZKTeco device
+      responses:
+        200:
+          description: Default device retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Device'
+                  - type: object
+                    properties:
+                      connection_status:
+                        type: string
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/devices/status:
+    get:
+      tags:
+        - Devices
+      summary: Get device status
+      description: Get current device connection status and information
+      responses:
+        200:
+          description: Device status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceStatus'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/devices/test-connection:
+    post:
+      tags:
+        - Devices
+      summary: Test device connection
+      description: Test connection to ZKTeco device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ip_address:
+                  type: string
+                  format: ipv4
+                port:
+                  type: integer
+                  default: 4370
+                password:
+                  type: integer
+                  default: 0
+              required:
+                - ip_address
+      responses:
+        200:
+          description: Connection test completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  connected:
+                    type: boolean
+                  message:
+                    type: string
+                  device_info:
+                    type: object
+                    properties:
+                      firmware:
+                        type: string
+                      users_count:
+                        type: integer
+                      records_count:
+                        type: integer
+        400:
+          $ref: '#/components/responses/BadRequest'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/devices/time:
+    get:
+      tags:
+        - Devices
+      summary: Get device time
+      description: Get current device time with synchronization status
+      responses:
+        200:
+          description: Device time retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceTimeResponse'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/devices/time/sync:
+    post:
+      tags:
+        - Devices
+      summary: Sync device time
+      description: Synchronize device time with server time
+      responses:
+        200:
+          description: Device time synchronized successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  old_time:
+                    type: string
+                    format: date-time
+                  new_time:
+                    type: string
+                    format: date-time
+                  time_difference_seconds:
+                    type: number
+                    format: float
+                  synchronized:
+                    type: boolean
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/devices/health:
+    get:
+      tags:
+        - Devices
+      summary: Device health check
+      description: Check device system health
+      responses:
+        200:
+          description: Device system health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  device_connected:
+                    type: boolean
+                  last_sync:
+                    type: string
+                    format: date-time
+                  response_time_ms:
+                    type: integer
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  # Employee Endpoints
+  /api/employees/:
+    get:
+      tags:
+        - Employees
+      summary: Get all employees
+      description: Retrieve all employees with optional filtering
+      parameters:
+        - name: include_inactive
+          in: query
+          description: Include inactive employees
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: include_hidden
+          in: query
+          description: Include hidden employees
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: role_id
+          in: query
+          description: Filter by job role ID
+          required: false
+          schema:
+            type: integer
+      responses:
+        200:
+          description: Employees retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  employees:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Employee'
+                  total:
+                    type: integer
+                  active:
+                    type: integer
+                  hidden:
+                    type: integer
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/employees/{badge_number}:
+    get:
+      tags:
+        - Employees
+      summary: Get specific employee
+      description: Get employee details by badge number
+      parameters:
+        - name: badge_number
+          in: path
+          description: Employee badge number
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Employee retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Employee'
+        404:
+          $ref: '#/components/responses/NotFound'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      tags:
+        - Employees
+      summary: Update employee
+      description: Update employee information
+      parameters:
+        - name: badge_number
+          in: path
+          description: Employee badge number
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmployeeUpdate'
+      responses:
+        200:
+          description: Employee updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      employee:
+                        $ref: '#/components/schemas/Employee'
+        404:
+          $ref: '#/components/responses/NotFound'
+        422:
+          $ref: '#/components/responses/UnprocessableEntity'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      tags:
+        - Employees
+      summary: Delete employee (soft delete)
+      description: Soft delete employee by setting inactive status
+      parameters:
+        - name: badge_number
+          in: path
+          description: Employee badge number
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Employee deactivated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        404:
+          $ref: '#/components/responses/NotFound'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/employees/{badge_number}/nickname:
+    put:
+      tags:
+        - Employees
+      summary: Update employee nickname
+      description: Update employee Thai name (nickname)
+      parameters:
+        - name: badge_number
+          in: path
+          description: Employee badge number
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                thai_name:
+                  type: string
+                  description: Employee Thai name
+              required:
+                - thai_name
+      responses:
+        200:
+          description: Employee nickname updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      employee:
+                        $ref: '#/components/schemas/Employee'
+        404:
+          $ref: '#/components/responses/NotFound'
+        422:
+          $ref: '#/components/responses/UnprocessableEntity'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/employees/{badge_number}/status:
+    put:
+      tags:
+        - Employees
+      summary: Update employee status
+      description: Update employee active/inactive status
+      parameters:
+        - name: badge_number
+          in: path
+          description: Employee badge number
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_active:
+                  type: boolean
+                  description: Employee active status
+              required:
+                - is_active
+      responses:
+        200:
+          description: Employee status updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      employee:
+                        $ref: '#/components/schemas/Employee'
+        404:
+          $ref: '#/components/responses/NotFound'
+        422:
+          $ref: '#/components/responses/UnprocessableEntity'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/employees/{badge_number}/hidden:
+    put:
+      tags:
+        - Employees
+      summary: Update employee visibility
+      description: Update employee hidden/visible status
+      parameters:
+        - name: badge_number
+          in: path
+          description: Employee badge number
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_hidden:
+                  type: boolean
+                  description: Employee hidden status
+              required:
+                - is_hidden
+      responses:
+        200:
+          description: Employee visibility updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      employee:
+                        $ref: '#/components/schemas/Employee'
+        404:
+          $ref: '#/components/responses/NotFound'
+        422:
+          $ref: '#/components/responses/UnprocessableEntity'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/employees/roles/:
+    get:
+      tags:
+        - Employees
+      summary: Get job roles
+      description: Get all job roles
+      responses:
+        200:
+          description: Job roles retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roles:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/JobRole'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      tags:
+        - Employees
+      summary: Create job role
+      description: Create a new job role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role_name:
+                  type: string
+                  description: Role name (system identifier)
+                display_name:
+                  type: string
+                  description: Role display name
+                description:
+                  type: string
+                  description: Role description
+                has_shifts:
+                  type: boolean
+                  default: false
+                  description: Whether role supports shifts
+                is_active:
+                  type: boolean
+                  default: true
+                  description: Role active status
+              required:
+                - role_name
+                - display_name
+      responses:
+        201:
+          description: Job role created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      role:
+                        $ref: '#/components/schemas/JobRole'
+        422:
+          $ref: '#/components/responses/UnprocessableEntity'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/employees/health:
+    get:
+      tags:
+        - Employees
+      summary: Employee health check
+      description: Check employee system health
+      responses:
+        200:
+          description: Employee system health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  total_employees:
+                    type: integer
+                  active_employees:
+                    type: integer
+                  database_accessible:
+                    type: boolean
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  # Export Endpoints
+  /api/export/attendance/csv:
+    get:
+      tags:
+        - Export
+      summary: Export attendance CSV
+      description: Export attendance records as CSV file
+      parameters:
+        - name: start_date
+          in: query
+          description: Filter start date (ISO format)
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          description: Filter end date (ISO format)
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: employee_badge
+          in: query
+          description: Filter by employee badge number
+          required: false
+          schema:
+            type: string
+      responses:
+        200:
+          description: CSV file download
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        400:
+          $ref: '#/components/responses/BadRequest'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/export/employees/csv:
+    get:
+      tags:
+        - Export
+      summary: Export employee CSV
+      description: Export employee list as CSV file
+      parameters:
+        - name: include_inactive
+          in: query
+          description: Include inactive employees
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: include_hidden
+          in: query
+          description: Include hidden employees
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        200:
+          description: CSV file download
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        400:
+          $ref: '#/components/responses/BadRequest'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/export/quick/today-attendance:
+    get:
+      tags:
+        - Export
+      summary: Quick export today's attendance
+      description: Export today's attendance records as CSV
+      responses:
+        200:
+          description: CSV file download
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/export/health:
+    get:
+      tags:
+        - Export
+      summary: Export health check
+      description: Check export system health
+      responses:
+        200:
+          description: Export system health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  export_functions_available:
+                    type: boolean
+                  last_export:
+                    type: string
+                    format: date-time
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  # System Endpoints
+  /api/system/health:
+    get:
+      tags:
+        - System
+      summary: System health check
+      description: Comprehensive system health monitoring
+      responses:
+        200:
+          description: System health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealth'
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/system/logs:
+    get:
+      tags:
+        - System
+      summary: Get system logs
+      description: Retrieve system operational logs
+      parameters:
+        - name: log_type
+          in: query
+          description: Filter by log type
+          required: false
+          schema:
+            type: string
+            enum: [all, connection, sync, error, api]
+            default: all
+        - name: limit
+          in: query
+          description: Number of log entries
+          required: false
+          schema:
+            type: integer
+            default: 50
+      responses:
+        200:
+          description: System logs retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        timestamp:
+                          type: string
+                          format: date-time
+                        level:
+                          type: string
+                        message:
+                          type: string
+                        source:
+                          type: string
+                  total:
+                    type: integer
+                  log_type:
+                    type: string
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/system/metrics:
+    get:
+      tags:
+        - System
+      summary: Get performance metrics
+      description: Retrieve system performance metrics
+      responses:
+        200:
+          description: Performance metrics retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_performance:
+                    type: object
+                    properties:
+                      db_query_time_ms:
+                        type: number
+                        format: float
+                      status:
+                        type: string
+                      response_time_ms:
+                        type: number
+                        format: float
+                  activity_metrics:
+                    type: object
+                    properties:
+                      last_24_hours:
+                        type: object
+                        properties:
+                          attendance_records:
+                            type: integer
+                          api_requests:
+                            type: integer
+                          sync_operations:
+                            type: integer
+                      current_session:
+                        type: object
+                        properties:
+                          uptime_seconds:
+                            type: integer
+                          requests_handled:
+                            type: integer
+        500:
+          $ref: '#/components/responses/InternalServerError'
+
+  # Health Check Endpoint
+  /health:
+    get:
+      tags:
+        - System
+      summary: Basic health check
+      description: Basic application health check
+      responses:
+        200:
+          description: Application is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  server:
+                    type: string
+                    example: unified
+        500:
+          $ref: '#/components/responses/InternalServerError'

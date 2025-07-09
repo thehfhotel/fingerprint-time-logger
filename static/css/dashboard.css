@@ -1,5 +1,10 @@
 /* Dashboard specific styles */
 
+/* Device clock styling */
+.last-update-display #deviceClock {
+    color: white !important;
+}
+
 /* Employee grid */
 #employeeContainer {
     display: grid;

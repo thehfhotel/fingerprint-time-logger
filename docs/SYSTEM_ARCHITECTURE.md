@@ -1,17 +1,62 @@
 # 🏗️ System Architecture Documentation
 
+**Version**: 2.0  
+**Last Updated**: January 2025  
+**Status**: Current - Reflects post-cleanup architecture
+
 ## Table of Contents
 1. [Overview](#overview)
-2. [Offline Mode Architecture](#offline-mode-architecture)
+2. [Current Architecture](#current-architecture)
 3. [ZKTeco Device Connection](#zkteco-device-connection)
-4. [Database & Cache Architecture](#database--cache-architecture)
-5. [Integration Architecture](#integration-architecture)
-6. [Performance Optimizations](#performance-optimizations)
-7. [Reliability Features](#reliability-features)
+4. [Database Architecture](#database-architecture)
+5. [API Architecture](#api-architecture)
+6. [Frontend Architecture](#frontend-architecture)
+7. [Background Services](#background-services)
+8. [Performance Optimizations](#performance-optimizations)
+9. [Reliability Features](#reliability-features)
+10. [Recent Improvements](#recent-improvements)
 
 ## Overview
 
-The Fingerprint Time Logger implements a sophisticated **offline-first architecture** designed to ensure continuous operation even when network connectivity or device availability is intermittent. This document provides a comprehensive explanation of the system's core components and their interactions.
+The Fingerprint Time Logger is a **modern, simplified single-user system** that has been streamlined from a complex enterprise solution to a focused, efficient application. After the January 2025 cleanup, the system now features a **unified FastAPI architecture** with real-time capabilities, background processing, and comprehensive monitoring.
+
+## Current Architecture
+
+### Core Components
+
+```mermaid
+graph TB
+    A[ZKTeco Device] -->|pyzk| B[Device Service]
+    B --> C[Unified FastAPI Server]
+    C --> D[SQLite Database]
+    C --> E[Static Files]
+    C --> F[WebSocket Manager]
+    C --> G[Background Tasks]
+    G --> H[Auto-Import Service]
+    H --> A
+    F --> I[Real-time Dashboard]
+    E --> I
+    D --> J[Alembic Migrations]
+```
+
+### Technology Stack
+
+- **Backend**: FastAPI 0.104.1 with Uvicorn ASGI server
+- **Database**: SQLite with SQLAlchemy 2.0.23 ORM
+- **Device Communication**: pyzk 0.9 library
+- **Frontend**: Vanilla HTML/CSS/JavaScript with WebSocket
+- **Migrations**: Alembic 1.12.1
+- **Background Tasks**: FastAPI BackgroundTasks
+- **Real-time**: WebSocket connections
+
+### Unified Server Architecture
+
+The system runs as a **single FastAPI process** that handles:
+- REST API endpoints (`/api/`)
+- Static file serving (`/static/`)
+- WebSocket connections (`/ws`)
+- Background task scheduling
+- Database operations
 
 ## 📡 Offline Mode Architecture
 

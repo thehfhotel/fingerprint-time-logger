@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Documentation - Fingerprint Time Logger</title>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.10.5/swagger-ui.css" />
+    <style>
+        html {
+            box-sizing: border-box;
+            overflow: -moz-scrollbars-vertical;
+            overflow-y: scroll;
+        }
+        
+        *, *:before, *:after {
+            box-sizing: inherit;
+        }
+        
+        body {
+            margin: 0;
+            background: #fafafa;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        
+        .swagger-ui .topbar {
+            background-color: #667eea;
+            background-image: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .swagger-ui .topbar .download-url-wrapper {
+            display: none;
+        }
+        
+        .swagger-ui .topbar .link img {
+            content: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>');
+        }
+        
+        .swagger-ui .info {
+            margin: 50px 0;
+        }
+        
+        .swagger-ui .info .title {
+            color: #3b4151;
+            font-size: 36px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+        
+        .swagger-ui .info .description {
+            color: #3b4151;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .swagger-ui .info .description h2 {
+            color: #667eea;
+            margin-top: 30px;
+            margin-bottom: 15px;
+        }
+        
+        .swagger-ui .scheme-container {
+            background: #fff;
+            border-radius: 4px;
+            box-shadow: 0 1px 2px 0 rgba(0,0,0,.15);
+            margin: 20px 0;
+            padding: 20px;
+        }
+        
+        .swagger-ui .btn.authorize {
+            background-color: #667eea;
+            border-color: #667eea;
+        }
+        
+        .swagger-ui .btn.authorize:hover {
+            background-color: #5a6fd8;
+            border-color: #5a6fd8;
+        }
+        
+        .swagger-ui .opblock.opblock-get {
+            border-color: #61affe;
+            background: rgba(97, 175, 254, 0.1);
+        }
+        
+        .swagger-ui .opblock.opblock-post {
+            border-color: #49cc90;
+            background: rgba(73, 204, 144, 0.1);
+        }
+        
+        .swagger-ui .opblock.opblock-put {
+            border-color: #fca130;
+            background: rgba(252, 161, 48, 0.1);
+        }
+        
+        .swagger-ui .opblock.opblock-delete {
+            border-color: #f93e3e;
+            background: rgba(249, 62, 62, 0.1);
+        }
+        
+        .swagger-ui .opblock-tag {
+            color: #3b4151;
+            font-size: 18px;
+            font-weight: bold;
+            margin: 30px 0 15px 0;
+        }
+        
+        .swagger-ui .opblock-summary-description {
+            color: #3b4151;
+            font-size: 13px;
+        }
+        
+        .swagger-ui .parameter__name {
+            color: #3b4151;
+            font-weight: bold;
+        }
+        
+        .swagger-ui .parameter__type {
+            color: #3b4151;
+            font-size: 12px;
+        }
+        
+        .swagger-ui .response-col_status {
+            color: #3b4151;
+            font-weight: bold;
+        }
+        
+        .swagger-ui .response-col_description {
+            color: #3b4151;
+        }
+        
+        .swagger-ui .model-box {
+            background: #fff;
+            border-radius: 4px;
+            box-shadow: 0 1px 2px 0 rgba(0,0,0,.15);
+        }
+        
+        .swagger-ui .model-title {
+            color: #3b4151;
+            font-weight: bold;
+        }
+        
+        .swagger-ui .prop-name {
+            color: #3b4151;
+            font-weight: bold;
+        }
+        
+        .swagger-ui .prop-type {
+            color: #3b4151;
+            font-style: italic;
+        }
+        
+        .swagger-ui .try-out__btn {
+            background-color: #667eea;
+            border-color: #667eea;
+            color: white;
+        }
+        
+        .swagger-ui .try-out__btn:hover {
+            background-color: #5a6fd8;
+            border-color: #5a6fd8;
+        }
+        
+        .swagger-ui .execute-wrapper .btn {
+            background-color: #667eea;
+            border-color: #667eea;
+            color: white;
+        }
+        
+        .swagger-ui .execute-wrapper .btn:hover {
+            background-color: #5a6fd8;
+            border-color: #5a6fd8;
+        }
+        
+        .api-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        
+        .api-header h1 {
+            margin: 0;
+            font-size: 2.5rem;
+            font-weight: bold;
+        }
+        
+        .api-header p {
+            margin: 0.5rem 0 0 0;
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+        
+        .api-navigation {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin: 2rem 0;
+            padding: 1.5rem;
+        }
+        
+        .api-navigation h3 {
+            color: #3b4151;
+            margin: 0 0 1rem 0;
+            font-size: 1.3rem;
+        }
+        
+        .api-navigation ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+        }
+        
+        .api-navigation li {
+            background: #f8f9fa;
+            border-radius: 4px;
+            padding: 0.75rem;
+            border-left: 4px solid #667eea;
+        }
+        
+        .api-navigation a {
+            color: #3b4151;
+            text-decoration: none;
+            font-weight: 500;
+            display: block;
+        }
+        
+        .api-navigation a:hover {
+            color: #667eea;
+        }
+        
+        .api-navigation .description {
+            color: #6b7280;
+            font-size: 0.9rem;
+            margin-top: 0.25rem;
+        }
+        
+        .api-stats {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin: 2rem 0;
+            padding: 1.5rem;
+        }
+        
+        .api-stats h3 {
+            color: #3b4151;
+            margin: 0 0 1rem 0;
+            font-size: 1.3rem;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+        
+        .stat-item {
+            text-align: center;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #667eea;
+            display: block;
+        }
+        
+        .stat-label {
+            color: #6b7280;
+            font-size: 0.9rem;
+            margin-top: 0.25rem;
+        }
+        
+        .swagger-container {
+            max-width: none;
+            margin: 0;
+            padding: 0;
+        }
+        
+        @media (max-width: 768px) {
+            .api-header h1 {
+                font-size: 2rem;
+            }
+            
+            .api-header p {
+                font-size: 1rem;
+            }
+            
+            .api-navigation ul {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="api-header">
+        <h1>🔐 Fingerprint Time Logger API</h1>
+        <p>Comprehensive API documentation for ZKTeco biometric device management</p>
+    </div>
+    
+    <div style="max-width: 1200px; margin: 0 auto; padding: 0 2rem;">
+        <div class="api-navigation">
+            <h3>🚀 Quick Navigation</h3>
+            <ul>
+                <li>
+                    <a href="#/Attendance">📊 Attendance Management</a>
+                    <div class="description">Attendance record tracking and synchronization</div>
+                </li>
+                <li>
+                    <a href="#/Devices">🔌 Device Management</a>
+                    <div class="description">ZKTeco device connectivity and control</div>
+                </li>
+                <li>
+                    <a href="#/Employees">👥 Employee Management</a>
+                    <div class="description">Employee records and Thai name management</div>
+                </li>
+                <li>
+                    <a href="#/Export">📤 Data Export</a>
+                    <div class="description">CSV export and reporting functionality</div>
+                </li>
+                <li>
+                    <a href="#/System">🔧 System Monitoring</a>
+                    <div class="description">Health checks, logs, and performance metrics</div>
+                </li>
+            </ul>
+        </div>
+        
+        <div class="api-stats">
+            <h3>📈 API Statistics</h3>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <span class="stat-number">40+</span>
+                    <div class="stat-label">API Endpoints</div>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">5</span>
+                    <div class="stat-label">Core Modules</div>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">15+</span>
+                    <div class="stat-label">Data Models</div>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-number">100%</span>
+                    <div class="stat-label">Documentation</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="swagger-ui" class="swagger-container"></div>
+    
+    <script src="https://unpkg.com/swagger-ui-dist@5.10.5/swagger-ui-bundle.js"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5.10.5/swagger-ui-standalone-preset.js"></script>
+    <script>
+        window.onload = function() {
+            const ui = SwaggerUIBundle({
+                url: '/docs/openapi.yaml',
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout",
+                docExpansion: "none",
+                operationsSorter: "alpha",
+                tagsSorter: "alpha",
+                filter: true,
+                showExtensions: true,
+                showCommonExtensions: true,
+                defaultModelsExpandDepth: 2,
+                defaultModelExpandDepth: 2,
+                displayRequestDuration: true,
+                tryItOutEnabled: true,
+                requestInterceptor: function(request) {
+                    // Add any request interceptors here
+                    return request;
+                },
+                responseInterceptor: function(response) {
+                    // Add any response interceptors here
+                    return response;
+                },
+                onComplete: function() {
+                    console.log('Swagger UI loaded successfully');
+                    
+                    // Add custom behavior after loading
+                    const logo = document.querySelector('.topbar .link img');
+                    if (logo) {
+                        logo.style.height = '30px';
+                        logo.style.width = '30px';
+                    }
+                    
+                    // Add custom title to topbar
+                    const topbarWrapper = document.querySelector('.topbar-wrapper');
+                    if (topbarWrapper) {
+                        const title = document.createElement('span');
+                        title.textContent = 'Fingerprint Time Logger API';
+                        title.style.color = 'white';
+                        title.style.fontSize = '18px';
+                        title.style.fontWeight = 'bold';
+                        title.style.marginLeft = '10px';
+                        topbarWrapper.appendChild(title);
+                    }
+                }
+            });
+            
+            // Add keyboard shortcuts
+            document.addEventListener('keydown', function(e) {
+                // Ctrl+K to focus search
+                if (e.ctrlKey && e.key === 'k') {
+                    e.preventDefault();
+                    const searchInput = document.querySelector('.filter-container input');
+                    if (searchInput) {
+                        searchInput.focus();
+                    }
+                }
+                
+                // Escape to collapse all
+                if (e.key === 'Escape') {
+                    const collapseButtons = document.querySelectorAll('.opblock-summary-control');
+                    collapseButtons.forEach(button => {
+                        if (button.getAttribute('aria-expanded') === 'true') {
+                            button.click();
+                        }
+                    });
+                }
+            });
+        };
+        
+        // Add service worker for offline support
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('/sw.js').then(function(registration) {
+                    console.log('ServiceWorker registration successful');
+                }, function(err) {
+                    console.log('ServiceWorker registration failed: ', err);
+                });
+            });
+        }
+        
+        // Add analytics tracking (if needed)
+        function trackAPIUsage(endpoint, method) {
+            // Add your analytics tracking code here
+            console.log(`API Usage: ${method} ${endpoint}`);
+        }
+        
+        // Add error handling for failed API calls
+        window.addEventListener('unhandledrejection', function(event) {
+            console.error('Unhandled promise rejection:', event.reason);
+        });
+        
+        // Add dark mode toggle (optional)
+        function toggleDarkMode() {
+            document.body.classList.toggle('dark-mode');
+            localStorage.setItem('dark-mode', document.body.classList.contains('dark-mode'));
+        }
+        
+        // Restore dark mode preference
+        if (localStorage.getItem('dark-mode') === 'true') {
+            document.body.classList.add('dark-mode');
+        }
+    </script>
+</body>
+</html>
