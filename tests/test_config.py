@@ -10,7 +10,7 @@ def test_default_settings():
     """Test that default settings are correctly loaded"""
     settings = Settings()
     
-    assert settings.database_url == "sqlite:///./attendance.db"
+    assert settings.database_url == "sqlite:///./database/attendance.db"
     assert settings.zkteco_host == "192.168.100.209"
     assert settings.zkteco_port == 4370
     assert settings.server_port == 5000
@@ -63,4 +63,4 @@ def test_get_settings():
     settings = get_settings()
     
     assert isinstance(settings, Settings)
-    assert settings.database_url == "sqlite:///./attendance.db"
+    assert settings.database_url == "sqlite:///./database/attendance.db"
