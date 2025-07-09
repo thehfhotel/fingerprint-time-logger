@@ -76,36 +76,7 @@ async def get_attendance_summary():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/")
-async def create_attendance_record(
-    employee_badge: str,
-    punch_type: int,
-    timestamp: Optional[datetime] = None,
-    device_id: Optional[int] = None
-):
-    """Create a new attendance record"""
-    try:
-        if timestamp is None:
-            timestamp = datetime.now()
-        
-        if device_id is None:
-            device = device_service.get_default_device()
-            device_id = device.id if device else 1
-        
-        record = attendance_service.create_attendance_record(
-            employee_badge=employee_badge,
-            timestamp=timestamp,
-            punch_type=punch_type,
-            device_id=device_id
-        )
-        
-        return {
-            "success": True,
-            "record_id": record.id,
-            "message": "Attendance record created successfully"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Manual record creation endpoint removed - not used by frontend
 
 
 @router.get("/employee/{employee_badge}")
@@ -314,50 +285,10 @@ async def export_attendance_csv(
 # VALIDATION & STATISTICS
 # ============================================================================
 
-@router.get("/stats/daily")
-async def get_daily_stats(target_date: Optional[date] = Query(None)):
-    """Get daily attendance statistics"""
-    try:
-        if target_date is None:
-            target_date = date.today()
-        
-        records = attendance_service.get_attendance_records(
-            start_date=target_date,
-            end_date=target_date,
-            limit=1000
-        )
-        
-        # Calculate basic stats
-        check_ins = sum(1 for r in records if r.punch_type == 0)
-        check_outs = sum(1 for r in records if r.punch_type == 1)
-        unique_employees = len(set(r.employee_badge_number for r in records))
-        
-        return {
-            "date": target_date.isoformat(),
-            "total_records": len(records),
-            "check_ins": check_ins,
-            "check_outs": check_outs,
-            "unique_employees": unique_employees,
-            "completion_rate": round((check_outs / check_ins * 100) if check_ins > 0 else 0, 2)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Daily statistics endpoint removed - not used by frontend
 
 
-@router.post("/validate/{record_id}")
-async def validate_attendance_record(record_id: int, db: Session = Depends(get_db)):
-    """Validate a specific attendance record"""
-    try:
-        record = db.query(AttendanceRecord).filter(AttendanceRecord.id == record_id).first()
-        if not record:
-            raise HTTPException(status_code=404, detail="Record not found")
-        
-        validation = attendance_service.validate_attendance_record(record)
-        return validation
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Record validation endpoint removed - not used by frontend
 
 
 # ============================================================================

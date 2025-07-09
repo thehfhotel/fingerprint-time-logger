@@ -82,60 +82,10 @@ async def get_default_device():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/")
-async def create_device(device_data: DeviceCreate, db: Session = Depends(get_db)):
-    """Create a new device"""
-    try:
-        device = Device(
-            name=device_data.name,
-            ip_address=device_data.ip_address,
-            port=device_data.port,
-            password=device_data.password,
-            is_active=device_data.is_active
-        )
-        
-        db.add(device)
-        db.commit()
-        db.refresh(device)
-        
-        return {
-            "success": True,
-            "message": "Device created successfully",
-            "device_id": device.id
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Device creation endpoint removed - not used by frontend
 
 
-@router.put("/{device_id}")
-async def update_device(device_id: int, device_data: DeviceUpdate, db: Session = Depends(get_db)):
-    """Update a device"""
-    try:
-        device = db.query(Device).filter(Device.id == device_id).first()
-        if not device:
-            raise HTTPException(status_code=404, detail="Device not found")
-        
-        if device_data.name is not None:
-            device.name = device_data.name
-        if device_data.ip_address is not None:
-            device.ip_address = device_data.ip_address
-        if device_data.port is not None:
-            device.port = device_data.port
-        if device_data.password is not None:
-            device.password = device_data.password
-        if device_data.is_active is not None:
-            device.is_active = device_data.is_active
-        
-        db.commit()
-        
-        return {
-            "success": True,
-            "message": "Device updated successfully"
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Device update endpoint removed - not used by frontend
 
 
 # ============================================================================
@@ -217,54 +167,10 @@ async def sync_attendance():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/sync/users")
-async def get_device_users():
-    """Get users from device"""
-    try:
-        device = device_service.get_default_device()
-        if not device:
-            raise HTTPException(status_code=400, detail="No device configured")
-        
-        users = device_service.get_users(device)
-        return {
-            "users": users,
-            "total": len(users)
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Device users endpoint removed - not used by frontend
 
 
-@router.get("/sync/attendance-preview")
-async def preview_attendance_data():
-    """Preview attendance data from device without saving"""
-    try:
-        device = device_service.get_default_device()
-        if not device:
-            raise HTTPException(status_code=400, detail="No device configured")
-        
-        records = device_service.get_attendance_records(device)
-        
-        # Return preview of recent records
-        preview_records = []
-        for record in records[-50:]:  # Last 50 records
-            preview_records.append({
-                "user_id": record["user_id"],
-                "timestamp": record["timestamp"].isoformat(),
-                "punch_type": "check-in" if record["punch_type"] == 0 else "check-out",
-                "status": record["status"]
-            })
-        
-        return {
-            "preview": preview_records,
-            "total_available": len(records),
-            "showing": len(preview_records)
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Attendance preview endpoint removed - not used by frontend
 
 
 @router.get("/time")
@@ -287,22 +193,7 @@ async def sync_device_time():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class SetTimeRequest(BaseModel):
-    target_time: str
-
-@router.post("/time/set")
-async def set_device_time(request: SetTimeRequest):
-    """Set device time to specific timestamp (ISO format)"""
-    try:
-        from datetime import datetime
-        # Parse the ISO timestamp
-        target_datetime = datetime.fromisoformat(request.target_time.replace('Z', '+00:00'))
-        result = device_service.set_device_time(target_datetime)
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid timestamp format: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Device time set endpoint removed - not used by frontend
 
 
 # ============================================================================

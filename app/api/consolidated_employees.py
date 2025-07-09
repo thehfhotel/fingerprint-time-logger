@@ -334,43 +334,7 @@ async def get_employee(badge_number: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/")
-async def create_employee(employee_data: EmployeeCreate, db: Session = Depends(get_db)):
-    """Create a new employee"""
-    try:
-        # Check if employee already exists
-        existing = db.query(Employee).filter(Employee.badge_number == employee_data.badge_number).first()
-        if existing:
-            raise HTTPException(status_code=400, detail="Employee with this badge number already exists")
-        
-        # Generate display name
-        display_name = employee_data.thai_name or employee_data.english_name or f"พนักงาน {employee_data.badge_number}"
-        
-        employee = Employee(
-            badge_number=employee_data.badge_number,
-            english_name=employee_data.english_name,
-            thai_name=employee_data.thai_name,
-            display_name=display_name,
-            department=employee_data.department,
-            position=employee_data.position,
-            job_role_id=employee_data.job_role_id,
-            is_active=employee_data.is_active,
-            is_hidden=employee_data.is_hidden
-        )
-        
-        db.add(employee)
-        db.commit()
-        db.refresh(employee)
-        
-        return {
-            "success": True,
-            "message": "Employee created successfully",
-            "badge_number": employee.badge_number
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Employee creation endpoint removed - not used by frontend
 
 
 @router.put("/{badge_number}")
