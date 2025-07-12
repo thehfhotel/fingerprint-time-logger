@@ -5,7 +5,7 @@ Modern fingerprint time logger for ZKTeco biometric devices with Thai localizati
 ## Quick Start
 
 ```bash
-# Start unified server
+# Start Docker services
 ./scripts/start.sh
 
 # Use application
@@ -37,9 +37,10 @@ python3 -m pytest -v
 
 ## Architecture
 
+- **Docker Container**: Containerized deployment with Docker Compose
 - **Unified FastAPI Server (5000)**: All functionality in single process
 - **Static Dashboard**: HTML/CSS/JS served by FastAPI with WebSocket updates
-- **SQLite Database**: Local storage with Alembic migrations
+- **SQLite Database**: Local storage with Alembic migrations (volume mounted)
 - **ZKTeco Integration**: pyzk library for device communication
 - **Background Tasks**: Auto-import fingerprint logs every 30 minutes
 
@@ -83,10 +84,15 @@ python3 -m pytest -v
 ## Development Commands
 
 ```bash
-# Unified server
+# Docker development
+docker-compose up -d --build
+docker logs fingerprint-time-logger
+docker exec -it fingerprint-time-logger bash
+
+# Direct development (without Docker)
 uvicorn app.main_unified:app --reload --port 5000
 
-# Database
+# Database (inside container or locally)
 alembic -c database/alembic.ini revision --autogenerate -m "description"
 alembic -c database/alembic.ini upgrade head
 

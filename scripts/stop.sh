@@ -1,6 +1,6 @@
 #!/bin/bash
-# Updated stop script for unified FastAPI server architecture
-# Simplified from dual-server to single unified server
+# Docker Compose stop script for Fingerprint Time Logger
+# Updated to use containerized deployment
 
 # Source common functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,144 +9,115 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 setup_error_handling
 
-# Configuration for unified server
-SERVICE="unified_server"
-SERVICE_TO_STOP="${1:-}"  # Optional: specify service or empty for default
+# Configuration
+SERVICE_NAME="fingerprint-time-logger"
+COMPOSE_FILE="$PROJECT_ROOT/docker-compose.yml"
 
-# Stop the unified service
-stop_service() {
-    local service=$1
-    local pid_file="$PID_DIR/${service}.pid"
+# Stop Docker Compose services
+stop_docker_services() {
+    log_info "Stopping Docker Compose services..."
     
-    if ! is_process_running "$service"; then
-        log_warn "$service is not running"
-        rm -f "$pid_file"
-        return 0
+    cd "$PROJECT_ROOT"
+    
+    # Use docker compose (newer) or docker-compose (legacy)
+    local compose_cmd="docker compose"
+    if ! docker compose version >/dev/null 2>&1; then
+        compose_cmd="docker-compose"
     fi
     
-    local pid=$(cat "$pid_file")
-    log_info "Stopping $service (PID: $pid)..."
-    
-    # Kill process gracefully
-    if kill_process_graceful "$pid" 10; then
-        log_success "$service stopped successfully"
-        rm -f "$pid_file"
+    # Stop services
+    if $compose_cmd down; then
+        log_success "Docker services stopped successfully"
         return 0
     else
-        log_error "Failed to stop $service gracefully"
+        log_error "Failed to stop Docker services cleanly"
         return 1
     fi
 }
 
-# Cleanup processes by pattern (fallback)
-cleanup_by_pattern() {
-    local pattern=$1
-    local service_name=$2
+# Force cleanup if needed
+force_cleanup() {
+    log_warn "Attempting force cleanup..."
     
-    log_info "Cleaning up any remaining $service_name processes..."
-    
-    local pids=$(pgrep -f "$pattern" 2>/dev/null || true)
-    
-    if [ -z "$pids" ]; then
-        log_success "No remaining $service_name processes found"
-        return 0
+    # Stop container forcefully
+    if docker ps --filter "name=$SERVICE_NAME" | grep -q "$SERVICE_NAME"; then
+        log_info "Force stopping container: $SERVICE_NAME"
+        docker stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+        docker rm "$SERVICE_NAME" >/dev/null 2>&1 || true
     fi
     
-    log_warn "Found remaining $service_name processes: $pids"
+    # Clean up any orphaned containers
+    local orphaned=$(docker ps -a --filter "name=$SERVICE_NAME" --format "{{.Names}}" 2>/dev/null || true)
+    if [ -n "$orphaned" ]; then
+        log_info "Cleaning up orphaned containers: $orphaned"
+        echo "$orphaned" | xargs docker rm -f >/dev/null 2>&1 || true
+    fi
     
-    for pid in $pids; do
-        if kill -0 "$pid" 2>/dev/null; then
-            log_info "Force stopping process $pid"
-            kill_process_graceful "$pid" 3
-        fi
-    done
+    log_success "Force cleanup completed"
 }
 
-# Final cleanup
-final_cleanup() {
-    log_info "Performing final cleanup..."
-    
-    # Clean up stale PID files
-    cleanup_stale_pids
-    
-    # Remove temporary files
-    rm -f "$PID_DIR"/*.port 2>/dev/null || true
-    
-    # Clean Python cache
-    find "$PROJECT_ROOT" -name "*.pyc" -delete 2>/dev/null || true
-    find "$PROJECT_ROOT" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-    
-    log_success "Cleanup completed"
-}
-
-# Verify service is stopped
-verify_stop() {
-    local service=$1
-    local pattern=$2
-    
-    # Check PID file
-    if is_process_running "$service"; then
+# Verify services are stopped
+verify_stopped() {
+    if docker ps --filter "name=$SERVICE_NAME" --filter "status=running" | grep -q "$SERVICE_NAME"; then
         return 1
     fi
-    
-    # Check by pattern
-    local remaining=$(pgrep -f "$pattern" 2>/dev/null || true)
-    if [ -n "$remaining" ]; then
-        return 1
-    fi
-    
     return 0
 }
 
 # Main execution
 main() {
-    echo "🛑 Fingerprint Time Logger - Stopping Unified Server"
+    echo "🛑 Fingerprint Time Logger - Stopping Docker Services"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "📁 Project Root: $PROJECT_ROOT"
+    echo ""
     
-    ensure_directories
+    # Check if services are running
+    if ! docker ps --filter "name=$SERVICE_NAME" --filter "status=running" | grep -q "$SERVICE_NAME"; then
+        log_info "No running services found"
+        log_success "System is already stopped"
+        echo ""
+        echo "📋 Management Commands:"
+        echo "   Start:   ./scripts/start.sh"
+        echo "   Status:  ./scripts/status.sh"
+        echo "   Restart: ./scripts/restart.sh"
+        echo ""
+        exit 0
+    fi
     
-    case "$SERVICE_TO_STOP" in
-        "")
-            log_info "Stopping unified server..."
-            
-            local server_stopped=false
-            
-            # Stop unified server
-            if stop_service "$SERVICE"; then
-                server_stopped=true
-            fi
-            
-            # Cleanup remaining processes
-            cleanup_by_pattern "uvicorn.*app.main_unified" "Unified Server"
-            
-            # Verify service stopped
-            if verify_stop "$SERVICE" "uvicorn.*app.main_unified"; then
-                if [ "$server_stopped" = true ]; then
-                    log_success "Unified server stopped successfully"
-                else
-                    log_success "No running server found, system is clean"
-                fi
-            else
-                log_warn "Some server processes may still be running"
-            fi
-            ;;
-            
-        *)
-            log_error "Unknown service: $SERVICE_TO_STOP"
-            log_info "Usage: $0 [no arguments to stop unified server]"
-            exit 1
-            ;;
-    esac
+    # Stop services
+    local stop_success=false
+    if stop_docker_services; then
+        stop_success=true
+    fi
     
-    # Final cleanup
-    final_cleanup
+    # Verify services stopped
+    if verify_stopped; then
+        if [ "$stop_success" = true ]; then
+            log_success "All services stopped successfully"
+        else
+            log_success "Services are now stopped"
+        fi
+    else
+        log_warn "Some services may still be running, attempting force cleanup..."
+        force_cleanup
+        
+        if verify_stopped; then
+            log_success "Force cleanup successful, all services stopped"
+        else
+            log_error "Some services may still be running"
+            log_info "Check with: docker ps --filter 'name=$SERVICE_NAME'"
+        fi
+    fi
     
     echo ""
     echo "📋 Management Commands:"
     echo "   Start:   ./scripts/start.sh"
     echo "   Status:  ./scripts/status.sh"
     echo "   Restart: ./scripts/restart.sh"
+    echo ""
+    echo "🐳 Docker Commands:"
+    echo "   View all containers: docker ps -a"
+    echo "   Clean up images: docker system prune"
     echo ""
 }
 
