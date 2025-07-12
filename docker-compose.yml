@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  fingerprint-logger:
+    build: .
+    container_name: fingerprint-time-logger
+    network_mode: "host"
+    volumes:
+      - ./database:/app/database
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_URL=sqlite:///./database/attendance.db
+      - ZKTECO_HOST=${ZKTECO_HOST:-192.168.100.209}
+      - ZKTECO_PORT=${ZKTECO_PORT:-4370}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/devices/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

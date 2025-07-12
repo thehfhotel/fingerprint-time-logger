@@ -52,7 +52,9 @@ class SimpleDeviceService:
                     device.ip_address,
                     port=device.port,
                     timeout=self.timeout,
-                    password=device.password
+                    password=device.password,
+                    force_udp=False,
+                    ommit_ping=True
                 )
                 conn = zk.connect()
                 logger.info(f"Connected to device {device.name}")
