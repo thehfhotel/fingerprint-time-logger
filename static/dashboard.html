@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Employee Time Log Dashboard</title>
     <!-- CSS Files -->
     <link rel="stylesheet" href="static/css/base.css">
@@ -10,7 +13,7 @@
     <link rel="stylesheet" href="static/css/modal.css">
     
     <!-- JavaScript Files -->
-    <script src="static/js/config.js?bust=1752419001&force=true&v=4&importfix=1&nocache=1"></script>
+    <script src="static/js/config.js?bust=1752420001&force=true&v=7&simplified=1&final=<?= Date.now() ?>"></script>
     <script src="static/js/websocket-adapter.js"></script>
     <script src="static/js/real-time-manager.js"></script>
 </head>
@@ -282,6 +285,7 @@
             const importBtn = document.getElementById('importButton');
             const lastImportElem = document.getElementById('lastImport');
             
+            console.log('Import function called - setting button state');
             importBtn.disabled = true;
             importBtn.textContent = '📥 Importing...';
             
@@ -290,75 +294,52 @@
                 socket.emit('refresh', {});
                 console.log('Import triggered via WebSocket');
                 
-                // Also trigger via API as fallback (with immediate return)
+                // Show immediate feedback that import was triggered
+                importBtn.textContent = '⏳ Processing...';
+                console.log('Button text set to Processing...');
+                
+                // Also trigger via API as fallback
                 fetch(appConfig.getApiUrl('refresh'), { 
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     }
-                }).catch(e => console.log('API fallback failed:', e));
-                
-                // Show immediate feedback that import was triggered
-                importBtn.textContent = '⏳ Processing...';
-                console.log('Import process started in background');
-                
-                // Set up completion monitoring via WebSocket
-                const originalHandler = socket._callbacks['$attendance_update'] || [];
-                
-                // Add temporary listener for import completion
-                socket.on('attendance_update', function importCompletionHandler(data) {
-                    if (data.type === 'auto_import_update' || data.synced_records !== undefined) {
-                        console.log('Import completed via WebSocket:', data);
-                        
-                        // Update last import time if available
-                        if (data.data && data.data.last_import) {
-                            lastImportElem.textContent = data.data.last_import;
-                            lastImportElem.style.color = '#90EE90';
-                            console.log('Last import time updated:', data.data.last_import);
-                        }
-                        
-                        // Update dashboard with new data
-                        updateDashboard(data);
-                        
-                        // Show completion status
-                        const syncedCount = data.synced_records || 0;
+                }).then(response => {
+                    console.log('API refresh response:', response.status);
+                    return response.json();
+                }).then(data => {
+                    console.log('API refresh completed:', data);
+                    
+                    // If we get a successful response, update the UI
+                    if (data.success) {
+                        const syncedCount = data.synced || 0;
                         importBtn.textContent = `✅ Imported ${syncedCount} records`;
+                        
+                        // Refresh the dashboard to get updated last import time
+                        loadInitialData();
                         
                         // Reset button after delay
                         setTimeout(() => {
                             importBtn.disabled = false;
                             importBtn.textContent = '📥 Import Fingerprint Log';
                         }, 3000);
-                        
-                        // Remove this temporary listener
-                        socket.off('attendance_update', importCompletionHandler);
                     }
-                });
-                
-                // Fallback: Reset button after 30 seconds if no completion signal
-                setTimeout(() => {
-                    if (importBtn.textContent.includes('Processing')) {
-                        importBtn.textContent = '⏱️ Still processing...';
+                }).catch(e => {
+                    console.log('API refresh failed:', e);
+                    
+                    // Fallback: Reset button after 10 seconds
+                    setTimeout(() => {
+                        importBtn.textContent = '⏱️ Check completed';
                         
-                        // Check for updated last import time manually
-                        fetch(appConfig.getApiUrl('attendance/summary'))
-                            .then(r => r.json())
-                            .then(data => {
-                                if (data.last_import) {
-                                    lastImportElem.textContent = data.last_import;
-                                    lastImportElem.style.color = '#90EE90';
-                                    console.log('Last import time updated via fallback:', data.last_import);
-                                }
-                                loadInitialData(); // Refresh dashboard data
-                            })
-                            .catch(e => console.log('Fallback check failed:', e));
+                        // Refresh to get any updates
+                        loadInitialData();
                         
                         setTimeout(() => {
                             importBtn.disabled = false;
                             importBtn.textContent = '📥 Import Fingerprint Log';
-                        }, 5000);
-                    }
-                }, 30000);
+                        }, 2000);
+                    }, 10000);
+                });
                 
             } catch (error) {
                 console.error('Import trigger failed:', error);
