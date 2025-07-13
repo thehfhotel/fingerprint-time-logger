@@ -63,6 +63,8 @@ class SimpleAttendanceService:
             
             # Get device last sync time for last import indicator
             from app.models.models import Device
+            # Refresh the session to ensure we get the latest data
+            db.expire_all()
             device = db.query(Device).first()
             last_import_time = None
             if device and device.last_sync:

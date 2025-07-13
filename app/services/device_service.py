@@ -139,8 +139,11 @@ class SimpleDeviceService:
             # Get records from device
             records = self.get_attendance_records(device)
             
+            # Always update last sync time when sync is attempted, regardless of new records
+            self.update_last_sync()
+            
             if not records:
-                return {"success": True, "message": "No new records", "synced": 0}
+                return {"success": True, "message": "No new records", "synced": 0, "total_processed": 0}
             
             # Store in database
             db = next(get_db())
@@ -167,10 +170,6 @@ class SimpleDeviceService:
                         db.add(new_record)
                         synced_count += 1
                 
-                db.commit()
-                
-                # Update device last sync
-                device.last_sync = datetime.now()
                 db.commit()
                 
                 return {

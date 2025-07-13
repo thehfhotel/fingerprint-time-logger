@@ -8,7 +8,7 @@ import asyncio
 import os
 from typing import List
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.core.database import engine, Base
 from app.api import (
@@ -50,12 +50,50 @@ manager = ConnectionManager()
 
 # Background task control
 background_task = None
+auto_import_start_time = None
+last_auto_import_time = None
 
 async def auto_import_fingerprint_logs():
     """Background task to automatically import fingerprint logs every 30 minutes"""
+    global auto_import_start_time, last_auto_import_time
+    
     auto_import_interval = int(os.getenv('AUTO_IMPORT_INTERVAL_MINUTES', '30')) * 60  # Convert to seconds
+    auto_import_start_time = datetime.now()
     
     logger.info(f"Starting auto-import background task (interval: {auto_import_interval/60} minutes)")
+    
+    # Do immediate import on startup
+    try:
+        logger.info("Performing initial auto-import on startup...")
+        
+        # Import device service here to avoid circular imports
+        from app.services.device_service import device_service
+        
+        # Perform sync
+        result = device_service.sync_attendance_data()
+        last_auto_import_time = datetime.now()
+        
+        if result["success"]:
+            logger.info(f"Initial auto-import successful: {result.get('synced', 0)} records synced")
+            
+            # Broadcast update to WebSocket clients
+            from app.services.attendance_service import attendance_service
+            try:
+                attendance_data = attendance_service.get_attendance_summary()
+                await manager.broadcast({
+                    "type": "auto_import_update",
+                    "data": attendance_data,
+                    "synced_records": result.get('synced', 0),
+                    "timestamp": datetime.now().isoformat(),
+                    "message": f"Auto-imported {result.get('synced', 0)} records (startup)"
+                })
+            except Exception as broadcast_error:
+                logger.warning(f"Failed to broadcast initial auto-import update: {broadcast_error}")
+        else:
+            logger.warning(f"Initial auto-import failed: {result.get('message', 'Unknown error')}")
+            
+    except Exception as e:
+        logger.error(f"Initial auto-import error: {e}")
     
     while True:
         try:
@@ -68,6 +106,7 @@ async def auto_import_fingerprint_logs():
             
             # Perform sync
             result = device_service.sync_attendance_data()
+            last_auto_import_time = datetime.now()
             
             if result["success"]:
                 logger.info(f"Auto-import successful: {result.get('synced', 0)} records synced")
@@ -218,15 +257,41 @@ async def health_check():
 @fingerprint_app.get("/api/auto-import/status")
 async def get_auto_import_status():
     """Get auto-import background task status"""
-    global background_task
+    global background_task, auto_import_start_time, last_auto_import_time
     
     auto_import_interval = int(os.getenv('AUTO_IMPORT_INTERVAL_MINUTES', '30'))
+    
+    # Calculate exact next import time
+    next_import_estimate = "Unknown"
+    if auto_import_start_time and last_auto_import_time:
+        # Next import is 30 minutes after last import
+        next_import_time = last_auto_import_time + timedelta(minutes=auto_import_interval)
+        minutes_until_next = (next_import_time - datetime.now()).total_seconds() / 60
+        
+        if minutes_until_next > 0:
+            if minutes_until_next < 1:
+                next_import_estimate = f"In {int(minutes_until_next * 60)} seconds"
+            else:
+                next_import_estimate = f"In {int(minutes_until_next)} minutes"
+        else:
+            next_import_estimate = "Overdue (running now)"
+    elif auto_import_start_time:
+        # First import hasn't happened yet, calculate from start time
+        next_import_time = auto_import_start_time + timedelta(minutes=auto_import_interval)
+        minutes_until_next = (next_import_time - datetime.now()).total_seconds() / 60
+        
+        if minutes_until_next > 0:
+            next_import_estimate = f"In {int(minutes_until_next)} minutes (first import)"
+        else:
+            next_import_estimate = "Running first import now"
     
     return {
         "enabled": background_task is not None and not background_task.done(),
         "interval_minutes": auto_import_interval,
         "task_status": "running" if background_task and not background_task.done() else "stopped",
-        "next_import_estimate": f"Within {auto_import_interval} minutes"
+        "next_import_estimate": next_import_estimate,
+        "last_auto_import": last_auto_import_time.strftime('%Y-%m-%d %H:%M:%S') if last_auto_import_time else None,
+        "service_started": auto_import_start_time.strftime('%Y-%m-%d %H:%M:%S') if auto_import_start_time else None
     }
 
 @fingerprint_app.post("/api/auto-import/trigger")
