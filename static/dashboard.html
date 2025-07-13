@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="static/css/modal.css">
     
     <!-- JavaScript Files -->
-    <script src="static/js/config.js"></script>
+    <script src="static/js/config.js?nocache=1721728100&v=fix"></script>
     <script src="static/js/websocket-adapter.js"></script>
     <script src="static/js/real-time-manager.js"></script>
 </head>
@@ -136,6 +136,8 @@
         // Load Thai names data (simplified - use basic employee data)
         async function loadThaiNames() {
             try {
+                // Ensure config is loaded first
+                await appConfig.loadConfig();
                 const response = await fetch(appConfig.getApiUrl('employees/'));
                 if (response.ok) {
                     const data = await response.json();
@@ -341,6 +343,8 @@
         // Load device clock
         async function loadDeviceClock() {
             try {
+                // Ensure config is loaded first
+                await appConfig.loadConfig();
                 const response = await fetch(appConfig.getApiUrl('devices/time'));
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -383,6 +387,9 @@
             try {
                 console.log('Loading initial data...');
                 
+                // Ensure config is loaded first
+                await appConfig.loadConfig();
+                
                 // Load Thai names first
                 await loadThaiNames();
                 console.log('Thai names loaded');
@@ -391,7 +398,9 @@
                 loadDeviceClock();
                 
                 // Then load attendance data
-                const response = await fetch(appConfig.getApiUrl('attendance'));
+                const apiUrl = appConfig.getApiUrl('attendance');
+                console.log('API URL generated:', apiUrl);
+                const response = await fetch(apiUrl);
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
@@ -623,7 +632,7 @@
             });
             
             try {
-                const response = await fetch(`/api/attendance/export/csv?${queryParams}`, {
+                const response = await fetch(appConfig.getApiUrl(`attendance/export/csv?${queryParams}`), {
                     method: 'GET'
                 });
                 

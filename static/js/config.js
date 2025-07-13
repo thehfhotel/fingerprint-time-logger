@@ -43,7 +43,7 @@ class ConfigManager {
     getDefaultConfig() {
         return {
             api: {
-                baseUrl: `${this.basePath}/api`,
+                baseUrl: `${window.location.protocol}//${window.location.host}${this.basePath}/api`,
                 timeout: 30000,
                 retryAttempts: 3
             },
@@ -82,7 +82,16 @@ class ConfigManager {
     getApiUrl(endpoint = '') {
         // Remove leading slash if present to avoid double slashes
         const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
-        return `${this.basePath}/api/${cleanEndpoint}`;
+        
+        // Special handling for endpoints that don't work with trailing slashes under Cloudflare Tunnel
+        const noSlashEndpoints = ['devices/time'];
+        const needsSlash = cleanEndpoint && !cleanEndpoint.endsWith('/') && !noSlashEndpoints.includes(cleanEndpoint);
+        const finalEndpoint = needsSlash ? cleanEndpoint + '/' : cleanEndpoint;
+        
+        const relativeUrl = `${this.basePath}/api/${finalEndpoint}`;
+        console.log('getApiUrl debug - smart slash handling:', { endpoint, cleanEndpoint, finalEndpoint, needsSlash, basePath: this.basePath, relativeUrl });
+        
+        return relativeUrl;
     }
 
     getBasePath() {
