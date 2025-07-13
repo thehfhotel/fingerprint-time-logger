@@ -84,7 +84,7 @@ class ConfigManager {
         const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
         
         // Special handling for endpoints that don't work with trailing slashes under Cloudflare Tunnel
-        const noSlashEndpoints = ['devices/time'];
+        const noSlashEndpoints = ['devices/time', 'devices/health'];
         const needsSlash = cleanEndpoint && !cleanEndpoint.endsWith('/') && !noSlashEndpoints.includes(cleanEndpoint);
         const finalEndpoint = needsSlash ? cleanEndpoint + '/' : cleanEndpoint;
         
