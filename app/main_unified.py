@@ -120,12 +120,11 @@ async def lifespan(app: FastAPI):
 fingerprint_app = FastAPI(
     title="Fingerprint Time Logger - Unified",
     description="Unified API and Dashboard for ZKTeco fingerprint attendance tracking",
-    version="2.0.0",
-    lifespan=lifespan
+    version="2.0.0"
 )
 
 # Create root app to handle both direct access and tunneled access
-app = FastAPI(title="Fingerprint Logger Root")
+app = FastAPI(title="Fingerprint Logger Root", lifespan=lifespan)
 
 # CORS configuration for fingerprint_app
 fingerprint_app.add_middleware(
