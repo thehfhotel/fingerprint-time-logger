@@ -61,6 +61,13 @@ class SimpleAttendanceService:
                        .limit(100)\
                        .all()
             
+            # Get device last sync time for last import indicator
+            from app.models.models import Device
+            device = db.query(Device).first()
+            last_import_time = None
+            if device and device.last_sync:
+                last_import_time = device.last_sync.strftime('%Y-%m-%d %H:%M:%S')
+            
             # Group by employee
             employee_data = {}
             for record in records:
@@ -81,6 +88,7 @@ class SimpleAttendanceService:
             return {
                 'data': employee_data,
                 'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'last_import': last_import_time,
                 'total_employees': len(employee_data),
                 'total_records': len(records)
             }

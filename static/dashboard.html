@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="static/css/modal.css">
     
     <!-- JavaScript Files -->
-    <script src="static/js/config.js?nocache=1721728500&v=complete"></script>
+    <script src="static/js/config.js?bust=1752418999&force=true&v=3&summary=fixed&nocache=1"></script>
     <script src="static/js/websocket-adapter.js"></script>
     <script src="static/js/real-time-manager.js"></script>
 </head>
@@ -19,6 +19,9 @@
         <div class="header-row-1">
             <h1>Employee Time Log Dashboard</h1>
             <div class="last-update-display">
+                <div style="margin-bottom: 5px; font-size: 0.9em; color: #e0e0e0;">
+                    Last Import: <span id="lastImport" style="color: #e0e0e0;">Never</span>
+                </div>
                 Last Update: <span id="lastUpdate">Never</span>
                 <div style="margin-top: 5px; font-size: 0.9em; color: white;">
                     Device Clock: <span id="deviceClock" style="color: white;">Loading...</span>
@@ -112,6 +115,7 @@
             const deviceStatus = document.getElementById('deviceStatus');
             const deviceStatusText = document.getElementById('deviceStatusText');
             const lastUpdate = document.getElementById('lastUpdate');
+            const lastImport = document.getElementById('lastImport');
             
             // Handle loading state first
             if (data.device_status && data.device_status.loading) {
@@ -128,6 +132,15 @@
             }
             
             lastUpdate.textContent = data.last_update || data.timestamp || new Date().toLocaleString();
+            
+            // Update last import time if available
+            if (data.last_import) {
+                lastImport.textContent = data.last_import;
+                lastImport.style.color = '#90EE90'; // Light green to indicate successful import
+            } else {
+                lastImport.textContent = 'Never';
+                lastImport.style.color = '#e0e0e0';
+            }
             
             // Update employee grid with new data
             updateEmployeeGrid(data);
@@ -398,7 +411,7 @@
                 loadDeviceClock();
                 
                 // Then load attendance data
-                const apiUrl = appConfig.getApiUrl('attendance');
+                const apiUrl = appConfig.getApiUrl('attendance/summary');
                 console.log('API URL generated:', apiUrl);
                 const response = await fetch(apiUrl);
                 if (!response.ok) {
@@ -416,10 +429,20 @@
                 const deviceStatus = document.getElementById('deviceStatus');
                 const deviceStatusText = document.getElementById('deviceStatusText');
                 const lastUpdate = document.getElementById('lastUpdate');
+                const lastImport = document.getElementById('lastImport');
                 
                 deviceStatusText.textContent = 'API Connected';
                 deviceStatus.classList.remove('disconnected');
                 lastUpdate.textContent = new Date().toLocaleString();
+                
+                // Update last import time if available
+                if (data.last_import) {
+                    lastImport.textContent = data.last_import;
+                    lastImport.style.color = '#90EE90'; // Light green to indicate successful import
+                } else {
+                    lastImport.textContent = 'Never';
+                    lastImport.style.color = '#e0e0e0';
+                }
                 
                 console.log('Initial data load completed successfully');
                 
