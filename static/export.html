@@ -232,7 +232,7 @@
                     format: format
                 });
                 
-                const response = await fetch(`/api/attendance/export/csv?${params}`);
+                const response = await fetch(appConfig.getApiUrl(`attendance/export/csv?${params}`));
                 
                 if (!response.ok) {
                     throw new Error(`Export failed: ${response.statusText}`);

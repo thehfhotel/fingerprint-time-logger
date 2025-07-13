@@ -463,7 +463,7 @@
                     return;
                 }
                 
-                const response = await fetch(`/api/attendance/records/${recordId}/mark-late`, {
+                const response = await fetch(appConfig.getApiUrl(`attendance/records/${recordId}/mark-late`), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

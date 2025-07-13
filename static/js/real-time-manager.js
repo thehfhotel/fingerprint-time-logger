@@ -84,7 +84,7 @@ class RealTimeManager {
     startHealthMonitoring() {
         this.healthCheckInterval = setInterval(async () => {
             try {
-                const response = await fetch(`${this.apiBaseUrl}/api/devices/health`, {
+                const response = await fetch(appConfig.getApiUrl('devices/health'), {
                     method: 'GET',
                     headers: { 'Accept': 'application/json' }
                 });
@@ -135,7 +135,7 @@ class RealTimeManager {
             
             // Refresh attendance data
             if (window.updateDashboard) {
-                const response = await fetch(`${this.apiBaseUrl}/api/attendance/`, {
+                const response = await fetch(appConfig.getApiUrl('attendance/'), {
                     method: 'GET',
                     headers: { 'Accept': 'application/json' }
                 });
