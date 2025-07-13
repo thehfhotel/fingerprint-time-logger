@@ -37,7 +37,7 @@ check_service_health() {
         
         if kill -0 "$pid" 2>/dev/null; then
             # Process is running, check HTTP endpoint
-            if curl -s -f "http://localhost:$port/api/devices/health" >/dev/null 2>&1 || \
+            if curl -s -f "http://localhost:$port/fingerprintlogs/api/devices/health" >/dev/null 2>&1 || \
                curl -s -f "http://localhost:$port/" >/dev/null 2>&1; then
                 echo -e "${GREEN}✅ $service_name: Healthy${NC}"
                 ((HEALTHY_SERVICES++))
@@ -65,7 +65,7 @@ if [ "$1" = "--quiet" ] || [ "$1" = "-q" ]; then
     if [ -f "$PID_FILE" ]; then
         pid=$(cat "$PID_FILE")
         if kill -0 "$pid" 2>/dev/null; then
-            if curl -s -f "http://localhost:$PORT/api/devices/health" >/dev/null 2>&1; then
+            if curl -s -f "http://localhost:$PORT/fingerprintlogs/api/devices/health" >/dev/null 2>&1; then
                 server_healthy=1
             fi
         fi

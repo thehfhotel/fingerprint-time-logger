@@ -64,7 +64,7 @@ wait_for_service() {
     local max_attempts=30
     
     while [ $attempts -lt $max_attempts ]; do
-        if curl -f http://localhost:$PORT/api/devices/health >/dev/null 2>&1; then
+        if curl -f http://localhost:$PORT/fingerprintlogs/api/devices/health >/dev/null 2>&1; then
             log_success "Service is ready and healthy"
             return 0
         fi
@@ -87,9 +87,9 @@ wait_for_service() {
 show_service_info() {
     echo ""
     echo "🌐 Access URLs:"
-    echo "   📊 Dashboard: http://localhost:$PORT"
-    echo "   🔌 API Health: http://localhost:$PORT/api/devices/health"
-    echo "   📖 API Docs: http://localhost:$PORT/docs"
+    echo "   📊 Dashboard: http://localhost:$PORT/fingerprintlogs/"
+    echo "   🔌 API Health: http://localhost:$PORT/fingerprintlogs/api/devices/health"
+    echo "   📖 API Docs: http://localhost:$PORT/fingerprintlogs/docs"
     echo ""
     echo "📋 Management Commands:"
     echo "   Status: ./scripts/status.sh"
