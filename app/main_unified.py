@@ -120,7 +120,8 @@ app = FastAPI(
     title="Fingerprint Time Logger - Unified",
     description="Unified API and Dashboard for ZKTeco fingerprint attendance tracking",
     version="2.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    root_path="/fingerprintlogs"
 )
 
 # CORS configuration

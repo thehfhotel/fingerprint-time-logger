@@ -32,7 +32,8 @@ class WebSocketAdapter {
 
     connect() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        const basePath = window.location.pathname.startsWith('/fingerprintlogs') ? '/fingerprintlogs' : '';
+        const wsUrl = `${protocol}//${window.location.host}${basePath}/ws`;
         
         try {
             this.ws = new WebSocket(wsUrl);
