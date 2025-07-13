@@ -83,13 +83,23 @@ class ConfigManager {
         // Remove leading slash if present to avoid double slashes
         const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
         
+        // Extract base path and query string if present
+        const [basePath, queryString] = cleanEndpoint.split('?');
+        
         // Special handling for endpoints that don't work with trailing slashes under Cloudflare Tunnel
         const noSlashEndpoints = ['devices/time', 'devices/health', 'auto-import/status', 'devices/sync-time', 'refresh', 'attendance/summary'];
-        const needsSlash = cleanEndpoint && !cleanEndpoint.endsWith('/') && !noSlashEndpoints.includes(cleanEndpoint);
-        const finalEndpoint = needsSlash ? cleanEndpoint + '/' : cleanEndpoint;
+        
+        // Don't add slash if endpoint has query parameters, already ends with slash, or is in noSlashEndpoints
+        const needsSlash = basePath && 
+                          !basePath.endsWith('/') && 
+                          !noSlashEndpoints.includes(basePath) && 
+                          !queryString; // Don't add slash if there are query parameters
+        
+        const finalBasePath = needsSlash ? basePath + '/' : basePath;
+        const finalEndpoint = queryString ? `${finalBasePath}?${queryString}` : finalBasePath;
         
         const relativeUrl = `${this.basePath}/api/${finalEndpoint}`;
-        console.log('getApiUrl debug - smart slash handling:', { endpoint, cleanEndpoint, finalEndpoint, needsSlash, basePath: this.basePath, relativeUrl });
+        console.log('getApiUrl debug - smart slash handling:', { endpoint, cleanEndpoint, basePath, queryString, finalEndpoint, needsSlash, relativeUrl });
         
         return relativeUrl;
     }
