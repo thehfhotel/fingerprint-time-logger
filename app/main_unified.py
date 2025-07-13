@@ -116,16 +116,19 @@ async def lifespan(app: FastAPI):
     
     logger.info("Shutting down unified server...")
 
-app = FastAPI(
+# Create the main application
+fingerprint_app = FastAPI(
     title="Fingerprint Time Logger - Unified",
     description="Unified API and Dashboard for ZKTeco fingerprint attendance tracking",
     version="2.0.0",
-    lifespan=lifespan,
-    root_path="/fingerprintlogs"
+    lifespan=lifespan
 )
 
-# CORS configuration
-app.add_middleware(
+# Create root app to handle both direct access and tunneled access
+app = FastAPI(title="Fingerprint Logger Root")
+
+# CORS configuration for fingerprint_app
+fingerprint_app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -134,21 +137,21 @@ app.add_middleware(
 )
 
 # Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+fingerprint_app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Include Consolidated API routers - Phase 4 Simplification
-app.include_router(consolidated_attendance.router, prefix="/api/attendance", tags=["attendance"])
-app.include_router(consolidated_devices.router, prefix="/api/devices", tags=["devices"])
-app.include_router(consolidated_employees.router, prefix="/api/employees", tags=["employees"])
-app.include_router(consolidated_export.router, prefix="/api/export", tags=["export"])
+fingerprint_app.include_router(consolidated_attendance.router, prefix="/api/attendance", tags=["attendance"])
+fingerprint_app.include_router(consolidated_devices.router, prefix="/api/devices", tags=["devices"])
+fingerprint_app.include_router(consolidated_employees.router, prefix="/api/employees", tags=["employees"])
+fingerprint_app.include_router(consolidated_export.router, prefix="/api/export", tags=["export"])
 
 # System Status API - New comprehensive status monitoring
 from app.api import system_status
-app.include_router(system_status.router, prefix="/api/system", tags=["system-status"])
+fingerprint_app.include_router(system_status.router, prefix="/api/system", tags=["system-status"])
 
 
 # WebSocket endpoint for real-time updates
-@app.websocket("/ws")
+@fingerprint_app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
@@ -181,41 +184,39 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 # Serve HTML pages
-@app.get("/")
+@fingerprint_app.get("/")
 async def serve_dashboard():
     return FileResponse("static/dashboard.html")
 
-
-
-@app.get("/device-status")
+@fingerprint_app.get("/device-status")
 async def serve_device_status():
     return FileResponse("static/device-status.html")
 
-@app.get("/export")
+@fingerprint_app.get("/export")
 async def serve_export():
     return FileResponse("static/export.html")
 
-@app.get("/nickname-management")
+@fingerprint_app.get("/nickname-management")
 async def serve_nickname_management():
     return FileResponse("static/nickname-management.html")
 
-@app.get("/status")
+@fingerprint_app.get("/status")
 async def serve_status():
     return FileResponse("static/status.html")
 
-@app.get("/docs")
+@fingerprint_app.get("/docs")
 async def serve_api_docs():
     return FileResponse("static/swagger.html")
 
-@app.get("/docs/openapi.yaml")
+@fingerprint_app.get("/docs/openapi.yaml")
 async def serve_openapi_spec():
     return FileResponse("docs/openapi.yaml")
 
-@app.get("/health")
+@fingerprint_app.get("/health")
 async def health_check():
     return {"status": "healthy", "server": "unified"}
 
-@app.get("/api/auto-import/status")
+@fingerprint_app.get("/api/auto-import/status")
 async def get_auto_import_status():
     """Get auto-import background task status"""
     global background_task
@@ -229,7 +230,7 @@ async def get_auto_import_status():
         "next_import_estimate": f"Within {auto_import_interval} minutes"
     }
 
-@app.post("/api/auto-import/trigger")
+@fingerprint_app.post("/api/auto-import/trigger")
 async def trigger_manual_import():
     """Manually trigger fingerprint log import"""
     try:
@@ -265,24 +266,24 @@ async def trigger_manual_import():
 from fastapi import HTTPException
 from fastapi.responses import RedirectResponse
 
-@app.get("/employee-management")
+@fingerprint_app.get("/employee-management")
 async def redirect_employee_management():
     return RedirectResponse(url="/", status_code=301)
 
-@app.get("/work-schedules") 
+@fingerprint_app.get("/work-schedules") 
 async def redirect_work_schedules():
     return RedirectResponse(url="/", status_code=301)
 
-@app.get("/attendance-calendar")
+@fingerprint_app.get("/attendance-calendar")
 async def redirect_attendance_calendar():
     return RedirectResponse(url="/", status_code=301)
 
-@app.get("/favicon.ico")
+@fingerprint_app.get("/favicon.ico")
 async def favicon():
     return {"status": "no favicon"}
 
 # Legacy API endpoint for manual refresh (from dashboard)
-@app.post("/api/refresh")
+@fingerprint_app.post("/api/refresh")
 async def manual_refresh():
     """Manual refresh endpoint for backward compatibility"""
     try:
@@ -308,6 +309,10 @@ async def manual_refresh():
             "success": False,
             "message": f"Refresh failed: {str(e)}"
         }
+
+# Mount the fingerprint app on both root and /fingerprintlogs for tunnel support
+app.mount("/fingerprintlogs", fingerprint_app, name="fingerprint_tunnel")
+app.mount("/", fingerprint_app, name="fingerprint_direct")
 
 if __name__ == "__main__":
     import uvicorn
