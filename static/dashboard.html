@@ -290,15 +290,15 @@
             importBtn.textContent = '📥 Importing...';
             
             try {
-                // Trigger background import via WebSocket (non-blocking)
-                socket.emit('refresh', {});
-                console.log('Import triggered via WebSocket');
-                
                 // Show immediate feedback that import was triggered
                 importBtn.textContent = '⏳ Processing...';
                 console.log('Button text set to Processing...');
                 
-                // Also trigger via API as fallback
+                // Trigger background import via WebSocket (non-blocking)
+                socket.emit('refresh', {});
+                console.log('Import triggered via WebSocket');
+                
+                // Also trigger via API as primary method
                 fetch(appConfig.getApiUrl('refresh'), { 
                     method: 'POST',
                     headers: {
