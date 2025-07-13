@@ -12,6 +12,7 @@ services:
       - DATABASE_URL=sqlite:///./database/attendance.db
       - ZKTECO_HOST=${ZKTECO_HOST:-192.168.100.209}
       - ZKTECO_PORT=${ZKTECO_PORT:-4370}
+      - TZ=Asia/Bangkok
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/api/devices/health"]
