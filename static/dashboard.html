@@ -136,7 +136,7 @@
         // Load Thai names data (simplified - use basic employee data)
         async function loadThaiNames() {
             try {
-                const response = await fetch('/api/employees/');
+                const response = await fetch(appConfig.getApiUrl('employees/'));
                 if (response.ok) {
                     const data = await response.json();
                     const employees = data.employees || data; // Handle both formats
@@ -277,7 +277,7 @@
                 socket.emit('refresh', {});
                 
                 // Also try API refresh as fallback
-                const refreshResponse = await fetch('/api/refresh', { 
+                const refreshResponse = await fetch(appConfig.getApiUrl('refresh'), { 
                     method: 'POST',
                     signal: controller.signal,
                     headers: {
@@ -341,7 +341,7 @@
         // Load device clock
         async function loadDeviceClock() {
             try {
-                const response = await fetch('/api/devices/time');
+                const response = await fetch(appConfig.getApiUrl('devices/time'));
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
@@ -391,7 +391,7 @@
                 loadDeviceClock();
                 
                 // Then load attendance data
-                const response = await fetch('/api/attendance');
+                const response = await fetch(appConfig.getApiUrl('attendance'));
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }

@@ -6,13 +6,23 @@ class ConfigManager {
     constructor() {
         this.config = null;
         this.loaded = false;
+        this.basePath = this.detectBasePath();
+    }
+
+    detectBasePath() {
+        // Detect if we're running under /fingerprintlogs path
+        const pathname = window.location.pathname;
+        if (pathname.startsWith('/fingerprintlogs')) {
+            return '/fingerprintlogs';
+        }
+        return '';
     }
 
     async loadConfig() {
         if (this.loaded) return this.config;
         
         try {
-            const response = await fetch('/api/devices/app-config');
+            const response = await fetch(`${this.basePath}/api/devices/app-config`);
             if (response.ok) {
                 this.config = await response.json();
                 this.loaded = true;
@@ -33,7 +43,7 @@ class ConfigManager {
     getDefaultConfig() {
         return {
             api: {
-                baseUrl: "/api",
+                baseUrl: `${this.basePath}/api`,
                 timeout: 30000,
                 retryAttempts: 3
             },
@@ -67,6 +77,16 @@ class ConfigManager {
 
     getValueByPath(obj, path) {
         return path.split('.').reduce((current, key) => current?.[key], obj);
+    }
+
+    getApiUrl(endpoint = '') {
+        // Remove leading slash if present to avoid double slashes
+        const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
+        return `${this.basePath}/api/${cleanEndpoint}`;
+    }
+
+    getBasePath() {
+        return this.basePath;
     }
 }
 

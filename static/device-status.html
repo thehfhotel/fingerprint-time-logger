@@ -177,7 +177,7 @@
         
         async function loadDeviceStatus() {
             try {
-                const response = await fetch('/api/devices/health');
+                const response = await fetch(appConfig.getApiUrl('devices/health'));
                 deviceStatus = await response.json();
                 updateDeviceDisplay();
             } catch (error) {
@@ -246,7 +246,7 @@
                 const indicator = document.getElementById('deviceIndicator');
                 indicator.className = 'status-indicator status-syncing';
                 
-                const response = await fetch('/api/devices/sync-time', { method: 'POST' });
+                const response = await fetch(appConfig.getApiUrl('devices/sync-time'), { method: 'POST' });
                 const result = await response.json();
                 
                 if (result.success) {
@@ -266,7 +266,7 @@
                 const indicator = document.getElementById('deviceIndicator');
                 indicator.className = 'status-indicator status-syncing';
                 
-                const response = await fetch('/api/attendance/sync', { method: 'POST' });
+                const response = await fetch(appConfig.getApiUrl('attendance/sync'), { method: 'POST' });
                 const result = await response.json();
                 
                 if (result.success) {
@@ -322,7 +322,7 @@
         
         async function loadAutoImportStatus() {
             try {
-                const response = await fetch('/api/auto-import/status');
+                const response = await fetch(appConfig.getApiUrl('auto-import/status'));
                 autoImportStatus = await response.json();
                 updateAutoImportDisplay();
             } catch (error) {
@@ -379,7 +379,7 @@
                 const indicator = document.getElementById('autoImportIndicator');
                 indicator.className = 'status-indicator status-syncing';
                 
-                const response = await fetch('/api/auto-import/trigger', { method: 'POST' });
+                const response = await fetch(appConfig.getApiUrl('auto-import/trigger'), { method: 'POST' });
                 const result = await response.json();
                 
                 if (result.success) {

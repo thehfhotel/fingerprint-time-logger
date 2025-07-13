@@ -572,7 +572,7 @@
 
             async loadSystemHealth() {
                 try {
-                    const response = await fetch('/api/system/health');
+                    const response = await fetch(appConfig.getApiUrl('system/health'));
                     const data = await response.json();
 
                     this.updateOverallStatus(data);
@@ -592,7 +592,7 @@
 
             async loadPerformanceMetrics() {
                 try {
-                    const response = await fetch('/api/system/metrics');
+                    const response = await fetch(appConfig.getApiUrl('system/metrics'));
                     const data = await response.json();
 
                     this.updatePerformanceMetrics(data);
@@ -640,7 +640,7 @@
 
             async loadDeviceClock() {
                 try {
-                    const response = await fetch('/api/devices/time');
+                    const response = await fetch(appConfig.getApiUrl('devices/time'));
                     const data = await response.json();
                     const deviceClockElement = document.getElementById('device-clock');
                     
@@ -844,7 +844,7 @@
             syncBtn.textContent = '⏳ Syncing...';
             
             try {
-                const response = await fetch('/api/devices/time/sync', {
+                const response = await fetch(appConfig.getApiUrl('devices/time/sync'), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
