@@ -6,6 +6,9 @@
     <title>Employee Nickname Management - Fingerprint Time Logger</title>
     <link rel="stylesheet" href="static/css/base.css">
     <link rel="stylesheet" href="static/css/modal.css">
+    
+    <!-- JavaScript Files -->
+    <script src="static/js/config.js?bust=1752420001&force=true&v=7&simplified=1&final=<?= Date.now() ?>"></script>
     <style>
         .nickname-table {
             width: 100%;
@@ -214,12 +217,16 @@
         // Load employees on page load
         async function loadEmployees() {
             try {
+                // Ensure config is loaded first
+                await appConfig.loadConfig();
+                
                 const params = new URLSearchParams({
                     from_device: 'true',  // Always fetch from ZK device
                     include_hidden: showHidden.toString()
                 });
                 
-                const url = `/api/employees/?${params}`;
+                const url = appConfig.getApiUrl(`employees/?${params}`);
+                console.log('Loading employees from:', url);
                 const response = await fetch(url);
                 if (!response.ok) throw new Error('Failed to load employees');
                 
@@ -309,7 +316,7 @@
             errorMsg.style.display = 'none';
             
             try {
-                const response = await fetch(`/api/employees/${badgeNumber}/nickname`, {
+                const response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}/nickname`), {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'
@@ -362,7 +369,7 @@
         // Toggle employee status (active/inactive)
         async function toggleStatus(badgeNumber, newStatus) {
             try {
-                const response = await fetch(`/api/employees/${badgeNumber}/status`, {
+                const response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}/status`), {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'
@@ -391,7 +398,7 @@
         // Toggle employee hidden status
         async function toggleHidden(badgeNumber, newHiddenStatus) {
             try {
-                const response = await fetch(`/api/employees/${badgeNumber}/hidden`, {
+                const response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}/hidden`), {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json'
