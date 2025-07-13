@@ -87,12 +87,13 @@ class ConfigManager {
         const [basePath, queryString] = cleanEndpoint.split('?');
         
         // Special handling for endpoints that don't work with trailing slashes under Cloudflare Tunnel
-        const noSlashEndpoints = ['devices/time', 'devices/health', 'auto-import/status', 'devices/sync-time', 'refresh', 'attendance/summary'];
+        const noSlashEndpoints = ['devices/time', 'devices/health', 'auto-import/status', 'devices/sync-time', 'refresh', 'attendance/summary', 'employees'];
         
         // Don't add slash if endpoint has query parameters, already ends with slash, or is in noSlashEndpoints
+        const basePathWithoutSlash = basePath ? basePath.replace(/\/$/, '') : '';
         const needsSlash = basePath && 
                           !basePath.endsWith('/') && 
-                          !noSlashEndpoints.includes(basePath) && 
+                          !noSlashEndpoints.includes(basePathWithoutSlash) && 
                           !queryString; // Don't add slash if there are query parameters
         
         const finalBasePath = needsSlash ? basePath + '/' : basePath;
