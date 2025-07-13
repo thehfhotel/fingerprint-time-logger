@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="static/css/modal.css">
     
     <!-- JavaScript Files -->
-    <script src="static/js/config.js?bust=1752418999&force=true&v=3&summary=fixed&nocache=1"></script>
+    <script src="static/js/config.js?bust=1752419001&force=true&v=4&importfix=1&nocache=1"></script>
     <script src="static/js/websocket-adapter.js"></script>
     <script src="static/js/real-time-manager.js"></script>
 </head>
@@ -277,76 +277,97 @@
             container.innerHTML = consolidatedCard;
         }
         
-        // Unified import function - imports fingerprint data and discovers new employees
+        // Background import function - triggers import and monitors completion
         async function importFingerprintLog() {
             const importBtn = document.getElementById('importButton');
+            const lastImportElem = document.getElementById('lastImport');
+            
             importBtn.disabled = true;
             importBtn.textContent = '📥 Importing...';
             
-            // Create AbortController for timeout handling
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
-            
             try {
-                // Trigger manual refresh through WebSocket
+                // Trigger background import via WebSocket (non-blocking)
                 socket.emit('refresh', {});
+                console.log('Import triggered via WebSocket');
                 
-                // Also try API refresh as fallback
-                const refreshResponse = await fetch(appConfig.getApiUrl('refresh'), { 
+                // Also trigger via API as fallback (with immediate return)
+                fetch(appConfig.getApiUrl('refresh'), { 
                     method: 'POST',
-                    signal: controller.signal,
                     headers: {
                         'Content-Type': 'application/json'
                     }
+                }).catch(e => console.log('API fallback failed:', e));
+                
+                // Show immediate feedback that import was triggered
+                importBtn.textContent = '⏳ Processing...';
+                console.log('Import process started in background');
+                
+                // Set up completion monitoring via WebSocket
+                const originalHandler = socket._callbacks['$attendance_update'] || [];
+                
+                // Add temporary listener for import completion
+                socket.on('attendance_update', function importCompletionHandler(data) {
+                    if (data.type === 'auto_import_update' || data.synced_records !== undefined) {
+                        console.log('Import completed via WebSocket:', data);
+                        
+                        // Update last import time if available
+                        if (data.data && data.data.last_import) {
+                            lastImportElem.textContent = data.data.last_import;
+                            lastImportElem.style.color = '#90EE90';
+                            console.log('Last import time updated:', data.data.last_import);
+                        }
+                        
+                        // Update dashboard with new data
+                        updateDashboard(data);
+                        
+                        // Show completion status
+                        const syncedCount = data.synced_records || 0;
+                        importBtn.textContent = `✅ Imported ${syncedCount} records`;
+                        
+                        // Reset button after delay
+                        setTimeout(() => {
+                            importBtn.disabled = false;
+                            importBtn.textContent = '📥 Import Fingerprint Log';
+                        }, 3000);
+                        
+                        // Remove this temporary listener
+                        socket.off('attendance_update', importCompletionHandler);
+                    }
                 });
                 
-                clearTimeout(timeoutId);
+                // Fallback: Reset button after 30 seconds if no completion signal
+                setTimeout(() => {
+                    if (importBtn.textContent.includes('Processing')) {
+                        importBtn.textContent = '⏱️ Still processing...';
+                        
+                        // Check for updated last import time manually
+                        fetch(appConfig.getApiUrl('attendance/summary'))
+                            .then(r => r.json())
+                            .then(data => {
+                                if (data.last_import) {
+                                    lastImportElem.textContent = data.last_import;
+                                    lastImportElem.style.color = '#90EE90';
+                                    console.log('Last import time updated via fallback:', data.last_import);
+                                }
+                                loadInitialData(); // Refresh dashboard data
+                            })
+                            .catch(e => console.log('Fallback check failed:', e));
+                        
+                        setTimeout(() => {
+                            importBtn.disabled = false;
+                            importBtn.textContent = '📥 Import Fingerprint Log';
+                        }, 5000);
+                    }
+                }, 30000);
                 
-                if (!refreshResponse.ok) {
-                    const errorData = await refreshResponse.json().catch(() => ({}));
-                    throw new Error(errorData.message || `Server error: ${refreshResponse.status}`);
-                }
+            } catch (error) {
+                console.error('Import trigger failed:', error);
+                importBtn.textContent = '❌ Failed to start';
                 
-                const refreshData = await refreshResponse.json();
-                console.log('Import completed:', refreshData);
-                
-                importBtn.textContent = '✅ Import Complete';
-                
-                // Reload data
-                setTimeout(async () => {
-                    await loadThaiNames();
-                    await loadInitialData();
-                }, 500);
-                
-                // Reset button after success
                 setTimeout(() => {
                     importBtn.disabled = false;
                     importBtn.textContent = '📥 Import Fingerprint Log';
                 }, 3000);
-                
-            } catch (error) {
-                clearTimeout(timeoutId);
-                console.error('Import failed:', error);
-                
-                let errorMessage = 'Import failed';
-                if (error.name === 'AbortError') {
-                    errorMessage = 'Import timed out - operation may still be processing in background';
-                    importBtn.textContent = '⏱️ Timed out';
-                } else if (error.message) {
-                    errorMessage = `Import failed: ${error.message}`;
-                    importBtn.textContent = '❌ Failed';
-                } else {
-                    importBtn.textContent = '❌ Error';
-                }
-                
-                console.error('Error details:', errorMessage);
-                alert(errorMessage);
-                
-                // Reset button after error
-                setTimeout(() => {
-                    importBtn.disabled = false;
-                    importBtn.textContent = '📥 Import Fingerprint Log';
-                }, 5000);
             }
         }
         
