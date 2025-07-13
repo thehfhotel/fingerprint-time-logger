@@ -310,9 +310,13 @@ async def manual_refresh():
             "message": f"Refresh failed: {str(e)}"
         }
 
-# Mount the fingerprint app on both root and /fingerprintlogs for tunnel support
+# Mount the fingerprint app for tunnel support
 app.mount("/fingerprintlogs", fingerprint_app, name="fingerprint_tunnel")
-app.mount("/", fingerprint_app, name="fingerprint_direct")
+
+# Add a root redirect for direct access
+@app.get("/")
+async def root_redirect():
+    return {"message": "Fingerprint Time Logger", "dashboard": "/fingerprintlogs/"}
 
 if __name__ == "__main__":
     import uvicorn
