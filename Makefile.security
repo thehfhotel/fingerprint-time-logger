@@ -1,0 +1,245 @@
+# Security Testing Makefile for Fingerprint Time Logger
+# Provides convenient commands for running security tests
+
+.PHONY: help security-test security-quick security-full security-install security-clean security-report threat-model
+
+# Colors for output
+RED=\033[0;31m
+GREEN=\033[0;32m
+YELLOW=\033[1;33m
+BLUE=\033[0;34m
+NC=\033[0m # No Color
+
+# Default target
+help: ## Show this help message
+	@echo "$(BLUE)Fingerprint Time Logger - Security Testing$(NC)"
+	@echo "=================================================="
+	@echo ""
+	@echo "Available targets:"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "$(BLUE)%-20s$(NC) %s\n", $$1, $$2}'
+	@echo ""
+	@echo "$(YELLOW)Security Test Categories:$(NC)"
+	@echo "  biometric    - Biometric data protection tests"
+	@echo "  websocket    - WebSocket security tests"
+	@echo "  csv          - CSV injection and export tests"
+	@echo "  api          - API endpoint security tests"
+	@echo "  unicode      - Unicode/Thai character tests"
+	@echo "  tools        - Automated security tools"
+
+# Installation targets
+security-install: ## Install security testing dependencies
+	@echo "$(BLUE)Installing security testing dependencies...$(NC)"
+	@pip install bandit[toml] safety pytest-security pytest-timeout pytest-asyncio
+	@echo "$(GREEN)Security dependencies installed successfully!$(NC)"
+
+security-deps-check: ## Check if security dependencies are installed
+	@echo "$(BLUE)Checking security dependencies...$(NC)"
+	@python -c "import bandit, safety, pytest" || (echo "$(RED)Missing dependencies. Run 'make security-install'$(NC)" && exit 1)
+	@echo "$(GREEN)All security dependencies are installed.$(NC)"
+
+# Core security testing targets
+security-test: security-deps-check ## Run all security tests
+	@echo "$(BLUE)Running comprehensive security test suite...$(NC)"
+	@pytest tests/security/ -c pytest-security.ini --tb=short
+	@echo "$(GREEN)Security tests completed!$(NC)"
+
+security-quick: security-deps-check ## Run quick security scan (essential tests only)
+	@echo "$(YELLOW)Running quick security scan...$(NC)"
+	@python tests/security/security_test_runner.py --quick
+	@echo "$(GREEN)Quick security scan completed!$(NC)"
+
+security-full: security-deps-check ## Run comprehensive security assessment
+	@echo "$(BLUE)Running comprehensive security assessment...$(NC)"
+	@python tests/security/security_test_runner.py --full
+	@echo "$(GREEN)Comprehensive security assessment completed!$(NC)"
+
+# Category-specific tests
+security-biometric: security-deps-check ## Run biometric security tests
+	@echo "$(BLUE)Running biometric security tests...$(NC)"
+	@pytest tests/security/test_biometric_security.py -v -m biometric
+
+security-websocket: security-deps-check ## Run WebSocket security tests
+	@echo "$(BLUE)Running WebSocket security tests...$(NC)"
+	@pytest tests/security/test_websocket_security.py -v -m websocket
+
+security-csv: security-deps-check ## Run CSV injection security tests
+	@echo "$(BLUE)Running CSV security tests...$(NC)"
+	@pytest tests/security/test_csv_injection.py -v -m csv
+
+security-api: security-deps-check ## Run API security tests
+	@echo "$(BLUE)Running API security tests...$(NC)"
+	@pytest tests/security/test_api_security.py -v -m api
+
+security-unicode: security-deps-check ## Run Unicode/Thai security tests
+	@echo "$(BLUE)Running Unicode security tests...$(NC)"
+	@pytest tests/security/test_unicode_security.py -v -m unicode
+
+security-tools: security-deps-check ## Run automated security tools
+	@echo "$(BLUE)Running automated security tools...$(NC)"
+	@pytest tests/security/test_automated_security_tools.py -v -m automated_tools
+
+# Security analysis targets
+bandit-scan: security-deps-check ## Run Bandit static security analysis
+	@echo "$(BLUE)Running Bandit security scan...$(NC)"
+	@bandit -r app/ -f json -o security_reports/bandit_latest.json || true
+	@bandit -r app/ -f txt || true
+	@echo "$(GREEN)Bandit scan completed! Check security_reports/bandit_latest.json$(NC)"
+
+safety-scan: security-deps-check ## Run Safety dependency vulnerability scan
+	@echo "$(BLUE)Running Safety vulnerability scan...$(NC)"
+	@safety check --json --output security_reports/safety_latest.json || true
+	@safety check || true
+	@echo "$(GREEN)Safety scan completed! Check security_reports/safety_latest.json$(NC)"
+
+# Reporting targets
+security-report: ## Generate comprehensive security report
+	@echo "$(BLUE)Generating comprehensive security report...$(NC)"
+	@python tests/security/security_test_runner.py --full
+	@echo "$(GREEN)Security report generated in security_reports/$(NC)"
+
+threat-model: ## Generate threat model documentation
+	@echo "$(BLUE)Generating threat model...$(NC)"
+	@python tests/security/security_test_runner.py --threat-model
+	@echo "$(GREEN)Threat model generated in security_reports/$(NC)"
+
+# CI/CD integration targets
+security-ci: security-deps-check ## Run security tests for CI/CD (JSON output)
+	@echo "$(BLUE)Running security tests for CI/CD...$(NC)"
+	@python tests/security/security_test_runner.py --full --json-only
+	@echo "$(GREEN)CI/CD security tests completed!$(NC)"
+
+security-ci-quick: security-deps-check ## Run quick security tests for CI/CD
+	@echo "$(YELLOW)Running quick security tests for CI/CD...$(NC)"
+	@python tests/security/security_test_runner.py --quick --json-only
+	@echo "$(GREEN)Quick CI/CD security tests completed!$(NC)"
+
+# Severity-based testing
+security-critical: security-deps-check ## Run tests for critical vulnerabilities only
+	@echo "$(RED)Running critical security vulnerability tests...$(NC)"
+	@pytest tests/security/ -m critical -v
+
+security-high: security-deps-check ## Run tests for high severity vulnerabilities
+	@echo "$(YELLOW)Running high severity security tests...$(NC)"
+	@pytest tests/security/ -m high -v
+
+# Performance and load testing
+security-performance: security-deps-check ## Run security tests with performance metrics
+	@echo "$(BLUE)Running security tests with performance metrics...$(NC)"
+	@pytest tests/security/ --durations=0 --tb=no -v
+
+security-load: security-deps-check ## Run security load testing
+	@echo "$(BLUE)Running security load tests...$(NC)"
+	@pytest tests/security/ -m "not slow" --maxfail=5 -x
+
+# Development targets
+security-dev: security-deps-check ## Run security tests in development mode (verbose, no coverage)
+	@echo "$(BLUE)Running security tests in development mode...$(NC)"
+	@pytest tests/security/ -v -s --tb=long --no-cov
+
+security-debug: security-deps-check ## Run security tests with debug output
+	@echo "$(BLUE)Running security tests with debug output...$(NC)"
+	@pytest tests/security/ -v -s --tb=long --log-cli-level=DEBUG --capture=no
+
+# Coverage and quality
+security-coverage: security-deps-check ## Run security tests with coverage report
+	@echo "$(BLUE)Running security tests with coverage...$(NC)"
+	@pytest tests/security/ --cov=app --cov-report=html:security_reports/coverage_html --cov-report=term
+
+security-quality: security-deps-check bandit-scan safety-scan ## Run all security quality checks
+	@echo "$(GREEN)Security quality analysis completed!$(NC)"
+
+# Cleanup targets
+security-clean: ## Clean security test artifacts and reports
+	@echo "$(YELLOW)Cleaning security test artifacts...$(NC)"
+	@rm -rf security_reports/*.html
+	@rm -rf security_reports/*.json
+	@rm -rf security_reports/coverage_html
+	@rm -rf .pytest_cache
+	@rm -rf __pycache__
+	@rm -rf tests/security/__pycache__
+	@rm -rf .coverage
+	@rm -f test_security.db
+	@echo "$(GREEN)Security artifacts cleaned!$(NC)"
+
+security-clean-all: security-clean ## Clean all security-related files including dependencies
+	@echo "$(YELLOW)Cleaning all security files...$(NC)"
+	@rm -rf security_reports/
+	@echo "$(GREEN)All security files cleaned!$(NC)"
+
+# Docker targets (if using containerized testing)
+security-docker-build: ## Build security testing Docker image
+	@echo "$(BLUE)Building security testing Docker image...$(NC)"
+	@docker build -t fingerprint-security-tests -f Dockerfile.security .
+
+security-docker-run: ## Run security tests in Docker container
+	@echo "$(BLUE)Running security tests in Docker...$(NC)"
+	@docker run --rm -v $(PWD)/security_reports:/app/security_reports fingerprint-security-tests
+
+# Utility targets
+security-list-tests: ## List all available security tests
+	@echo "$(BLUE)Available security tests:$(NC)"
+	@pytest tests/security/ --collect-only -q
+
+security-markers: ## Show all security test markers
+	@echo "$(BLUE)Security test markers:$(NC)"
+	@pytest --markers | grep -E "(security|biometric|websocket|csv|api|unicode|critical|high|medium|low)"
+
+security-env-check: ## Check security testing environment
+	@echo "$(BLUE)Checking security testing environment...$(NC)"
+	@echo "Python version: $$(python --version)"
+	@echo "Pytest version: $$(pytest --version)"
+	@echo "Security tools:"
+	@bandit --version 2>/dev/null || echo "  Bandit: Not installed"
+	@safety --version 2>/dev/null || echo "  Safety: Not installed"
+	@echo "Database: $$(ls -la *.db 2>/dev/null || echo 'No database files found')"
+	@echo "Reports directory: $$(ls -la security_reports/ 2>/dev/null || echo 'No reports directory')"
+
+# Integration targets
+security-pre-commit: security-quick ## Run security tests suitable for pre-commit hooks
+	@echo "$(GREEN)Pre-commit security check completed!$(NC)"
+
+security-pre-push: security-test ## Run full security tests suitable for pre-push hooks
+	@echo "$(GREEN)Pre-push security check completed!$(NC)"
+
+# Monitoring and alerting
+security-monitor: ## Continuously monitor for security issues
+	@echo "$(BLUE)Starting security monitoring...$(NC)"
+	@while true; do \
+		make security-quick > /tmp/security-monitor.log 2>&1; \
+		if [ $$? -ne 0 ]; then \
+			echo "$(RED)Security issues detected! Check /tmp/security-monitor.log$(NC)"; \
+		else \
+			echo "$(GREEN)Security check passed at $$(date)$(NC)"; \
+		fi; \
+		sleep 300; \
+	done
+
+# Help for specific categories
+security-help-biometric: ## Show help for biometric security testing
+	@echo "$(BLUE)Biometric Security Testing Help$(NC)"
+	@echo "================================="
+	@echo "Tests biometric data protection, ZKTeco device security,"
+	@echo "attendance record integrity, and employee ID enumeration."
+	@echo ""
+	@echo "Run: make security-biometric"
+
+security-help-websocket: ## Show help for WebSocket security testing
+	@echo "$(BLUE)WebSocket Security Testing Help$(NC)"
+	@echo "================================="
+	@echo "Tests WebSocket message injection, broadcast security,"
+	@echo "connection security, and real-time update vulnerabilities."
+	@echo ""
+	@echo "Run: make security-websocket"
+
+# Status and reporting
+security-status: ## Show current security testing status
+	@echo "$(BLUE)Security Testing Status$(NC)"
+	@echo "========================="
+	@echo "Last reports:"
+	@ls -lt security_reports/*.html security_reports/*.json 2>/dev/null | head -5 || echo "No recent reports found"
+	@echo ""
+	@echo "Test database:"
+	@ls -la test_security.db 2>/dev/null || echo "No test database found"
+	@echo ""
+	@echo "Coverage:"
+	@ls -la security_reports/coverage_html/index.html 2>/dev/null || echo "No coverage report found"

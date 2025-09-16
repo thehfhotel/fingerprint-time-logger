@@ -33,6 +33,9 @@ alembic -c database/alembic.ini upgrade head
 
 # Run tests
 python3 -m pytest -v
+
+# Run E2E tests
+./scripts/run_e2e_tests.sh
 ```
 
 ## Architecture
@@ -122,6 +125,30 @@ ZKTECO_PORT=4370
 - **Employee Status Features**: Active/inactive and hidden/visible toggles
 - **Enhanced Monitoring**: Comprehensive system health checks and diagnostics
 
+## E2E Testing Framework
+
+### Framework Components
+- **Page Objects**: Dashboard, Employee Management, System Status
+- **Workflows**: Employee lifecycle, attendance tracking, real-time updates
+- **Browser Support**: Chromium, Firefox, WebKit with mobile viewports
+- **Thai Localization**: Unicode validation, Bangkok timezone
+- **WebSocket Testing**: Real-time functionality validation
+
+### Test Execution
+```bash
+# Quick smoke tests
+./scripts/run_e2e_tests.sh smoke
+
+# Complete workflow testing
+./scripts/run_e2e_tests.sh workflows
+
+# Performance and load testing
+./scripts/run_e2e_tests.sh performance
+
+# Cross-browser testing
+./scripts/run_e2e_tests.sh --browser firefox
+```
+
 ## Documentation
 
 - **API Reference**: `docs/API_REFERENCE.md` - Complete API documentation
@@ -129,10 +156,43 @@ ZKTECO_PORT=4370
 - **System Architecture**: `docs/SYSTEM_ARCHITECTURE.md` - Technical architecture
 - **Developer Guide**: `docs/DEVELOPER_GUIDE.md` - Setup and development guide
 
+## Testing
+
+### Comprehensive Test Suite
+- **323 Unit Tests**: Complete unit test coverage with zero failures
+- **E2E Testing Framework**: Playwright-based browser automation
+- **Integration Tests**: Full workflow testing including Thai localization
+- **Performance Testing**: Load testing and performance validation
+
+### Running Tests
+```bash
+# Unit tests only
+python3 -m pytest -v
+
+# E2E tests (requires application running)
+./scripts/run_e2e_tests.sh
+
+# Run specific E2E test suites
+./scripts/run_e2e_tests.sh smoke     # Quick validation
+./scripts/run_e2e_tests.sh workflows # Complete workflows
+./scripts/run_e2e_tests.sh integration # System integration
+
+# All tests with reporting
+./scripts/run_e2e_tests.sh --parallel --browser chromium
+```
+
+### Test Categories
+- **Smoke Tests**: Critical path validation
+- **Workflow Tests**: Complete user journeys (employee lifecycle, attendance tracking)
+- **Integration Tests**: Device connectivity, WebSocket real-time, Thai Unicode
+- **Performance Tests**: Page load times, sync operations, large datasets
+
 ## Development Workflow
 
 **Commit Strategy**: Follow `COMMIT_STRATEGY.md` for granular commits at every development step.
 
-**Testing**: Run `python3 -m pytest -v` before commits to ensure stability.
+**Testing**: Always run tests before commits:
+1. `python3 -m pytest -v` (unit tests)
+2. `./scripts/run_e2e_tests.sh smoke` (critical paths)
 
 **Focus**: Simple, functional single-user system optimized for reliability and ease of use.

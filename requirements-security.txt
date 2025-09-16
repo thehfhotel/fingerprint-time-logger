@@ -1,0 +1,205 @@
+# Security Testing Dependencies for Fingerprint Time Logger
+# Additional requirements for comprehensive security testing framework
+
+# ============================================================================
+# CORE SECURITY TESTING TOOLS
+# ============================================================================
+
+# Static Application Security Testing (SAST)
+bandit[toml]==1.7.5           # Python code security scanner
+semgrep==1.45.0               # Advanced multi-language SAST tool
+
+# Dependency Vulnerability Scanning
+safety==2.3.4                 # Known vulnerability database scanning
+pip-audit==2.6.1              # Python package auditing tool
+
+# Security-focused pytest plugins
+pytest-security==0.1.1        # Security testing utilities for pytest
+pytest-timeout==2.1.0         # Test timeout handling for security tests
+pytest-xdist==3.3.1          # Parallel test execution
+
+# ============================================================================
+# SECURITY TESTING UTILITIES
+# ============================================================================
+
+# HTTP security testing
+httpx==0.25.2                 # Already in main requirements (async HTTP client)
+requests-mock==1.11.0         # HTTP request mocking for security tests
+responses==0.23.3             # HTTP response mocking
+
+# Cryptographic testing
+cryptography==41.0.7          # Cryptographic operations and testing
+bcrypt==4.1.2                 # Password hashing validation
+passlib==1.7.4                # Password library security testing
+
+# Network and protocol testing
+websockets==12.0              # WebSocket security testing
+urllib3==2.1.0                # HTTP library security testing
+
+# ============================================================================
+# FUZZING AND PAYLOAD GENERATION
+# ============================================================================
+
+# Fuzzing libraries
+hypothesis==6.88.1            # Property-based testing and fuzzing
+faker==20.1.0                 # Already in main requirements (fake data generation)
+factory-boy==3.3.0           # Already in main requirements (test data factories)
+
+# Security payload libraries
+python-string-utils==1.0.0    # String manipulation utilities for payloads
+fuzzywuzzy==0.18.0            # String similarity for bypass detection
+
+# ============================================================================
+# UNICODE AND INTERNATIONALIZATION TESTING
+# ============================================================================
+
+# Unicode normalization and security
+unicodedata2==15.1.0          # Enhanced Unicode database
+unidecode==1.3.7              # Unicode transliteration
+chardet==5.2.0                # Character encoding detection
+
+# Thai language specific testing
+pythainlp==4.0.2              # Thai natural language processing
+thai-segmenter==0.4.1         # Thai text segmentation
+
+# ============================================================================
+# REPORTING AND ANALYSIS
+# ============================================================================
+
+# Report generation
+jinja2==3.1.2                 # Template engine for security reports
+matplotlib==3.8.2             # Security metrics visualization
+pandas==2.1.4                 # Data analysis for security metrics
+numpy==1.26.2                 # Numerical analysis support
+
+# JSON and data processing
+jsonschema==4.20.0            # JSON schema validation
+pyyaml==6.0.1                 # YAML processing for configurations
+toml==0.10.2                  # TOML configuration file support
+
+# ============================================================================
+# PERFORMANCE AND LOAD TESTING
+# ============================================================================
+
+# Performance testing for DoS validation
+locust==2.17.0                # Load testing framework
+memory-profiler==0.61.0       # Memory usage profiling
+psutil==5.9.6                 # System resource monitoring
+
+# ============================================================================
+# DEVELOPMENT AND DEBUGGING
+# ============================================================================
+
+# Enhanced debugging for security tests
+ipdb==0.13.13                 # Interactive debugger
+rich==13.7.0                  # Rich text and beautiful formatting
+colorama==0.4.6               # Cross-platform colored terminal text
+
+# Code quality and linting
+flake8==6.1.0                 # Code style checking
+black==23.11.0                # Code formatting
+isort==5.12.0                 # Import sorting
+mypy==1.7.1                   # Static type checking
+
+# ============================================================================
+# BIOMETRIC AND DEVICE TESTING MOCKS
+# ============================================================================
+
+# Device simulation and mocking
+pyzk==0.9                     # Already in main requirements (ZKTeco integration)
+pyserial==3.5                 # Serial communication mocking
+mock==5.1.0                   # Enhanced mocking capabilities
+
+# ============================================================================
+# OPTIONAL ADVANCED SECURITY TOOLS
+# ============================================================================
+
+# Advanced vulnerability scanners (optional)
+# vulners==2.1.9              # Vulnerability database API client
+# python-nmap==0.7.1          # Network scanning capabilities
+# scapy==2.5.0                # Packet manipulation and analysis
+
+# Machine learning for anomaly detection (optional)
+# scikit-learn==1.3.2         # ML algorithms for security analysis
+# tensorflow==2.15.0          # Deep learning for pattern recognition
+
+# ============================================================================
+# TESTING FRAMEWORK ENHANCEMENTS
+# ============================================================================
+
+# Extended pytest functionality
+pytest-cov==4.1.0             # Coverage reporting
+pytest-html==4.1.1            # HTML test reports
+pytest-json-report==1.5.0     # JSON test reports
+pytest-benchmark==4.0.0       # Performance benchmarking
+pytest-mock==3.12.0           # Enhanced mocking for pytest
+pytest-asyncio==0.21.1        # Already in main requirements (async testing)
+
+# Test data management
+pytest-factoryboy==2.6.0      # Factory Boy integration for pytest
+pytest-postgresql==5.0.0      # PostgreSQL testing fixtures (if needed)
+pytest-env==1.1.0             # Environment variable management
+
+# ============================================================================
+# CONTAINERIZATION AND CI/CD
+# ============================================================================
+
+# Container security testing
+docker==6.1.3                 # Docker API client for container testing
+kubernetes==28.1.0            # Kubernetes API client (if applicable)
+
+# CI/CD integration utilities
+github3.py==4.0.1             # GitHub API integration
+gitlab-python==4.1.1          # GitLab API integration
+
+# ============================================================================
+# DOCUMENTATION AND COMPLIANCE
+# ============================================================================
+
+# Security documentation generation
+sphinx==7.2.6                 # Documentation generation
+sphinx-rtd-theme==1.3.0       # ReadTheDocs theme
+mkdocs==1.5.3                 # Markdown documentation
+mkdocs-material==9.4.8        # Material theme for MkDocs
+
+# Compliance and standards
+pycwe==1.5.0                  # Common Weakness Enumeration database
+python-owasp==0.1.4           # OWASP utilities
+
+# ============================================================================
+# ENVIRONMENT AND CONFIGURATION
+# ============================================================================
+
+# Environment management
+python-dotenv==1.0.0          # Already in main requirements (.env file support)
+pydantic-settings==2.1.0      # Already in main requirements (settings management)
+
+# Configuration validation
+marshmallow==3.20.1           # Schema validation and serialization
+cerberus==1.3.5               # Data validation
+
+# ============================================================================
+# INSTALLATION NOTES
+# ============================================================================
+#
+# To install security testing dependencies:
+#   pip install -r requirements.txt -r requirements-security.txt
+#
+# For development with security testing:
+#   pip install -r requirements.txt -r requirements-security.txt -r requirements-dev.txt
+#
+# For minimal security testing (CI/CD):
+#   pip install bandit safety pytest-security pytest-timeout
+#
+# Note: Some advanced tools (commented out) require additional system dependencies
+#       and may significantly increase installation time and size.
+#
+# Version pinning strategy:
+#   - Core security tools: Pinned to specific versions for consistency
+#   - Utility libraries: Compatible versions with main requirements
+#   - Optional tools: Latest stable versions
+#
+# Security considerations:
+#   - All dependencies regularly audited with safety and pip-audit
+#   - Versions selected to avoid known vulnerabilities
+#   - Minimal necessary dependencies to reduce attack surface
