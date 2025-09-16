@@ -393,7 +393,7 @@ show_menu() {
 
 get_user_choice() {
     local choice
-    echo -ne "${GREEN}Enter your choice [0-9]: ${NC}"
+    echo -ne "${GREEN}Enter your choice [0-9]: ${NC}" >&2
     read -r choice
     echo "$choice"
 }

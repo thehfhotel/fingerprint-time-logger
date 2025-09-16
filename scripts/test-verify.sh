@@ -686,7 +686,7 @@ show_config_menu() {
 
 get_test_choice() {
     local choice
-    echo -ne "${GREEN}Enter your choice [0-11]: ${NC}"
+    echo -ne "${GREEN}Enter your choice [0-11]: ${NC}" >&2
     read -r choice
     echo "$choice"
 }
@@ -694,12 +694,12 @@ get_test_choice() {
 configure_settings() {
     while true; do
         show_config_menu
-        echo -ne "${GREEN}Select setting to change [1-5]: ${NC}"
+        echo -ne "${GREEN}Select setting to change [1-5]: ${NC}" >&2
         read -r config_choice
 
         case $config_choice in
             1)
-                echo -ne "${GREEN}Enter coverage threshold (current: $COVERAGE_THRESHOLD): ${NC}"
+                echo -ne "${GREEN}Enter coverage threshold (current: $COVERAGE_THRESHOLD): ${NC}" >&2
                 read -r new_coverage
                 if [[ "$new_coverage" =~ ^[0-9]+$ ]] && [[ "$new_coverage" -ge 0 ]] && [[ "$new_coverage" -le 100 ]]; then
                     COVERAGE_THRESHOLD="$new_coverage"
@@ -709,7 +709,7 @@ configure_settings() {
                 fi
                 ;;
             2)
-                echo -ne "${GREEN}Enter browser (chromium/firefox/webkit, current: $BROWSER): ${NC}"
+                echo -ne "${GREEN}Enter browser (chromium/firefox/webkit, current: $BROWSER): ${NC}" >&2
                 read -r new_browser
                 if [[ "$new_browser" =~ ^(chromium|firefox|webkit)$ ]]; then
                     BROWSER="$new_browser"
@@ -728,7 +728,7 @@ configure_settings() {
                 fi
                 ;;
             4)
-                echo -ne "${GREEN}Enter app URL (current: $APP_URL): ${NC}"
+                echo -ne "${GREEN}Enter app URL (current: $APP_URL): ${NC}" >&2
                 read -r new_url
                 if [[ "$new_url" =~ ^https?:// ]]; then
                     APP_URL="$new_url"
