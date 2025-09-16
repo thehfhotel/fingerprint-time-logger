@@ -33,8 +33,10 @@ alembic -c database/alembic.ini upgrade head
 # Run tests
 python3 -m pytest -v
 
-# Run E2E tests
-./scripts/run_e2e_tests.sh
+# Testing & Verification
+./scripts/test-verify.sh setup     # Setup testing infrastructure
+./scripts/test-verify.sh all       # Complete test suite
+./scripts/test-verify.sh e2e       # E2E tests only
 ```
 
 ## Architecture
@@ -139,11 +141,10 @@ ZKTECO_PORT=4370
 ./scripts/test-verify.sh all            # All tests and quality checks
 ./scripts/test-verify.sh e2e            # E2E tests only
 
-# E2E-specific (legacy, still available)
-./scripts/run_e2e_tests.sh smoke       # Quick smoke tests
-./scripts/run_e2e_tests.sh workflows   # Complete workflow testing
-./scripts/run_e2e_tests.sh performance # Performance and load testing
-./scripts/run_e2e_tests.sh --browser firefox # Cross-browser testing
+# Enhanced testing options
+./scripts/test-verify.sh setup --browser firefox    # Setup with custom browser
+./scripts/test-verify.sh e2e --parallel             # Parallel E2E execution
+./scripts/test-verify.sh all --coverage 90          # High coverage threshold
 ```
 
 ## Documentation

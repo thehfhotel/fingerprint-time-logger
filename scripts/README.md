@@ -28,17 +28,12 @@ This directory contains utility scripts for managing the Fingerprint Time Logger
 
 ## Specialized Scripts
 
-### E2E Testing
-- **`run_e2e_tests.sh`** - Advanced E2E testing framework
-  - Called by `test-verify.sh` for E2E tests
-  - Supports multiple browsers and execution modes
-
-### Setup & Installation
-- **`setup_enhanced_testing.sh`** - Testing framework installation
-  - Sets up E2E, security, and quality testing infrastructure
-
 ### Utilities
 - **`display_attendance.py`** - Display formatted attendance records
+
+### Support Directories
+- **`lib/common.sh`** - Shared functions for scripts
+- **`archive/`** - Legacy scripts maintained for reference
 
 ## Usage Examples
 
@@ -50,14 +45,12 @@ This directory contains utility scripts for managing the Fingerprint Time Logger
 ./scripts/manage-app.sh deploy          # Deploy with fresh build
 
 # Testing & Verification
-./scripts/test-verify.sh all                    # Complete test suite
+./scripts/test-verify.sh setup                 # Setup testing infrastructure
+./scripts/test-verify.sh all                   # Complete test suite
 ./scripts/test-verify.sh unit --coverage 85    # Unit tests with coverage
 ./scripts/test-verify.sh e2e --browser firefox # E2E tests with Firefox
 ./scripts/test-verify.sh quality               # Code quality checks
-
-# Advanced E2E Testing
-./scripts/run_e2e_tests.sh workflows --parallel
-./scripts/run_e2e_tests.sh smoke --browser chromium
+./scripts/test-verify.sh all --parallel        # All tests in parallel
 ```
 
 ## Script Organization
@@ -65,12 +58,13 @@ This directory contains utility scripts for managing the Fingerprint Time Logger
 ```
 scripts/
 ├── manage-app.sh           # 🎯 Application lifecycle management
-├── test-verify.sh          # 🧪 Testing and quality verification
-├── run_e2e_tests.sh        # 🖥️ Advanced E2E testing
-├── setup_enhanced_testing.sh # ⚙️ Testing framework setup
+├── test-verify.sh          # 🧪 Testing and quality verification (enhanced)
 ├── display_attendance.py   # 📊 Utility scripts
 ├── lib/common.sh           # 📚 Shared functions
 └── archive/                # 📦 Legacy scripts (archived)
+    ├── run_e2e_tests.sh        # (Legacy E2E framework)
+    ├── setup_enhanced_testing.sh # (Legacy setup script)
+    └── [other legacy scripts]
 ```
 
 ## Application Access
@@ -95,6 +89,8 @@ Old scripts have been consolidated but archived for reference:
 | `health.sh` | `./scripts/manage-app.sh health` |
 | `run_tests.sh` | `./scripts/test-verify.sh all` |
 | `test_status.sh` | `./scripts/test-verify.sh report` |
+| `run_e2e_tests.sh` | `./scripts/test-verify.sh e2e` |
+| `setup_enhanced_testing.sh` | `./scripts/test-verify.sh setup` |
 
 ## Health Check Exit Codes
 

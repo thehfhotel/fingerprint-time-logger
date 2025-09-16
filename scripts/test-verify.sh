@@ -216,9 +216,9 @@ run_e2e_tests() {
         return 0
     fi
 
-    # Check if E2E framework exists
-    if [[ ! -f "$PROJECT_ROOT/scripts/run_e2e_tests.sh" ]]; then
-        log_warning "E2E test framework not found - skipping E2E tests"
+    # Check if E2E tests exist
+    if [[ ! -d "$PROJECT_ROOT/tests/e2e" ]]; then
+        log_warning "E2E tests directory not found - run 'setup' command first"
         return 0
     fi
 
@@ -232,40 +232,47 @@ run_e2e_tests() {
     log_info "Application URL: $APP_URL"
     log_info "Parallel execution: $PARALLEL"
 
-    # Set E2E environment variables
+    # Build pytest command with enhanced options
+    local e2e_cmd="python -m pytest tests/e2e/ -v"
+    e2e_cmd="$e2e_cmd --browser=$BROWSER"
+    e2e_cmd="$e2e_cmd --html=reports/e2e/report.html --self-contained-html"
+    e2e_cmd="$e2e_cmd --json-report --json-report-file=reports/e2e/report.json"
+    e2e_cmd="$e2e_cmd --screenshot=on-failure"
+
+    if [[ "$PARALLEL" == "true" ]]; then
+        e2e_cmd="$e2e_cmd -n auto"
+        log_info "Running E2E tests in parallel mode"
+    fi
+
+    # Set environment variables for E2E tests
     export BROWSER="$BROWSER"
     export APP_URL="$APP_URL"
     export HEADLESS="true"
 
-    # Run E2E tests with different suites
+    log_info "Executing E2E test suite..."
     local e2e_success=true
 
-    # Smoke tests (critical paths)
-    log_section "Running smoke tests..."
-    if "$PROJECT_ROOT/scripts/run_e2e_tests.sh" smoke; then
-        log_success "E2E smoke tests passed"
+    if $e2e_cmd; then
+        log_success "E2E tests completed successfully"
+
+        # Display results summary if JSON report available
+        if [[ -f "reports/e2e/report.json" ]]; then
+            local total_tests=$(python -c "import json; data=json.load(open('reports/e2e/report.json')); print(data['summary']['total'])" 2>/dev/null || echo "unknown")
+            local passed_tests=$(python -c "import json; data=json.load(open('reports/e2e/report.json')); print(data['summary'].get('passed', 0))" 2>/dev/null || echo "unknown")
+            local failed_tests=$(python -c "import json; data=json.load(open('reports/e2e/report.json')); print(data['summary'].get('failed', 0))" 2>/dev/null || echo "unknown")
+            log_info "E2E Results: $passed_tests passed, $failed_tests failed (total: $total_tests)"
+        fi
     else
-        log_error "E2E smoke tests failed"
+        log_error "E2E tests failed"
         e2e_success=false
     fi
 
-    # Workflow tests (if smoke tests pass)
     if [[ $e2e_success == true ]]; then
-        log_section "Running workflow tests..."
-        if "$PROJECT_ROOT/scripts/run_e2e_tests.sh" workflows; then
-            log_success "E2E workflow tests passed"
-        else
-            log_error "E2E workflow tests failed"
-            e2e_success=false
-        fi
-    fi
-
-    if [[ $e2e_success == true ]]; then
-        log_success "E2E tests completed successfully"
         E2E_TESTS_PASSED=true
+        log_info "E2E Report: file://$PROJECT_ROOT/reports/e2e/report.html"
     else
-        log_error "E2E tests failed"
         E2E_TESTS_PASSED=false
+        log_info "E2E Report (with failures): file://$PROJECT_ROOT/reports/e2e/report.html"
         return 1
     fi
 }
@@ -521,6 +528,85 @@ EOF
 }
 
 # Show usage
+setup_enhanced_testing() {
+    log_header "SETTING UP ENHANCED TESTING INFRASTRUCTURE"
+
+    # Check Python version
+    log_info "Checking Python version..."
+    python_version=$(python3 --version 2>&1 | awk '{print $2}')
+    if [[ $(python3 -c "import sys; print(sys.version_info >= (3, 8))") == "True" ]]; then
+        log_success "Python $python_version detected"
+    else
+        log_error "Python 3.8+ required, found $python_version"
+        exit 1
+    fi
+
+    # Create enhanced testing directory structure
+    log_info "Creating enhanced testing directories..."
+    mkdir -p tests/e2e/{page_objects,workflows,visual,screenshots,reports}
+    mkdir -p tests/security
+    mkdir -p tests/performance
+    mkdir -p quality/{reports/coverage,reports/quality,reports/security}
+    mkdir -p reports/{unit,e2e,security,quality,performance}
+
+    log_success "Enhanced directory structure created"
+
+    # Create enhanced requirements file
+    log_info "Creating enhanced testing requirements..."
+    cat > requirements-enhanced-testing.txt << 'EOF'
+# E2E Testing Dependencies
+playwright==1.40.0
+pytest-playwright==0.4.3
+pytest-html==4.1.1
+pytest-xdist==3.3.1
+
+# Quality Assurance Dependencies
+coverage==7.3.2
+pytest-cov==4.1.0
+flake8==6.0.0
+black==23.11.0
+mypy==1.7.0
+isort==5.12.0
+
+# Security Testing Dependencies
+bandit==1.7.5
+safety==2.3.4
+pip-audit==2.6.1
+
+# Performance Testing Dependencies
+pytest-benchmark==4.0.0
+memory-profiler==0.61.0
+psutil==5.9.6
+
+# Reporting Dependencies
+pytest-json-report==1.5.0
+pytest-metadata==3.0.0
+jinja2==3.1.2
+EOF
+
+    # Install enhanced dependencies
+    log_info "Installing enhanced testing dependencies..."
+    if [[ "$VIRTUAL_ENV" == "" ]]; then
+        log_warning "No virtual environment detected, checking for venv..."
+        if [[ -d "$PROJECT_ROOT/venv" ]]; then
+            log_info "Activating virtual environment..."
+            source "$PROJECT_ROOT/venv/bin/activate"
+        else
+            log_warning "No virtual environment found. Installing globally..."
+        fi
+    fi
+
+    pip install -r requirements-enhanced-testing.txt
+    log_success "Enhanced dependencies installed"
+
+    # Install Playwright browsers
+    log_info "Installing Playwright browsers..."
+    playwright install chromium firefox webkit || log_warning "Some browsers may not have installed correctly"
+    log_success "Playwright browsers installed"
+
+    log_success "Enhanced testing infrastructure setup complete!"
+}
+
 show_usage() {
     cat << EOF
 Fingerprint Time Logger - Testing and Verification Script
@@ -535,6 +621,7 @@ Commands:
     security        Run security tests only
     quality         Run quality checks only
     performance     Run performance tests only
+    setup           Setup enhanced testing infrastructure
     report          Generate comprehensive test report
     help            Show this help message
 
@@ -545,6 +632,7 @@ Options:
     --app-url URL   Set application URL for E2E tests (default: http://localhost:5000)
 
 Examples:
+    $0 setup                         # Setup enhanced testing infrastructure
     $0 all                           # Run complete test suite
     $0 unit --coverage 85            # Unit tests with 85% coverage
     $0 e2e --browser firefox         # E2E tests with Firefox
@@ -634,6 +722,9 @@ main() {
         performance)
             check_prerequisites
             run_performance_tests
+            ;;
+        setup)
+            setup_enhanced_testing
             ;;
         report)
             generate_report
