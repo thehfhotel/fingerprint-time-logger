@@ -1,0 +1,411 @@
+"""
+Shared test configuration and fixtures for Fingerprint Time Logger
+Provides common test setup, database configuration, and reusable fixtures
+"""
+import os
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+from fastapi.testclient import TestClient
+
+from app.core.database import Base, get_db
+from app.main_unified import app, fingerprint_app
+from tests.fixtures.test_factories import *
+from tests.fixtures.zkteco_simulator import ZKTecoSimulatorFactory, MockZKConnection
+
+# Test database configuration
+TEST_DATABASE_URL = "sqlite:///./test_attendance.db"
+TEST_MEMORY_DATABASE_URL = "sqlite:///:memory:"
+
+
+@pytest.fixture(scope="function")
+def test_engine():
+    """Create test database engine for each test function"""
+    # Use a shared in-memory database for SQLite
+    # The "file::memory:?cache=shared" URI allows multiple connections to the same in-memory database
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,  # Important for in-memory databases
+        echo=False  # Set to True for SQL debugging
+    )
+
+    # Import all models to ensure they are registered with Base.metadata
+    # This is critical for the tables to be created properly
+    from app.models.models import Employee, Device, AttendanceRecord, AttendanceAdjustment
+
+    # Create all tables in the test database
+    Base.metadata.create_all(bind=engine)
+
+    yield engine
+
+    # Clean up
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+@pytest.fixture(scope="function")
+def test_db(test_engine):
+    """Create test database session for each test function"""
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+    session = TestingSessionLocal()
+
+    # Configure Factory Boy to use this session
+    from tests.fixtures.test_factories import EmployeeFactory, DeviceFactory, AttendanceRecordFactory
+    EmployeeFactory._meta.sqlalchemy_session = session
+    DeviceFactory._meta.sqlalchemy_session = session
+    AttendanceRecordFactory._meta.sqlalchemy_session = session
+
+    try:
+        yield session
+    finally:
+        # Clean up Factory Boy session
+        EmployeeFactory._meta.sqlalchemy_session = None
+        DeviceFactory._meta.sqlalchemy_session = None
+        AttendanceRecordFactory._meta.sqlalchemy_session = None
+        session.rollback()
+        session.close()
+
+
+@pytest.fixture(scope="function")
+def test_client(test_engine):
+    """Create FastAPI test client for direct fingerprint_app access (no mounting)"""
+
+    # Create a session factory for the test engine
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    # Override database dependency
+    fingerprint_app.dependency_overrides[get_db] = override_get_db
+
+    # Create test client for direct app access
+    with TestClient(fingerprint_app) as client:
+        yield client
+
+    # Clean up dependency override
+    fingerprint_app.dependency_overrides.clear()
+
+
+@pytest.fixture(scope="function")
+def mounted_test_client(test_engine):
+    """Create FastAPI test client for root app with mounted fingerprint_app (production-like structure)"""
+
+    # Create a session factory for the test engine
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    # Override database dependency on the fingerprint_app (which is mounted)
+    fingerprint_app.dependency_overrides[get_db] = override_get_db
+
+    # Create test client for root app (which has fingerprint_app mounted at /fingerprintlogs)
+    with TestClient(app) as client:
+        yield client
+
+    # Clean up dependency override
+    fingerprint_app.dependency_overrides.clear()
+
+
+# ZKTeco Device Simulator Fixtures
+
+@pytest.fixture
+def healthy_device_simulator():
+    """Fixture for healthy ZKTeco device simulator"""
+    return ZKTecoSimulatorFactory.create_healthy_device()
+
+
+@pytest.fixture
+def network_issues_simulator():
+    """Fixture for ZKTeco device with network issues"""
+    return ZKTecoSimulatorFactory.create_network_issues_device()
+
+
+@pytest.fixture
+def error_prone_simulator():
+    """Fixture for ZKTeco device with errors"""
+    return ZKTecoSimulatorFactory.create_error_prone_device()
+
+
+@pytest.fixture
+def populated_device_simulator():
+    """Fixture for ZKTeco device with test data"""
+    return ZKTecoSimulatorFactory.create_populated_device(user_count=10, attendance_days=7)
+
+
+@pytest.fixture
+def mock_zk_connection(healthy_device_simulator):
+    """Fixture for mock ZK connection object"""
+    return MockZKConnection(healthy_device_simulator)
+
+
+# Test Data Fixtures using Factory Boy
+
+@pytest.fixture
+def test_employee(test_db):
+    """Create a test employee"""
+    employee = EmployeeFactory()
+    test_db.add(employee)
+    test_db.commit()
+    test_db.refresh(employee)
+    return employee
+
+
+@pytest.fixture
+def test_device(test_db):
+    """Create a test device"""
+    device = DeviceFactory()
+    test_db.add(device)
+    test_db.commit()
+    test_db.refresh(device)
+    return device
+
+
+@pytest.fixture
+def test_employees(test_db):
+    """Create multiple test employees"""
+    employees = []
+    for i in range(5):
+        employee = EmployeeFactory(badge_number=f"{i+1:04d}")
+        test_db.add(employee)
+        employees.append(employee)
+
+    test_db.commit()
+
+    for employee in employees:
+        test_db.refresh(employee)
+
+    return employees
+
+
+@pytest.fixture
+def test_attendance_records(test_db, test_employee, test_device):
+    """Create test attendance records"""
+    records = []
+    for i in range(3):
+        record = AttendanceRecordFactory(
+            employee_badge_number=test_employee.badge_number,
+            device_id=test_device.id
+        )
+        test_db.add(record)
+        records.append(record)
+
+    test_db.commit()
+
+    for record in records:
+        test_db.refresh(record)
+
+    return records
+
+
+@pytest.fixture
+def test_company_setup(test_db):
+    """Create complete test company with devices, employees, and attendance"""
+    # Create test data
+    company_data = create_test_company(
+        employee_count=5,
+        device_count=2,
+        days_of_history=7,
+        session=test_db
+    )
+
+    # Add to database
+    for device in company_data['devices']:
+        test_db.add(device)
+
+    for employee in company_data['employees']:
+        test_db.add(employee)
+
+    for record in company_data['attendance_records']:
+        test_db.add(record)
+
+    test_db.commit()
+
+    # Refresh objects
+    for device in company_data['devices']:
+        test_db.refresh(device)
+
+    for employee in company_data['employees']:
+        test_db.refresh(employee)
+
+    for record in company_data['attendance_records']:
+        test_db.refresh(record)
+
+    return company_data
+
+
+# Mock Service Fixtures
+
+@pytest.fixture
+def mock_device_service(healthy_device_simulator):
+    """Mock device service with simulator"""
+    from unittest.mock import Mock
+    from app.services.device_service import device_service
+
+    # Mock the device service methods
+    original_connect = device_service.connect_to_device
+    original_get_attendance = device_service.get_attendance
+
+    def mock_connect(device):
+        connection = MockZKConnection(healthy_device_simulator)
+        return connection if connection.connect() else None
+
+    def mock_get_attendance():
+        return healthy_device_simulator.get_attendance()
+
+    device_service.connect_to_device = Mock(side_effect=mock_connect)
+    device_service.get_attendance = Mock(side_effect=mock_get_attendance)
+
+    yield device_service
+
+    # Restore original methods
+    device_service.connect_to_device = original_connect
+    device_service.get_attendance = original_get_attendance
+
+
+# API Testing Utilities
+
+@pytest.fixture
+def api_headers():
+    """Standard API headers for testing"""
+    return {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+
+
+@pytest.fixture
+def authenticated_headers(api_headers):
+    """Headers with authentication (if implemented)"""
+    # Add authentication headers when auth is implemented
+    return api_headers
+
+
+# Environment Configuration
+
+@pytest.fixture(autouse=True)
+def test_environment():
+    """Set up test environment variables"""
+    os.environ['TESTING'] = 'true'
+    os.environ['DATABASE_URL'] = TEST_MEMORY_DATABASE_URL
+
+    yield
+
+    # Cleanup
+    if 'TESTING' in os.environ:
+        del os.environ['TESTING']
+
+
+# Performance Testing Fixtures
+
+@pytest.fixture
+def performance_dataset(test_db):
+    """Large dataset for performance testing"""
+    # Create larger dataset for performance tests
+    company_data = create_test_company(
+        employee_count=100,
+        device_count=5,
+        days_of_history=90,
+        session=test_db
+    )
+
+    # Add to database in batches for performance
+    batch_size = 50
+
+    # Add devices
+    for device in company_data['devices']:
+        test_db.add(device)
+
+    # Add employees in batches
+    for i in range(0, len(company_data['employees']), batch_size):
+        batch = company_data['employees'][i:i + batch_size]
+        for employee in batch:
+            test_db.add(employee)
+        test_db.commit()
+
+    # Add attendance records in batches
+    for i in range(0, len(company_data['attendance_records']), batch_size):
+        batch = company_data['attendance_records'][i:i + batch_size]
+        for record in batch:
+            test_db.add(record)
+        test_db.commit()
+
+    test_db.commit()
+    return company_data
+
+
+# Utility Functions for Tests
+
+def assert_response_success(response):
+    """Assert that an API response is successful"""
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+    return response.json()
+
+
+def assert_response_created(response):
+    """Assert that an API response indicates creation"""
+    assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
+    return response.json()
+
+
+def assert_response_not_found(response):
+    """Assert that an API response indicates not found"""
+    assert response.status_code == 404, f"Expected 404, got {response.status_code}: {response.text}"
+
+
+def assert_response_bad_request(response):
+    """Assert that an API response indicates bad request"""
+    assert response.status_code == 400, f"Expected 400, got {response.status_code}: {response.text}"
+
+
+# Cleanup fixtures
+
+@pytest.fixture(autouse=True)
+def cleanup_test_files():
+    """Clean up any test files created during tests"""
+    yield
+
+    # Clean up test database file if it exists
+    if os.path.exists("test_attendance.db"):
+        os.remove("test_attendance.db")
+
+    # Clean up any other test artifacts
+    test_files = [
+        "test_export.csv",
+        "test_logs.txt"
+    ]
+
+    for file in test_files:
+        if os.path.exists(file):
+            os.remove(file)
+
+
+# Pytest configuration
+def pytest_configure(config):
+    """Configure pytest with custom markers"""
+    config.addinivalue_line(
+        "markers", "unit: mark test as a unit test"
+    )
+    config.addinivalue_line(
+        "markers", "integration: mark test as an integration test"
+    )
+    config.addinivalue_line(
+        "markers", "e2e: mark test as an end-to-end test"
+    )
+    config.addinivalue_line(
+        "markers", "performance: mark test as a performance test"
+    )
+    config.addinivalue_line(
+        "markers", "slow: mark test as slow running"
+    )

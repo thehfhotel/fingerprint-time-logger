@@ -15,7 +15,7 @@ services:
       - TZ=Asia/Bangkok
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/api/devices/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/fingerprintlogs/api/devices/health"]
       interval: 30s
       timeout: 10s
       retries: 3

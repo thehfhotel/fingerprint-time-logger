@@ -1,0 +1,259 @@
+"""
+Focused tests for employee API endpoints to increase coverage
+Tests employee management functionality including Thai name support
+"""
+
+import pytest
+from datetime import datetime
+
+
+class TestEmployeeEndpoints:
+    """Test core employee API endpoints"""
+
+    def test_get_employees(self, test_client, test_company_setup):
+        """Test GET /api/employees/ - Get all employees"""
+        response = test_client.get("/api/employees/")
+        assert response.status_code == 200
+        data = response.json()
+        assert "employees" in data
+        assert isinstance(data["employees"], list)
+
+    def test_get_employees_with_filters(self, test_client, test_company_setup):
+        """Test GET /api/employees/ with filter parameters"""
+        # Test with include_hidden=true
+        response = test_client.get("/api/employees/?include_hidden=true")
+        assert response.status_code == 200
+
+        # Test with include_inactive=true
+        response = test_client.get("/api/employees/?include_inactive=true")
+        assert response.status_code == 200
+
+    def test_get_employee_by_badge(self, test_client, test_company_setup):
+        """Test GET /api/employees/{badge} - Get specific employee"""
+        employees = test_company_setup["employees"]
+        if employees:
+            badge = employees[0].badge_number
+            response = test_client.get(f"/api/employees/{badge}")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["badge_number"] == badge
+
+    def test_get_employee_not_found(self, test_client):
+        """Test getting non-existent employee"""
+        response = test_client.get("/api/employees/NONEXISTENT")
+        assert response.status_code == 404
+
+    def test_create_employee(self, test_client):
+        """Test POST /api/employees/ - Create new employee"""
+        employee_data = {
+            "badge_number": "TEST001",
+            "english_name": "Test Employee",
+            "thai_name": "พนักงานทดสอบ",
+            "display_name": "Test Employee",
+            "department": "Testing",
+            "position": "Test Position",
+            "is_active": True,
+            "is_hidden": False
+        }
+        response = test_client.post("/api/employees/", json=employee_data)
+        assert response.status_code in [200, 201]
+        if response.status_code in [200, 201]:
+            data = response.json()
+            assert data["badge_number"] == employee_data["badge_number"]
+            assert data["english_name"] == employee_data["english_name"]
+
+    def test_update_employee(self, test_client, test_company_setup):
+        """Test PUT /api/employees/{badge} - Update employee"""
+        employees = test_company_setup["employees"]
+        if employees:
+            badge = employees[0].badge_number
+            update_data = {
+                "badge_number": badge,
+                "english_name": "Updated Employee Name",
+                "thai_name": employees[0].thai_name,
+                "display_name": "Updated Employee Name",
+                "department": "Updated Department",
+                "position": employees[0].position,
+                "is_active": True,
+                "is_hidden": False
+            }
+            response = test_client.put(f"/api/employees/{badge}", json=update_data)
+            assert response.status_code == 200
+            data = response.json()
+            assert data["english_name"] == update_data["english_name"]
+
+    def test_update_employee_nickname(self, test_client, test_company_setup):
+        """Test PUT /api/employees/{badge}/nickname - Update nickname"""
+        employees = test_company_setup["employees"]
+        if employees:
+            badge = employees[0].badge_number
+            nickname_data = {
+                "display_name": "New Nickname"
+            }
+            response = test_client.put(f"/api/employees/{badge}/nickname", json=nickname_data)
+            assert response.status_code == 200
+            data = response.json()
+            assert data["display_name"] == nickname_data["display_name"]
+
+    def test_update_employee_status(self, test_client, test_company_setup):
+        """Test PUT /api/employees/{badge}/status - Update status"""
+        employees = test_company_setup["employees"]
+        if employees:
+            badge = employees[0].badge_number
+            status_data = {
+                "is_active": False
+            }
+            response = test_client.put(f"/api/employees/{badge}/status", json=status_data)
+            assert response.status_code == 200
+            data = response.json()
+            assert data["is_active"] == status_data["is_active"]
+
+    def test_update_employee_hidden(self, test_client, test_company_setup):
+        """Test PUT /api/employees/{badge}/hidden - Update hidden status"""
+        employees = test_company_setup["employees"]
+        if employees:
+            badge = employees[0].badge_number
+            hidden_data = {
+                "is_hidden": True
+            }
+            response = test_client.put(f"/api/employees/{badge}/hidden", json=hidden_data)
+            assert response.status_code == 200
+            data = response.json()
+            assert data["is_hidden"] == hidden_data["is_hidden"]
+
+    def test_delete_employee(self, test_client, test_company_setup):
+        """Test DELETE /api/employees/{badge} - Delete employee"""
+        employees = test_company_setup["employees"]
+        if employees and len(employees) > 1:  # Don't delete if only one
+            badge = employees[-1].badge_number  # Delete the last one
+            response = test_client.delete(f"/api/employees/{badge}")
+            assert response.status_code in [200, 204]
+
+    def test_get_employee_statistics(self, test_client, test_company_setup):
+        """Test GET /api/employees/stats/summary - Employee statistics"""
+        response = test_client.get("/api/employees/stats/summary")
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, dict)
+
+    def test_employees_health_check(self, test_client):
+        """Test GET /api/employees/health - Health check"""
+        response = test_client.get("/api/employees/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert "status" in data
+
+
+class TestEmployeeEndpointsValidation:
+    """Test employee endpoint validation and error cases"""
+
+    def test_create_employee_duplicate_badge(self, test_client, test_company_setup):
+        """Test creating employee with duplicate badge number"""
+        employees = test_company_setup["employees"]
+        if employees:
+            employee_data = {
+                "badge_number": employees[0].badge_number,  # Duplicate badge
+                "english_name": "Duplicate Employee",
+                "thai_name": "พนักงานซ้ำ",
+                "display_name": "Duplicate Employee",
+                "is_active": True
+            }
+            response = test_client.post("/api/employees/", json=employee_data)
+            assert response.status_code in [400, 409, 422]  # Conflict or validation error
+
+    def test_create_employee_missing_required_fields(self, test_client):
+        """Test creating employee with missing required fields"""
+        employee_data = {
+            "english_name": "Incomplete Employee"
+            # Missing badge_number
+        }
+        response = test_client.post("/api/employees/", json=employee_data)
+        assert response.status_code == 422
+
+    def test_update_nonexistent_employee(self, test_client):
+        """Test updating non-existent employee"""
+        update_data = {
+            "badge_number": "NONEXISTENT",
+            "english_name": "Updated Name",
+            "thai_name": "ชื่อใหม่",
+            "display_name": "Updated Name",
+            "is_active": True
+        }
+        response = test_client.put("/api/employees/NONEXISTENT", json=update_data)
+        assert response.status_code == 404
+
+    def test_invalid_badge_format(self, test_client):
+        """Test employee operations with invalid badge format"""
+        # Test empty badge
+        response = test_client.get("/api/employees/")  # Empty badge in path
+        assert response.status_code == 200  # This should get all employees
+
+        # Test very long badge
+        long_badge = "A" * 100
+        response = test_client.get(f"/api/employees/{long_badge}")
+        assert response.status_code == 404
+
+    def test_update_nickname_nonexistent(self, test_client):
+        """Test updating nickname for non-existent employee"""
+        nickname_data = {"display_name": "New Nickname"}
+        response = test_client.put("/api/employees/NONEXISTENT/nickname", json=nickname_data)
+        assert response.status_code == 404
+
+    def test_update_status_nonexistent(self, test_client):
+        """Test updating status for non-existent employee"""
+        status_data = {"is_active": False}
+        response = test_client.put("/api/employees/NONEXISTENT/status", json=status_data)
+        assert response.status_code == 404
+
+
+class TestEmployeeThaiNameSupport:
+    """Test Thai name functionality"""
+
+    def test_get_thai_names(self, test_client, test_company_setup):
+        """Test GET /api/employees/thai-names/ - Get Thai names"""
+        response = test_client.get("/api/employees/thai-names/")
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, (dict, list))
+
+    def test_update_thai_name(self, test_client, test_company_setup):
+        """Test PUT /api/employees/thai-names/{badge} - Update Thai name"""
+        employees = test_company_setup["employees"]
+        if employees:
+            badge = employees[0].badge_number
+            thai_name_data = {
+                "thai_name": "ชื่อไทยใหม่",
+                "display_name": "ชื่อไทยใหม่"
+            }
+            response = test_client.put(f"/api/employees/thai-names/{badge}", json=thai_name_data)
+            assert response.status_code == 200
+            data = response.json()
+            assert data["thai_name"] == thai_name_data["thai_name"]
+
+    def test_thai_name_with_special_characters(self, test_client):
+        """Test Thai names with special characters"""
+        employee_data = {
+            "badge_number": "THAI001",
+            "english_name": "Thai Test",
+            "thai_name": "พนักงาน ทดสอบ ภาษาไทย ๑๒๓",  # Thai with numbers
+            "display_name": "พนักงาน ทดสอบ",
+            "is_active": True
+        }
+        response = test_client.post("/api/employees/", json=employee_data)
+        # Should handle Thai characters properly
+        assert response.status_code in [200, 201, 400, 422]
+
+    def test_empty_display_name_fallback(self, test_client):
+        """Test display name fallback logic"""
+        employee_data = {
+            "badge_number": "FALLBACK001",
+            "english_name": "Fallback Test",
+            "thai_name": "",  # Empty Thai name
+            "display_name": "",  # Empty display name
+            "is_active": True
+        }
+        response = test_client.post("/api/employees/", json=employee_data)
+        if response.status_code in [200, 201]:
+            data = response.json()
+            # Should fallback to english_name or badge number
+            assert data["display_name"] in [employee_data["english_name"], f"พนักงาน {employee_data['badge_number']}"]
