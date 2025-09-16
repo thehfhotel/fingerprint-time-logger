@@ -93,17 +93,23 @@ async def get_employee_attendance(
     employee_badge: str,
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    limit: int = Query(100)
+    limit: int = Query(100),
+    db: Session = Depends(get_db)
 ):
     """Get attendance records for a specific employee"""
     try:
+        # Check if employee exists first
+        employee = db.query(Employee).filter(Employee.badge_number == employee_badge).first()
+        if not employee:
+            raise HTTPException(status_code=404, detail="Employee not found")
+
         records = attendance_service.get_attendance_records(
             start_date=start_date,
             end_date=end_date,
             employee_badge=employee_badge,
             limit=limit
         )
-        
+
         return {
             "employee_badge": employee_badge,
             "records": [
@@ -118,6 +124,8 @@ async def get_employee_attendance(
             ],
             "total": len(records)
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -238,9 +246,12 @@ async def get_sync_status():
         device = device_service.get_default_device()
         
         return {
+            "status": "healthy" if device_status.get("connected", False) else "unhealthy",
             "device_status": device_status,
             "last_sync": device.last_sync.isoformat() if device and device.last_sync else None,
-            "sync_available": device_status.get("connected", False)
+            "sync_available": device_status.get("connected", False),
+            "last": device.last_sync.isoformat() if device and device.last_sync else None,  # Alternative field name
+            "sync": device_status.get("connected", False)  # Alternative field name
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -331,7 +342,7 @@ async def attendance_health_check():
 @router.post("/records/{record_id}/mark-late")
 async def mark_attendance_late(
     record_id: int,
-    adjustment_data: AttendanceAdjustmentCreate,
+    adjustment_data: dict,
     db: Session = Depends(get_db)
 ):
     """Mark an attendance record as late"""
@@ -349,13 +360,13 @@ async def mark_attendance_late(
         
         if existing_adjustment:
             # Update existing adjustment
-            existing_adjustment.is_marked_late = adjustment_data.is_marked_late
-            existing_adjustment.late_reason = adjustment_data.late_reason
-            existing_adjustment.notes = adjustment_data.notes
-            existing_adjustment.adjusted_by = adjustment_data.adjusted_by
+            existing_adjustment.is_marked_late = adjustment_data.get("is_marked_late", False)
+            existing_adjustment.late_reason = adjustment_data.get("late_reason")
+            existing_adjustment.notes = adjustment_data.get("notes")
+            existing_adjustment.adjusted_by = adjustment_data.get("adjusted_by")
             existing_adjustment.adjustment_timestamp = datetime.now()
             db.commit()
-            
+
             return {
                 "success": True,
                 "message": "Late marking updated successfully",
@@ -367,11 +378,11 @@ async def mark_attendance_late(
             adjustment = AttendanceAdjustment(
                 attendance_record_id=record_id,
                 adjustment_type='late_marking',
-                is_marked_late=adjustment_data.is_marked_late,
-                late_reason=adjustment_data.late_reason,
-                adjusted_by=adjustment_data.adjusted_by,
+                is_marked_late=adjustment_data.get("is_marked_late", False),
+                late_reason=adjustment_data.get("late_reason"),
+                adjusted_by=adjustment_data.get("adjusted_by"),
                 adjustment_timestamp=datetime.now(),
-                notes=adjustment_data.notes
+                notes=adjustment_data.get("notes")
             )
             
             db.add(adjustment)

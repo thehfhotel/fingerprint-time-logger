@@ -58,7 +58,7 @@ async def update_employee_nickname(
         
         if not employee:
             # Create new employee if doesn't exist (from ZK device)
-            display_name = nickname_data.get("nickname", f"User {badge_number}")
+            display_name = nickname_data.get("nickname") or nickname_data.get("display_name") or f"User {badge_number}"
             employee = Employee(
                 badge_number=badge_number,
                 display_name=display_name,
@@ -74,11 +74,12 @@ async def update_employee_nickname(
                 "message": "Employee created and nickname set successfully",
                 "badge_number": badge_number,
                 "nickname": employee.display_name,
+                "display_name": employee.display_name,
                 "created": True
             }
         else:
             # Update existing employee nickname
-            employee.display_name = nickname_data.get("nickname", "")
+            employee.display_name = nickname_data.get("nickname") or nickname_data.get("display_name") or ""
             db.commit()
             
             return {
@@ -86,6 +87,7 @@ async def update_employee_nickname(
                 "message": "Nickname updated successfully",
                 "badge_number": badge_number,
                 "nickname": employee.display_name,
+                "display_name": employee.display_name,
                 "created": False
             }
     except HTTPException:
@@ -294,6 +296,23 @@ async def get_employees_from_device(include_hidden: bool, include_inactive: bool
         raise HTTPException(status_code=500, detail=f"Error fetching from device: {str(e)}")
 
 
+@router.get("/health")
+async def employees_health_check(db: Session = Depends(get_db)):
+    """Health check for employee system"""
+    try:
+        total_employees = db.query(Employee).filter(Employee.is_active == True).count()
+
+        return {
+            "status": "healthy",
+            "total_employees": total_employees,
+            "has_employees": total_employees > 0
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+
 @router.get("/{badge_number}")
 async def get_employee(badge_number: str, db: Session = Depends(get_db)):
     """Get a specific employee by badge number"""
@@ -301,7 +320,7 @@ async def get_employee(badge_number: str, db: Session = Depends(get_db)):
         employee = db.query(Employee).filter(Employee.badge_number == badge_number).first()
         if not employee:
             raise HTTPException(status_code=404, detail="Employee not found")
-        
+
         return {
             "badge_number": employee.badge_number,
             "english_name": employee.english_name,
@@ -309,7 +328,6 @@ async def get_employee(badge_number: str, db: Session = Depends(get_db)):
             "display_name": employee.display_name,
             "department": employee.department,
             "position": employee.position,
-            "job_role_id": employee.job_role_id,
             "is_active": employee.is_active,
             "is_hidden": employee.is_hidden,
             "created_at": employee.created_at.isoformat() if employee.created_at else None
@@ -349,10 +367,19 @@ async def update_employee(badge_number: str, employee_data: EmployeeUpdate, db: 
         employee.display_name = employee.thai_name or employee.english_name or f"พนักงาน {badge_number}"
         
         db.commit()
-        
+        db.refresh(employee)
+
         return {
             "success": True,
-            "message": "Employee updated successfully"
+            "message": "Employee updated successfully",
+            "badge_number": employee.badge_number,
+            "english_name": employee.english_name,
+            "thai_name": employee.thai_name,
+            "display_name": employee.display_name,
+            "department": employee.department,
+            "position": employee.position,
+            "is_active": employee.is_active,
+            "is_hidden": employee.is_hidden
         }
     except HTTPException:
         raise
@@ -407,20 +434,23 @@ async def get_thai_names(db: Session = Depends(get_db)):
 
 
 @router.put("/thai-names/{badge_number}")
-async def update_thai_name(badge_number: str, thai_name: str, db: Session = Depends(get_db)):
+async def update_thai_name(badge_number: str, thai_name_data: dict, db: Session = Depends(get_db)):
     """Update Thai name for an employee"""
     try:
         employee = db.query(Employee).filter(Employee.badge_number == badge_number).first()
         if not employee:
             raise HTTPException(status_code=404, detail="Employee not found")
-        
+
+        thai_name = thai_name_data.get("thai_name", "")
         employee.thai_name = thai_name
-        employee.display_name = thai_name
+        employee.display_name = thai_name_data.get("display_name", thai_name)
         db.commit()
-        
+
         return {
             "success": True,
-            "message": "Thai name updated successfully"
+            "message": "Thai name updated successfully",
+            "thai_name": employee.thai_name,
+            "display_name": employee.display_name
         }
     except HTTPException:
         raise
@@ -480,19 +510,4 @@ async def get_employee_summary(db: Session = Depends(get_db)):
 # HEALTH & STATUS
 # ============================================================================
 
-@router.get("/health")
-async def employees_health_check(db: Session = Depends(get_db)):
-    """Health check for employee system"""
-    try:
-        total_employees = db.query(Employee).filter(Employee.is_active == True).count()
-        
-        return {
-            "status": "healthy",
-            "total_employees": total_employees,
-            "has_employees": total_employees > 0
-        }
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e)
-        }
+# Health endpoint moved above /{badge_number} to avoid route conflicts
