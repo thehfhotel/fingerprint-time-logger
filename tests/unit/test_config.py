@@ -410,7 +410,7 @@ class TestConfigurationDocumentation:
         config = Settings()
 
         # Check that no settings are None (all have defaults)
-        config_dict = config.dict()
+        config_dict = config.model_dump()
         for key, value in config_dict.items():
             assert value is not None, f"Setting {key} should have a default value"
 
@@ -437,8 +437,8 @@ class TestConfigurationDocumentation:
 
     def test_environment_prefix_consistency(self):
         """Test that environment prefix is consistently applied"""
-        # This tests the Config.env_prefix setting
+        # This tests the model_config.env_prefix setting
         config = Settings()
-        assert hasattr(config, 'Config')
-        assert config.Config.env_prefix == "FINGERPRINT_"
-        assert config.Config.case_sensitive is False
+        assert hasattr(config, 'model_config')
+        assert config.model_config.get('env_prefix') == "FINGERPRINT_"
+        assert config.model_config.get('case_sensitive') is False

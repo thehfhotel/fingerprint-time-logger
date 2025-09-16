@@ -4,6 +4,7 @@ Simplified configuration management for the unified FastAPI system
 """
 
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 from typing import Optional
 
 
@@ -68,10 +69,11 @@ class Settings(BaseSettings):
         """Check if running in development environment"""
         return self.environment.lower() == "development"
 
-    class Config:
-        env_file = ".env"
-        env_prefix = "FINGERPRINT_"  # Environment variables prefix
-        case_sensitive = False
+    model_config = ConfigDict(
+        env_file=".env",
+        env_prefix="FINGERPRINT_",  # Environment variables prefix
+        case_sensitive=False
+    )
 
 
 # Global settings instance

@@ -1,6 +1,6 @@
 from datetime import datetime, time, date
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from enum import Enum
 
 
@@ -31,8 +31,7 @@ class Device(DeviceBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Employee schemas (unified model)
@@ -65,8 +64,7 @@ class Employee(EmployeeBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Attendance Record schemas
@@ -94,8 +92,7 @@ class AttendanceRecord(AttendanceRecordBase):
     device: Optional[Device] = None
     adjustments: Optional[List['AttendanceAdjustment']] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Attendance Adjustment schemas
@@ -126,8 +123,7 @@ class AttendanceAdjustment(AttendanceAdjustmentBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Sync Log schemas
