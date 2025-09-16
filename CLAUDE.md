@@ -5,21 +5,20 @@ Modern fingerprint time logger for ZKTeco biometric devices with Thai localizati
 ## Quick Start
 
 ```bash
-# Start Docker services
-./scripts/start.sh
+# Application Management (consolidated script)
+./scripts/manage-app.sh start      # Start the application
+./scripts/manage-app.sh stop       # Stop the application
+./scripts/manage-app.sh restart    # Restart the application
+./scripts/manage-app.sh status     # Check comprehensive status
+./scripts/manage-app.sh health     # Quick health check
+./scripts/manage-app.sh logs       # Show application logs
+./scripts/manage-app.sh deploy     # Deploy with fresh build
+./scripts/manage-app.sh backup     # Backup database
 
-# Use application
+# Application URLs (after starting):
 # Dashboard: http://localhost:5000
-# API: Same server on port 5000
-
-# Stop application  
-./scripts/stop.sh
-
-# Check status
-./scripts/status.sh
-
-# Restart server
-./scripts/restart.sh
+# API Docs:  http://localhost:5000/docs
+# Status:    http://localhost:5000/status
 ```
 
 ## Development
@@ -136,17 +135,15 @@ ZKTECO_PORT=4370
 
 ### Test Execution
 ```bash
-# Quick smoke tests
-./scripts/run_e2e_tests.sh smoke
+# Consolidated testing script
+./scripts/test-verify.sh all            # All tests and quality checks
+./scripts/test-verify.sh e2e            # E2E tests only
 
-# Complete workflow testing
-./scripts/run_e2e_tests.sh workflows
-
-# Performance and load testing
-./scripts/run_e2e_tests.sh performance
-
-# Cross-browser testing
-./scripts/run_e2e_tests.sh --browser firefox
+# E2E-specific (legacy, still available)
+./scripts/run_e2e_tests.sh smoke       # Quick smoke tests
+./scripts/run_e2e_tests.sh workflows   # Complete workflow testing
+./scripts/run_e2e_tests.sh performance # Performance and load testing
+./scripts/run_e2e_tests.sh --browser firefox # Cross-browser testing
 ```
 
 ## Documentation
@@ -166,19 +163,21 @@ ZKTECO_PORT=4370
 
 ### Running Tests
 ```bash
-# Unit tests only
+# Testing and Verification (consolidated script)
+./scripts/test-verify.sh all            # Complete test suite
+./scripts/test-verify.sh unit           # Unit tests only
+./scripts/test-verify.sh integration    # Integration tests
+./scripts/test-verify.sh e2e            # E2E tests (requires app running)
+./scripts/test-verify.sh security       # Security tests
+./scripts/test-verify.sh quality        # Code quality checks
+./scripts/test-verify.sh performance    # Performance tests
+./scripts/test-verify.sh report         # Generate test report
+
+# Test options
+./scripts/test-verify.sh all --coverage 85 --browser firefox --parallel
+
+# Legacy command still works:
 python3 -m pytest -v
-
-# E2E tests (requires application running)
-./scripts/run_e2e_tests.sh
-
-# Run specific E2E test suites
-./scripts/run_e2e_tests.sh smoke     # Quick validation
-./scripts/run_e2e_tests.sh workflows # Complete workflows
-./scripts/run_e2e_tests.sh integration # System integration
-
-# All tests with reporting
-./scripts/run_e2e_tests.sh --parallel --browser chromium
 ```
 
 ### Test Categories
@@ -192,7 +191,8 @@ python3 -m pytest -v
 **Commit Strategy**: Follow `COMMIT_STRATEGY.md` for granular commits at every development step.
 
 **Testing**: Always run tests before commits:
-1. `python3 -m pytest -v` (unit tests)
-2. `./scripts/run_e2e_tests.sh smoke` (critical paths)
+1. `./scripts/test-verify.sh unit` (unit tests)
+2. `./scripts/test-verify.sh e2e` (critical E2E paths)
+3. `./scripts/test-verify.sh all` (comprehensive testing - recommended)
 
 **Focus**: Simple, functional single-user system optimized for reliability and ease of use.

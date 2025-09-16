@@ -1,76 +1,168 @@
-# Scripts
+# Scripts Directory
 
-Management scripts for fingerprint time logger.
+This directory contains utility scripts for managing the Fingerprint Time Logger application.
 
-## Usage
+## Consolidated Scripts (Primary)
+
+### Application Management
+- **`manage-app.sh`** - **Consolidated application lifecycle management**
+  - `start` - Start the Docker application
+  - `stop` - Stop the Docker application
+  - `restart` - Restart the Docker application
+  - `status` - Show comprehensive application status
+  - `health` - Quick health check
+  - `logs` - Show application logs
+  - `deploy` - Deploy with fresh build
+  - `backup` - Backup database
+
+### Testing & Verification
+- **`test-verify.sh`** - **Consolidated testing and quality verification**
+  - `all` - Complete test suite with reporting
+  - `unit` - Unit tests with coverage
+  - `integration` - Integration tests
+  - `e2e` - End-to-end browser tests
+  - `security` - Security vulnerability tests
+  - `quality` - Code quality checks (style, security, dependencies)
+  - `performance` - Performance benchmarking
+  - `report` - Generate comprehensive test report
+
+## Specialized Scripts
+
+### E2E Testing
+- **`run_e2e_tests.sh`** - Advanced E2E testing framework
+  - Called by `test-verify.sh` for E2E tests
+  - Supports multiple browsers and execution modes
+
+### Setup & Installation
+- **`setup_enhanced_testing.sh`** - Testing framework installation
+  - Sets up E2E, security, and quality testing infrastructure
+
+### Utilities
+- **`display_attendance.py`** - Display formatted attendance records
+
+## Usage Examples
 
 ```bash
-./scripts/start.sh     # Start unified server
-./scripts/stop.sh      # Stop server  
-./scripts/restart.sh   # Restart server
-./scripts/status.sh    # Check status
-./scripts/health.sh    # Quick health check
+# Application Management
+./scripts/manage-app.sh start           # Start application
+./scripts/manage-app.sh status          # Check comprehensive status
+./scripts/manage-app.sh backup          # Backup database
+./scripts/manage-app.sh deploy          # Deploy with fresh build
+
+# Testing & Verification
+./scripts/test-verify.sh all                    # Complete test suite
+./scripts/test-verify.sh unit --coverage 85    # Unit tests with coverage
+./scripts/test-verify.sh e2e --browser firefox # E2E tests with Firefox
+./scripts/test-verify.sh quality               # Code quality checks
+
+# Advanced E2E Testing
+./scripts/run_e2e_tests.sh workflows --parallel
+./scripts/run_e2e_tests.sh smoke --browser chromium
 ```
 
-## Scripts
+## Script Organization
 
-| Script | Purpose |
-|--------|---------|
-| `start.sh` | Start unified FastAPI server on port 5000 |
-| `stop.sh` | Stop unified server |
-| `restart.sh` | Restart server with health checks |
-| `status.sh` | Full system diagnostics |
-| `health.sh` | Quick health check (exit codes) |
+```
+scripts/
+├── manage-app.sh           # 🎯 Application lifecycle management
+├── test-verify.sh          # 🧪 Testing and quality verification
+├── run_e2e_tests.sh        # 🖥️ Advanced E2E testing
+├── setup_enhanced_testing.sh # ⚙️ Testing framework setup
+├── display_attendance.py   # 📊 Utility scripts
+├── lib/common.sh           # 📚 Shared functions
+└── archive/                # 📦 Legacy scripts (archived)
+```
 
-## Simple Scripts
+## Application Access
 
-For quick, no-frills management:
+After starting with `./scripts/manage-app.sh start`:
 
-| Script | Purpose |
-|--------|---------|
-| `start_simple.sh` | Basic server startup |
-| `stop_simple.sh` | Basic server shutdown |
-| `status_simple.sh` | Simple status check |
+- **Dashboard**: http://localhost:5000
+- **API Documentation**: http://localhost:5000/docs
+- **System Status**: http://localhost:5000/status
+- **Health Check**: http://localhost:5000/health
+
+## Migration from Legacy Scripts
+
+Old scripts have been consolidated but archived for reference:
+
+| Legacy Script | New Command |
+|---------------|-------------|
+| `start.sh` | `./scripts/manage-app.sh start` |
+| `stop.sh` | `./scripts/manage-app.sh stop` |
+| `restart.sh` | `./scripts/manage-app.sh restart` |
+| `status.sh` | `./scripts/manage-app.sh status` |
+| `health.sh` | `./scripts/manage-app.sh health` |
+| `run_tests.sh` | `./scripts/test-verify.sh all` |
+| `test_status.sh` | `./scripts/test-verify.sh report` |
 
 ## Health Check Exit Codes
 
-- `0` = Healthy
-- `1` = Partial/Warning  
-- `2` = Down/Critical
+- `0` = Healthy/Success
+- `1` = Partial Issues/Warnings
+- `2` = Critical Failures
 
-## Access
+## Test Reporting
 
-- Dashboard: http://localhost:5000
-- API Health: http://localhost:5000/api/devices/health
-- API Docs: http://localhost:5000/docs
+The consolidated testing script generates comprehensive reports:
 
-## Files
+- **HTML Reports**: `reports/test-summary.html` (main report)
+- **Unit Coverage**: `reports/unit/coverage/index.html`
+- **E2E Results**: `tests/e2e/reports/`
+- **Quality Reports**: `reports/quality/`
 
-- PID: `pids/unified_server.pid`
-- Log: `logs/unified_server.log`
-- DB: `database/attendance.db`
+## Database & Files
 
-## Python Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `test_device_connection.py` | Test ZKTeco device connectivity |
-| `display_attendance.py` | Show attendance records from device |
-| `debug_data.py` | Debug attendance data |
-| `migrate_thai_names.py` | Migrate Thai names to database |
+- **Database**: `database/attendance.db`
+- **Backups**: `backups/` (created by backup command)
+- **Logs**: Docker container logs (accessed via `manage-app.sh logs`)
+- **Reports**: `reports/` (test results and coverage)
 
 ## Troubleshooting
 
 ```bash
-# Check logs
-tail -f logs/unified_server.log
+# Check application status
+./scripts/manage-app.sh status
+
+# View recent logs
+./scripts/manage-app.sh logs
+
+# Health check with details
+./scripts/manage-app.sh health
+
+# Run diagnostics
+./scripts/test-verify.sh all
+
+# Test device connectivity
+python3 scripts/display_attendance.py
 
 # Force restart
-./scripts/stop.sh && ./scripts/start.sh
+./scripts/manage-app.sh stop && ./scripts/manage-app.sh start
+```
 
-# Port conflicts
-ss -tlnp | grep :5000
+## Advanced Configuration
 
-# Test device connection
-python3 scripts/test_device_connection.py 192.168.100.209
+### Environment Variables
+
+**Application Management:**
+- `SERVICE_NAME` - Docker service name (default: fingerprint-time-logger)
+- `PORT` - Application port (default: 5000)
+- `MAX_HEALTH_RETRIES` - Health check retry count (default: 30)
+
+**Testing & Verification:**
+- `COVERAGE_THRESHOLD` - Coverage threshold percentage (default: 80)
+- `BROWSER` - Browser for E2E tests (default: chromium)
+- `APP_URL` - Application URL for testing (default: http://localhost:5000)
+- `PARALLEL` - Enable parallel execution (default: false)
+
+### Script Options
+
+```bash
+# Application management options
+./scripts/manage-app.sh start --no-build    # Start without rebuilding
+./scripts/manage-app.sh deploy --force      # Force deploy without checks
+
+# Testing options
+./scripts/test-verify.sh all --coverage 90 --parallel --browser firefox
+./scripts/test-verify.sh e2e --app-url http://localhost:8000
 ```
