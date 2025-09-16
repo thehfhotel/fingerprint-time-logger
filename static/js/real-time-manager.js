@@ -135,7 +135,7 @@ class RealTimeManager {
             
             // Refresh attendance data
             if (window.updateDashboard) {
-                const response = await fetch(appConfig.getApiUrl('attendance/'), {
+                const response = await fetch(appConfig.getApiUrl('attendance/summary'), {
                     method: 'GET',
                     headers: { 'Accept': 'application/json' }
                 });

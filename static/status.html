@@ -754,7 +754,7 @@
 
                 try {
                     const logType = document.getElementById('log-filter').value;
-                    const response = await fetch(`/api/system/logs?log_type=${logType}&limit=50`);
+                    const response = await fetch(appConfig.getApiUrl(`system/logs?log_type=${logType}&limit=50`));
                     const data = await response.json();
 
                     this.displayLogs(data.logs || []);

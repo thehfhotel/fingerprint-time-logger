@@ -9,6 +9,7 @@ import os
 from typing import List
 import json
 from datetime import datetime, timedelta
+from app.utils.cache_busting import cache_manager
 
 from app.core.database import engine, Base
 from app.api import (
@@ -174,8 +175,30 @@ fingerprint_app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files
-fingerprint_app.mount("/static", StaticFiles(directory="static"), name="static")
+# Custom StaticFiles with cache control headers
+class CacheControlStaticFiles(StaticFiles):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        # Add aggressive cache control headers
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        # Force fresh content for JavaScript files
+        if full_path.endswith('.js'):
+            response.headers["ETag"] = f'"v2.0-https-fix-{hash(full_path)}"'
+        return response
+
+# Mount static files with cache control
+fingerprint_app.mount("/static", CacheControlStaticFiles(directory="static"), name="static")
+
+# Cache busting endpoint
+@fingerprint_app.get("/api/static-version/{file_path:path}")
+async def get_static_version(file_path: str):
+    """Get versioned URL for static file"""
+    return {"url": cache_manager.get_versioned_url(file_path)}
 
 # Include Consolidated API routers - Phase 4 Simplification
 fingerprint_app.include_router(consolidated_attendance.router, prefix="/api/attendance", tags=["attendance"])
@@ -221,30 +244,38 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
 
-# Serve HTML pages
+# Helper function to serve HTML with cache control headers
+def serve_html_with_cache_control(file_path: str):
+    response = FileResponse(file_path)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+# Serve HTML pages with cache control headers
 @fingerprint_app.get("/")
 async def serve_dashboard():
-    return FileResponse("static/dashboard.html")
+    return serve_html_with_cache_control("static/dashboard.html")
 
 @fingerprint_app.get("/device-status")
 async def serve_device_status():
-    return FileResponse("static/device-status.html")
+    return serve_html_with_cache_control("static/device-status.html")
 
 @fingerprint_app.get("/export")
 async def serve_export():
-    return FileResponse("static/export.html")
+    return serve_html_with_cache_control("static/export.html")
 
 @fingerprint_app.get("/nickname-management")
 async def serve_nickname_management():
-    return FileResponse("static/nickname-management.html")
+    return serve_html_with_cache_control("static/nickname-management.html")
 
 @fingerprint_app.get("/status")
 async def serve_status():
-    return FileResponse("static/status.html")
+    return serve_html_with_cache_control("static/status.html")
 
 @fingerprint_app.get("/docs")
 async def serve_api_docs():
-    return FileResponse("static/swagger.html")
+    return serve_html_with_cache_control("static/swagger.html")
 
 @fingerprint_app.get("/docs/openapi.yaml")
 async def serve_openapi_spec():

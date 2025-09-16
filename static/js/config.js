@@ -1,5 +1,6 @@
 /**
  * Configuration Manager - Loads app configuration from API
+ * Version 2.0 - Fixed HTTPS mixed content issue
  */
 
 class ConfigManager {
@@ -7,6 +8,8 @@ class ConfigManager {
         this.config = null;
         this.loaded = false;
         this.basePath = this.detectBasePath();
+        this.version = '2.0-https-fix';
+        console.log('ConfigManager initialized - Version:', this.version);
     }
 
     detectBasePath() {
@@ -91,18 +94,21 @@ class ConfigManager {
         
         // Don't add slash if endpoint has query parameters, already ends with slash, or is in noSlashEndpoints
         const basePathWithoutSlash = basePath ? basePath.replace(/\/$/, '') : '';
+        const containsMarkLate = basePath && basePath.includes('/mark-late');
         const needsSlash = basePath && 
                           !basePath.endsWith('/') && 
                           !noSlashEndpoints.includes(basePathWithoutSlash) && 
+                          !containsMarkLate &&
                           !queryString; // Don't add slash if there are query parameters
         
         const finalBasePath = needsSlash ? basePath + '/' : basePath;
         const finalEndpoint = queryString ? `${finalBasePath}?${queryString}` : finalBasePath;
         
-        const relativeUrl = `${this.basePath}/api/${finalEndpoint}`;
-        console.log('getApiUrl debug - smart slash handling:', { endpoint, cleanEndpoint, basePath, queryString, finalEndpoint, needsSlash, relativeUrl });
+        // Return absolute URL to prevent mixed content issues
+        const absoluteUrl = `${window.location.protocol}//${window.location.host}${this.basePath}/api/${finalEndpoint}`;
+        console.log('getApiUrl debug v2.0 - HTTPS fix applied:', { endpoint, cleanEndpoint, basePath, queryString, finalEndpoint, needsSlash, absoluteUrl });
         
-        return relativeUrl;
+        return absoluteUrl;
     }
 
     getBasePath() {

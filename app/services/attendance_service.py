@@ -52,6 +52,9 @@ class SimpleAttendanceService:
         """Get simple attendance summary for dashboard"""
         db = next(get_db())
         try:
+            # Import AttendanceAdjustment at the top of the function
+            from app.models.models import AttendanceAdjustment
+            
             # Get recent records (last 100), filtering out future dates
             current_year = datetime.now().year
             max_year = current_year + 5  # Allow up to 5 years in the future for clock skew
@@ -78,13 +81,23 @@ class SimpleAttendanceService:
                 if employee_id not in employee_data:
                     employee_data[employee_id] = []
                 
+                # Get the latest adjustment for this record (if any)
+                adjustment = db.query(AttendanceAdjustment)\
+                              .filter(AttendanceAdjustment.attendance_record_id == record.id)\
+                              .filter(AttendanceAdjustment.adjustment_type == 'late_marking')\
+                              .order_by(desc(AttendanceAdjustment.adjustment_timestamp))\
+                              .first()
+                
                 employee_data[employee_id].append({
+                    'id': record.id,
                     'employee_id': employee_id,
                     'time': record.timestamp.strftime('%H:%M:%S'),
                     'date': record.timestamp.strftime('%Y-%m-%d'),
-                    'date_display': record.timestamp.strftime('%m/%d'),
+                    'date_display': record.timestamp.strftime('%m/%d/%Y'),
                     'status': 'Check-in' if record.punch_type == 0 else 'Check-out',
-                    'timestamp': record.timestamp.isoformat()
+                    'timestamp': record.timestamp.isoformat(),
+                    'is_marked_late': adjustment.is_marked_late if adjustment else False,
+                    'late_reason': adjustment.late_reason if adjustment else None
                 })
             
             return {

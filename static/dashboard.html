@@ -7,15 +7,23 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Employee Time Log Dashboard</title>
-    <!-- CSS Files -->
-    <link rel="stylesheet" href="static/css/base.css">
-    <link rel="stylesheet" href="static/css/dashboard.css">
-    <link rel="stylesheet" href="static/css/modal.css">
+    <!-- CSS Files with cache busting -->
+    <script>
+        const cssTimestamp = Date.now();
+        document.write(`<link rel="stylesheet" href="static/css/base.css?v=${cssTimestamp}">`);
+        document.write(`<link rel="stylesheet" href="static/css/dashboard.css?v=${cssTimestamp}">`);
+        document.write(`<link rel="stylesheet" href="static/css/modal.css?v=${cssTimestamp}">`);
+    </script>
     
     <!-- JavaScript Files -->
-    <script src="static/js/config.js?bust=1752420001&force=true&v=7&simplified=1&final=<?= Date.now() ?>"></script>
-    <script src="static/js/websocket-adapter.js"></script>
-    <script src="static/js/real-time-manager.js"></script>
+    <script>
+        // Cache busting for critical JS files - v2.0 HTTPS fix
+        const timestamp = Date.now();
+        const version = 'v2.0-https-fix';
+        document.write(`<script src="static/js/config.js?v=${timestamp}&version=${version}&bust=2"><\/script>`);
+        document.write(`<script src="static/js/websocket-adapter.js?v=${timestamp}&version=${version}&bust=2"><\/script>`);
+        document.write(`<script src="static/js/real-time-manager.js?v=${timestamp}&version=${version}&bust=2"><\/script>`);
+    </script>
 </head>
 <body>
     <div class="header">
@@ -134,11 +142,11 @@
                 deviceStatusText.textContent = 'Device Disconnected';
             }
             
-            lastUpdate.textContent = data.last_update || data.timestamp || new Date().toLocaleString();
+            lastUpdate.textContent = new Date().toLocaleString();
             
             // Update last import time if available
             if (data.last_import) {
-                lastImport.textContent = data.last_import;
+                lastImport.textContent = new Date(data.last_import).toLocaleString();
                 lastImport.style.color = '#90EE90'; // Light green to indicate successful import
             } else {
                 lastImport.textContent = 'Never';
@@ -198,7 +206,7 @@
                         id: record.id,
                         employee_id: record.employee_badge_number || record.employee_id,  // Handle both field names
                         time: timestamp.toLocaleTimeString('en-US', {hour12: false}),
-                        date: timestamp.toLocaleDateString(),
+                        date: timestamp.toLocaleDateString('en-US', {month: '2-digit', day: '2-digit', year: 'numeric'}),
                         timestamp: record.timestamp,
                         is_marked_late: record.is_marked_late || false,
                         late_reason: record.late_reason || null,
@@ -439,7 +447,7 @@
                 
                 // Update last import time if available
                 if (data.last_import) {
-                    lastImport.textContent = data.last_import;
+                    lastImport.textContent = new Date(data.last_import).toLocaleString();
                     lastImport.style.color = '#90EE90'; // Light green to indicate successful import
                 } else {
                     lastImport.textContent = 'Never';
