@@ -16,10 +16,10 @@ NC='\033[0m' # No Color
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-SERVICE_NAME="fingerprint-time-logger"
+SERVICE_NAME="fingerprint-logger"
 COMPOSE_FILE="$PROJECT_ROOT/docker-compose.yml"
 PORT=5000
-HEALTH_ENDPOINT="http://localhost:$PORT/health"
+HEALTH_ENDPOINT="http://localhost:$PORT/fingerprintlogs/health"
 MAX_HEALTH_RETRIES=30
 HEALTH_RETRY_DELAY=2
 
