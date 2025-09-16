@@ -5,7 +5,11 @@ Modern fingerprint time logger for ZKTeco biometric devices with Thai localizati
 ## Quick Start
 
 ```bash
-# Application Management (consolidated script)
+# Interactive Scripts (NEW) - Guided menus for easy operation
+./scripts/manage-app.sh            # Interactive application management
+./scripts/test-verify.sh           # Interactive testing with configuration
+
+# Direct Commands - For automation and CI/CD
 ./scripts/manage-app.sh start      # Start the application
 ./scripts/manage-app.sh stop       # Stop the application
 ./scripts/manage-app.sh restart    # Restart the application
@@ -33,7 +37,10 @@ alembic -c database/alembic.ini upgrade head
 # Run tests
 python3 -m pytest -v
 
-# Testing & Verification
+# Interactive Testing & Verification
+./scripts/test-verify.sh           # Interactive testing with configuration options
+
+# Direct Testing Commands
 ./scripts/test-verify.sh setup     # Setup testing infrastructure
 ./scripts/test-verify.sh all       # Complete test suite
 ./scripts/test-verify.sh e2e       # E2E tests only

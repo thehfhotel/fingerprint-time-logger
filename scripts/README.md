@@ -5,26 +5,17 @@ This directory contains utility scripts for managing the Fingerprint Time Logger
 ## Consolidated Scripts (Primary)
 
 ### Application Management
-- **`manage-app.sh`** - **Consolidated application lifecycle management**
-  - `start` - Start the Docker application
-  - `stop` - Stop the Docker application
-  - `restart` - Restart the Docker application
-  - `status` - Show comprehensive application status
-  - `health` - Quick health check
-  - `logs` - Show application logs
-  - `deploy` - Deploy with fresh build
-  - `backup` - Backup database
+- **`manage-app.sh`** - **Interactive application lifecycle management**
+  - **Interactive Mode**: Run without arguments for guided menu
+  - **Command Mode**: Traditional command-line interface
+  - Functions: `start`, `stop`, `restart`, `status`, `health`, `logs`, `deploy`, `backup`
 
 ### Testing & Verification
-- **`test-verify.sh`** - **Consolidated testing and quality verification**
-  - `all` - Complete test suite with reporting
-  - `unit` - Unit tests with coverage
-  - `integration` - Integration tests
-  - `e2e` - End-to-end browser tests
-  - `security` - Security vulnerability tests
-  - `quality` - Code quality checks (style, security, dependencies)
-  - `performance` - Performance benchmarking
-  - `report` - Generate comprehensive test report
+- **`test-verify.sh`** - **Interactive testing and quality verification**
+  - **Interactive Mode**: Run without arguments for guided menu with configuration
+  - **Command Mode**: Traditional command-line interface
+  - **Configuration**: Interactive settings for coverage, browser, parallel execution
+  - Functions: `all`, `unit`, `integration`, `e2e`, `security`, `quality`, `performance`, `setup`, `report`
 
 ## Specialized Scripts
 
@@ -38,13 +29,16 @@ This directory contains utility scripts for managing the Fingerprint Time Logger
 ## Usage Examples
 
 ```bash
-# Application Management
+# Interactive Mode (NEW) - Run without arguments for guided menus
+./scripts/manage-app.sh                 # Interactive application management
+./scripts/test-verify.sh                # Interactive testing with configuration
+
+# Command Mode (Traditional) - Direct commands for automation
 ./scripts/manage-app.sh start           # Start application
 ./scripts/manage-app.sh status          # Check comprehensive status
 ./scripts/manage-app.sh backup          # Backup database
 ./scripts/manage-app.sh deploy          # Deploy with fresh build
 
-# Testing & Verification
 ./scripts/test-verify.sh setup                 # Setup testing infrastructure
 ./scripts/test-verify.sh all                   # Complete test suite
 ./scripts/test-verify.sh unit --coverage 85    # Unit tests with coverage

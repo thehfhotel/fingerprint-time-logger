@@ -368,43 +368,146 @@ Environment Variables:
 EOF
 }
 
-# Main execution
-main() {
-    case "${1:-help}" in
-        start)
+# Interactive menu system
+show_menu() {
+    clear
+    echo -e "${CYAN}=====================================${NC}"
+    echo -e "${CYAN}  Fingerprint Time Logger Manager${NC}"
+    echo -e "${CYAN}=====================================${NC}"
+    echo ""
+    echo -e "${GREEN}Available Operations:${NC}"
+    echo ""
+    echo -e "${BLUE}1.${NC} Start Application"
+    echo -e "${BLUE}2.${NC} Stop Application"
+    echo -e "${BLUE}3.${NC} Restart Application"
+    echo -e "${BLUE}4.${NC} Show Status"
+    echo -e "${BLUE}5.${NC} Health Check"
+    echo -e "${BLUE}6.${NC} Show Logs"
+    echo -e "${BLUE}7.${NC} Deploy Application"
+    echo -e "${BLUE}8.${NC} Backup Database"
+    echo -e "${BLUE}9.${NC} Help"
+    echo -e "${RED}0.${NC} Exit"
+    echo ""
+    echo -e "${YELLOW}=====================================${NC}"
+}
+
+get_user_choice() {
+    local choice
+    echo -ne "${GREEN}Enter your choice [0-9]: ${NC}"
+    read -r choice
+    echo "$choice"
+}
+
+execute_choice() {
+    local choice=$1
+
+    case $choice in
+        1)
+            log_info "Starting application..."
             start_application
             ;;
-        stop)
+        2)
+            log_info "Stopping application..."
             stop_application
             ;;
-        restart)
+        3)
+            log_info "Restarting application..."
             restart_application
             ;;
-        status)
+        4)
             show_status
             ;;
-        health)
+        5)
             check_health
             ;;
-        logs)
+        6)
             show_logs
             ;;
-        deploy)
+        7)
+            log_info "Deploying application..."
             deploy_application
             ;;
-        backup)
+        8)
+            log_info "Creating database backup..."
             backup_database
             ;;
-        help|--help|-h)
+        9)
             show_usage
+            ;;
+        0)
+            log_info "Exiting..."
+            exit 0
             ;;
         *)
-            log_error "Unknown command: $1"
-            echo ""
-            show_usage
-            exit 1
+            log_error "Invalid choice: $choice"
             ;;
     esac
+}
+
+wait_for_continue() {
+    echo ""
+    echo -ne "${YELLOW}Press Enter to continue...${NC}"
+    read -r
+}
+
+# Main execution with interactive menu or direct command support
+main() {
+    # If arguments provided, use command-line mode for backwards compatibility
+    if [[ $# -gt 0 ]]; then
+        case "${1:-help}" in
+            start)
+                start_application
+                ;;
+            stop)
+                stop_application
+                ;;
+            restart)
+                restart_application
+                ;;
+            status)
+                show_status
+                ;;
+            health)
+                check_health
+                ;;
+            logs)
+                show_logs
+                ;;
+            deploy)
+                deploy_application
+                ;;
+            backup)
+                backup_database
+                ;;
+            help|--help|-h)
+                show_usage
+                ;;
+            *)
+                log_error "Unknown command: $1"
+                echo ""
+                show_usage
+                exit 1
+                ;;
+        esac
+        return
+    fi
+
+    # Interactive menu mode
+    while true; do
+        show_menu
+        choice=$(get_user_choice)
+        echo ""
+
+        execute_choice "$choice"
+
+        if [[ "$choice" != "0" && "$choice" != "9" ]]; then
+            wait_for_continue
+        fi
+
+        if [[ "$choice" == "0" ]]; then
+            break
+        fi
+    done
 }
 
 # Run main function with all arguments

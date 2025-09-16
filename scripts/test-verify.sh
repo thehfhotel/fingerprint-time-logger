@@ -648,7 +648,184 @@ Environment Variables:
 EOF
 }
 
-# Main execution
+# Interactive menu system for testing
+show_test_menu() {
+    clear
+    echo -e "${CYAN}=====================================${NC}"
+    echo -e "${CYAN}   Testing & Verification Manager${NC}"
+    echo -e "${CYAN}=====================================${NC}"
+    echo ""
+    echo -e "${GREEN}Available Test Operations:${NC}"
+    echo ""
+    echo -e "${BLUE} 1.${NC} Run All Tests (Complete Suite)"
+    echo -e "${BLUE} 2.${NC} Unit Tests Only"
+    echo -e "${BLUE} 3.${NC} Integration Tests Only"
+    echo -e "${BLUE} 4.${NC} E2E Tests Only"
+    echo -e "${BLUE} 5.${NC} Security Tests Only"
+    echo -e "${BLUE} 6.${NC} Quality Checks Only"
+    echo -e "${BLUE} 7.${NC} Performance Tests Only"
+    echo -e "${BLUE} 8.${NC} Setup Testing Infrastructure"
+    echo -e "${BLUE} 9.${NC} Generate Test Report"
+    echo -e "${BLUE}10.${NC} Configure Test Settings"
+    echo -e "${BLUE}11.${NC} Help & Usage"
+    echo -e "${RED} 0.${NC} Exit"
+    echo ""
+    echo -e "${YELLOW}=====================================${NC}"
+}
+
+show_config_menu() {
+    echo ""
+    echo -e "${PURPLE}=== Configuration Options ===${NC}"
+    echo -e "${BLUE}1.${NC} Coverage Threshold: ${GREEN}$COVERAGE_THRESHOLD%${NC}"
+    echo -e "${BLUE}2.${NC} Browser: ${GREEN}$BROWSER${NC}"
+    echo -e "${BLUE}3.${NC} Parallel Execution: ${GREEN}$PARALLEL${NC}"
+    echo -e "${BLUE}4.${NC} App URL: ${GREEN}$APP_URL${NC}"
+    echo -e "${BLUE}5.${NC} Back to Main Menu"
+    echo ""
+}
+
+get_test_choice() {
+    local choice
+    echo -ne "${GREEN}Enter your choice [0-11]: ${NC}"
+    read -r choice
+    echo "$choice"
+}
+
+configure_settings() {
+    while true; do
+        show_config_menu
+        echo -ne "${GREEN}Select setting to change [1-5]: ${NC}"
+        read -r config_choice
+
+        case $config_choice in
+            1)
+                echo -ne "${GREEN}Enter coverage threshold (current: $COVERAGE_THRESHOLD): ${NC}"
+                read -r new_coverage
+                if [[ "$new_coverage" =~ ^[0-9]+$ ]] && [[ "$new_coverage" -ge 0 ]] && [[ "$new_coverage" -le 100 ]]; then
+                    COVERAGE_THRESHOLD="$new_coverage"
+                    log_success "Coverage threshold set to $COVERAGE_THRESHOLD%"
+                else
+                    log_error "Invalid coverage threshold. Please enter a number between 0-100."
+                fi
+                ;;
+            2)
+                echo -ne "${GREEN}Enter browser (chromium/firefox/webkit, current: $BROWSER): ${NC}"
+                read -r new_browser
+                if [[ "$new_browser" =~ ^(chromium|firefox|webkit)$ ]]; then
+                    BROWSER="$new_browser"
+                    log_success "Browser set to $BROWSER"
+                else
+                    log_error "Invalid browser. Please enter: chromium, firefox, or webkit"
+                fi
+                ;;
+            3)
+                if [[ "$PARALLEL" == "true" ]]; then
+                    PARALLEL="false"
+                    log_success "Parallel execution disabled"
+                else
+                    PARALLEL="true"
+                    log_success "Parallel execution enabled"
+                fi
+                ;;
+            4)
+                echo -ne "${GREEN}Enter app URL (current: $APP_URL): ${NC}"
+                read -r new_url
+                if [[ "$new_url" =~ ^https?:// ]]; then
+                    APP_URL="$new_url"
+                    log_success "App URL set to $APP_URL"
+                else
+                    log_error "Invalid URL format. Please include http:// or https://"
+                fi
+                ;;
+            5)
+                break
+                ;;
+            *)
+                log_error "Invalid choice: $config_choice"
+                ;;
+        esac
+        echo ""
+        echo -ne "${YELLOW}Press Enter to continue...${NC}"
+        read -r
+    done
+}
+
+execute_test_choice() {
+    local choice=$1
+
+    case $choice in
+        1)
+            log_info "Running complete test suite..."
+            check_prerequisites
+            run_unit_tests
+            run_integration_tests
+            run_e2e_tests
+            run_security_tests
+            run_quality_checks
+            run_performance_tests
+            generate_report
+            ;;
+        2)
+            log_info "Running unit tests..."
+            check_prerequisites
+            run_unit_tests
+            ;;
+        3)
+            log_info "Running integration tests..."
+            check_prerequisites
+            run_integration_tests
+            ;;
+        4)
+            log_info "Running E2E tests..."
+            check_prerequisites
+            run_e2e_tests
+            ;;
+        5)
+            log_info "Running security tests..."
+            check_prerequisites
+            run_security_tests
+            ;;
+        6)
+            log_info "Running quality checks..."
+            check_prerequisites
+            run_quality_checks
+            ;;
+        7)
+            log_info "Running performance tests..."
+            check_prerequisites
+            run_performance_tests
+            ;;
+        8)
+            log_info "Setting up testing infrastructure..."
+            setup_enhanced_testing
+            ;;
+        9)
+            log_info "Generating test report..."
+            generate_report
+            ;;
+        10)
+            configure_settings
+            ;;
+        11)
+            show_usage
+            ;;
+        0)
+            log_info "Exiting..."
+            exit 0
+            ;;
+        *)
+            log_error "Invalid choice: $choice"
+            ;;
+    esac
+}
+
+wait_for_test_continue() {
+    echo ""
+    echo -ne "${YELLOW}Press Enter to continue...${NC}"
+    read -r
+}
+
+# Main execution with interactive menu or direct command support
 main() {
     local command="${1:-help}"
 
@@ -764,5 +941,35 @@ main() {
     fi
 }
 
-# Run main function with all arguments
-main "$@"
+# Enhanced main function with interactive support
+enhanced_main() {
+    # If arguments provided, use command-line mode for backwards compatibility
+    if [[ $# -gt 0 ]]; then
+        main "$@"
+        return
+    fi
+
+    # Interactive menu mode
+    # Create reports directory
+    mkdir -p "$PROJECT_ROOT/reports"
+    cd "$PROJECT_ROOT"
+
+    while true; do
+        show_test_menu
+        choice=$(get_test_choice)
+        echo ""
+
+        execute_test_choice "$choice"
+
+        if [[ "$choice" != "0" && "$choice" != "11" && "$choice" != "10" ]]; then
+            wait_for_test_continue
+        fi
+
+        if [[ "$choice" == "0" ]]; then
+            break
+        fi
+    done
+}
+
+# Run enhanced main function with all arguments
+enhanced_main "$@"
