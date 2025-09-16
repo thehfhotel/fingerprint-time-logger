@@ -9,10 +9,13 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import io
+import logging
 
 from app.core.database import get_db
 from app.services.export_service import export_service
 from app.services.attendance_service import attendance_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -35,16 +38,12 @@ async def export_attendance_csv(
             date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"attendance_export_{date_str}.csv"
         
-        # Get filtered attendance data
-        records = attendance_service.get_attendance_records(
+        # Generate CSV content directly with filters
+        csv_content = export_service.export_attendance_csv(
             start_date=start_date,
             end_date=end_date,
-            employee_badge=employee_badge,
-            limit=50000  # Large limit for exports
+            employee_badge=employee_badge
         )
-        
-        # Generate CSV content
-        csv_content = export_service.export_attendance_csv(records)
         
         # Create streaming response
         output = io.StringIO()
@@ -106,8 +105,7 @@ async def export_employees_csv(
     """Export employee list to CSV"""
     try:
         csv_content = export_service.export_employees_csv(
-            include_hidden=include_hidden,
-            detailed=format == "detailed"
+            include_hidden=include_hidden
         )
         
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -267,16 +265,31 @@ async def export_monthly_report(
 
 @router.get("/reports/employee-summary")
 async def export_employee_summary_report(
+    employee_badge: str = Query(..., description="Employee badge number"),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     format: str = Query("json", description="Export format: json, csv")
 ):
     """Export per-employee summary report"""
     try:
-        report = export_service.generate_employee_summary_report(
+        # Get employee attendance records
+        records = attendance_service.get_attendance_records(
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            employee_badge=employee_badge,
+            limit=50000
         )
+
+        try:
+            report = export_service.generate_employee_summary_report(
+                employee_badge=employee_badge,
+                records=records
+            )
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "not found" in error_msg:
+                raise HTTPException(status_code=404, detail=f"Employee {employee_badge} not found")
+            raise HTTPException(status_code=500, detail=str(e))
         
         if format.lower() == "csv":
             csv_content = export_service.export_employee_summary_csv(report)
@@ -369,13 +382,10 @@ async def quick_export_today_attendance():
     """Quick export of today's attendance data"""
     try:
         today = date.today()
-        records = attendance_service.get_attendance_records(
+        csv_content = export_service.export_attendance_csv(
             start_date=today,
-            end_date=today,
-            limit=1000
+            end_date=today
         )
-        
-        csv_content = export_service.export_attendance_csv(records)
         filename = f"today_attendance_{today.strftime('%Y%m%d')}.csv"
         
         response = StreamingResponse(
@@ -396,13 +406,10 @@ async def quick_export_this_month():
         today = date.today()
         start_date = date(today.year, today.month, 1)
         
-        records = attendance_service.get_attendance_records(
+        csv_content = export_service.export_attendance_csv(
             start_date=start_date,
-            end_date=today,
-            limit=10000
+            end_date=today
         )
-        
-        csv_content = export_service.export_attendance_csv(records)
         filename = f"month_attendance_{today.strftime('%Y%m')}.csv"
         
         response = StreamingResponse(
@@ -421,8 +428,7 @@ async def quick_export_all_employees():
     """Quick export of all active employees"""
     try:
         csv_content = export_service.export_employees_csv(
-            include_hidden=False,
-            detailed=True
+            include_hidden=False
         )
         
         date_str = datetime.now().strftime("%Y%m%d")

@@ -89,11 +89,17 @@ class SimpleExportService:
             logger.error(f"CSV export failed: {e}")
             raise Exception(f"Export failed: {str(e)}")
     
-    def export_employees_csv(self) -> str:
+    def export_employees_csv(self, active_only: bool = False, include_hidden: bool = True) -> str:
         """Export employee list to CSV string"""
         try:
             employees = attendance_service.get_employee_list()
-            
+
+            # Filter based on parameters
+            if active_only:
+                employees = [emp for emp in employees if emp.is_active]
+            if not include_hidden:
+                employees = [emp for emp in employees if not emp.is_hidden]
+
             # Create CSV in memory
             output = io.StringIO()
             writer = csv.writer(output)
@@ -210,6 +216,136 @@ class SimpleExportService:
         except Exception as e:
             logger.error(f"Count records failed: {e}")
             return 0
+
+    def export_summary_csv(self, summary: Dict[str, Any]) -> str:
+        """Export attendance summary to CSV"""
+        try:
+            output = io.StringIO()
+            writer = csv.writer(output)
+
+            # Write header
+            writer.writerow(['Metric', 'Value'])
+
+            # Write summary data
+            for key, value in summary.items():
+                if isinstance(value, dict):
+                    for sub_key, sub_value in value.items():
+                        writer.writerow([f"{key}_{sub_key}", str(sub_value)])
+                else:
+                    writer.writerow([key, str(value)])
+
+            return output.getvalue()
+        except Exception as e:
+            logger.error(f"Summary CSV export failed: {e}")
+            raise Exception(f"Summary export failed: {str(e)}")
+
+    def export_thai_names_csv(self) -> str:
+        """Export Thai names to CSV"""
+        try:
+            employees = attendance_service.get_employee_list()
+
+            output = io.StringIO()
+            writer = csv.writer(output)
+
+            writer.writerow(['Badge Number', 'English Name', 'Thai Name', 'Display Name'])
+
+            for employee in employees:
+                writer.writerow([
+                    employee.badge_number,
+                    employee.english_name or '',
+                    employee.thai_name or '',
+                    employee.display_name or ''
+                ])
+
+            return output.getvalue()
+        except Exception as e:
+            logger.error(f"Thai names CSV export failed: {e}")
+            raise Exception(f"Thai names export failed: {str(e)}")
+
+    def generate_monthly_report(self, year: int, month: int, records: List[Any]) -> Dict[str, Any]:
+        """Generate monthly report data"""
+        try:
+            return {
+                "report_type": "monthly",
+                "year": year,
+                "month": month,
+                "total_records": len(records),
+                "period": f"{year}-{month:02d}",
+                "summary": {
+                    "records_count": len(records),
+                    "unique_employees": len(set(r.employee_badge_number for r in records))
+                }
+            }
+        except Exception as e:
+            logger.error(f"Monthly report generation failed: {e}")
+            raise Exception(f"Monthly report failed: {str(e)}")
+
+    def export_monthly_report_csv(self, report: Dict[str, Any]) -> str:
+        """Export monthly report to CSV"""
+        try:
+            output = io.StringIO()
+            writer = csv.writer(output)
+
+            writer.writerow(['Report Type', 'Monthly'])
+            writer.writerow(['Year', report.get('year', 'N/A')])
+            writer.writerow(['Month', report.get('month', 'N/A')])
+            writer.writerow(['Total Records', report.get('total_records', 0)])
+
+            return output.getvalue()
+        except Exception as e:
+            logger.error(f"Monthly report CSV export failed: {e}")
+            raise Exception(f"Monthly report CSV failed: {str(e)}")
+
+    def generate_employee_summary_report(self, employee_badge: str, records: List[Any]) -> Dict[str, Any]:
+        """Generate employee summary report"""
+        try:
+            employees = attendance_service.get_employee_list()
+            employee = next((emp for emp in employees if emp.badge_number == employee_badge), None)
+
+            if not employee:
+                raise Exception(f"Employee {employee_badge} not found")
+
+            return {
+                "report_type": "employee_summary",
+                "employee": {
+                    "badge_number": employee.badge_number,
+                    "display_name": employee.display_name
+                },
+                "records_count": len(records),
+                "summary": {
+                    "total_records": len(records),
+                    "checkins": len([r for r in records if r.punch_type == 0]),
+                    "checkouts": len([r for r in records if r.punch_type == 1])
+                }
+            }
+        except Exception as e:
+            logger.error(f"Employee summary generation failed: {e}")
+            raise Exception(f"Employee summary failed: {str(e)}")
+
+    def export_employee_summary_csv(self, report: Dict[str, Any]) -> str:
+        """Export employee summary to CSV"""
+        try:
+            output = io.StringIO()
+            writer = csv.writer(output)
+
+            writer.writerow(['Employee Badge', report['employee']['badge_number']])
+            writer.writerow(['Employee Name', report['employee']['display_name']])
+            writer.writerow(['Total Records', report['records_count']])
+
+            return output.getvalue()
+        except Exception as e:
+            logger.error(f"Employee summary CSV export failed: {e}")
+            raise Exception(f"Employee summary CSV failed: {str(e)}")
+
+    def test_export_capability(self) -> bool:
+        """Test if export service is working"""
+        try:
+            # Simple test - try to get employee count
+            employees = attendance_service.get_employee_list()
+            return True
+        except Exception as e:
+            logger.error(f"Export capability test failed: {e}")
+            return False
     
     def export_to_csv(self, start_date=None, end_date=None, employee_ids=None,
                      device_ids=None, punch_types=None, format_type="detailed",

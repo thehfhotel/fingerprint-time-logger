@@ -17,7 +17,7 @@ class EmployeeFactory(SQLAlchemyModelFactory):
 
     class Meta:
         model = Employee
-        sqlalchemy_session_persistence = "commit"
+        sqlalchemy_session_persistence = "flush"
 
     badge_number = factory.Sequence(lambda n: f"{n:04d}")
     english_name = factory.Faker('name')
@@ -34,7 +34,7 @@ class DeviceFactory(SQLAlchemyModelFactory):
 
     class Meta:
         model = Device
-        sqlalchemy_session_persistence = "commit"
+        sqlalchemy_session_persistence = "flush"
 
     name = factory.Faker('company')
     ip_address = factory.Faker('ipv4_private')
@@ -49,7 +49,7 @@ class AttendanceRecordFactory(SQLAlchemyModelFactory):
 
     class Meta:
         model = AttendanceRecord
-        sqlalchemy_session_persistence = "commit"
+        sqlalchemy_session_persistence = "flush"
 
     employee_badge_number = factory.SubFactory(EmployeeFactory)
     device_id = factory.SubFactory(DeviceFactory)

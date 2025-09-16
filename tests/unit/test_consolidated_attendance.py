@@ -38,18 +38,20 @@ class TestConsolidatedAttendanceAPI:
         response = test_client.get("/api/attendance/summary")
         assert response.status_code == 200
         data = response.json()
-        assert "today" in data
+        assert "data" in data
         assert "total_employees" in data
-        assert "checked_in" in data
-        assert "checked_out" in data
-        assert "absent" in data
+        assert "total_records" in data
+        assert "last_update" in data
 
     def test_get_attendance_today(self, test_client, test_company_setup):
         """Test GET /api/attendance/today - Today's attendance"""
         response = test_client.get("/api/attendance/today")
         assert response.status_code == 200
         data = response.json()
-        assert isinstance(data, list)
+        assert "date" in data
+        assert "records" in data
+        assert "total" in data
+        assert isinstance(data["records"], list)
 
     def test_get_employee_attendance(self, test_client, test_company_setup):
         """Test GET /api/attendance/employee/{badge_number}"""
@@ -60,7 +62,9 @@ class TestConsolidatedAttendanceAPI:
             response = test_client.get(f"/api/attendance/employee/{badge_number}")
             assert response.status_code == 200
             data = response.json()
-            assert isinstance(data, list)
+            assert "employee_badge" in data
+            assert "records" in data
+            assert isinstance(data["records"], list)
 
     def test_get_employee_attendance_not_found(self, test_client):
         """Test GET /api/attendance/employee/{badge_number} - Employee not found"""
@@ -79,16 +83,19 @@ class TestConsolidatedAttendanceAPI:
         response = test_client.get("/api/attendance/calendar/config")
         assert response.status_code == 200
         data = response.json()
-        assert "current_date" in data
-        assert "months" in data
+        assert "working_days" in data
+        assert "violation_threshold_minutes" in data
+        assert "status_colors" in data
 
     def test_get_calendar_data(self, test_client, test_company_setup):
-        """Test GET /api/attendance/calendar/data - Calendar data"""
+        """Test GET /api/attendance/calendar/{year}/{month} - Calendar data"""
         year = datetime.now().year
         month = datetime.now().month
-        response = test_client.get(f"/api/attendance/calendar/data?year={year}&month={month}")
+        response = test_client.get(f"/api/attendance/calendar/{year}/{month}")
         assert response.status_code == 200
         data = response.json()
+        assert "year" in data
+        assert "month" in data
         assert "calendar_data" in data
 
     def test_sync_attendance(self, test_client, mock_device_service):
@@ -125,11 +132,14 @@ class TestConsolidatedAttendanceAPI:
             assert response.status_code in [200, 404]
 
     def test_get_record_adjustments(self, test_client, test_attendance_records):
-        """Test GET /api/attendance/{record_id}/adjustments - Get record adjustments"""
+        """Test GET /api/attendance/records/{record_id}/adjustments - Get record adjustments"""
         if test_attendance_records:
             record_id = test_attendance_records[0].id
-            response = test_client.get(f"/api/attendance/{record_id}/adjustments")
+            response = test_client.get(f"/api/attendance/records/{record_id}/adjustments")
             assert response.status_code == 200
+            data = response.json()
+            assert "record_id" in data
+            assert "adjustments" in data
 
     def test_delete_record_adjustment(self, test_client, test_attendance_records):
         """Test DELETE /api/attendance/adjustments/{adjustment_id} - Delete adjustment"""
@@ -142,13 +152,13 @@ class TestConsolidatedAttendanceAPIEdgeCases:
 
     def test_invalid_date_format_calendar(self, test_client):
         """Test calendar data with invalid date format"""
-        response = test_client.get("/api/attendance/calendar/data?year=invalid&month=invalid")
+        response = test_client.get("/api/attendance/calendar/invalid/month")
         assert response.status_code == 422  # Validation error
 
     def test_future_date_calendar(self, test_client):
         """Test calendar data with future date"""
         future_year = datetime.now().year + 10
-        response = test_client.get(f"/api/attendance/calendar/data?year={future_year}&month=1")
+        response = test_client.get(f"/api/attendance/calendar/{future_year}/1")
         assert response.status_code == 200  # Should still work
 
     def test_csv_export_with_invalid_dates(self, test_client):

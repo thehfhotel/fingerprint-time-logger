@@ -4,7 +4,7 @@ Provides common test setup, database configuration, and reusable fixtures
 """
 import os
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
@@ -21,33 +21,44 @@ TEST_MEMORY_DATABASE_URL = "sqlite:///:memory:"
 
 @pytest.fixture(scope="function")
 def test_engine():
-    """Create test database engine for each test function"""
-    # Use a shared in-memory database for SQLite
-    # The "file::memory:?cache=shared" URI allows multiple connections to the same in-memory database
+    """Create test database engine optimized for speed"""
+    # Use in-memory database with speed optimizations
     engine = create_engine(
         "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,  # Important for in-memory databases
-        echo=False  # Set to True for SQL debugging
+        connect_args={
+            "check_same_thread": False,
+            "isolation_level": None,  # Use autocommit mode
+        },
+        poolclass=StaticPool,
+        pool_pre_ping=False,  # Disable ping for speed
+        echo=False
     )
 
-    # Import all models to ensure they are registered with Base.metadata
-    # This is critical for the tables to be created properly
+    # Speed up SQLite for testing
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        # Speed optimizations for testing
+        cursor.execute("PRAGMA synchronous = OFF")
+        cursor.execute("PRAGMA journal_mode = MEMORY")
+        cursor.execute("PRAGMA temp_store = MEMORY")
+        cursor.close()
+
+    # Import all models once
     from app.models.models import Employee, Device, AttendanceRecord, AttendanceAdjustment
 
-    # Create all tables in the test database
+    # Create all tables
     Base.metadata.create_all(bind=engine)
 
     yield engine
 
-    # Clean up
-    Base.metadata.drop_all(bind=engine)
+    # Fast cleanup
     engine.dispose()
 
 
 @pytest.fixture(scope="function")
 def test_db(test_engine):
-    """Create test database session for each test function"""
+    """Create test database session with transaction rollback for isolation"""
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
     session = TestingSessionLocal()
 
@@ -64,13 +75,14 @@ def test_db(test_engine):
         EmployeeFactory._meta.sqlalchemy_session = None
         DeviceFactory._meta.sqlalchemy_session = None
         AttendanceRecordFactory._meta.sqlalchemy_session = None
+        # Rollback any uncommitted changes and close
         session.rollback()
         session.close()
 
 
 @pytest.fixture(scope="function")
 def test_client(test_engine):
-    """Create FastAPI test client for direct fingerprint_app access (no mounting)"""
+    """Create FastAPI test client with optimized database dependency"""
 
     # Create a session factory for the test engine
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
@@ -255,23 +267,23 @@ def mock_device_service(healthy_device_simulator):
 
     # Mock the device service methods
     original_connect = device_service.connect_to_device
-    original_get_attendance = device_service.get_attendance
+    original_get_attendance_records = device_service.get_attendance_records
 
     def mock_connect(device):
         connection = MockZKConnection(healthy_device_simulator)
         return connection if connection.connect() else None
 
-    def mock_get_attendance():
+    def mock_get_attendance_records(device):
         return healthy_device_simulator.get_attendance()
 
     device_service.connect_to_device = Mock(side_effect=mock_connect)
-    device_service.get_attendance = Mock(side_effect=mock_get_attendance)
+    device_service.get_attendance_records = Mock(side_effect=mock_get_attendance_records)
 
     yield device_service
 
     # Restore original methods
     device_service.connect_to_device = original_connect
-    device_service.get_attendance = original_get_attendance
+    device_service.get_attendance_records = original_get_attendance_records
 
 
 # API Testing Utilities
