@@ -43,7 +43,7 @@ class IndividualAttendanceManager {
 
     async loadEmployees() {
         try {
-            const response = await fetch('/api/employees/');
+            const response = await fetch(appConfig.getApiUrl('employees'));
             if (!response.ok) throw new Error('Failed to load employees');
 
             const data = await response.json();
@@ -144,7 +144,7 @@ class IndividualAttendanceManager {
 
         try {
             const response = await fetch(
-                `/api/attendance/employee/${this.selectedEmployeeId}?start_date=${startDate}&end_date=${endDate}`
+                appConfig.getApiUrl(`attendance/employee/${this.selectedEmployeeId}?start_date=${startDate}&end_date=${endDate}`)
             );
 
             if (!response.ok) throw new Error('Failed to load attendance data');
