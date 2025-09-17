@@ -13,8 +13,7 @@ from app.utils.cache_busting import cache_manager
 
 from app.core.database import engine, Base
 from app.api import (
-    consolidated_attendance, consolidated_devices, consolidated_employees, 
-    consolidated_export
+    consolidated_attendance, consolidated_devices, consolidated_employees
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -204,7 +203,6 @@ async def get_static_version(file_path: str):
 fingerprint_app.include_router(consolidated_attendance.router, prefix="/api/attendance", tags=["attendance"])
 fingerprint_app.include_router(consolidated_devices.router, prefix="/api/devices", tags=["devices"])
 fingerprint_app.include_router(consolidated_employees.router, prefix="/api/employees", tags=["employees"])
-fingerprint_app.include_router(consolidated_export.router, prefix="/api/export", tags=["export"])
 
 # System Status API - New comprehensive status monitoring
 from app.api import system_status
@@ -268,6 +266,10 @@ async def serve_export():
 @fingerprint_app.get("/nickname-management")
 async def serve_nickname_management():
     return serve_html_with_cache_control("static/nickname-management.html")
+
+@fingerprint_app.get("/individual-attendance")
+async def serve_individual_attendance():
+    return serve_html_with_cache_control("static/individual-attendance.html")
 
 @fingerprint_app.get("/status")
 async def serve_status():
@@ -348,8 +350,21 @@ async def trigger_manual_import():
                 })
             except Exception as broadcast_error:
                 logger.warning(f"Failed to broadcast manual import update: {broadcast_error}")
-        
-        return result
+
+        # Return sanitized response (don't expose raw device data)
+        synced_count = result.get("synced", 0)
+        # Ensure synced count is a safe integer
+        if not isinstance(synced_count, int):
+            try:
+                synced_count = int(synced_count) if str(synced_count).isdigit() else 0
+            except (ValueError, TypeError):
+                synced_count = 0
+
+        return {
+            "success": result.get("success", False),
+            "synced": synced_count,
+            "message": f"Import completed successfully: {synced_count} records processed"
+        }
     except Exception as e:
         logger.error(f"Manual import failed: {e}")
         return {

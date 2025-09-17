@@ -88,7 +88,52 @@ async def get_attendance_summary():
 # Manual record creation endpoint removed - not used by frontend
 
 
-@router.get("/employee/{employee_badge}")
+@router.get("/employee/{employee_id}")
+async def get_employee_attendance_by_id(
+    employee_id: int,
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Get attendance records for a specific employee by ID (for individual attendance page)"""
+    try:
+        # Get employee by ID
+        employee = db.query(Employee).filter(Employee.id == employee_id).first()
+        if not employee:
+            raise HTTPException(status_code=404, detail="Employee not found")
+
+        # Get attendance records
+        records = attendance_service.get_attendance_records(
+            start_date=start_date,
+            end_date=end_date,
+            employee_badge=employee.badge_number,
+            limit=1000  # Higher limit for individual view
+        )
+
+        # Format records for the individual attendance page
+        formatted_records = []
+        for record in records:
+            formatted_records.append({
+                "id": record.id,
+                "check_in_time": record.timestamp.isoformat() if record.punch_type == "IN" else None,
+                "check_out_time": record.timestamp.isoformat() if record.punch_type == "OUT" else None,
+                "punch_type": record.punch_type,
+                "timestamp": record.timestamp.isoformat()
+            })
+
+        return {
+            "employee_id": employee_id,
+            "employee_name": employee.nickname or employee.name_english,
+            "records": formatted_records,
+            "total": len(formatted_records)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/employee/badge/{employee_badge}")
 async def get_employee_attendance(
     employee_badge: str,
     start_date: Optional[date] = Query(None),
@@ -96,7 +141,7 @@ async def get_employee_attendance(
     limit: int = Query(100),
     db: Session = Depends(get_db)
 ):
-    """Get attendance records for a specific employee"""
+    """Get attendance records for a specific employee by badge"""
     try:
         # Check if employee exists first
         employee = db.query(Employee).filter(Employee.badge_number == employee_badge).first()

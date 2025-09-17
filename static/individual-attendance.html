@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>เข้า/ออก รายคน - Individual Attendance</title>
+    <!-- CSS Files with cache busting -->
+    <script>
+        const cssTimestamp = Date.now();
+        document.write(`<link rel="stylesheet" href="static/css/base.css?v=${cssTimestamp}">`);
+        document.write(`<link rel="stylesheet" href="static/css/individual-attendance.css?v=${cssTimestamp}">`);
+    </script>
+
+    <!-- JavaScript Files -->
+    <script>
+        const timestamp = Date.now();
+        const version = 'v1.0-individual';
+        document.write(`<script src="static/js/config.js?v=${timestamp}&version=${version}"><\/script>`);
+        document.write(`<script src="static/js/individual-attendance.js?v=${timestamp}&version=${version}"><\/script>`);
+    </script>
+</head>
+<body>
+    <div class="header">
+        <div class="header-row-1">
+            <h1>เข้า/ออก รายคน</h1>
+            <div class="nav-actions">
+                <a href="/fingerprintlogs/" class="action-btn">← กลับไปแดชบอร์ด</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <!-- Left Sidebar with Nickname List -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h3>รายชื่อพนักงาน</h3>
+                <div class="search-box">
+                    <input type="text" id="nicknameSearch" placeholder="ค้นหาชื่อ..." />
+                </div>
+            </div>
+            <div class="nickname-list" id="nicknameList">
+                <div class="loading">กำลังโหลดรายชื่อ...</div>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div class="content-area">
+            <div class="content-header">
+                <h2 id="selectedEmployeeName">เลือกพนักงานเพื่อดูข้อมูล</h2>
+                <div class="date-filter">
+                    <label>ตั้งแต่วันที่:</label>
+                    <input type="date" id="startDate" />
+                    <label>ถึงวันที่:</label>
+                    <input type="date" id="endDate" />
+                    <button id="filterButton" class="filter-btn">กรอง</button>
+                </div>
+            </div>
+
+            <div class="attendance-table-container">
+                <table class="attendance-table" id="attendanceTable">
+                    <thead>
+                        <tr>
+                            <th>วันที่ (dd/mm/yyyy)</th>
+                            <th>เวลา</th>
+                        </tr>
+                    </thead>
+                    <tbody id="attendanceTableBody">
+                        <tr>
+                            <td colspan="2" class="no-data">เลือกพนักงานเพื่อดูข้อมูลการเข้า-ออกงาน</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+        <div class="loading-spinner">กำลังโหลดข้อมูล...</div>
+    </div>
+</body>
+</html>
