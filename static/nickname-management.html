@@ -18,8 +18,8 @@
     <script>
         const timestamp = Date.now();
         const randomId = Math.random().toString(36).substring(7);
-        const buildNumber = '2025011800'; // Build timestamp - FORCE CACHE BREAK
-        const version = `v2.5-debug-${buildNumber}`;
+        const buildNumber = '2025011801'; // Build timestamp - FORCE CACHE BREAK v3.0
+        const version = `v3.0-https-fix-${buildNumber}`;
         const cacheBuster = `${timestamp}.${randomId}&build=${buildNumber}`;
         document.write(`<script src="static/js/config.js?v=${cacheBuster}&version=${version}&force=${Date.now()}"><\/script>`);
     </script>
@@ -393,14 +393,14 @@
                 });
                 
                 if (!response.ok) throw new Error('Failed to update hidden status');
-                
+
                 // Update the employee in our local array
                 const employee = employees.find(e => e.badge_number === badgeNumber);
                 if (employee) {
                     employee.is_hidden = newHiddenStatus;
                 }
-                
-                // Refresh the display
+
+                // Refresh the display with filtered employees
                 displayEmployees(getFilteredEmployees());
             } catch (error) {
                 console.error('Error updating hidden status:', error);
@@ -427,11 +427,17 @@
         // Get filtered employees based on search and hidden status
         function getFilteredEmployees() {
             const searchTerm = document.getElementById('searchInput').value.toLowerCase();
-            
+
             return employees.filter(employee => {
+                // Filter by search term
                 const badgeMatch = employee.badge_number.toLowerCase().includes(searchTerm);
                 const nameMatch = (employee.display_name || '').toLowerCase().includes(searchTerm);
-                return badgeMatch || nameMatch;
+                const searchMatch = badgeMatch || nameMatch;
+
+                // Filter by hidden status
+                const hiddenMatch = showHidden || !employee.is_hidden;
+
+                return searchMatch && hiddenMatch;
             });
         }
 

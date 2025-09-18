@@ -232,13 +232,10 @@ async def get_employees_from_device(include_hidden: bool, include_inactive: bool
         zk_users = device_service.get_users(device)
         
         # Get all employees from database for merging
+        # Load ALL employees first, apply filtering after merging to preserve hidden state
         db_employees = {}
         query = db.query(Employee)
-        if not include_hidden:
-            query = query.filter(Employee.is_hidden == False)
-        if not include_inactive:
-            query = query.filter(Employee.is_active == True)
-        
+
         for emp in query.all():
             db_employees[emp.badge_number] = emp
         
