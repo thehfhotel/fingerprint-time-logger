@@ -8,7 +8,7 @@ class ConfigManager {
         this.config = null;
         this.loaded = false;
         this.basePath = this.detectBasePath();
-        this.version = '2.9-cache-busting-fix-' + Date.now();
+        this.version = '3.0-https-redirect-fix-' + Date.now();
         console.log('ConfigManager initialized - Version:', this.version);
     }
 
@@ -46,7 +46,7 @@ class ConfigManager {
     getDefaultConfig() {
         return {
             api: {
-                baseUrl: `${window.location.protocol}//${window.location.host}${this.basePath}/api`,
+                baseUrl: `${this.basePath}/api`,
                 timeout: 30000,
                 retryAttempts: 3
             },
@@ -96,11 +96,14 @@ class ConfigManager {
 
         // Add trailing slash for FastAPI routes (except for specific endpoints)
         const noSlashEndpoints = ['devices/time', 'devices/health', 'auto-import/status', 'devices/sync-time', 'refresh', 'attendance/summary'];
+        // Also exclude endpoints that match patterns like employees/{id}/status
+        const statusEndpointPattern = /^employees\/\d+\/status$/;
         const endpointWithoutSlash = endpointPath ? endpointPath.replace(/\/$/, '') : '';
         const containsMarkLate = endpointPath && endpointPath.includes('/mark-late');
         const needsSlash = endpointPath &&
                           !endpointPath.endsWith('/') &&
                           !noSlashEndpoints.includes(endpointWithoutSlash) &&
+                          !statusEndpointPattern.test(endpointWithoutSlash) &&
                           !containsMarkLate &&
                           !queryString;
 

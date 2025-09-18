@@ -18,7 +18,7 @@ services:
       - ZKTECO_HOST=${ZKTECO_HOST:-192.168.100.209}
       - ZKTECO_PORT=${ZKTECO_PORT:-4370}
       - TZ=Asia/Bangkok
-      - BEHIND_PROXY=${BEHIND_PROXY:-false}
+      - BEHIND_PROXY=${BEHIND_PROXY:-true}  # Default true for nginx integration
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/fingerprintlogs/api/devices/health"]
@@ -28,7 +28,13 @@ services:
       start_period: 40s
     networks:
       - app-network
+      - shared-nginx  # Connect to shared nginx network for routing
 
 networks:
   app-network:
     driver: bridge
+
+  # External shared nginx network for reverse proxy
+  shared-nginx:
+    external: true
+    name: shared-nginx

@@ -1,5 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
@@ -173,6 +174,12 @@ fingerprint_app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Proxy headers middleware for nginx reverse proxy
+if os.getenv("BEHIND_PROXY", "false").lower() == "true":
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+    fingerprint_app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+    logger.info("Proxy headers middleware enabled for nginx reverse proxy")
 
 # Custom StaticFiles with cache control headers
 class CacheControlStaticFiles(StaticFiles):
