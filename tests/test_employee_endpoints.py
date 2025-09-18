@@ -43,12 +43,6 @@ class TestEmployeeEndpoints:
         response = test_client.get("/api/employees/NONEXISTENT")
         assert response.status_code == 404
 
-    @pytest.mark.skip(reason="POST /api/employees/ endpoint removed in API simplification")
-    def test_create_employee(self, test_client):
-        """Test POST /api/employees/ - Create new employee - ENDPOINT REMOVED"""
-        # Employee creation was removed in the consolidated API simplification
-        # Employees are now created automatically from ZK device users
-        pass
 
     def test_update_employee(self, test_client, test_company_setup):
         """Test PUT /api/employees/{badge} - Update employee"""
@@ -135,15 +129,6 @@ class TestEmployeeEndpoints:
 class TestEmployeeEndpointsValidation:
     """Test employee endpoint validation and error cases"""
 
-    @pytest.mark.skip(reason="POST /api/employees/ endpoint removed in API simplification")
-    def test_create_employee_duplicate_badge(self, test_client, test_company_setup):
-        """Test creating employee with duplicate badge number - ENDPOINT REMOVED"""
-        pass
-
-    @pytest.mark.skip(reason="POST /api/employees/ endpoint removed in API simplification")
-    def test_create_employee_missing_required_fields(self, test_client):
-        """Test creating employee with missing required fields - ENDPOINT REMOVED"""
-        pass
 
     def test_update_nonexistent_employee(self, test_client):
         """Test updating non-existent employee"""
@@ -215,10 +200,6 @@ class TestEmployeeThaiNameSupport:
             data = response.json()
             assert data["thai_name"] == thai_name_data["thai_name"]
 
-    @pytest.mark.skip(reason="POST /api/employees/ endpoint removed in API simplification")
-    def test_thai_name_with_special_characters(self, test_client):
-        """Test Thai names with special characters - ENDPOINT REMOVED"""
-        pass
 
     def test_empty_display_name_fallback(self, test_client):
         """Test display name fallback logic"""

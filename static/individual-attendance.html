@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate, max-age=0">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
+    <meta http-equiv="Last-Modified" content="0">
+    <meta name="cache-buster" content="2025-01-17-debug-v2.5">
     <title>เข้า/ออก รายคน - Individual Attendance</title>
     <!-- CSS Files with cache busting -->
     <script>
@@ -14,20 +16,29 @@
         document.write(`<link rel="stylesheet" href="static/css/individual-attendance.css?v=${cssTimestamp}">`);
     </script>
 
-    <!-- JavaScript Files -->
+    <!-- JavaScript Files with Aggressive Cache Busting -->
     <script>
         const timestamp = Date.now();
-        const version = 'v1.0-individual';
-        document.write(`<script src="static/js/config.js?v=${timestamp}&version=${version}"><\/script>`);
-        document.write(`<script src="static/js/individual-attendance.js?v=${timestamp}&version=${version}"><\/script>`);
+        const randomId = Math.random().toString(36).substring(7);
+        const buildNumber = '2025011700'; // Build timestamp
+        const version = `v2.5-debug-${buildNumber}`;
+        const cacheBuster = `${timestamp}.${randomId}&build=${buildNumber}`;
+        document.write(`<script src="static/js/config.js?v=${cacheBuster}&version=${version}&force=${Date.now()}"><\/script>`);
+        document.write(`<script src="static/js/individual-attendance.js?v=${cacheBuster}&version=${version}&force=${Date.now()}"><\/script>`);
     </script>
 </head>
 <body>
     <div class="header">
         <div class="header-row-1">
             <h1>เข้า/ออก รายคน</h1>
-            <div class="nav-actions">
-                <a href="/fingerprintlogs/" class="action-btn">← กลับไปแดชบอร์ด</a>
+        </div>
+        <div class="header-row-2">
+            <div class="header-actions">
+                <a href="./" class="action-btn">📊 Dashboard</a>
+                <a href="./device-status" class="action-btn">🔧 Device Status</a>
+                <a href="./nickname-management" class="action-btn">👤 Nicknames</a>
+                <a href="/fingerprintlogs/individual-attendance" class="action-btn" style="background: var(--accent-blue); color: white;">📅 เข้า/ออก รายคน</a>
+                <a href="./export" class="action-btn">📤 Export Data</a>
             </div>
         </div>
     </div>
@@ -55,7 +66,7 @@
                     <input type="date" id="startDate" />
                     <label>ถึงวันที่:</label>
                     <input type="date" id="endDate" />
-                    <button id="filterButton" class="filter-btn">กรอง</button>
+                    <button id="filterButton" class="btn btn-primary">กรอง</button>
                 </div>
             </div>
 

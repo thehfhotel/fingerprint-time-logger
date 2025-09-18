@@ -3,11 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Export Data - Fingerprint Time Logger</title>
-    <link rel="stylesheet" href="static/css/base.css">
-    
+    <!-- CSS Files with cache busting -->
+    <script>
+        const cssTimestamp = Date.now();
+        document.write(`<link rel="stylesheet" href="static/css/base.css?v=${cssTimestamp}">`);
+    </script>
+
     <!-- JavaScript Files -->
-    <script src="static/js/config.js?bust=1752418999&force=true&v=3&summary=fixed&nocache=1"></script>
+    <script>
+        const timestamp = Date.now();
+        const randomId = Math.random().toString(36).substring(7);
+        const buildNumber = '2025011800'; // Build timestamp - FORCE CACHE BREAK
+        const version = `v2.5-debug-${buildNumber}`;
+        const cacheBuster = `${timestamp}.${randomId}&build=${buildNumber}`;
+        document.write(`<script src="static/js/config.js?v=${cacheBuster}&version=${version}&force=${Date.now()}"><\/script>`);
+    </script>
     <style>
         .export-container {
             max-width: 600px;
@@ -55,28 +69,7 @@
         }
         
         .btn {
-            padding: 0.75rem 2rem;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 500;
-            font-size: 1rem;
-            transition: all 0.2s;
             width: 100%;
-        }
-        
-        .btn-primary {
-            background-color: #3b82f6;
-            color: white;
-        }
-        
-        .btn-primary:hover {
-            background-color: #2563eb;
-        }
-        
-        .btn-primary:disabled {
-            background-color: #9ca3af;
-            cursor: not-allowed;
         }
         
         .export-status {
@@ -133,16 +126,23 @@
     </style>
 </head>
 <body>
-    <div class="navigation">
-        <a href="./" class="nav-link">Dashboard</a>
-        <a href="./device-status" class="nav-link">Device Status</a>
-        <a href="./nickname-management" class="nav-link">Nicknames</a>
-        <a href="./export" class="nav-link">Export Data</a>
+    <div class="header">
+        <div class="header-row-1">
+            <h1>Export Attendance Data</h1>
+        </div>
+        <div class="header-row-2">
+            <div class="header-actions">
+                <a href="./" class="action-btn">📊 Dashboard</a>
+                <a href="./device-status" class="action-btn">🔧 Device Status</a>
+                <a href="./nickname-management" class="action-btn">👤 Nicknames</a>
+                <a href="/fingerprintlogs/individual-attendance" class="action-btn">📅 เข้า/ออก รายคน</a>
+                <a href="./export" class="action-btn" style="background: var(--accent-blue); color: white;">📤 Export Data</a>
+            </div>
+        </div>
     </div>
 
-    <div class="export-container">
-        <h1>Export Attendance Data</h1>
-        
+    <div class="container">
+        <div class="export-container">
         <div class="info-text">
             Export your attendance records to CSV format for external analysis or reporting.
         </div>
@@ -223,18 +223,21 @@
             const statusDiv = document.getElementById('exportStatus');
             
             try {
+                // Ensure config is loaded first
+                await appConfig.loadConfig();
+
                 // Show loading status
                 showStatus('Loading...', 'loading');
                 exportBtn.disabled = true;
                 exportBtn.textContent = 'Exporting...';
-                
+
                 // Build export URL
                 const params = new URLSearchParams({
                     start_date: startDate,
                     end_date: endDate,
                     format: format
                 });
-                
+
                 const response = await fetch(appConfig.getApiUrl(`attendance/export/csv?${params}`));
                 
                 if (!response.ok) {

@@ -70,6 +70,7 @@ class CSVSecurityTester(SecurityTester):
                 badge_number=f"CSV_INJ_{i:03d}",
                 english_name=payload,
                 thai_name=f"ทดสอบ {payload}",
+                display_name=f"ทดสอบ {payload}",
                 department=payload,
                 position=f"Position {payload}",
                 is_active=True
@@ -80,9 +81,9 @@ class CSVSecurityTester(SecurityTester):
 
         # Test CSV export endpoints
         csv_endpoints = [
-            "/api/export/employees-csv/",
-            "/api/export/attendance-csv/",
-            "/api/export/quick-export/employees",
+            "/api/employees/export/csv",
+            "/api/attendance/export/csv",
+            "/api/employees/export/csv",
         ]
 
         for endpoint in csv_endpoints:
@@ -162,11 +163,11 @@ class CSVSecurityTester(SecurityTester):
         vulnerabilities = []
 
         export_endpoints = [
-            "/api/export/employees-csv/",
-            "/api/export/attendance-csv/",
-            "/api/export/full-export/",
-            "/api/export/quick-export/employees",
-            "/api/export/quick-export/attendance",
+            "/api/employees/export/csv",
+            "/api/attendance/export/csv",
+            "/api/attendance/export/csv",
+            "/api/employees/export/csv",
+            "/api/attendance/export/csv",
         ]
 
         for endpoint in export_endpoints:
@@ -228,8 +229,8 @@ class CSVSecurityTester(SecurityTester):
         vulnerabilities = []
 
         export_endpoints = [
-            "/api/export/employees-csv/",
-            "/api/export/attendance-csv/",
+            "/api/employees/export/csv",
+            "/api/attendance/export/csv",
         ]
 
         for endpoint in export_endpoints:
@@ -303,8 +304,8 @@ class CSVSecurityTester(SecurityTester):
         ]
 
         base_endpoints = [
-            "/api/export/attendance-csv/",
-            "/api/export/employees-csv/",
+            "/api/attendance/export/csv",
+            "/api/employees/export/csv",
         ]
 
         for endpoint in base_endpoints:
@@ -405,6 +406,7 @@ class TestCSVSecurity:
             badge_number="DANGER_001",
             english_name='=cmd|"/c calc"!A1',
             thai_name='=SUM(A1:A10)*cmd|"/c calc"!A1',
+            display_name='=SUM(A1:A10)*cmd|"/c calc"!A1',
             department='@SUM(1+1)*cmd|"/c calc"!A1',
             position='+cmd|"/c powershell"!A1',
             is_active=True
@@ -413,7 +415,7 @@ class TestCSVSecurity:
         test_db.commit()
 
         # Export employees CSV
-        response = await security_client.get("/api/export/employees-csv/")
+        response = security_client.get("/api/employees/export/csv")
         assert response.status_code == 200
 
         csv_content = response.text
@@ -436,6 +438,7 @@ class TestCSVSecurity:
             badge_number="ENCODING_001",
             english_name="Test Employee",
             thai_name="พนักงานทดสอบ中文字符テスト",  # Thai, Chinese, Japanese
+            display_name="พนักงานทดสอบ中文字符テスト",
             department="отдел",  # Cyrillic
             position="مهندس",  # Arabic
             is_active=True
@@ -444,7 +447,7 @@ class TestCSVSecurity:
         test_db.commit()
 
         # Export and check encoding
-        response = await security_client.get("/api/export/employees-csv/")
+        response = security_client.get("/api/employees/export/csv")
         assert response.status_code == 200
 
         # Should handle Unicode properly without injection
@@ -459,7 +462,7 @@ class TestCSVSecurity:
         """Test handling of large export requests"""
 
         # This test checks if the system handles large exports gracefully
-        response = await security_client.get("/api/export/attendance-csv/", params={
+        response = security_client.get("/api/attendance/export/csv", params={
             "limit": "999999"  # Request very large limit
         })
 

@@ -318,6 +318,202 @@ sqlite3 attendance.db ".schema"
    - Increase timeout values
    - Clear device data after successful sync
 
+### 🐳 Docker Build Issues
+
+#### Docker BuildX Cache Problems (Cache Not Clearing)
+
+**Symptoms:**
+- File changes not reflected in built container
+- `docker buildx bake --no-cache` still uses cached layers
+- Container serves old versions of updated files
+- Build appears successful but changes are missing
+
+**Root Cause:**
+Docker BuildX uses BuildKit's internal cache system, which is separate from regular Docker cache. The `--no-cache` flag for `docker buildx bake` doesn't clear BuildKit's internal cache, causing file changes to be ignored.
+
+**Solutions:**
+
+1. **Clear BuildKit Cache (Immediate Fix)**
+   ```bash
+   # Clear all BuildKit cache
+   docker buildx prune -f
+
+   # Then rebuild
+   docker buildx bake --load fingerprint-logger
+
+   # Or use the manage-app.sh script
+   ./scripts/manage-app.sh deploy --fresh-build
+   ```
+
+2. **Automatic Cache Management (Enhanced Script)**
+   ```bash
+   # Use the enhanced cache management features
+   ./scripts/manage-app.sh cache-status     # Check cache state
+   ./scripts/manage-app.sh cache-clear      # Clear all build caches
+   ./scripts/manage-app.sh deploy --fresh-build  # Force fresh build
+   ```
+
+3. **Cache State Detection**
+   The system can detect stale cache by monitoring:
+   - Dockerfile modifications
+   - requirements.txt changes
+   - Source code updates (app/*)
+   - Configuration file changes
+
+   **Cache staleness indicators:**
+   ```bash
+   # Check what files have changed since last build
+   find . -name "Dockerfile" -newer .docker-cache-state
+   find . -name "requirements*.txt" -newer .docker-cache-state
+   find app/ -name "*.py" -newer .docker-cache-state
+   ```
+
+**Prevention:**
+
+1. **Use Enhanced Build Script**
+   ```bash
+   # The manage-app.sh script now includes intelligent cache management
+   export CACHE_STRATEGY=auto  # Automatically detect stale cache
+   ./scripts/manage-app.sh start
+   ```
+
+2. **Regular Cache Maintenance**
+   ```bash
+   # Add to crontab for weekly cache cleanup
+   0 2 * * 0 docker buildx prune -f
+   ```
+
+3. **Environment Variables for Cache Control**
+   ```bash
+   # Set cache strategy
+   export CACHE_STRATEGY=auto          # auto|fresh|preserve
+   export CACHE_STALENESS_HOURS=24     # Hours before cache considered stale
+   export CACHE_DEBUG=true             # Enable verbose cache logging
+   ```
+
+#### Container Shows Old Files After Build
+
+**Symptoms:**
+- Recent code changes not visible in running container
+- JavaScript/CSS files show old versions
+- Configuration changes ignored
+
+**Diagnostic Steps:**
+1. **Check if files exist in container:**
+   ```bash
+   docker exec fingerprint-time-logger ls -la /app/static/js/config.js
+   docker exec fingerprint-time-logger head -10 /app/static/js/config.js
+   ```
+
+2. **Verify file timestamps:**
+   ```bash
+   # Compare host vs container file times
+   ls -la static/js/config.js
+   docker exec fingerprint-time-logger ls -la /app/static/js/config.js
+   ```
+
+3. **Check Docker layer caching:**
+   ```bash
+   # Review build output for CACHED vs copied layers
+   docker buildx bake --progress=plain fingerprint-logger 2>&1 | grep -E "(COPY|CACHED)"
+   ```
+
+**Solutions:**
+1. **Force fresh build with cache clear:**
+   ```bash
+   ./scripts/manage-app.sh deploy --fresh-build
+   ```
+
+2. **Manual cache clearing:**
+   ```bash
+   docker buildx prune -f
+   docker system prune -f  # If using docker-compose
+   docker buildx bake --load fingerprint-logger
+   docker-compose restart
+   ```
+
+#### Build Cache Size Issues
+
+**Symptoms:**
+- Docker taking up excessive disk space
+- Build cache consuming GBs of storage
+- System running out of disk space
+
+**Solutions:**
+
+1. **Check cache size:**
+   ```bash
+   docker system df         # Show Docker space usage
+   docker buildx du         # Show buildx cache size
+   ```
+
+2. **Selective cache cleaning:**
+   ```bash
+   # Clear only build cache
+   docker buildx prune -f
+
+   # Clear all unused Docker objects
+   docker system prune -a -f
+
+   # Clear everything including volumes (DANGEROUS)
+   docker system prune -a --volumes -f
+   ```
+
+3. **Automated cache management:**
+   ```bash
+   # Set up automated cache cleanup
+   cat > /etc/cron.weekly/docker-cleanup << 'EOF'
+   #!/bin/bash
+   # Clean up Docker build cache weekly
+   docker buildx prune -f --filter until=168h
+   docker system prune -f --filter until=168h
+   EOF
+   chmod +x /etc/cron.weekly/docker-cleanup
+   ```
+
+#### Docker Compose vs Docker Bake Cache Issues
+
+**Symptoms:**
+- Different behavior between build methods
+- Cache issues vary by build tool used
+
+**Understanding the Difference:**
+
+- **Docker Compose**: Uses regular Docker builder
+  - Cache cleared with: `docker-compose build --no-cache`
+  - System cache: `docker system prune -f`
+
+- **Docker Bake**: Uses BuildKit builder
+  - Cache cleared with: `docker buildx prune -f`
+  - More advanced caching but can be stickier
+
+**Solutions:**
+
+1. **For Docker Compose builds:**
+   ```bash
+   docker-compose down
+   docker system prune -f
+   docker-compose build --no-cache
+   docker-compose up -d
+   ```
+
+2. **For Docker Bake builds:**
+   ```bash
+   docker buildx prune -f
+   docker buildx bake --load fingerprint-logger
+   docker-compose restart
+   ```
+
+3. **Universal cache clearing (all methods):**
+   ```bash
+   # Clear everything
+   docker buildx prune -f
+   docker system prune -a -f
+
+   # Rebuild with preferred method
+   ./scripts/manage-app.sh deploy --fresh-build
+   ```
+
 ### 🔧 Performance Issues
 
 #### Slow API Responses

@@ -4,7 +4,7 @@ Replaces: employees_unified.py, employees.py, thai_names.py, roles.py
 """
 
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, File, UploadFile, Depends
+from fastapi import APIRouter, HTTPException, File, UploadFile, Depends, Query, Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -442,6 +442,11 @@ async def update_thai_name(badge_number: str, thai_name_data: dict, db: Session 
             raise HTTPException(status_code=404, detail="Employee not found")
 
         thai_name = thai_name_data.get("thai_name", "")
+
+        # Validate Thai name length (reasonable limit: 200 characters)
+        if len(thai_name) > 200:
+            raise HTTPException(status_code=422, detail="Thai name too long (maximum 200 characters)")
+
         employee.thai_name = thai_name
         employee.display_name = thai_name_data.get("display_name", thai_name)
         db.commit()
@@ -511,3 +516,36 @@ async def get_employee_summary(db: Session = Depends(get_db)):
 # ============================================================================
 
 # Health endpoint moved above /{badge_number} to avoid route conflicts
+
+
+# ============================================================================
+# EXPORT FUNCTIONALITY
+# ============================================================================
+
+@router.get("/export/csv")
+async def export_employees_csv(
+    active_only: bool = Query(False, description="Export only active employees"),
+    include_hidden: bool = Query(True, description="Include hidden employees"),
+    db: Session = Depends(get_db)
+):
+    """Export employees as CSV file"""
+    try:
+        from app.services.export_service import export_service
+
+        # Create export service instance
+        service = export_service.__class__(db)
+
+        # Generate CSV content
+        csv_content = service.export_employees_csv(
+            active_only=active_only,
+            include_hidden=include_hidden
+        )
+
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=employees.csv"}
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")

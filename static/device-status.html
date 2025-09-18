@@ -3,11 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Device Status - Fingerprint Time Logger</title>
-    <link rel="stylesheet" href="static/css/base.css">
-    
+    <!-- CSS Files with cache busting -->
+    <script>
+        const cssTimestamp = Date.now();
+        document.write(`<link rel="stylesheet" href="static/css/base.css?v=${cssTimestamp}">`);
+    </script>
+
     <!-- JavaScript Files -->
-    <script src="static/js/config.js?bust=1752418999&force=true&v=3&summary=fixed&nocache=1"></script>
+    <script>
+        const timestamp = Date.now();
+        const version = 'v2.0-https-fix';
+        document.write(`<script src="static/js/config.js?v=${timestamp}&version=${version}&bust=2"><\/script>`);
+    </script>
     <style>
         .status-container {
             max-width: 800px;
@@ -61,32 +72,6 @@
             margin-top: 2rem;
         }
         
-        .btn {
-            padding: 0.75rem 1.5rem;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 500;
-            transition: all 0.2s;
-        }
-        
-        .btn-primary {
-            background-color: #3b82f6;
-            color: white;
-        }
-        
-        .btn-primary:hover {
-            background-color: #2563eb;
-        }
-        
-        .btn-secondary {
-            background-color: #6b7280;
-            color: white;
-        }
-        
-        .btn-secondary:hover {
-            background-color: #4b5563;
-        }
         
         .sync-log {
             max-height: 300px;
@@ -98,23 +83,6 @@
             font-size: 0.875rem;
         }
         
-        .navigation {
-            text-align: center;
-            margin-bottom: 2rem;
-        }
-        
-        .nav-link {
-            color: #3b82f6;
-            text-decoration: none;
-            margin: 0 1rem;
-            padding: 0.5rem 1rem;
-            border-radius: 4px;
-            transition: background-color 0.2s;
-        }
-        
-        .nav-link:hover {
-            background-color: #f3f4f6;
-        }
         
         .loading {
             text-align: center;
@@ -124,14 +92,23 @@
     </style>
 </head>
 <body>
-    <div class="navigation">
-        <a href="./" class="nav-link">Dashboard</a>
-        <a href="./device-status" class="nav-link">Device Status</a>
-        <a href="./nickname-management" class="nav-link">Nicknames</a>
-        <a href="./export" class="nav-link">Export Data</a>
+    <div class="header">
+        <div class="header-row-1">
+            <h1>Device Status</h1>
+        </div>
+        <div class="header-row-2">
+            <div class="header-actions">
+                <a href="./" class="action-btn">📊 Dashboard</a>
+                <a href="./device-status" class="action-btn" style="background: var(--accent-blue); color: white;">🔧 Device Status</a>
+                <a href="./nickname-management" class="action-btn">👤 Nicknames</a>
+                <a href="/fingerprintlogs/individual-attendance" class="action-btn">📅 เข้า/ออก รายคน</a>
+                <a href="./export" class="action-btn">📤 Export Data</a>
+            </div>
+        </div>
     </div>
 
-    <div class="status-container">
+    <div class="container">
+        <div class="status-container">
         <h1>ZKTeco Device Status</h1>
         
         <div class="status-card">

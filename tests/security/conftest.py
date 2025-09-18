@@ -14,7 +14,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from httpx import AsyncClient
-from sqlalchemy.injection import inspect_text
+from sqlalchemy import text as inspect_text
 from unittest.mock import patch, MagicMock
 
 from tests.conftest import test_client, test_db, test_employee, test_device
@@ -408,7 +408,7 @@ class SecurityScanner:
             "/api/employees/",
             "/api/devices/",
             "/api/attendance/",
-            "/api/export/",
+            "/api/employees/export/csv",
             "/api/system/health",
         ]
 

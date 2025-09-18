@@ -73,6 +73,7 @@ class UnicodeSecurityTester(SecurityTester):
                     badge_number=f"UNICODE_{len(vulnerabilities)}",
                     english_name=attack,
                     thai_name=f"ทดสอบ {attack}",
+                    display_name=f"ทดสอบ {attack}",
                     is_active=True
                 )
                 db.add(test_employee)
@@ -448,7 +449,18 @@ class TestUnicodeSecurity:
     async def test_thai_name_validation(self, security_client, test_db):
         """Test Thai name validation and sanitization"""
 
-        # Test various Thai name inputs
+        # First create a test employee in the database
+        from app.models.models import Employee
+        test_employee = Employee(
+            badge_number="THAI_TEST_001",
+            english_name="Test Employee",
+            display_name="Test Employee",
+            is_active=True
+        )
+        test_db.add(test_employee)
+        test_db.commit()
+
+        # Test various Thai name inputs using the PUT endpoint
         thai_names = [
             "พนักงานทดสอบ",  # Normal Thai name
             "พนักงาน ทดสอบ",  # Thai with space
@@ -458,37 +470,44 @@ class TestUnicodeSecurity:
         ]
 
         for thai_name in thai_names:
-            response = await security_client.post("/api/employees/", json={
-                "badge_number": f"THAI_{hash(thai_name) % 10000}",
-                "english_name": "Test Employee",
-                "thai_name": thai_name,
-                "is_active": True
+            response = security_client.put(f"/api/employees/thai-names/THAI_TEST_001", json={
+                "thai_name": thai_name
             })
 
             # Should accept valid Thai names
-            assert response.status_code == 201, f"Valid Thai name rejected: {thai_name}"
+            assert response.status_code in [200, 201], f"Valid Thai name rejected: {thai_name}"
 
-            # Cleanup
-            if response.status_code == 201:
-                employee_id = response.json().get("id")
-                if employee_id:
-                    await security_client.delete(f"/api/employees/{employee_id}")
+        # Cleanup
+        test_db.delete(test_employee)
+        test_db.commit()
 
-    async def test_unicode_length_limits(self, security_client):
+    async def test_unicode_length_limits(self, security_client, test_db):
         """Test Unicode length validation"""
+
+        # First create a test employee in the database
+        from app.models.models import Employee
+        test_employee = Employee(
+            badge_number="LONG_THAI_001",
+            english_name="Test Employee",
+            display_name="Test Employee",
+            is_active=True
+        )
+        test_db.add(test_employee)
+        test_db.commit()
 
         # Test very long Thai strings
         long_thai = "พนักงาน" * 1000  # Very long Thai string
 
-        response = await security_client.post("/api/employees/", json={
-            "badge_number": "LONG_THAI_001",
-            "english_name": "Test Employee",
-            "thai_name": long_thai,
-            "is_active": True
+        response = security_client.put(f"/api/employees/thai-names/LONG_THAI_001", json={
+            "thai_name": long_thai
         })
 
         # Should reject overly long names
         assert response.status_code in [400, 413, 422], "Should reject overly long Thai names"
+
+        # Cleanup
+        test_db.delete(test_employee)
+        test_db.commit()
 
     async def test_unicode_in_csv_export(self, security_client, test_db):
         """Test Unicode handling in CSV exports"""
@@ -498,19 +517,21 @@ class TestUnicodeSecurity:
             badge_number="CSV_THAI_001",
             english_name="Test Employee",
             thai_name="พนักงานทดสอบ การส่งออก CSV",
+            display_name="พนักงานทดสอบ การส่งออก CSV",
             is_active=True
         )
         test_db.add(thai_employee)
         test_db.commit()
 
         # Export CSV
-        response = await security_client.get("/api/export/employees-csv/")
+        response = security_client.get("/api/employees/export/csv")
         assert response.status_code == 200
 
         csv_content = response.text
 
         # Should properly handle Thai characters in CSV
-        assert "พนักงานทดสอบ" in csv_content or "UTF-8" in response.headers.get("content-type", "")
+        content_type = response.headers.get("content-type", "").lower()
+        assert "พนักงานทดสอบ" in csv_content or "utf-8" in content_type
 
         # Cleanup
         test_db.delete(thai_employee)
@@ -527,7 +548,7 @@ class TestUnicodeSecurity:
         ]
 
         for rtl_text in rtl_texts:
-            response = await security_client.post("/api/employees/", json={
+            response = security_client.post("/api/employees/", json={
                 "badge_number": f"RTL_{hash(rtl_text) % 10000}",
                 "english_name": rtl_text,
                 "thai_name": "พนักงานทดสอบ",
@@ -538,7 +559,7 @@ class TestUnicodeSecurity:
                 employee_id = response.json().get("id")
 
                 # Get employee and check for proper RTL handling
-                get_response = await security_client.get(f"/api/employees/{employee_id}")
+                get_response = security_client.get(f"/api/employees/{employee_id}")
                 if get_response.status_code == 200:
                     response_text = get_response.text
 
@@ -546,4 +567,4 @@ class TestUnicodeSecurity:
                     assert "\u202e" not in response_text, "RTL override should be filtered or escaped"
 
                 # Cleanup
-                await security_client.delete(f"/api/employees/{employee_id}")
+                security_client.delete(f"/api/employees/{employee_id}")

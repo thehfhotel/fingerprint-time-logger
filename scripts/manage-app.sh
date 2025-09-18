@@ -18,10 +18,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SERVICE_NAME="fingerprint-logger"
 COMPOSE_FILE="$PROJECT_ROOT/docker-compose.yml"
+BAKE_FILE="$PROJECT_ROOT/docker-bake.hcl"
 PORT=5000
 HEALTH_ENDPOINT="http://localhost:$PORT/fingerprintlogs/health"
 MAX_HEALTH_RETRIES=30
 HEALTH_RETRY_DELAY=2
+
+# Build configuration
+BUILD_METHOD=${BUILD_METHOD:-"auto"}  # auto, bake, compose
+BUILD_TARGET=${BUILD_TARGET:-"fingerprint-logger"}
 
 # Source common functions if available
 if [[ -f "$SCRIPT_DIR/lib/common.sh" ]]; then
@@ -81,6 +86,419 @@ check_compose_file() {
     log_info "Docker compose file found: $COMPOSE_FILE"
 }
 
+# Docker Compose helper function
+get_compose_cmd() {
+    if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+        echo "docker compose"
+    else
+        echo "docker-compose"
+    fi
+}
+
+# Docker Bake support functions
+check_bake_support() {
+    if command -v docker >/dev/null 2>&1 && docker buildx bake --help >/dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+check_bake_file() {
+    if [[ -f "$BAKE_FILE" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+determine_build_method() {
+    local method="$1"
+
+    case "$method" in
+        "bake")
+            if check_bake_support && check_bake_file; then
+                echo "bake"
+            else
+                log_warning "Bake requested but not available, falling back to Compose" >&2
+                echo "compose"
+            fi
+            ;;
+        "compose")
+            echo "compose"
+            ;;
+        "auto"|*)
+            if check_bake_support && check_bake_file; then
+                log_info "Docker Bake detected - using optimized build system" >&2
+                echo "bake"
+            else
+                log_info "Using standard Docker Compose build" >&2
+                echo "compose"
+            fi
+            ;;
+    esac
+}
+
+# ==============================================================================
+# CACHE MANAGEMENT FUNCTIONS
+# ==============================================================================
+
+detect_cache_staleness() {
+    local cache_state_file=".docker-cache-state"
+    local staleness_hours=${CACHE_STALENESS_HOURS:-24}
+    local critical_files=("Dockerfile" "requirements.txt" "requirements-*.txt" "docker-bake.hcl" "docker-compose.yml")
+    local stale_files=()
+
+    # Check if cache state file exists
+    if [[ ! -f "$cache_state_file" ]]; then
+        log_info "No cache state found - cache will be considered stale"
+        return 0  # Stale
+    fi
+
+    # Check critical files for modifications
+    for pattern in "${critical_files[@]}"; do
+        while IFS= read -r -d '' file; do
+            if [[ "$file" -nt "$cache_state_file" ]]; then
+                stale_files+=("$file")
+            fi
+        done < <(find . -maxdepth 1 -name "$pattern" -print0 2>/dev/null)
+    done
+
+    # Check source code modifications (app directory)
+    if [[ -d "app" ]]; then
+        local app_files_newer
+        app_files_newer=$(find app/ -name "*.py" -newer "$cache_state_file" 2>/dev/null | wc -l)
+        if [[ $app_files_newer -gt 0 ]]; then
+            stale_files+=("app/ ($app_files_newer files)")
+        fi
+    fi
+
+    # Check cache age
+    if [[ -f "$cache_state_file" ]]; then
+        local cache_age_hours
+        cache_age_hours=$(( ($(date +%s) - $(stat -c %Y "$cache_state_file" 2>/dev/null || stat -f %m "$cache_state_file" 2>/dev/null || echo 0)) / 3600 ))
+        if [[ $cache_age_hours -gt $staleness_hours ]]; then
+            stale_files+=("cache age: ${cache_age_hours}h (limit: ${staleness_hours}h)")
+        fi
+    fi
+
+    # Report findings
+    if [[ ${#stale_files[@]} -gt 0 ]]; then
+        if [[ "${CACHE_DEBUG:-false}" == "true" ]]; then
+            log_warning "Cache staleness detected:"
+            for file in "${stale_files[@]}"; do
+                log_warning "  - $file"
+            done
+        fi
+        return 0  # Stale
+    else
+        if [[ "${CACHE_DEBUG:-false}" == "true" ]]; then
+            log_info "Cache appears fresh"
+        fi
+        return 1  # Fresh
+    fi
+}
+
+clear_buildkit_cache() {
+    log_info "Clearing BuildKit cache..."
+    local cache_size_before
+    cache_size_before=$(docker buildx du --verbose 2>/dev/null | grep "^Total:" | awk '{print $2}' || echo "Unknown")
+
+    if command -v docker buildx >/dev/null 2>&1; then
+        if docker buildx prune -f; then
+            local cache_size_after
+            cache_size_after=$(docker buildx du --verbose 2>/dev/null | grep "^Total:" | awk '{print $2}' || echo "0B")
+            log_success "BuildKit cache cleared (was: $cache_size_before, now: $cache_size_after)"
+        else
+            log_error "Failed to clear BuildKit cache"
+            return 1
+        fi
+    else
+        log_warning "Docker buildx not available, skipping BuildKit cache clear"
+        return 1
+    fi
+}
+
+clear_docker_cache() {
+    log_info "Clearing Docker build cache..."
+    if docker builder prune -f; then
+        log_success "Docker build cache cleared"
+    else
+        log_error "Failed to clear Docker build cache"
+        return 1
+    fi
+}
+
+apply_cache_strategy() {
+    local cache_strategy=${CACHE_STRATEGY:-fast}
+    local force_fresh=${1:-false}
+
+    # Force fresh build overrides everything
+    if [[ "$force_fresh" == "true" ]]; then
+        log_info "Fresh build requested - clearing all caches"
+        clear_buildkit_cache
+        clear_docker_cache
+        return 0
+    fi
+
+    case "$cache_strategy" in
+        "auto")
+            if detect_cache_staleness; then
+                log_info "Auto cache strategy: Stale cache detected, clearing..."
+                clear_buildkit_cache
+                # Don't clear docker cache for compose builds unless explicitly needed
+            else
+                log_info "Auto cache strategy: Cache is fresh, using existing cache"
+            fi
+            ;;
+        "fresh")
+            log_info "Fresh cache strategy: Clearing all caches"
+            clear_buildkit_cache
+            clear_docker_cache
+            ;;
+        "preserve")
+            log_info "Preserve cache strategy: Using existing cache"
+            ;;
+        "fast")
+            log_info "Fast cache strategy: Maximum cache utilization for speed"
+            # Never clear cache unless forced, rely on CACHEBUST for invalidation
+            ;;
+        *)
+            log_warning "Unknown cache strategy '$cache_strategy', using auto"
+            apply_cache_strategy "auto" "$force_fresh"
+            ;;
+    esac
+}
+
+update_cache_state() {
+    local cache_state_file=".docker-cache-state"
+    local build_method=${1:-$(determine_build_method "$BUILD_METHOD")}
+
+    # Create cache state file with metadata
+    cat > "$cache_state_file" << EOF
+# Cache state file - generated $(date)
+# Build method: $build_method
+# Cache strategy: ${CACHE_STRATEGY:-fast}
+# Last updated: $(date -u -Iseconds)
+EOF
+
+    if [[ "${CACHE_DEBUG:-false}" == "true" ]]; then
+        log_info "Cache state updated: $cache_state_file"
+    fi
+}
+
+show_cache_status() {
+    local cache_state_file=".docker-cache-state"
+
+    log_header "CACHE STATUS"
+
+    # Cache state file info
+    if [[ -f "$cache_state_file" ]]; then
+        local last_updated
+        last_updated=$(stat -c %y "$cache_state_file" 2>/dev/null || stat -f %Sm "$cache_state_file" 2>/dev/null || echo "Unknown")
+        log_info "Last cache update: $last_updated"
+
+        # Show cache file content if debug enabled
+        if [[ "${CACHE_DEBUG:-false}" == "true" ]]; then
+            echo ""
+            cat "$cache_state_file"
+            echo ""
+        fi
+    else
+        log_warning "No cache state file found (.docker-cache-state)"
+    fi
+
+    # Docker cache sizes
+    echo ""
+    log_info "Docker cache usage:"
+    if command -v docker system >/dev/null 2>&1; then
+        docker system df
+    else
+        log_error "Docker not available"
+    fi
+
+    # BuildKit cache info if available
+    echo ""
+    if command -v docker buildx >/dev/null 2>&1; then
+        log_info "BuildKit cache info:"
+        docker buildx du 2>/dev/null || log_warning "BuildKit cache info not available"
+    fi
+
+    # Staleness detection
+    echo ""
+    if detect_cache_staleness; then
+        log_warning "Cache Status: STALE (recommend clearing)"
+    else
+        log_success "Cache Status: FRESH (can reuse)"
+    fi
+
+    # Current configuration
+    echo ""
+    log_info "Cache configuration:"
+    log_info "  CACHE_STRATEGY: ${CACHE_STRATEGY:-fast}"
+    log_info "  CACHE_STALENESS_HOURS: ${CACHE_STALENESS_HOURS:-24}"
+    log_info "  CACHE_DEBUG: ${CACHE_DEBUG:-false}"
+}
+
+cache_clear_command() {
+    log_header "CLEARING ALL BUILD CACHES"
+
+    local cleared=false
+
+    # Clear BuildKit cache
+    if clear_buildkit_cache; then
+        cleared=true
+    fi
+
+    # Clear Docker cache
+    if clear_docker_cache; then
+        cleared=true
+    fi
+
+    # Clear system cache if requested
+    if [[ "${1:-}" == "--system" ]]; then
+        log_info "Clearing system Docker cache..."
+        if docker system prune -f; then
+            log_success "System Docker cache cleared"
+            cleared=true
+        else
+            log_error "Failed to clear system Docker cache"
+        fi
+    fi
+
+    if [[ "$cleared" == "true" ]]; then
+        # Update cache state to reflect clearing
+        update_cache_state
+        log_success "Cache clearing completed"
+    else
+        log_error "No caches were successfully cleared"
+        return 1
+    fi
+}
+
+rebuild_command() {
+    log_header "RELIABLE REBUILD WITH CACHE BUSTING"
+
+    local target="${BUILD_TARGET:-fingerprint-logger}"
+    local cachebust
+    cachebust=$(date +%s)
+
+    log_info "Using cache-busting value: $cachebust"
+    log_info "Target: $target"
+
+    # Determine build method
+    local actual_method
+    actual_method=$(determine_build_method "$BUILD_METHOD")
+
+    case "$actual_method" in
+        "bake")
+            log_info "Rebuilding with Docker Bake and cache busting..."
+            if check_bake_support && check_bake_file; then
+                log_info "Running: docker buildx bake --set $target.args.CACHEBUST=$cachebust $target"
+                if docker buildx bake --set "$target.args.CACHEBUST=$cachebust" "$target"; then
+                    log_success "Bake rebuild with cache busting completed successfully"
+                    update_cache_state
+                    return 0
+                else
+                    log_error "Bake rebuild failed"
+                    return 1
+                fi
+            else
+                log_error "Docker Bake not available"
+                return 1
+            fi
+            ;;
+        "compose")
+            log_info "Rebuilding with Docker Compose..."
+            if docker compose build; then
+                log_success "Compose rebuild completed successfully"
+                update_cache_state
+                return 0
+            else
+                log_error "Compose rebuild failed"
+                return 1
+            fi
+            ;;
+        *)
+            log_error "Unknown build method: $actual_method"
+            return 1
+            ;;
+    esac
+}
+
+# ==============================================================================
+# BUILD FUNCTIONS
+# ==============================================================================
+
+# Enhanced build function with cache management
+build_application() {
+    local fresh_build=${1:-false}
+    local actual_method
+    actual_method=$(determine_build_method "$BUILD_METHOD")
+
+    log_info "Building application using $actual_method method..."
+
+    # Apply cache strategy before building
+    apply_cache_strategy "$fresh_build"
+
+    case "$actual_method" in
+        "bake")
+            build_with_bake
+            ;;
+        "compose")
+            build_with_compose
+            ;;
+        *)
+            log_error "Unknown build method: $actual_method"
+            return 1
+            ;;
+    esac
+
+    # Update cache state after successful build
+    if [[ $? -eq 0 ]]; then
+        update_cache_state "$actual_method"
+    fi
+}
+
+build_with_bake() {
+    local original_dir="$(pwd)"
+
+    log_info "Running Docker Bake build with target: $BUILD_TARGET"
+
+    # Change to project root to ensure bake definition file is found
+    cd "$PROJECT_ROOT"
+
+    # Simple Docker Bake build - no cache complexity
+    if docker buildx bake --load "$BUILD_TARGET"; then
+        cd "$original_dir"
+        log_success "Bake build completed successfully"
+        return 0
+    else
+        cd "$original_dir"
+        log_error "Bake build failed"
+        return 1
+    fi
+}
+
+build_with_compose() {
+    log_info "Running Docker Compose build"
+
+    # Use docker compose (modern) or docker-compose (legacy)
+    local compose_cmd="docker compose"
+    if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
+        compose_cmd="docker-compose"
+    fi
+
+    # Simple Compose build
+    if $compose_cmd -f "$COMPOSE_FILE" build; then
+        log_success "Compose build completed successfully"
+        return 0
+    else
+        log_error "Compose build failed"
+        return 1
+    fi
+}
+
 # Health check functions
 wait_for_health() {
     local retries=0
@@ -128,7 +546,9 @@ start_application() {
     check_compose_file
 
     # Check if already running
-    if docker-compose -f "$COMPOSE_FILE" ps | grep -q "$SERVICE_NAME.*Up"; then
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    if $compose_cmd -f "$COMPOSE_FILE" ps | grep -q "$SERVICE_NAME.*Up"; then
         log_warning "Application is already running"
         check_health
         return 0
@@ -136,25 +556,35 @@ start_application() {
 
     log_info "Starting application containers..."
 
-    # Start with build to ensure latest image
-    if docker-compose -f "$COMPOSE_FILE" up -d --build; then
-        log_success "Containers started successfully"
+    # Build with enhanced build system
+    if build_application; then
+        log_info "Starting containers with latest image..."
 
-        # Wait for application to be healthy
-        if wait_for_health; then
-            log_success "Application started and is healthy"
-            echo ""
-            log_info "Application URLs:"
-            log_info "  Dashboard: http://localhost:$PORT/"
-            log_info "  API Docs:  http://localhost:$PORT/docs"
-            log_info "  Status:    http://localhost:$PORT/status"
+        # Get the appropriate compose command
+        compose_cmd=$(get_compose_cmd)
+
+        if $compose_cmd -f "$COMPOSE_FILE" up -d; then
+            log_success "Containers started successfully"
+
+            # Wait for application to be healthy
+            if wait_for_health; then
+                log_success "Application started and is healthy"
+                echo ""
+                log_info "Application URLs:"
+                log_info "  Dashboard: http://localhost:$PORT/"
+                log_info "  API Docs:  http://localhost:$PORT/docs"
+                log_info "  Status:    http://localhost:$PORT/status"
+            else
+                log_error "Application started but health check failed"
+                show_logs
+                return 1
+            fi
         else
-            log_error "Application started but health check failed"
-            show_logs
+            log_error "Failed to start application containers"
             return 1
         fi
     else
-        log_error "Failed to start application containers"
+        log_error "Build failed"
         return 1
     fi
 }
@@ -166,14 +596,16 @@ stop_application() {
     check_compose_file
 
     # Check if running
-    if ! docker-compose -f "$COMPOSE_FILE" ps | grep -q "$SERVICE_NAME"; then
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    if ! $compose_cmd -f "$COMPOSE_FILE" ps | grep -q "$SERVICE_NAME"; then
         log_warning "No containers are currently running"
         return 0
     fi
 
     log_info "Stopping application containers..."
 
-    if docker-compose -f "$COMPOSE_FILE" down; then
+    if $compose_cmd -f "$COMPOSE_FILE" down; then
         log_success "Application stopped successfully"
     else
         log_error "Failed to stop application"
@@ -201,7 +633,9 @@ show_status() {
     # Container status
     echo "Container Status:"
     if [[ -f "$COMPOSE_FILE" ]]; then
-        docker-compose -f "$COMPOSE_FILE" ps || log_warning "Could not get container status"
+        local compose_cmd
+        compose_cmd=$(get_compose_cmd)
+        $compose_cmd -f "$COMPOSE_FILE" ps || log_warning "Could not get container status"
     else
         log_warning "Docker compose file not found"
     fi
@@ -256,10 +690,22 @@ show_logs() {
     check_compose_file
 
     log_info "Showing recent application logs..."
-    docker-compose -f "$COMPOSE_FILE" logs --tail=50 "$SERVICE_NAME" 2>/dev/null || log_error "Could not retrieve logs"
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    $compose_cmd -f "$COMPOSE_FILE" logs --tail=50 "$SERVICE_NAME" 2>/dev/null || log_error "Could not retrieve logs"
 }
 
 deploy_application() {
+    local fresh_build=false
+
+    # Check for --fresh-build flag in remaining args
+    for arg in "${remaining_args[@]}"; do
+        if [[ "$arg" == "--fresh-build" ]]; then
+            fresh_build=true
+            break
+        fi
+    done
+
     log_header "DEPLOYING FINGERPRINT TIME LOGGER"
 
     check_docker
@@ -267,13 +713,14 @@ deploy_application() {
 
     log_info "Starting deployment process..."
 
-    # Pull latest images
-    log_info "Pulling latest base images..."
-    docker-compose -f "$COMPOSE_FILE" pull || log_warning "Could not pull latest images"
+    # Pull latest images and build with enhanced build system
+    if [[ "$fresh_build" == "true" ]]; then
+        log_info "Fresh build requested - clearing caches and building application..."
+    else
+        log_info "Pulling latest base images and building application..."
+    fi
 
-    # Build with no cache to ensure fresh build
-    log_info "Building application with latest changes..."
-    if docker-compose -f "$COMPOSE_FILE" build --no-cache; then
+    if build_application "$fresh_build"; then
         log_success "Build completed successfully"
     else
         log_error "Build failed"
@@ -282,7 +729,12 @@ deploy_application() {
 
     # Deploy (restart with new images)
     log_info "Deploying application..."
-    if docker-compose -f "$COMPOSE_FILE" up -d --force-recreate; then
+
+    # Get the appropriate compose command
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+
+    if $compose_cmd -f "$COMPOSE_FILE" up -d --force-recreate; then
         log_success "Deployment completed"
 
         # Wait for health check
@@ -339,31 +791,78 @@ Fingerprint Time Logger - Application Management Script
 Usage: $0 <command> [options]
 
 Commands:
-    start       Start the application
-    stop        Stop the application
-    restart     Restart the application
-    status      Show application status
-    health      Check application health
-    logs        Show application logs
-    deploy      Deploy application with fresh build
-    backup      Backup database
-    help        Show this help message
+    start           Start the application
+    stop            Stop the application
+    restart         Restart the application
+    status          Show application status
+    health          Check application health
+    logs            Show application logs
+    deploy          Deploy application with fresh build
+    backup          Backup database
+    cache-status    Show Docker BuildKit cache status
+    cache-clear     Clear Docker BuildKit cache
+    rebuild         Force rebuild with cache busting (reliable for file changes)
+    help            Show this help message
+
+Build Options:
+    --build-method METHOD      Set build method (auto, bake, compose)
+    --build-target TARGET      Set Docker Bake target (fingerprint-logger, fingerprint-logger-dev, fingerprint-logger-prod)
+    --no-build-cache          Force rebuild without cache (clears BuildKit cache first)
+    --fresh-build             Clear cache and rebuild from scratch (for deploy command)
+
+Cache Management:
+    --cache-strategy STRATEGY  Cache strategy: auto, fast, preserve, fresh (default: fast)
+    --cache-debug             Enable cache debugging output
 
 Examples:
-    $0 start                    # Start the application
-    $0 stop                     # Stop the application
-    $0 restart                  # Restart the application
-    $0 status                   # Show comprehensive status
-    $0 health                   # Quick health check
-    $0 logs                     # Show recent logs
-    $0 deploy                   # Deploy with fresh build
-    $0 backup                   # Backup database
+    $0 start                           # Start with auto-detected build method
+    $0 start --build-method bake       # Start with Docker Bake build
+    $0 deploy --build-target fingerprint-logger-prod  # Deploy production build
+    $0 deploy --fresh-build            # Deploy with complete cache clear
+    $0 restart --no-build-cache        # Restart with fresh build
+    $0 status                          # Show comprehensive status
+    $0 health                          # Quick health check
+    $0 logs                            # Show recent logs
+    $0 backup                          # Backup database
+    $0 cache-status                    # Check BuildKit cache status
+    $0 cache-clear                     # Clear BuildKit cache (40GB+ possible)
+    $0 rebuild                         # Force reliable rebuild with cache busting
 
 Environment Variables:
-    SERVICE_NAME               # Docker service name (default: fingerprint-time-logger)
+    BUILD_METHOD              # Build method (auto, bake, compose) (default: auto)
+    BUILD_TARGET              # Docker Bake target (default: fingerprint-logger)
+    SERVICE_NAME              # Docker service name (default: fingerprint-time-logger)
     PORT                      # Application port (default: 5000)
     MAX_HEALTH_RETRIES        # Health check retry count (default: 30)
     HEALTH_RETRY_DELAY        # Health check delay in seconds (default: 2)
+    CACHE_STRATEGY            # Cache management strategy (auto, fast, preserve, fresh) (default: fast)
+    CACHE_STALENESS_HOURS     # Hours before cache is considered stale (default: 24)
+    CACHE_DEBUG               # Enable cache debugging output (true/false) (default: false)
+
+Build Methods:
+    auto        Automatically detect and use Docker Bake if available, fallback to Compose
+    bake        Force use of Docker Bake (requires docker buildx bake support)
+    compose     Force use of standard Docker Compose build
+
+Build Targets (Docker Bake):
+    fingerprint-logger        Standard production build (default)
+    fingerprint-logger-dev    Development build with additional tools
+    fingerprint-logger-prod   Production optimized build
+
+Cache Management Notes:
+    The Docker BuildKit cache can grow very large (40GB+) and may cause build issues where
+    file changes are not detected. The cache management commands help resolve these issues:
+
+    - cache-status: Shows current BuildKit cache size and age
+    - cache-clear: Clears all BuildKit cache (may take several minutes)
+    - auto: Intelligent cache management - clears when code changes detected (balanced)
+    - fast: Maximum cache utilization for fastest builds (relies on CACHEBUST for invalidation)
+    - preserve: Never clear cache, use existing layers for maximum speed
+    - fresh: Always clear cache for clean builds (slowest but most reliable)
+
+    If your builds are not picking up file changes, use:
+    $0 rebuild                         # Reliable rebuild with cache busting
+    $0 cache-clear && $0 restart       # Alternative: clear cache then restart
 
 EOF
 }
@@ -385,7 +884,13 @@ show_menu() {
     echo -e "${BLUE}6.${NC} Show Logs"
     echo -e "${BLUE}7.${NC} Deploy Application"
     echo -e "${BLUE}8.${NC} Backup Database"
-    echo -e "${BLUE}9.${NC} Help"
+    echo ""
+    echo -e "${CYAN}Cache Management:${NC}"
+    echo -e "${BLUE}9.${NC} Show Cache Status"
+    echo -e "${BLUE}10.${NC} Clear BuildKit Cache"
+    echo -e "${BLUE}11.${NC} Force Rebuild (Cache Busting)"
+    echo ""
+    echo -e "${BLUE}12.${NC} Help"
     echo -e "${RED}0.${NC} Exit"
     echo ""
     echo -e "${YELLOW}=====================================${NC}"
@@ -393,7 +898,7 @@ show_menu() {
 
 get_user_choice() {
     local choice
-    echo -ne "${GREEN}Enter your choice [0-9]: ${NC}" >&2
+    echo -ne "${GREEN}Enter your choice [0-12]: ${NC}" >&2
     read -r choice
     echo "$choice"
 }
@@ -432,6 +937,18 @@ execute_choice() {
             backup_database
             ;;
         9)
+            log_info "Checking cache status..."
+            show_cache_status
+            ;;
+        10)
+            log_info "Clearing BuildKit cache..."
+            cache_clear_command
+            ;;
+        11)
+            log_info "Force rebuilding with cache busting..."
+            rebuild_command
+            ;;
+        12)
             show_usage
             ;;
         0)
@@ -450,11 +967,64 @@ wait_for_continue() {
     read -r
 }
 
+# Argument parsing function
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --build-method)
+                BUILD_METHOD="$2"
+                shift 2
+                ;;
+            --build-target)
+                BUILD_TARGET="$2"
+                shift 2
+                ;;
+            --help|-h)
+                show_usage
+                exit 0
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                show_usage
+                exit 1
+                ;;
+            *)
+                # This should be the command, stop parsing
+                break
+                ;;
+        esac
+    done
+}
+
 # Main execution with interactive menu or direct command support
 main() {
+    # Parse command line arguments first
+    local original_args=("$@")
+    parse_arguments "$@"
+
+    # Remove parsed arguments to get the command
+    local remaining_args=()
+    local skip_next=false
+    for arg in "${original_args[@]}"; do
+        if [[ "$skip_next" == "true" ]]; then
+            skip_next=false
+            continue
+        fi
+        case "$arg" in
+            --build-method|--build-target)
+                skip_next=true
+                ;;
+            --help|-h)
+                ;;
+            *)
+                remaining_args+=("$arg")
+                ;;
+        esac
+    done
+
     # If arguments provided, use command-line mode for backwards compatibility
-    if [[ $# -gt 0 ]]; then
-        case "${1:-help}" in
+    if [[ ${#remaining_args[@]} -gt 0 ]]; then
+        case "${remaining_args[0]:-help}" in
             start)
                 start_application
                 ;;
@@ -479,11 +1049,20 @@ main() {
             backup)
                 backup_database
                 ;;
+            cache-status)
+                show_cache_status
+                ;;
+            cache-clear)
+                cache_clear_command "${remaining_args[@]:1}"
+                ;;
+            rebuild)
+                rebuild_command
+                ;;
             help|--help|-h)
                 show_usage
                 ;;
             *)
-                log_error "Unknown command: $1"
+                log_error "Unknown command: ${remaining_args[0]}"
                 echo ""
                 show_usage
                 exit 1

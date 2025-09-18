@@ -1,4 +1,5 @@
-// Individual Attendance Page JavaScript
+// Individual Attendance Page JavaScript - Cache Bust v2.8-name-fix-' + Date.now()
+console.log('🚀 Individual Attendance JS Loaded - Version:', '2.8-name-fix-' + Date.now());
 
 class IndividualAttendanceManager {
     constructor() {
@@ -6,8 +7,12 @@ class IndividualAttendanceManager {
         this.employees = [];
         this.attendanceData = [];
         this.initializeEventListeners();
-        this.loadEmployees();
         this.setDefaultDates();
+        // loadEmployees() will be called after initialization
+    }
+
+    async initialize() {
+        await this.loadEmployees();
     }
 
     initializeEventListeners() {
@@ -43,14 +48,28 @@ class IndividualAttendanceManager {
 
     async loadEmployees() {
         try {
-            const response = await fetch(appConfig.getApiUrl('employees'));
-            if (!response.ok) throw new Error('Failed to load employees');
+            // Use same parameters as nickname-management page for consistent data
+            const params = new URLSearchParams({
+                from_device: 'true',        // Always fetch from ZK device
+                include_hidden: 'false',    // Don't show hidden employees in attendance view
+                include_inactive: 'true'    // Show inactive employees (they might have attendance records)
+            });
+
+            const apiUrl = appConfig.getApiUrl(`employees/?${params}`);
+            console.log('🔍 Loading employees from:', apiUrl);
+            console.log('🔗 URL passed to fetch():', apiUrl);
+            console.log('📊 URL protocol check:', apiUrl.startsWith('https://') ? 'HTTPS ✅' : 'HTTP ❌');
+
+            const response = await fetch(apiUrl);
+            if (!response.ok) throw new Error(`Failed to load employees: ${response.status} ${response.statusText}`);
 
             const data = await response.json();
             this.employees = data.employees || [];
             this.renderEmployeeList();
+            console.log('Employees loaded successfully:', this.employees.length, 'employees');
         } catch (error) {
             console.error('Error loading employees:', error);
+            console.error('API URL that failed:', appConfig.getApiUrl('employees'));
             document.getElementById('nicknameList').innerHTML =
                 '<div class="loading">ไม่สามารถโหลดรายชื่อพนักงานได้</div>';
         }
@@ -67,13 +86,13 @@ class IndividualAttendanceManager {
 
         listContainer.innerHTML = employeesToRender
             .sort((a, b) => {
-                // Sort by nickname or English name
-                const nameA = (a.nickname || a.name_english || '').toLowerCase();
-                const nameB = (b.nickname || b.name_english || '').toLowerCase();
+                // Sort by display_name (matches nickname-management page)
+                const nameA = (a.display_name || a.badge_number || '').toLowerCase();
+                const nameB = (b.display_name || b.badge_number || '').toLowerCase();
                 return nameA.localeCompare(nameB);
             })
             .map(employee => {
-                const displayName = employee.nickname || employee.name_english || 'No Name';
+                const displayName = employee.display_name || `Employee #${employee.badge_number}` || 'No Name';
                 const activeClass = employee.id === this.selectedEmployeeId ? 'active' : '';
                 return `
                     <div class="nickname-item ${activeClass}"
@@ -95,14 +114,10 @@ class IndividualAttendanceManager {
 
         const term = searchTerm.toLowerCase();
         const filtered = this.employees.filter(employee => {
-            const nickname = (employee.nickname || '').toLowerCase();
-            const nameEnglish = (employee.name_english || '').toLowerCase();
-            const nameThai = (employee.name_thai || '').toLowerCase();
+            const displayName = (employee.display_name || '').toLowerCase();
             const badge = (employee.badge_number || '').toString();
 
-            return nickname.includes(term) ||
-                   nameEnglish.includes(term) ||
-                   nameThai.includes(term) ||
+            return displayName.includes(term) ||
                    badge.includes(term);
         });
 
@@ -242,8 +257,11 @@ class IndividualAttendanceManager {
     }
 }
 
-// Initialize when DOM is ready
+// Initialize when DOM is ready and config is loaded
 let attendanceManager;
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    // Wait for configuration to be loaded
+    await appConfig.loadConfig();
     attendanceManager = new IndividualAttendanceManager();
+    await attendanceManager.initialize();
 });

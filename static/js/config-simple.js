@@ -1,6 +1,6 @@
 /**
- * Configuration Manager - Loads app configuration from API
- * Version 2.0 - Fixed HTTPS mixed content issue
+ * Simplified Configuration Manager - No Protocol Detection
+ * Eliminates HTTPS mixed content issues permanently
  */
 
 class ConfigManager {
@@ -8,8 +8,8 @@ class ConfigManager {
         this.config = null;
         this.loaded = false;
         this.basePath = this.detectBasePath();
-        this.version = '2.9-cache-busting-fix-' + Date.now();
-        console.log('ConfigManager initialized - Version:', this.version);
+        this.version = '3.0-relative-urls-' + Date.now();
+        console.log('SimpleConfigManager initialized - Version:', this.version);
     }
 
     detectBasePath() {
@@ -23,8 +23,9 @@ class ConfigManager {
 
     async loadConfig() {
         if (this.loaded) return this.config;
-        
+
         try {
+            // Use relative URL - browser automatically uses correct protocol
             const response = await fetch(`${this.basePath}/api/devices/app-config`);
             if (response.ok) {
                 this.config = await response.json();
@@ -36,7 +37,6 @@ class ConfigManager {
             }
         } catch (error) {
             console.warn('Failed to load configuration, using defaults:', error);
-            // Fallback to default configuration
             this.config = this.getDefaultConfig();
             this.loaded = true;
             return this.config;
@@ -46,7 +46,7 @@ class ConfigManager {
     getDefaultConfig() {
         return {
             api: {
-                baseUrl: `${window.location.protocol}//${window.location.host}${this.basePath}/api`,
+                baseUrl: `${window.location.origin}${this.basePath}/api`,
                 timeout: 30000,
                 retryAttempts: 3
             },
@@ -83,9 +83,8 @@ class ConfigManager {
     }
 
     /**
-     * SIMPLIFIED URL GENERATION - NGINX REVERSE PROXY COMPATIBLE
-     * Uses relative URLs - nginx handles HTTPS termination
-     * Eliminates all protocol detection issues permanently
+     * SIMPLIFIED URL GENERATION - NO PROTOCOL DETECTION
+     * Always uses relative URLs - browser handles protocol automatically
      */
     getApiUrl(endpoint = '') {
         // Clean up endpoint
@@ -107,18 +106,15 @@ class ConfigManager {
         const finalEndpointPath = needsSlash ? endpointPath + '/' : endpointPath;
         const finalEndpoint = queryString ? `${finalEndpointPath}?${queryString}` : finalEndpointPath;
 
-        // NGINX REVERSE PROXY SOLUTION - RELATIVE URLs ONLY
-        // Browser automatically uses same protocol as page (HTTPS)
-        // No protocol detection needed - nginx handles everything
+        // SIMPLE RELATIVE URL - NO PROTOCOL DETECTION NEEDED
         const relativeUrl = `${this.basePath}/api/${finalEndpoint}`;
 
-        console.log('✅ NGINX PROXY URL:', {
+        console.log('✅ SIMPLE URL GENERATED:', {
             endpoint,
             cleanEndpoint,
             finalEndpoint,
             relativeUrl,
-            basePath: this.basePath,
-            version: 'nginx-proxy-v1.0'
+            basePath: this.basePath
         });
 
         return relativeUrl;

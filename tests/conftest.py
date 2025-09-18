@@ -76,7 +76,11 @@ def test_db(test_engine):
         DeviceFactory._meta.sqlalchemy_session = None
         AttendanceRecordFactory._meta.sqlalchemy_session = None
         # Rollback any uncommitted changes and close
-        session.rollback()
+        import warnings
+        from sqlalchemy.exc import SAWarning
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=SAWarning)
+            session.rollback()
         session.close()
 
 

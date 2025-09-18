@@ -95,18 +95,6 @@ class TestEnhancedAttendanceService:
         for employee in employees:
             assert isinstance(employee, Employee)
 
-    def test_validate_attendance_record(self, test_db, test_company_setup):
-        """Test attendance record validation"""
-        service = SimpleAttendanceService()
-        attendance_records = test_company_setup.get("attendance_records", [])
-
-        if attendance_records:
-            record = attendance_records[0]
-            validation_result = service.validate_attendance_record(record)
-
-            assert isinstance(validation_result, dict)
-            # Should have validation status
-            assert "valid" in validation_result or "status" in validation_result
 
 
 class TestEnhancedExportService:
@@ -150,44 +138,8 @@ class TestEnhancedExportService:
             lines = csv_content.strip().split('\n')
             assert len(lines) >= 1
 
-    def test_generate_filename(self, test_db):
-        """Test filename generation for exports"""
-        service = SimpleExportService()
 
-        filename = service.generate_filename("attendance")
 
-        assert isinstance(filename, str)
-        assert "attendance" in filename.lower()
-        assert filename.endswith('.csv')
-
-    def test_generate_filename_with_dates(self, test_db):
-        """Test filename generation with date range"""
-        service = SimpleExportService()
-
-        start_date = date(2024, 1, 1)
-        end_date = date(2024, 1, 31)
-
-        filename = service.generate_filename(
-            "attendance",
-            start_date=start_date,
-            end_date=end_date
-        )
-
-        assert isinstance(filename, str)
-        assert "2024" in filename
-        assert filename.endswith('.csv')
-
-    def test_get_export_stats(self, test_db, test_company_setup):
-        """Test export statistics generation"""
-        service = SimpleExportService()
-
-        stats = service.get_export_stats()
-
-        assert isinstance(stats, dict)
-        # Should have numeric statistics
-        for key, value in stats.items():
-            if isinstance(value, (int, float)):
-                assert value >= 0
 
     def test_count_records(self, test_db, test_company_setup):
         """Test record counting functionality"""

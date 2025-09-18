@@ -132,7 +132,6 @@ fingerprint-time-logger/
 │   │   ├── consolidated_attendance.py
 │   │   ├── consolidated_devices.py
 │   │   ├── consolidated_employees.py
-│   │   ├── consolidated_export.py
 │   │   └── system_status.py
 │   ├── core/                    # Core functionality
 │   │   ├── config.py           # Configuration management
@@ -144,7 +143,6 @@ fingerprint-time-logger/
 │   └── services/                # Business logic
 │       ├── attendance_service.py
 │       ├── device_service.py
-│       ├── employee_csv_service.py
 │       └── export_service.py
 ├── database/                    # Database files
 │   ├── alembic.ini             # Alembic configuration

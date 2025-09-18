@@ -7,7 +7,6 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, date
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, desc
-import csv
 import logging
 
 from app.models.models import AttendanceRecord, Employee, Device, AttendanceAdjustment
@@ -110,133 +109,8 @@ class SimpleAttendanceService:
         finally:
             db.close()
     
-    def create_attendance_record(self, 
-                               employee_badge: str,
-                               timestamp: datetime,
-                               punch_type: int,
-                               device_id: int,
-                               status: int = 0) -> AttendanceRecord:
-        """Create new attendance record"""
-        db = next(get_db())
-        try:
-            record = AttendanceRecord(
-                employee_badge_number=employee_badge,
-                device_id=device_id,
-                timestamp=timestamp,
-                punch_type=punch_type,
-                status=status,
-                sync_status='synced'
-            )
-            
-            db.add(record)
-            db.commit()
-            db.refresh(record)
-            
-            logger.info(f"Created attendance record for {employee_badge}")
-            return record
-        finally:
-            db.close()
     
-    def import_from_csv(self, csv_file_path: str) -> Dict[str, Any]:
-        """Import employee data from CSV (userid.csv format)"""
-        db = next(get_db())
-        try:
-            imported_count = 0
-            updated_count = 0
-            
-            with open(csv_file_path, 'r', encoding='utf-8') as file:
-                reader = csv.DictReader(file)
-                
-                for row in reader:
-                    badge_number = row.get('Badgenumber', '').strip()
-                    thai_name = row.get('ชื่อ', '').strip()
-                    
-                    if not badge_number:
-                        continue
-                    
-                    # Check if employee exists
-                    employee = db.query(Employee).filter(
-                        Employee.badge_number == badge_number
-                    ).first()
-                    
-                    if employee:
-                        # Update existing employee
-                        if thai_name and not employee.thai_name:
-                            employee.thai_name = thai_name
-                            employee.display_name = thai_name
-                            updated_count += 1
-                    else:
-                        # Create new employee
-                        display_name = thai_name if thai_name else f"พนักงาน {badge_number}"
-                        
-                        employee = Employee(
-                            badge_number=badge_number,
-                            thai_name=thai_name if thai_name else None,
-                            display_name=display_name,
-                            is_active=True,
-                            is_hidden=False
-                        )
-                        db.add(employee)
-                        imported_count += 1
-                
-                db.commit()
-                
-                return {
-                    "success": True,
-                    "imported": imported_count,
-                    "updated": updated_count,
-                    "total_processed": imported_count + updated_count
-                }
-        except Exception as e:
-            logger.error(f"CSV import failed: {e}")
-            return {"success": False, "message": str(e)}
-        finally:
-            db.close()
     
-    def sync_employees_from_device(self, device_users: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Sync employees discovered from device"""
-        db = next(get_db())
-        try:
-            synced_count = 0
-            
-            for user in device_users:
-                user_id = str(user.get('user_id', ''))
-                name = user.get('name', '')
-                
-                if not user_id:
-                    continue
-                
-                # Check if employee exists
-                employee = db.query(Employee).filter(
-                    Employee.badge_number == user_id
-                ).first()
-                
-                if not employee:
-                    # Create new employee
-                    display_name = name if name and name != f"User {user_id}" else f"พนักงาน {user_id}"
-                    
-                    employee = Employee(
-                        badge_number=user_id,
-                        english_name=name if name and name != f"User {user_id}" else None,
-                        display_name=display_name,
-                        is_active=True,
-                        is_hidden=False
-                    )
-                    db.add(employee)
-                    synced_count += 1
-            
-            db.commit()
-            
-            return {
-                "success": True,
-                "total_synced": synced_count,
-                "message": f"Synced {synced_count} new employees"
-            }
-        except Exception as e:
-            logger.error(f"Employee sync failed: {e}")
-            return {"success": False, "message": str(e)}
-        finally:
-            db.close()
     
     def get_employee_list(self) -> List[Employee]:
         """Get list of all active employees"""
@@ -250,29 +124,6 @@ class SimpleAttendanceService:
         finally:
             db.close()
     
-    def validate_attendance_record(self, record: AttendanceRecord) -> Dict[str, Any]:
-        """Basic attendance validation (simplified)"""
-        # Just basic checks - no complex validation logic
-        validation = {
-            "status": "valid",
-            "message": "Record is valid",
-            "issues": []
-        }
-        
-        # Check if employee exists
-        db = next(get_db())
-        try:
-            employee = db.query(Employee).filter(
-                Employee.badge_number == record.employee_badge_number
-            ).first()
-            
-            if not employee:
-                validation["status"] = "warning"
-                validation["issues"].append("Employee not found in system")
-        finally:
-            db.close()
-        
-        return validation
 
 
 # Global service instance

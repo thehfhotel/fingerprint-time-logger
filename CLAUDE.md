@@ -6,18 +6,19 @@ Modern fingerprint time logger for ZKTeco biometric devices with Thai localizati
 
 ```bash
 # Interactive Scripts (NEW) - Guided menus for easy operation
-./scripts/manage-app.sh            # Interactive application management
-./scripts/test-verify.sh           # Interactive testing with configuration
+./scripts/manage-app.sh            # Interactive application management with Docker Bake
+./scripts/test-suite-console.sh    # Enhanced testing console with comprehensive logging
 
-# Direct Commands - For automation and CI/CD
-./scripts/manage-app.sh start      # Start the application
-./scripts/manage-app.sh stop       # Stop the application
-./scripts/manage-app.sh restart    # Restart the application
-./scripts/manage-app.sh status     # Check comprehensive status
-./scripts/manage-app.sh health     # Quick health check
-./scripts/manage-app.sh logs       # Show application logs
-./scripts/manage-app.sh deploy     # Deploy with fresh build
-./scripts/manage-app.sh backup     # Backup database
+# Direct Commands - For automation and CI/CD with Docker Bake Support
+./scripts/manage-app.sh start                    # Start with auto-detected build method (Bake/Compose)
+./scripts/manage-app.sh start --build-method bake # Start with Docker Bake build
+./scripts/manage-app.sh stop                     # Stop the application
+./scripts/manage-app.sh restart --no-build-cache # Restart with fresh build
+./scripts/manage-app.sh status                   # Check comprehensive status
+./scripts/manage-app.sh health                   # Quick health check
+./scripts/manage-app.sh logs                     # Show application logs
+./scripts/manage-app.sh deploy --build-target fingerprint-logger-prod # Deploy optimized build
+./scripts/manage-app.sh backup                   # Backup database
 
 # Application URLs (after starting):
 # Dashboard: http://localhost:5000
@@ -34,6 +35,16 @@ pip install -r requirements.txt
 # Database migrations
 alembic -c database/alembic.ini upgrade head
 
+# Docker Build (Enhanced with Bake)
+./scripts/build-with-bake.sh              # Optimized Docker Bake build
+./scripts/build-with-bake.sh --dev        # Development build with tools
+./scripts/build-with-bake.sh --prod       # Production optimized build
+./scripts/build-comparison.sh             # Compare build performance
+
+# Standard Docker Commands
+docker compose build                      # Standard build (supports Bake delegation)
+docker compose up -d                      # Start with Docker Compose
+
 # Run tests
 python3 -m pytest -v                    # Standard test execution
 python3 -m pytest -n auto               # Parallel test execution (70% faster)
@@ -41,12 +52,12 @@ python3 -m pytest -n 4                  # Parallel with 4 specific workers
 python3 -m pytest tests/unit/ -n auto   # Parallel unit tests only
 
 # Interactive Testing & Verification
-./scripts/test-verify.sh           # Interactive testing with configuration options
+./scripts/test-suite-console.sh    # Enhanced testing console with comprehensive logging
 
 # Direct Testing Commands
-./scripts/test-verify.sh setup     # Setup testing infrastructure
-./scripts/test-verify.sh all       # Complete test suite
-./scripts/test-verify.sh e2e       # E2E tests only
+./scripts/test-suite-console.sh setup     # Setup testing infrastructure
+./scripts/test-suite-console.sh all       # Complete test suite
+./scripts/test-suite-console.sh e2e       # E2E tests only
 ```
 
 ## Architecture
@@ -110,7 +121,14 @@ uvicorn app.main_unified:app --reload --port 5000
 alembic -c database/alembic.ini revision --autogenerate -m "description"
 alembic -c database/alembic.ini upgrade head
 
-# Tests
+# Testing with integrated test-suite-console.sh
+./scripts/test-suite-console.sh all                    # Complete test suite
+./scripts/test-suite-console.sh unit                   # Unit tests only
+./scripts/test-suite-console.sh integration            # Integration tests (parallel)
+./scripts/test-suite-console.sh e2e                    # E2E tests (parallelized)
+./scripts/test-suite-console.sh e2e --browser firefox  # E2E with specific browser
+
+# Legacy testing
 python3 -m pytest -v
 ```
 
@@ -142,6 +160,40 @@ ZKTECO_PORT=4370
 - **Employee Status Features**: Active/inactive and hidden/visible toggles
 - **Enhanced Monitoring**: Comprehensive system health checks and diagnostics
 
+## Docker Build Optimization
+
+### Bake Build System (Jan 2025)
+Enhanced Docker build system using Docker Bake for improved performance and advanced features:
+
+- **Advanced Caching**: Registry-based build cache for faster subsequent builds
+- **Multi-stage Optimization**: Separate base, development, and production stages
+- **Parallel Builds**: Improved build parallelization compared to standard Compose
+- **Build Targets**: Specialized development and production optimized images
+- **Platform Support**: Multi-platform build capabilities (linux/amd64, linux/arm64)
+
+### Build Commands
+```bash
+# Optimized Bake builds
+./scripts/build-with-bake.sh              # Standard production build
+./scripts/build-with-bake.sh --dev        # Development build with testing tools
+./scripts/build-with-bake.sh --prod       # Production optimized build
+./scripts/build-comparison.sh             # Performance comparison tool
+
+# Standard builds (with Bake delegation when enabled)
+docker compose build                      # Uses Bake when COMPOSE_BAKE=true
+export COMPOSE_BAKE=true && docker compose build  # Enable Bake delegation
+
+# Manual Bake commands
+docker buildx bake fingerprint-logger     # Direct Bake build
+docker buildx bake fingerprint-logger-dev # Development target
+```
+
+### Performance Improvements
+- **Faster builds**: Enhanced caching and parallelization
+- **Better layer reuse**: Multi-stage builds with optimized layer sharing
+- **Registry caching**: Shared cache for team development
+- **Build customization**: Environment-specific optimizations
+
 ## E2E Testing Framework
 
 ### Framework Components
@@ -154,13 +206,13 @@ ZKTECO_PORT=4370
 ### Test Execution
 ```bash
 # Consolidated testing script
-./scripts/test-verify.sh all            # All tests and quality checks
-./scripts/test-verify.sh e2e            # E2E tests only
+./scripts/test-suite-console.sh all            # All tests and quality checks
+./scripts/test-suite-console.sh e2e            # E2E tests only
 
 # Enhanced testing options
-./scripts/test-verify.sh setup --browser firefox    # Setup with custom browser
-./scripts/test-verify.sh e2e --parallel             # Parallel E2E execution
-./scripts/test-verify.sh all --coverage 90          # High coverage threshold
+./scripts/test-suite-console.sh setup --browser firefox    # Setup with custom browser
+./scripts/test-suite-console.sh e2e --parallel             # Parallel E2E execution
+./scripts/test-suite-console.sh all --coverage 90          # High coverage threshold
 ```
 
 ## Documentation
@@ -181,17 +233,17 @@ ZKTECO_PORT=4370
 ### Running Tests
 ```bash
 # Testing and Verification (consolidated script)
-./scripts/test-verify.sh all            # Complete test suite
-./scripts/test-verify.sh unit           # Unit tests only
-./scripts/test-verify.sh integration    # Integration tests
-./scripts/test-verify.sh e2e            # E2E tests (requires app running)
-./scripts/test-verify.sh security       # Security tests
-./scripts/test-verify.sh quality        # Code quality checks
-./scripts/test-verify.sh performance    # Performance tests
-./scripts/test-verify.sh report         # Generate test report
+./scripts/test-suite-console.sh all            # Complete test suite
+./scripts/test-suite-console.sh unit           # Unit tests only
+./scripts/test-suite-console.sh integration    # Integration tests
+./scripts/test-suite-console.sh e2e            # E2E tests (requires app running)
+./scripts/test-suite-console.sh security       # Security tests
+./scripts/test-suite-console.sh quality        # Code quality checks
+./scripts/test-suite-console.sh performance    # Performance tests
+./scripts/test-suite-console.sh report         # Generate test report
 
 # Test options
-./scripts/test-verify.sh all --coverage 85 --browser firefox --parallel
+./scripts/test-suite-console.sh all --coverage 85 --browser firefox --parallel
 
 # Legacy command still works:
 python3 -m pytest -v
@@ -208,8 +260,8 @@ python3 -m pytest -v
 **Commit Strategy**: Follow `COMMIT_STRATEGY.md` for granular commits at every development step.
 
 **Testing**: Always run tests before commits:
-1. `./scripts/test-verify.sh unit` (unit tests)
-2. `./scripts/test-verify.sh e2e` (critical E2E paths)
-3. `./scripts/test-verify.sh all` (comprehensive testing - recommended)
+1. `./scripts/test-suite-console.sh unit` (unit tests)
+2. `./scripts/test-suite-console.sh e2e` (critical E2E paths)
+3. `./scripts/test-suite-console.sh all` (comprehensive testing - recommended)
 
 **Focus**: Simple, functional single-user system optimized for reliability and ease of use.

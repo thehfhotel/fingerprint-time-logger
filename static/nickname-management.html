@@ -3,34 +3,53 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Employee Nickname Management - Fingerprint Time Logger</title>
-    <link rel="stylesheet" href="static/css/base.css">
-    <link rel="stylesheet" href="static/css/modal.css">
-    
+    <!-- CSS Files with cache busting -->
+    <script>
+        const cssTimestamp = Date.now();
+        document.write(`<link rel="stylesheet" href="static/css/base.css?v=${cssTimestamp}">`);
+        document.write(`<link rel="stylesheet" href="static/css/modal.css?v=${cssTimestamp}">`);
+    </script>
+
     <!-- JavaScript Files -->
-    <script src="static/js/config.js?bust=1752420999&force=true&v=8&queryfix=1&final=<?= Date.now() ?>"></script>
+    <script>
+        const timestamp = Date.now();
+        const randomId = Math.random().toString(36).substring(7);
+        const buildNumber = '2025011800'; // Build timestamp - FORCE CACHE BREAK
+        const version = `v2.5-debug-${buildNumber}`;
+        const cacheBuster = `${timestamp}.${randomId}&build=${buildNumber}`;
+        document.write(`<script src="static/js/config.js?v=${cacheBuster}&version=${version}&force=${Date.now()}"><\/script>`);
+    </script>
     <style>
         .nickname-table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 20px;
+            margin-top: 1.5rem;
+            background: var(--primary-white);
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px var(--shadow-light);
         }
 
         .nickname-table th,
         .nickname-table td {
-            padding: 12px;
+            padding: 0.75rem;
             text-align: left;
-            border-bottom: 1px solid #ddd;
+            border-bottom: 1px solid var(--border-light);
         }
 
         .nickname-table th {
-            background-color: #f5f5f5;
+            background-color: var(--bg-tertiary);
             font-weight: 600;
-            color: #333;
+            color: var(--text-primary);
+            font-size: 0.875rem;
         }
 
         .nickname-table tr:hover {
-            background-color: #f9f9f9;
+            background-color: var(--bg-secondary);
         }
 
         .nickname-input {
@@ -44,25 +63,6 @@
         .nickname-input:focus {
             outline: none;
             border-color: #007bff;
-        }
-
-        .save-btn {
-            padding: 6px 12px;
-            background-color: #28a745;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-        }
-
-        .save-btn:hover {
-            background-color: #218838;
-        }
-
-        .save-btn:disabled {
-            background-color: #6c757d;
-            cursor: not-allowed;
         }
 
         .search-box {
@@ -119,66 +119,41 @@
             color: #383d41;
         }
 
-        .toggle-btn {
-            padding: 4px 8px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            margin-right: 5px;
+        .btn.inactive {
+            background: var(--text-muted) !important;
+            border-color: var(--text-muted) !important;
         }
 
-        .toggle-btn:hover {
-            background-color: #0056b3;
+        .btn.hidden {
+            background: var(--accent-orange) !important;
+            border-color: var(--accent-orange) !important;
+            color: var(--text-primary) !important;
         }
 
-        .toggle-btn.inactive {
-            background-color: #6c757d;
-        }
-
-        .toggle-btn.hidden {
-            background-color: #ffc107;
-            color: #212529;
-        }
-
-        .show-hidden-btn {
-            padding: 8px 16px;
-            background-color: #17a2b8;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            margin-left: 10px;
-        }
-
-        .show-hidden-btn:hover {
-            background-color: #138496;
-        }
-
-        .show-hidden-btn.active {
-            background-color: #ffc107;
-            color: #212529;
+        .btn.active {
+            background: var(--accent-blue) !important;
+            border-color: var(--accent-blue) !important;
+            color: var(--primary-white) !important;
         }
     </style>
 </head>
 <body>
-    <header>
-        <div class="header-content">
+    <div class="header">
+        <div class="header-row-1">
             <h1>Employee Nickname Management</h1>
-            <nav>
-                <a href="./" class="nav-link">Dashboard</a>
-                <a href="./device-status" class="nav-link">Device Status</a>
-                <a href="./nickname-management" class="nav-link active">Nicknames</a>
-                <a href="./export" class="nav-link">Export CSV</a>
-            </nav>
         </div>
-    </header>
+        <div class="header-row-2">
+            <div class="header-actions">
+                <a href="./" class="action-btn">📊 Dashboard</a>
+                <a href="./device-status" class="action-btn">🔧 Device Status</a>
+                <a href="./nickname-management" class="action-btn" style="background: var(--accent-blue); color: white;">👤 Nicknames</a>
+                <a href="/fingerprintlogs/individual-attendance" class="action-btn">📅 เข้า/ออก รายคน</a>
+                <a href="./export" class="action-btn">📤 Export Data</a>
+            </div>
+        </div>
+    </div>
 
-    <main>
-        <div class="container">
+    <div class="container">
             <div class="card">
                 <div class="card-header">
                     <h2>Manage Employee Nicknames</h2>
@@ -186,7 +161,7 @@
                 <div class="card-body">
                     <div class="search-box">
                         <input type="text" id="searchInput" class="search-input" placeholder="Search by Badge ID or Nickname...">
-                        <button id="showHiddenBtn" class="show-hidden-btn" onclick="toggleShowHidden()">Show Hidden</button>
+                        <button id="showHiddenBtn" class="btn btn-secondary" onclick="toggleShowHidden()">Show Hidden</button>
                     </div>
                     
                     <div id="loadingDiv" class="loading">Loading employee data...</div>
@@ -269,21 +244,21 @@
                                placeholder="${employee.in_database ? 'Enter nickname' : 'Enter nickname (will create employee)'}">
                     </td>
                     <td>
-                        <button class="toggle-btn ${employee.is_active ? '' : 'inactive'}" 
+                        <button class="btn btn-secondary toggle-btn ${employee.is_active ? '' : 'inactive'}"
                                 onclick="toggleStatus('${employee.badge_number}', ${!employee.is_active})">
                             ${employee.is_active ? 'Set Inactive' : 'Set Active'}
                         </button>
                         <span class="status-badge ${statusClass}">${statusText}</span>
                     </td>
                     <td>
-                        <button class="toggle-btn ${employee.is_hidden ? 'hidden' : ''}" 
+                        <button class="btn btn-secondary toggle-btn ${employee.is_hidden ? 'hidden' : ''}"
                                 onclick="toggleHidden('${employee.badge_number}', ${!employee.is_hidden})">
                             ${employee.is_hidden ? 'Show' : 'Hide'}
                         </button>
                         <span class="status-badge ${hiddenClass}">${hiddenText}</span>
                     </td>
                     <td>
-                        <button class="save-btn" 
+                        <button class="btn btn-primary save-btn"
                                 onclick="saveNickname('${employee.badge_number}')"
                                 id="save-${employee.badge_number}"
                                 disabled>
@@ -316,6 +291,9 @@
             errorMsg.style.display = 'none';
             
             try {
+                // Ensure config is loaded first
+                await appConfig.loadConfig();
+
                 const response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}/nickname`), {
                     method: 'PUT',
                     headers: {
@@ -369,6 +347,9 @@
         // Toggle employee status (active/inactive)
         async function toggleStatus(badgeNumber, newStatus) {
             try {
+                // Ensure config is loaded first
+                await appConfig.loadConfig();
+
                 const response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}/status`), {
                     method: 'PUT',
                     headers: {
@@ -398,6 +379,9 @@
         // Toggle employee hidden status
         async function toggleHidden(badgeNumber, newHiddenStatus) {
             try {
+                // Ensure config is loaded first
+                await appConfig.loadConfig();
+
                 const response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}/hidden`), {
                     method: 'PUT',
                     headers: {
@@ -428,7 +412,7 @@
         function toggleShowHidden() {
             showHidden = !showHidden;
             const btn = document.getElementById('showHiddenBtn');
-            
+
             if (showHidden) {
                 btn.textContent = 'Hide Hidden';
                 btn.classList.add('active');
@@ -436,7 +420,7 @@
                 btn.textContent = 'Show Hidden';
                 btn.classList.remove('active');
             }
-            
+
             loadEmployees();
         }
 
