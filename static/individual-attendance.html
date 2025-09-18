@@ -20,8 +20,8 @@
     <script>
         const timestamp = Date.now();
         const randomId = Math.random().toString(36).substring(7);
-        const buildNumber = '2025011700'; // Build timestamp
-        const version = `v2.5-debug-${buildNumber}`;
+        const buildNumber = '2025011803'; // Build timestamp - TIMESTAMP FIX
+        const version = `v2.8-timestamp-fix-${buildNumber}`;
         const cacheBuster = `${timestamp}.${randomId}&build=${buildNumber}`;
         document.write(`<script src="static/js/config.js?v=${cacheBuster}&version=${version}&force=${Date.now()}"><\/script>`);
         document.write(`<script src="static/js/individual-attendance.js?v=${cacheBuster}&version=${version}&force=${Date.now()}"><\/script>`);

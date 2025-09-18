@@ -93,12 +93,12 @@ class IndividualAttendanceManager {
             })
             .map(employee => {
                 const displayName = employee.display_name || `Employee #${employee.badge_number}` || 'No Name';
-                const activeClass = employee.id === this.selectedEmployeeId ? 'active' : '';
+                const activeClass = employee.badge_number === this.selectedEmployeeId ? 'active' : '';
                 return `
                     <div class="nickname-item ${activeClass}"
-                         data-employee-id="${employee.id}"
+                         data-employee-id="${employee.badge_number}"
                          data-employee-name="${displayName}"
-                         onclick="attendanceManager.selectEmployee(${employee.id}, '${displayName.replace(/'/g, "\\'")}')">
+                         onclick="attendanceManager.selectEmployee('${employee.badge_number}', '${displayName.replace(/'/g, "\\'")}')"
                         <span>${displayName}</span>
                         <span class="badge-id">#${employee.badge_number}</span>
                     </div>
@@ -159,7 +159,7 @@ class IndividualAttendanceManager {
 
         try {
             const response = await fetch(
-                appConfig.getApiUrl(`attendance/employee/${this.selectedEmployeeId}?start_date=${startDate}&end_date=${endDate}`)
+                appConfig.getApiUrl(`attendance/employee/badge/${this.selectedEmployeeId}?start_date=${startDate}&end_date=${endDate}`)
             );
 
             if (!response.ok) throw new Error('Failed to load attendance data');
@@ -186,26 +186,17 @@ class IndividualAttendanceManager {
         // Group attendance records by date
         const groupedData = {};
         this.attendanceData.forEach(record => {
-            const date = record.check_in_time ? record.check_in_time.split('T')[0] :
-                        record.check_out_time ? record.check_out_time.split('T')[0] : null;
+            // Use timestamp field from actual API response
+            const date = record.timestamp ? record.timestamp.split('T')[0] : null;
 
             if (date) {
                 if (!groupedData[date]) {
                     groupedData[date] = [];
                 }
 
-                // Add check-in time
-                if (record.check_in_time) {
-                    const time = new Date(record.check_in_time).toLocaleTimeString('th-TH', {
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    });
-                    groupedData[date].push(time);
-                }
-
-                // Add check-out time if different from check-in
-                if (record.check_out_time && record.check_out_time !== record.check_in_time) {
-                    const time = new Date(record.check_out_time).toLocaleTimeString('th-TH', {
+                // Add timestamp as punch time
+                if (record.timestamp) {
+                    const time = new Date(record.timestamp).toLocaleTimeString('th-TH', {
                         hour: '2-digit',
                         minute: '2-digit'
                     });
