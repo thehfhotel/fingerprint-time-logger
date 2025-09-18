@@ -159,3 +159,7 @@ logs/
 temp/
 tmp/
 pids/
+
+# Docker and cache files
+.docker-cache-state
+*.cache

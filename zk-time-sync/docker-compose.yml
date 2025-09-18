@@ -1,0 +1,39 @@
+# ZK Time Sync Service - Docker Compose Configuration
+version: '3.8'
+
+services:
+  zk-time-sync:
+    build: .
+    container_name: zk-time-sync
+    hostname: zk-time-sync
+    restart: unless-stopped
+
+    # Environment configuration
+    environment:
+      - TZ=Asia/Bangkok
+      - PYTHONUNBUFFERED=1
+
+    # Volume mounts
+    volumes:
+      # Persistent logging
+      - ./logs:/app/logs
+      # Configuration (can be modified without rebuild)
+      - ./config:/app/config:ro
+
+    # Network configuration - share network with main application
+    networks:
+      - shared-nginx
+      - default
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "from sync_service import ZKTimeSyncService; print(ZKTimeSyncService().health_check())"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+# Use existing shared network with main application
+networks:
+  shared-nginx:
+    external: true
