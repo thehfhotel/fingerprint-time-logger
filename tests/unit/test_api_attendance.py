@@ -45,9 +45,11 @@ class TestAttendanceAPI:
         data = assert_response_success(response)
 
         # Verify response structure
-        assert "employee_badge" in data
+        assert "employee_id" in data
+        assert "employee_name" in data
         assert "records" in data
-        assert data["employee_badge"] == employee.badge_number
+        assert "total" in data
+        assert data["employee_id"] == employee.id
         assert isinstance(data["records"], list)
 
     def test_get_employee_attendance_not_found(self, test_client: TestClient):
@@ -145,62 +147,6 @@ class TestAttendanceAPI:
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/csv; charset=utf-8"
 
-    def test_mark_attendance_late(self, test_client: TestClient, test_attendance_records, api_headers):
-        """Test POST /api/attendance/records/{record_id}/mark-late endpoint"""
-        record = test_attendance_records[0]
-
-        request_data = {
-            "is_marked_late": True,
-            "late_reason": "Traffic jam"
-        }
-
-        response = test_client.post(
-            f"/api/attendance/records/{record.id}/mark-late",
-            json=request_data,
-            headers=api_headers
-        )
-
-        data = assert_response_success(response)
-
-        # Verify late marking response
-        assert "record_id" in data
-        assert "success" in data
-        assert "message" in data
-        assert "adjustment_id" in data
-        assert data["success"] is True
-
-    def test_get_record_adjustments(self, test_client: TestClient, test_attendance_records):
-        """Test GET /api/attendance/records/{record_id}/adjustments endpoint"""
-        record = test_attendance_records[0]
-
-        response = test_client.get(f"/api/attendance/records/{record.id}/adjustments")
-        data = assert_response_success(response)
-
-        # Verify adjustments response structure
-        assert "record_id" in data
-        assert "adjustments" in data
-        assert isinstance(data["adjustments"], list)
-
-    def test_delete_record_adjustment(self, test_client: TestClient, test_attendance_records):
-        """Test DELETE /api/attendance/records/{record_id}/adjustments/{adjustment_id} endpoint"""
-        record = test_attendance_records[0]
-
-        # First mark as late to create an adjustment
-        self.test_mark_attendance_late(test_client, test_attendance_records, {"Content-Type": "application/json"})
-
-        # Get adjustments to find adjustment ID
-        adjustments_response = test_client.get(f"/api/attendance/records/{record.id}/adjustments")
-        adjustments_data = adjustments_response.json()
-
-        if adjustments_data["adjustments"]:
-            adjustment_id = adjustments_data["adjustments"][0]["id"]
-
-            # Delete the adjustment
-            response = test_client.delete(f"/api/attendance/records/{record.id}/adjustments/{adjustment_id}")
-            data = assert_response_success(response)
-
-            assert "message" in data
-            assert "deleted" in data["message"].lower()
 
 
 @pytest.mark.unit
@@ -232,19 +178,6 @@ class TestAttendanceAPIEdgeCases:
         )
         assert response.status_code == 422  # Validation error
 
-    def test_mark_late_nonexistent_record(self, test_client: TestClient, api_headers):
-        """Test marking non-existent record as late"""
-        request_data = {
-            "is_marked_late": True,
-            "late_reason": "Test"
-        }
-
-        response = test_client.post(
-            "/api/attendance/records/99999/mark-late",
-            json=request_data,
-            headers=api_headers
-        )
-        assert_response_not_found(response)
 
     def test_sync_with_device_connection_failure(self, test_client: TestClient, network_issues_simulator):
         """Test sync when device connection fails"""

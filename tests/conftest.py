@@ -45,7 +45,7 @@ def test_engine():
         cursor.close()
 
     # Import all models once
-    from app.models.models import Employee, Device, AttendanceRecord, AttendanceAdjustment
+    from app.models.models import Employee, Device, AttendanceRecord
 
     # Create all tables
     Base.metadata.create_all(bind=engine)

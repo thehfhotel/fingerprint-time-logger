@@ -123,28 +123,6 @@ class TestConsolidatedAttendanceAPI:
         response = test_client.get(f"/api/attendance/export/csv?start_date={start_date}&end_date={end_date}")
         assert response.status_code == 200
 
-    def test_mark_attendance_late(self, test_client, test_attendance_records):
-        """Test POST /api/attendance/{record_id}/mark-late - Mark record as late"""
-        if test_attendance_records:
-            record_id = test_attendance_records[0].id
-            response = test_client.post(f"/api/attendance/{record_id}/mark-late",
-                                      json={"reason": "Traffic jam"})
-            assert response.status_code in [200, 404]
-
-    def test_get_record_adjustments(self, test_client, test_attendance_records):
-        """Test GET /api/attendance/records/{record_id}/adjustments - Get record adjustments"""
-        if test_attendance_records:
-            record_id = test_attendance_records[0].id
-            response = test_client.get(f"/api/attendance/records/{record_id}/adjustments")
-            assert response.status_code == 200
-            data = response.json()
-            assert "record_id" in data
-            assert "adjustments" in data
-
-    def test_delete_record_adjustment(self, test_client, test_attendance_records):
-        """Test DELETE /api/attendance/adjustments/{adjustment_id} - Delete adjustment"""
-        response = test_client.delete("/api/attendance/adjustments/999")
-        assert response.status_code == 404  # Adjustment not found
 
 
 class TestConsolidatedAttendanceAPIEdgeCases:
@@ -166,11 +144,6 @@ class TestConsolidatedAttendanceAPIEdgeCases:
         response = test_client.get("/api/attendance/export/csv?start_date=invalid-date&end_date=2024-12-31")
         assert response.status_code == 422  # Validation error
 
-    def test_mark_late_nonexistent_record(self, test_client):
-        """Test marking non-existent record as late"""
-        response = test_client.post("/api/attendance/99999/mark-late",
-                                  json={"reason": "Test reason"})
-        assert response.status_code == 404
 
     def test_sync_with_device_connection_failure(self, test_client, network_issues_simulator):
         """Test sync when device connection fails"""
