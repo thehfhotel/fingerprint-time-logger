@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <meta name="version" content="v3.0-logs-update-20250919">
-    <title>Device Status - Fingerprint Time Logger</title>
+    <title>สถานะเครื่อง - ระบบบันทึกเวลาด้วยลายนิ้วมือ</title>
     <!-- CSS Files with cache busting -->
     <script>
         const cssTimestamp = Date.now();
@@ -185,22 +185,22 @@
 <body>
     <div class="header">
         <div class="header-row-1">
-            <h1>Device Status</h1>
+            <h1>สถานะเครื่องสแกน</h1>
         </div>
         <div class="header-row-2">
             <div class="header-actions">
-                <a href="./" class="action-btn">📊 Dashboard</a>
-                <a href="./device-status" class="action-btn" style="background: var(--accent-blue); color: white;">🔧 Device Status</a>
-                <a href="./nickname-management" class="action-btn">👤 Nicknames</a>
+                <a href="./" class="action-btn">📊 แดชบอร์ด</a>
+                <a href="./device-status" class="action-btn" style="background: var(--accent-blue); color: white;">🔧 สถานะเครื่อง</a>
+                <a href="./nickname-management" class="action-btn">👤 จัดการชื่อเล่น</a>
                 <a href="/fingerprintlogs/individual-attendance" class="action-btn">📅 เข้า/ออก รายคน</a>
-                <a href="./export" class="action-btn">📤 Export Data</a>
+                <a href="./export" class="action-btn">📤 ส่งออกข้อมูล</a>
             </div>
         </div>
     </div>
 
     <div class="container">
         <div class="status-container">
-        <h1>ZKTeco Device Status</h1>
+        <h1>สถานะเครื่อง ZKTeco</h1>
         
         <div class="status-card">
             <div class="status-header">
@@ -209,29 +209,29 @@
             </div>
             
             <div class="device-info" id="deviceInfo">
-                <div class="loading">Loading device information...</div>
+                <div class="loading">กำลังโหลดข้อมูลเครื่อง...</div>
             </div>
             
             <div class="action-buttons">
                 <button class="btn btn-primary" onclick="syncTime()">Sync Time to Device</button>
-                <button class="btn btn-primary" onclick="importLogs()">Import Fingerprint Logs</button>
-                <button class="btn btn-secondary" onclick="refreshStatus()">Refresh Status</button>
+                <button class="btn btn-primary" onclick="importLogs()">นำเข้าบันทึกลายนิ้วมือ</button>
+                <button class="btn btn-secondary" onclick="refreshStatus()">รีเฟรชสถานะ</button>
             </div>
         </div>
         
         <div class="status-card">
             <div class="status-header">
                 <div class="status-indicator" id="autoImportIndicator"></div>
-                <h2>Auto-Import Service</h2>
+                <h2>บริการนำเข้าอัตโนมัติ</h2>
             </div>
             
             <div class="device-info" id="autoImportInfo">
-                <div class="loading">Loading auto-import status...</div>
+                <div class="loading">กำลังโหลดสถานะการนำเข้าอัตโนมัติ...</div>
             </div>
             
             <div class="action-buttons">
-                <button class="btn btn-primary" onclick="triggerManualImport()">Import Now</button>
-                <button class="btn btn-secondary" onclick="refreshAutoImportStatus()">Refresh Status</button>
+                <button class="btn btn-primary" onclick="triggerManualImport()">นำเข้าทันที</button>
+                <button class="btn btn-secondary" onclick="refreshAutoImportStatus()">รีเฟรชสถานะ</button>
             </div>
         </div>
         
@@ -241,7 +241,7 @@
                 <div class="log-controls">
                     <select id="logLevel" onchange="loadLogs()">
                         <option value="">All Levels</option>
-                        <option value="ERROR">Errors Only</option>
+                        <option value="ERROR">ข้อผิดพลาดเท่านั้น</option>
                         <option value="WARNING">Warnings</option>
                         <option value="INFO">Info</option>
                     </select>
@@ -253,15 +253,15 @@
                         <option value="system">System Events</option>
                         <option value="employee">Employee Actions</option>
                     </select>
-                    <button class="btn btn-secondary btn-sm" onclick="loadLogs()">🔄 Refresh</button>
-                    <button class="btn btn-secondary btn-sm" onclick="clearLogDisplay()">🗑️ Clear View</button>
+                    <button class="btn btn-secondary btn-sm" onclick="loadLogs()">🔄 รีเฟรช</button>
+                    <button class="btn btn-secondary btn-sm" onclick="clearLogDisplay()">🗑️ ล้างการแสดงผล</button>
                 </div>
             </div>
             <div class="log-stats" id="logStats">
-                <div class="loading">Loading log statistics...</div>
+                <div class="loading">กำลังโหลดสถิติบันทึก...</div>
             </div>
             <div class="sync-log" id="syncLog">
-                <div class="loading">Loading application logs...</div>
+                <div class="loading">กำลังโหลดบันทึกการทำงาน...</div>
             </div>
         </div>
     </div>
@@ -289,7 +289,7 @@
                 infoDiv.innerHTML = `
                     <div class="info-item">
                         <span>Status:</span>
-                        <span style="color: #22c55e; font-weight: 500;">Connected</span>
+                        <span style="color: #22c55e; font-weight: 500;">เชื่อมต่อแล้ว</span>
                     </div>
                     <div class="info-item">
                         <span>Device Model:</span>
@@ -325,10 +325,10 @@
                 infoDiv.innerHTML = `
                     <div class="info-item">
                         <span>Status:</span>
-                        <span style="color: #ef4444; font-weight: 500;">Disconnected</span>
+                        <span style="color: #ef4444; font-weight: 500;">ไม่ได้เชื่อมต่อ</span>
                     </div>
                     <div class="info-item">
-                        <span>Error:</span>
+                        <span>ข้อผิดพลาด:</span>
                         <span>${deviceStatus.error || 'Unable to connect to device'}</span>
                     </div>
                 `;
@@ -466,7 +466,7 @@
                 </div>
                 <div class="stat-item">
                     <div class="stat-value" style="color: #ef4444;">${summary.recent_errors || 0}</div>
-                    <div class="stat-label">Errors</div>
+                    <div class="stat-label">ข้อผิดพลาด</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-value" style="color: #f59e0b;">${summary.recent_warnings || 0}</div>
@@ -489,7 +489,7 @@
 
         function clearLogDisplay() {
             const logDiv = document.getElementById('syncLog');
-            logDiv.innerHTML = '<div class="loading">Log display cleared. Click Refresh to reload logs.</div>';
+            logDiv.innerHTML = '<div class="loading">ล้างการแสดงผลแล้ว คลิกรีเฟรชเพื่อโหลดบันทึกใหม่</div>';
         }
 
         function addSyncLog(message) {

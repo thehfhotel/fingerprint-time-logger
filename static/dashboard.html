@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>Employee Time Log Dashboard</title>
+    <title>ระบบบันทึกเวลาด้วยลายนิ้วมือ</title>
     <!-- CSS Files with cache busting -->
     <script>
         const cssTimestamp = Date.now();
@@ -28,38 +28,38 @@
 <body>
     <div class="header">
         <div class="header-row-1">
-            <h1>Employee Time Log Dashboard</h1>
+            <h1>ระบบบันทึกเวลาด้วยลายนิ้วมือ</h1>
             <div class="last-update-display">
                 <div style="margin-bottom: 5px; font-size: 0.9em; color: #e0e0e0;">
-                    Last Import: <span id="lastImport" style="color: #e0e0e0;">Never</span>
+                    นำเข้าล่าสุด: <span id="lastImport" style="color: #e0e0e0;">ไม่เคย</span>
                 </div>
-                Last Update: <span id="lastUpdate">Never</span>
+                อัปเดตล่าสุด: <span id="lastUpdate">ไม่เคย</span>
                 <div style="margin-top: 5px; font-size: 0.9em; color: white;">
-                    Device Clock: <span id="deviceClock" style="color: white;">Loading...</span>
+                    เวลาเครื่อง: <span id="deviceClock" style="color: white;">กำลังโหลด...</span>
                 </div>
             </div>
         </div>
         <div class="header-row-2">
             <div class="header-actions">
-                <a href="./" class="action-btn">📊 Dashboard</a>
-                <a href="./device-status" class="action-btn">🔧 Device Status</a>
-                <a href="./nickname-management" class="action-btn">👤 Nicknames</a>
+                <a href="./" class="action-btn">📊 แดชบอร์ด</a>
+                <a href="./device-status" class="action-btn">🔧 สถานะเครื่อง</a>
+                <a href="./nickname-management" class="action-btn">👤 จัดการชื่อเล่น</a>
                 <a href="/fingerprintlogs/individual-attendance" class="action-btn">📅 เข้า/ออก รายคน</a>
-                <a href="./export" class="action-btn">📤 Export Data</a>
-                <button id="importButton" class="action-btn import-btn">📥 Import Fingerprint Log</button>
+                <a href="./export" class="action-btn">📤 ส่งออกข้อมูล</a>
+                <button id="importButton" class="action-btn import-btn">📥 นำเข้าบันทึกลายนิ้วมือ</button>
             </div>
         </div>
         
         <!-- Hidden elements for JavaScript compatibility - DO NOT REMOVE -->
         <div style="display: none;">
             <div class="status-dot" id="deviceStatus"></div>
-            <span id="deviceStatusText">Connecting...</span>
+            <span id="deviceStatusText">กำลังเชื่อมต่อ...</span>
         </div>
     </div>
 
     <div class="container">
         <div id="employeeContainer">
-            <div class="loading">Loading attendance data...</div>
+            <div class="loading">กำลังโหลดข้อมูลการลงเวลา...</div>
         </div>
     </div>
 
@@ -67,38 +67,38 @@
     <div id="exportModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Export Attendance Data</h2>
+                <h2>ส่งออกข้อมูลการลงเวลา</h2>
                 <span class="close" onclick="hideExportModal()">&times;</span>
             </div>
             <div class="modal-body">
                 <div class="form-group">
-                    <label for="exportStartDate">Start Date:</label>
+                    <label for="exportStartDate">วันที่เริ่มต้น:</label>
                     <input type="date" id="exportStartDate" required>
                 </div>
                 <div class="form-group">
-                    <label for="exportEndDate">End Date:</label>
+                    <label for="exportEndDate">วันที่สิ้นสุด:</label>
                     <input type="date" id="exportEndDate" required>
                 </div>
                 <div class="form-group">
                     <div class="checkbox-group">
                         <input type="checkbox" id="enableStreaming">
-                        <label for="enableStreaming">Enable streaming (for large exports)</label>
+                        <label for="enableStreaming">เปิดการสตรีม (สำหรับการส่งออกข้อมูลขนาดใหญ่)</label>
                     </div>
                     <div class="batch-size-group" id="batchSizeGroup">
-                        <label for="batchSize">Batch Size:</label>
+                        <label for="batchSize">ขนาดชุดข้อมูล:</label>
                         <input type="number" id="batchSize" value="1000" min="100" max="10000">
                     </div>
                 </div>
                 <div class="export-progress">
-                    <div id="exportMessage">Preparing export...</div>
+                    <div id="exportMessage">กำลังเตรียมการส่งออก...</div>
                     <div class="progress-bar">
                         <div class="progress-bar-fill" id="exportProgressBar"></div>
                     </div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="hideExportModal()">Cancel</button>
-                <button class="btn btn-primary" onclick="startExport()">Export</button>
+                <button class="btn btn-secondary" onclick="hideExportModal()">ยกเลิก</button>
+                <button class="btn btn-primary" onclick="startExport()">ส่งออก</button>
             </div>
         </div>
     </div>
@@ -133,7 +133,7 @@
             if (data.device_status && data.device_status.loading) {
                 deviceStatus.classList.remove('disconnected');
                 deviceStatus.classList.add('loading');
-                deviceStatusText.textContent = 'Loading Device Data...';
+                deviceStatusText.textContent = 'กำลังโหลดข้อมูลเครื่อง...';
             } else if (data.device_status && data.device_status.connected) {
                 deviceStatus.classList.remove('disconnected', 'loading');
                 deviceStatusText.textContent = 'Device Connected';
@@ -150,7 +150,7 @@
                 lastImport.textContent = new Date(data.last_import).toLocaleString();
                 lastImport.style.color = '#90EE90'; // Light green to indicate successful import
             } else {
-                lastImport.textContent = 'Never';
+                lastImport.textContent = 'ไม่เคย';
                 lastImport.style.color = '#e0e0e0';
             }
             
@@ -222,7 +222,7 @@
             }
             
             if (allRecords.length === 0) {
-                container.innerHTML = '<div class="no-data">No attendance data available</div>';
+                container.innerHTML = '<div class="no-data">ไม่มีข้อมูลการลงเวลา</div>';
                 return;
             }
             
@@ -261,13 +261,13 @@
             const consolidatedCard = `
                 <div class="employee-card consolidated-view">
                     <div class="employee-header">
-                        🏢 All Employees - Consolidated View (Most Recent First)
+                        🏢 พนักงานทั้งหมด - มุมมองรวม (ล่าสุดก่อน)
                         <span style="float: right; font-size: 0.9rem; opacity: 0.8;">
-                            ${allRecords.length} total record${allRecords.length !== 1 ? 's' : ''}
+                            รวม ${allRecords.length} บันทึก
                         </span>
                     </div>
                     <div class="attendance-list consolidated-list">
-                        ${attendanceEntries || '<div class="no-data">No attendance records found</div>'}
+                        ${attendanceEntries || '<div class="no-data">ไม่พบบันทึกการลงเวลา</div>'}
                     </div>
                 </div>
             `;
@@ -282,7 +282,7 @@
             
             console.log('Import function called - setting button state');
             importBtn.disabled = true;
-            importBtn.textContent = '📥 Importing...';
+            importBtn.textContent = '📥 กำลังนำเข้า...';
             
             try {
                 // Show immediate feedback that import was triggered
@@ -308,7 +308,7 @@
                     // If we get a successful response, update the UI
                     if (data.success) {
                         const syncedCount = data.synced || 0;
-                        importBtn.textContent = `✅ Imported ${syncedCount} records`;
+                        importBtn.textContent = `✅ นำเข้า ${syncedCount} บันทึก`;
                         
                         // Refresh the dashboard to get updated last import time
                         loadInitialData();
@@ -316,7 +316,7 @@
                         // Reset button after delay
                         setTimeout(() => {
                             importBtn.disabled = false;
-                            importBtn.textContent = '📥 Import Fingerprint Log';
+                            importBtn.textContent = '📥 นำเข้าบันทึกลายนิ้วมือ';
                         }, 3000);
                     }
                 }).catch(e => {
@@ -331,7 +331,7 @@
                         
                         setTimeout(() => {
                             importBtn.disabled = false;
-                            importBtn.textContent = '📥 Import Fingerprint Log';
+                            importBtn.textContent = '📥 นำเข้าบันทึกลายนิ้วมือ';
                         }, 2000);
                     }, 10000);
                 });
@@ -387,15 +387,15 @@
             } catch (error) {
                 console.error('Error loading device clock:', error);
                 const deviceClockElement = document.getElementById('deviceClock');
-                deviceClockElement.innerHTML = '❌ Error';
-                deviceClockElement.title = 'Error loading device clock';
+                deviceClockElement.innerHTML = '❌ ข้อผิดพลาด';
+                deviceClockElement.title = 'ข้อผิดพลาดในการโหลดเวลาเครื่อง';
             }
         }
         
         // Initial load with offline fallback
         async function loadInitialData() {
             try {
-                console.log('Loading initial data...');
+                console.log('กำลังโหลดข้อมูลเริ่มต้น...');
                 
                 // Ensure config is loaded first
                 await appConfig.loadConfig();
@@ -437,7 +437,7 @@
                     lastImport.textContent = new Date(data.last_import).toLocaleString();
                     lastImport.style.color = '#90EE90'; // Light green to indicate successful import
                 } else {
-                    lastImport.textContent = 'Never';
+                    lastImport.textContent = 'ไม่เคย';
                     lastImport.style.color = '#e0e0e0';
                 }
                 
@@ -457,7 +457,7 @@
                 
                 // Show user-friendly error message
                 document.getElementById('employeeContainer').innerHTML = 
-                    '<div class="no-data">Unable to load attendance data. Please try importing fingerprint log.</div>';
+                    '<div class="no-data">ไม่สามารถโหลดข้อมูลการลงเวลาได้ กรุณาลองนำเข้าบันทึกลายนิ้วมือ</div>';
             }
         }
         
@@ -630,7 +630,7 @@
                     }, 100);
                 }
                 
-                document.getElementById('exportMessage').textContent = 'Export completed!';
+                document.getElementById('exportMessage').textContent = 'ส่งออกเสร็จสิ้น!';
                 document.getElementById('exportProgressBar').style.width = '100%';
                 
                 setTimeout(() => {
@@ -639,7 +639,7 @@
                 
             } catch (error) {
                 console.error('Export error:', error);
-                document.getElementById('exportMessage').textContent = 'Export failed. Please try again.';
+                document.getElementById('exportMessage').textContent = 'ส่งออกล้มเหลว กรุณาลองใหม่อีกครั้ง';
             }
         }
         

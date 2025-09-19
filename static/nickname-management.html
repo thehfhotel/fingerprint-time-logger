@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>Employee Nickname Management - Fingerprint Time Logger</title>
+    <title>จัดการชื่อเล่นพนักงาน - ระบบบันทึกเวลาด้วยลายนิ้วมือ</title>
     <!-- CSS Files with cache busting -->
     <script>
         const cssTimestamp = Date.now();
@@ -144,11 +144,11 @@
         </div>
         <div class="header-row-2">
             <div class="header-actions">
-                <a href="./" class="action-btn">📊 Dashboard</a>
-                <a href="./device-status" class="action-btn">🔧 Device Status</a>
-                <a href="./nickname-management" class="action-btn" style="background: var(--accent-blue); color: white;">👤 Nicknames</a>
+                <a href="./" class="action-btn">📊 แดชบอร์ด</a>
+                <a href="./device-status" class="action-btn">🔧 สถานะเครื่อง</a>
+                <a href="./nickname-management" class="action-btn" style="background: var(--accent-blue); color: white;">👤 จัดการชื่อเล่น</a>
                 <a href="/fingerprintlogs/individual-attendance" class="action-btn">📅 เข้า/ออก รายคน</a>
-                <a href="./export" class="action-btn">📤 Export Data</a>
+                <a href="./export" class="action-btn">📤 ส่งออกข้อมูล</a>
             </div>
         </div>
     </div>
@@ -156,7 +156,7 @@
     <div class="container">
             <div class="card">
                 <div class="card-header">
-                    <h2>Manage Employee Nicknames</h2>
+                    <h2>จัดการชื่อเล่นพนักงาน</h2>
                 </div>
                 <div class="card-body">
                     <div class="search-box">
@@ -164,7 +164,7 @@
                         <button id="showHiddenBtn" class="btn btn-secondary" onclick="toggleShowHidden()">Show Hidden</button>
                     </div>
                     
-                    <div id="loadingDiv" class="loading">Loading employee data...</div>
+                    <div id="loadingDiv" class="loading">กำลังโหลดข้อมูลพนักงาน...</div>
                     
                     <table class="nickname-table" id="nicknameTable" style="display: none;">
                         <thead>

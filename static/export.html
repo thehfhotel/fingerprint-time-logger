@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>Export Data - Fingerprint Time Logger</title>
+    <title>ส่งออกข้อมูล - ระบบบันทึกเวลาด้วยลายนิ้วมือ</title>
     <!-- CSS Files with cache busting -->
     <script>
         const cssTimestamp = Date.now();
@@ -128,15 +128,15 @@
 <body>
     <div class="header">
         <div class="header-row-1">
-            <h1>Export Attendance Data</h1>
+            <h1>ส่งออกข้อมูลการลงเวลา</h1>
         </div>
         <div class="header-row-2">
             <div class="header-actions">
-                <a href="./" class="action-btn">📊 Dashboard</a>
-                <a href="./device-status" class="action-btn">🔧 Device Status</a>
-                <a href="./nickname-management" class="action-btn">👤 Nicknames</a>
+                <a href="./" class="action-btn">📊 แดชบอร์ด</a>
+                <a href="./device-status" class="action-btn">🔧 สถานะเครื่อง</a>
+                <a href="./nickname-management" class="action-btn">👤 จัดการชื่อเล่น</a>
                 <a href="/fingerprintlogs/individual-attendance" class="action-btn">📅 เข้า/ออก รายคน</a>
-                <a href="./export" class="action-btn" style="background: var(--accent-blue); color: white;">📤 Export Data</a>
+                <a href="./export" class="action-btn" style="background: var(--accent-blue); color: white;">📤 ส่งออกข้อมูล</a>
             </div>
         </div>
     </div>
@@ -144,25 +144,25 @@
     <div class="container">
         <div class="export-container">
         <div class="info-text">
-            Export your attendance records to CSV format for external analysis or reporting.
+            ส่งออกบันทึกการลงเวลาเป็นไฟล์ CSV สำหรับการวิเคราะห์หรือรายงาน
         </div>
         
         <div class="export-card">
-            <h2>CSV Export Options</h2>
+            <h2>ตัวเลือกการส่งออก CSV</h2>
             
             <form id="exportForm">
                 <div class="form-group">
-                    <label for="startDate">Start Date:</label>
+                    <label for="startDate">วันที่เริ่มต้น:</label>
                     <input type="date" id="startDate" name="startDate" required>
                 </div>
                 
                 <div class="form-group">
-                    <label for="endDate">End Date:</label>
+                    <label for="endDate">วันที่สิ้นสุด:</label>
                     <input type="date" id="endDate" name="endDate" required>
                 </div>
                 
                 <div class="form-group">
-                    <label for="format">Export Format:</label>
+                    <label for="format">รูปแบบการส่งออก:</label>
                     <select id="format" name="format">
                         <option value="detailed">Detailed (includes employee names)</option>
                         <option value="simple">Simple (badges and times only)</option>
@@ -171,7 +171,7 @@
                 </div>
                 
                 <button type="submit" class="btn btn-primary" id="exportBtn">
-                    Export to CSV
+                    ส่งออกเป็น CSV
                 </button>
                 
                 <div class="export-status" id="exportStatus"></div>
@@ -179,20 +179,20 @@
         </div>
         
         <div class="export-card">
-            <h2>Quick Export Options</h2>
+            <h2>ตัวเลือกส่งออกด่วน</h2>
             
             <div style="display: grid; gap: 1rem;">
                 <button class="btn btn-primary" onclick="quickExport('today')">
-                    Export Today's Records
+                    ส่งออกข้อมูลวันนี้
                 </button>
                 <button class="btn btn-primary" onclick="quickExport('week')">
-                    Export This Week
+                    ส่งออกข้อมูลสัปดาห์นี้
                 </button>
                 <button class="btn btn-primary" onclick="quickExport('month')">
-                    Export This Month
+                    ส่งออกข้อมูลเดือนนี้
                 </button>
                 <button class="btn btn-primary" onclick="quickExport('all')">
-                    Export All Records
+                    ส่งออกข้อมูลทั้งหมด
                 </button>
             </div>
         </div>
@@ -227,9 +227,9 @@
                 await appConfig.loadConfig();
 
                 // Show loading status
-                showStatus('Loading...', 'loading');
+                showStatus('กำลังโหลด...', 'loading');
                 exportBtn.disabled = true;
-                exportBtn.textContent = 'Exporting...';
+                exportBtn.textContent = 'กำลังส่งออก...';
 
                 // Build export URL
                 const params = new URLSearchParams({
@@ -256,14 +256,14 @@
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
                 
-                showStatus('Export completed successfully!', 'success');
+                showStatus('ส่งออกข้อมูลเสร็จสิ้น!', 'success');
                 
             } catch (error) {
                 console.error('Export error:', error);
                 showStatus(`Export failed: ${error.message}`, 'error');
             } finally {
                 exportBtn.disabled = false;
-                exportBtn.textContent = 'Export to CSV';
+                exportBtn.textContent = 'ส่งออกเป็น CSV';
             }
         }
         
