@@ -12,16 +12,19 @@ from sqlalchemy.orm import Session
 
 from app.models.models import Device, AttendanceRecord, Employee
 from app.core.database import get_db
+from app.services.logging_service import app_logger
 
 logger = logging.getLogger(__name__)
 
 
 class SimpleDeviceService:
     """Simplified device service with basic retry logic"""
-    
+
     def __init__(self):
         self.max_retries = int(os.getenv('DEVICE_MAX_RETRIES', '3'))
         self.timeout = int(os.getenv('DEVICE_TIMEOUT', '5'))
+        self.partial_sync_limit = int(os.getenv('PARTIAL_SYNC_LIMIT', '50'))
+        self.full_sync_interval_hours = int(os.getenv('FULL_SYNC_INTERVAL_HOURS', '24'))
     
     def get_default_device(self) -> Optional[Device]:
         """Get the default ZKTeco device"""
@@ -46,6 +49,8 @@ class SimpleDeviceService:
     
     def connect_to_device(self, device: Device) -> Optional[Any]:
         """Simple device connection with basic retry"""
+        start_time = datetime.now()
+
         for attempt in range(self.max_retries):
             try:
                 zk = ZK(
@@ -57,36 +62,68 @@ class SimpleDeviceService:
                     ommit_ping=True
                 )
                 conn = zk.connect()
+                duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+
                 logger.info(f"Connected to device {device.name}")
+                app_logger.log_device_connection(
+                    device_id=device.id,
+                    device_name=device.name,
+                    ip_address=device.ip_address,
+                    success=True
+                )
                 return conn
+
             except Exception as e:
                 logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
                 if attempt == self.max_retries - 1:
+                    duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
                     logger.error(f"Failed to connect to device after {self.max_retries} attempts")
+                    app_logger.log_device_connection(
+                        device_id=device.id,
+                        device_name=device.name,
+                        ip_address=device.ip_address,
+                        success=False,
+                        error=str(e)
+                    )
                     return None
         return None
     
-    def get_attendance_records(self, device: Device) -> List[Dict[str, Any]]:
-        """Get attendance records from device"""
+    def get_attendance_records(self, device: Device, limit: Optional[int] = None, full_sync: bool = False) -> List[Dict[str, Any]]:
+        """Get attendance records from device with checkpoint-based sync
+
+        Args:
+            device: Device to sync from
+            limit: Number of latest records to fetch (default: configured partial_sync_limit)
+            full_sync: If True, fetch ALL records for data integrity
+        """
         conn = self.connect_to_device(device)
         if not conn:
             return []
-        
+
         try:
-            # Get attendance records
-            records = conn.get_attendance()
-            
+            # Get all attendance records
+            all_records = conn.get_attendance()
+
+            if full_sync:
+                # Full sync: return all records
+                records_to_process = all_records
+                logger.info(f"Full sync: Retrieved {len(all_records)} total attendance records")
+            else:
+                # Partial sync: get latest records only
+                sync_limit = limit or self.partial_sync_limit
+                records_to_process = sorted(all_records, key=lambda x: x.timestamp, reverse=True)[:sync_limit]
+                logger.info(f"Partial sync: Retrieved {len(records_to_process)} latest records (from {len(all_records)} total)")
+
             # Convert to simple format
             attendance_data = []
-            for record in records:
+            for record in records_to_process:
                 attendance_data.append({
                     'user_id': str(record.user_id),
                     'timestamp': record.timestamp,
                     'punch_type': record.punch,  # ZKTeco library uses 'punch' not 'punch_type'
                     'status': record.status
                 })
-            
-            logger.info(f"Retrieved {len(attendance_data)} attendance records")
+
             return attendance_data
             
         except Exception as e:
@@ -129,21 +166,41 @@ class SimpleDeviceService:
             except:
                 pass
     
-    def sync_attendance_data(self) -> Dict[str, Any]:
-        """Simple sync of attendance data from device to database"""
+    def sync_attendance_data(self, force_full_sync: bool = False) -> Dict[str, Any]:
+        """Smart sync of attendance data with checkpoint-based approach"""
         device = self.get_default_device()
         if not device:
-            return {"success": False, "message": "No device configured"}
-        
+            error_msg = "No device configured"
+            app_logger.log_sync_failed(device_id=None, error=error_msg)
+            return {"success": False, "message": error_msg}
+
+        start_time = datetime.now()
+        sync_type = "full" if force_full_sync else "unknown"
+
         try:
-            # Get records from device
-            records = self.get_attendance_records(device)
-            
+            # Determine if full sync is needed
+            needs_full_sync = force_full_sync or self._should_do_full_sync(device)
+            sync_type = "full" if needs_full_sync else "partial"
+
+            # Log sync start
+            app_logger.log_sync_start(device_id=device.id, sync_type=sync_type)
+
+            # Get records from device (partial or full)
+            records = self.get_attendance_records(device, full_sync=needs_full_sync)
+
             # Always update last sync time when sync is attempted, regardless of new records
             self.update_last_sync()
-            
+
             if not records:
-                return {"success": True, "message": "No new records", "synced": 0, "total_processed": 0}
+                duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+                app_logger.log_sync_completed(
+                    device_id=device.id,
+                    synced_count=0,
+                    total_processed=0,
+                    sync_type=sync_type,
+                    duration_ms=duration_ms
+                )
+                return {"success": True, "message": f"No new records ({sync_type} sync)", "synced": 0, "total_processed": 0}
             
             # Store in database
             db = next(get_db())
@@ -171,12 +228,22 @@ class SimpleDeviceService:
                         synced_count += 1
                 
                 db.commit()
-                
+
+                duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+                app_logger.log_sync_completed(
+                    device_id=device.id,
+                    synced_count=synced_count,
+                    total_processed=len(records),
+                    sync_type=sync_type,
+                    duration_ms=duration_ms
+                )
+
                 return {
                     "success": True,
-                    "message": f"Synced {synced_count} new records",
+                    "message": f"Synced {synced_count} new records ({sync_type} sync)",
                     "synced": synced_count,
-                    "total_processed": len(records)
+                    "total_processed": len(records),
+                    "sync_type": sync_type
                 }
                 
             finally:
@@ -184,6 +251,11 @@ class SimpleDeviceService:
                 
         except Exception as e:
             logger.error(f"Sync failed: {e}")
+            app_logger.log_sync_failed(
+                device_id=device.id if device else None,
+                error=str(e),
+                sync_type=sync_type
+            )
             return {"success": False, "message": f"Sync failed: {str(e)}"}
     
     def get_device_status(self) -> Dict[str, Any]:
@@ -284,26 +356,46 @@ class SimpleDeviceService:
         device = self.get_default_device()
         if not device:
             return {"success": False, "message": "No device configured"}
-        
+
         # Use current server time if no target time specified
         if target_time is None:
             target_time = datetime.now()
-        
+
+        start_time = datetime.now()
         conn = self.connect_to_device(device)
         if conn:
             try:
                 # Get current device time before setting
                 old_device_time = conn.get_time()
-                
+
                 # Set new device time
                 conn.set_time(target_time)
-                
+
                 # Verify the time was set by reading it back
                 new_device_time = conn.get_time()
-                
+
                 # Calculate time difference
                 time_diff = (new_device_time - target_time).total_seconds()
-                
+                duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+                success = abs(time_diff) < 5
+
+                # Log the time sync operation
+                app_logger.log_action(
+                    level="INFO" if success else "WARNING",
+                    category="system",
+                    action="time_sync",
+                    message=f"Device time sync {'successful' if success else 'completed with drift'} - {time_diff:.1f}s difference",
+                    device_id=device.id,
+                    duration_ms=duration_ms,
+                    success=success,
+                    details={
+                        "old_time": old_device_time.isoformat(),
+                        "target_time": target_time.isoformat(),
+                        "new_time": new_device_time.isoformat(),
+                        "time_difference_seconds": time_diff
+                    }
+                )
+
                 conn.disconnect()
                 return {
                     "success": True,
@@ -312,16 +404,33 @@ class SimpleDeviceService:
                     "target_time": target_time.isoformat(),
                     "new_time": new_device_time.isoformat(),
                     "time_difference_seconds": time_diff,
-                    "synchronized": abs(time_diff) < 5  # Consider synchronized if within 5 seconds
+                    "synchronized": success
                 }
             except Exception as e:
                 logger.error(f"Failed to set device time: {e}")
+                app_logger.log_action(
+                    level="ERROR",
+                    category="system",
+                    action="time_sync_failed",
+                    message=f"Failed to set device time: {str(e)}",
+                    device_id=device.id,
+                    success=False,
+                    details={"error": str(e), "target_time": target_time.isoformat()}
+                )
                 try:
                     conn.disconnect()
                 except:
                     pass
                 return {"success": False, "message": f"Failed to set device time: {str(e)}"}
         else:
+            app_logger.log_action(
+                level="ERROR",
+                category="system",
+                action="time_sync_failed",
+                message="Could not connect to device for time sync",
+                device_id=device.id,
+                success=False
+            )
             return {"success": False, "message": "Could not connect to device"}
 
     def sync_time_to_device(self) -> Dict[str, Any]:
@@ -347,6 +456,25 @@ class SimpleDeviceService:
                 db.close()
         except Exception as e:
             logger.warning(f"Failed to update last sync time: {e}")
+
+    def _should_do_full_sync(self, device: Device) -> bool:
+        """Determine if full sync is needed - twice daily at 12:00 AM and 12:00 PM"""
+        if not device.last_sync:
+            logger.info("First sync - performing full sync")
+            return True
+
+        current_time = datetime.now()
+
+        # Check if it's 12:00 AM (00:00) or 12:00 PM (12:00)
+        if current_time.hour in [0, 12]:
+            # Check if we haven't done a full sync in the last hour
+            hours_since_last_sync = (current_time - device.last_sync).total_seconds() / 3600
+            if hours_since_last_sync >= 1:
+                logger.info(f"Scheduled full sync at {current_time.strftime('%H:%M')}")
+                return True
+
+        logger.info(f"Partial sync - next full sync at {'12:00 AM' if current_time.hour >= 12 else '12:00 PM'}")
+        return False
 
 
 # Global service instance

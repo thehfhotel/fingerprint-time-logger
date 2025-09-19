@@ -17,7 +17,7 @@ echo -e "${BLUE}DOCKER BAKE BUILD - FINGERPRINT LOGGER${NC}"
 echo -e "${BLUE}=====================================${NC}"
 
 # Default values
-BUILD_TARGET="fingerprint-logger"
+BUILD_TARGET="fingerprint-time-logger"
 BUILD_PLATFORM="linux/amd64"
 BUILD_CACHE=${BUILD_CACHE:-true}
 BUILD_PARALLEL=${BUILD_PARALLEL:-true}
@@ -30,11 +30,11 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --dev)
-            BUILD_TARGET="fingerprint-logger-dev"
+            BUILD_TARGET="fingerprint-time-logger-dev"
             shift
             ;;
         --prod)
-            BUILD_TARGET="fingerprint-logger-prod"
+            BUILD_TARGET="fingerprint-time-logger-prod"
             shift
             ;;
         --no-cache)
@@ -57,9 +57,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --help             Show this help message"
             echo ""
             echo "Available targets:"
-            echo "  fingerprint-logger     Main application (default)"
-            echo "  fingerprint-logger-dev Development with tools"
-            echo "  fingerprint-logger-prod Production optimized"
+            echo "  fingerprint-time-logger     Main application (default)"
+            echo "  fingerprint-time-logger-dev Development with tools"
+            echo "  fingerprint-time-logger-prod Production optimized"
             exit 0
             ;;
         *)
@@ -120,10 +120,10 @@ if docker buildx bake $BAKE_ARGS $BUILD_TARGET; then
     echo -e "${GREEN}Target: ${BUILD_TARGET}${NC}"
 
     # Show image information
-    if docker images fingerprint-logger:latest --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null; then
+    if docker images fingerprint-time-logger:latest --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null; then
         echo ""
         echo -e "${BLUE}Image Information:${NC}"
-        docker images fingerprint-logger:latest --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"
+        docker images fingerprint-time-logger:latest --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}"
     fi
 
 else

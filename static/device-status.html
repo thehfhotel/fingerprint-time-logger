@@ -6,6 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
+    <meta name="version" content="v3.0-logs-update-20250919">
     <title>Device Status - Fingerprint Time Logger</title>
     <!-- CSS Files with cache busting -->
     <script>
@@ -16,7 +17,7 @@
     <!-- JavaScript Files -->
     <script>
         const timestamp = Date.now();
-        const version = 'v2.0-https-fix';
+        const version = 'v3.0-logs-update-20250919';
         document.write(`<script src="static/js/config.js?v=${timestamp}&version=${version}&bust=2"><\/script>`);
     </script>
     <style>
@@ -37,8 +38,10 @@
         .status-header {
             display: flex;
             align-items: center;
+            justify-content: space-between;
             gap: 1rem;
             margin-bottom: 1.5rem;
+            flex-wrap: wrap;
         }
         
         .status-indicator {
@@ -88,6 +91,94 @@
             text-align: center;
             padding: 2rem;
             color: #6b7280;
+        }
+
+        .log-controls {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .log-controls select {
+            padding: 0.25rem 0.5rem;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 0.875rem;
+        }
+
+        .btn-sm {
+            padding: 0.25rem 0.75rem;
+            font-size: 0.875rem;
+        }
+
+        .log-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+            padding: 1rem;
+            background-color: #f9fafb;
+            border-radius: 6px;
+            font-size: 0.875rem;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .stat-label {
+            color: #6b7280;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .log-entry {
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            border-left: 3px solid #e5e7eb;
+            background-color: #f9fafb;
+            border-radius: 0 4px 4px 0;
+        }
+
+        .log-entry.level-error {
+            border-left-color: #ef4444;
+            background-color: #fef2f2;
+        }
+
+        .log-entry.level-warning {
+            border-left-color: #f59e0b;
+            background-color: #fffbeb;
+        }
+
+        .log-entry.level-info {
+            border-left-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+
+        .log-timestamp {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-bottom: 0.25rem;
+        }
+
+        .log-message {
+            font-family: inherit;
+            font-size: 0.875rem;
+            line-height: 1.4;
+        }
+
+        .log-details {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-top: 0.25rem;
         }
     </style>
 </head>
@@ -145,9 +236,32 @@
         </div>
         
         <div class="status-card">
-            <h2>Recent Sync Activity</h2>
+            <div class="status-header">
+                <h2>Application Logs <span style="font-size: 0.7em; color: #22c55e; font-weight: normal;">✓ v3.0</span></h2>
+                <div class="log-controls">
+                    <select id="logLevel" onchange="loadLogs()">
+                        <option value="">All Levels</option>
+                        <option value="ERROR">Errors Only</option>
+                        <option value="WARNING">Warnings</option>
+                        <option value="INFO">Info</option>
+                    </select>
+                    <select id="logCategory" onchange="loadLogs()">
+                        <option value="">All Categories</option>
+                        <option value="sync">Sync Operations</option>
+                        <option value="connection">Device Connection</option>
+                        <option value="api">API Requests</option>
+                        <option value="system">System Events</option>
+                        <option value="employee">Employee Actions</option>
+                    </select>
+                    <button class="btn btn-secondary btn-sm" onclick="loadLogs()">🔄 Refresh</button>
+                    <button class="btn btn-secondary btn-sm" onclick="clearLogDisplay()">🗑️ Clear View</button>
+                </div>
+            </div>
+            <div class="log-stats" id="logStats">
+                <div class="loading">Loading log statistics...</div>
+            </div>
             <div class="sync-log" id="syncLog">
-                <div class="loading">Loading sync log...</div>
+                <div class="loading">Loading application logs...</div>
             </div>
         </div>
     </div>
@@ -266,22 +380,137 @@
             addSyncLog('Status refreshed');
         }
         
+        async function loadLogs() {
+            try {
+                const level = document.getElementById('logLevel').value;
+                const category = document.getElementById('logCategory').value;
+
+                // Build query parameters
+                const params = new URLSearchParams({
+                    limit: '100',
+                    hours_back: '168' // 1 week
+                });
+
+                if (level) params.append('level', level);
+                if (category) params.append('category', category);
+
+                const response = await fetch(appConfig.getApiUrl(`system/logs?${params}`));
+                const data = await response.json();
+
+                displayLogs(data.logs || []);
+                displayLogStats(data.summary || {});
+
+            } catch (error) {
+                console.error('Failed to load logs:', error);
+                const logDiv = document.getElementById('syncLog');
+                logDiv.innerHTML = '<div class="log-entry level-error">Failed to load logs: ' + error.message + '</div>';
+            }
+        }
+
+        function displayLogs(logs) {
+            const logDiv = document.getElementById('syncLog');
+
+            if (logs.length === 0) {
+                logDiv.innerHTML = '<div class="log-entry">No logs found matching the current filters.</div>';
+                return;
+            }
+
+            const logEntries = logs.map(log => {
+                const timestamp = new Date(log.timestamp).toLocaleString();
+                const levelClass = `level-${log.level.toLowerCase()}`;
+
+                let details = '';
+                if (log.details && Object.keys(log.details).length > 0) {
+                    details = `<div class="log-details">Details: ${JSON.stringify(log.details)}</div>`;
+                }
+
+                let badge = '';
+                if (log.employee_badge) {
+                    details += `<div class="log-details">Employee: ${log.employee_badge}</div>`;
+                }
+
+                let duration = '';
+                if (log.duration_ms) {
+                    details += `<div class="log-details">Duration: ${log.duration_ms}ms</div>`;
+                }
+
+                const successIcon = log.success === true ? '✅' : log.success === false ? '❌' : '';
+
+                return `
+                    <div class="log-entry ${levelClass}">
+                        <div class="log-timestamp">[${timestamp}] ${log.level} - ${log.category}.${log.action} ${successIcon}</div>
+                        <div class="log-message">${log.message}</div>
+                        ${details}
+                    </div>
+                `;
+            }).join('');
+
+            logDiv.innerHTML = logEntries;
+        }
+
+        function displayLogStats(summary) {
+            const statsDiv = document.getElementById('logStats');
+
+            if (!summary || summary.error) {
+                statsDiv.innerHTML = '<div class="loading">Log statistics unavailable</div>';
+                return;
+            }
+
+            const healthColor = summary.health_status === 'good' ? '#22c55e' :
+                              summary.health_status === 'warning' ? '#f59e0b' : '#ef4444';
+
+            statsDiv.innerHTML = `
+                <div class="stat-item">
+                    <div class="stat-value">${summary.total_logs || 0}</div>
+                    <div class="stat-label">Total Logs</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" style="color: #ef4444;">${summary.recent_errors || 0}</div>
+                    <div class="stat-label">Errors</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" style="color: #f59e0b;">${summary.recent_warnings || 0}</div>
+                    <div class="stat-label">Warnings</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" style="color: ${healthColor};">${summary.health_status || 'unknown'}</div>
+                    <div class="stat-label">System Health</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">${summary.category_counts?.sync || 0}</div>
+                    <div class="stat-label">Sync Events</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">${summary.category_counts?.connection || 0}</div>
+                    <div class="stat-label">Connections</div>
+                </div>
+            `;
+        }
+
+        function clearLogDisplay() {
+            const logDiv = document.getElementById('syncLog');
+            logDiv.innerHTML = '<div class="loading">Log display cleared. Click Refresh to reload logs.</div>';
+        }
+
         function addSyncLog(message) {
+            // Create a temporary log entry for immediate feedback
             const logDiv = document.getElementById('syncLog');
             const timestamp = new Date().toLocaleString();
-            const logEntry = `[${timestamp}] ${message}\n`;
-            
-            if (logDiv.textContent.includes('Loading sync log...')) {
-                logDiv.textContent = logEntry;
+            const tempEntry = `
+                <div class="log-entry level-info">
+                    <div class="log-timestamp">[${timestamp}] INFO - ui.action ✅</div>
+                    <div class="log-message">${message}</div>
+                </div>
+            `;
+
+            if (logDiv.innerHTML.includes('Loading')) {
+                logDiv.innerHTML = tempEntry;
             } else {
-                logDiv.textContent = logEntry + logDiv.textContent;
+                logDiv.innerHTML = tempEntry + logDiv.innerHTML;
             }
-            
-            // Keep only last 50 lines
-            const lines = logDiv.textContent.split('\n');
-            if (lines.length > 50) {
-                logDiv.textContent = lines.slice(0, 50).join('\n');
-            }
+
+            // Reload logs after a short delay to get the actual logged data
+            setTimeout(loadLogs, 1000);
         }
         
         function showError(message) {
@@ -393,16 +622,38 @@
             `;
         }
         
+        // Force cache refresh detection
+        function checkForOldInterface() {
+            const logControlsExists = document.getElementById('logLevel');
+            const logStatsExists = document.getElementById('logStats');
+
+            if (!logControlsExists || !logStatsExists) {
+                console.log('Old interface detected, forcing page reload...');
+                // Add timestamp to force reload
+                const currentUrl = window.location.href.split('?')[0];
+                window.location.href = currentUrl + '?v=' + Date.now();
+                return false;
+            }
+            return true;
+        }
+
         // Initialize page
         document.addEventListener('DOMContentLoaded', () => {
+            // Check if we have the new interface
+            if (!checkForOldInterface()) {
+                return; // Will reload the page
+            }
+
             loadDeviceStatus();
             loadAutoImportStatus();
-            addSyncLog('Device status page loaded');
-            
+            loadLogs();
+            addSyncLog('Device status page loaded with new logging interface');
+
             // Auto-refresh every 30 seconds
             setInterval(() => {
                 loadDeviceStatus();
                 loadAutoImportStatus();
+                loadLogs(); // Auto-refresh logs too
             }, 30000);
         });
     </script>

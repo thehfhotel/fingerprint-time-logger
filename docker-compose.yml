@@ -4,6 +4,7 @@
 services:
   # FastAPI Application
   app:
+    image: fingerprint-time-logger:latest
     build:
       context: .
       target: fingerprint-logger

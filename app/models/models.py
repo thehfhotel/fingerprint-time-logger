@@ -122,3 +122,25 @@ class AttendanceRecord(Base):
 # Holiday model removed - not used by application
 
 # MonthlyAttendanceStats model removed - not used by application
+
+
+class ApplicationLog(Base):
+    """Application activity and error logging for system monitoring"""
+    __tablename__ = "application_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=func.now(), nullable=False, index=True)
+    level = Column(String(10), nullable=False, index=True)  # INFO, WARNING, ERROR, DEBUG
+    category = Column(String(20), nullable=False, index=True)  # sync, connection, api, error, system
+    action = Column(String(100), nullable=False)  # sync_completed, device_connected, etc.
+    message = Column(Text, nullable=False)
+    details = Column(JSON, nullable=True)  # Additional structured data
+    user_agent = Column(String(500), nullable=True)  # For API requests
+    ip_address = Column(String(45), nullable=True)  # For API requests
+    employee_badge = Column(String(50), nullable=True)  # Related employee if applicable
+    device_id = Column(Integer, ForeignKey("devices.id"), nullable=True)  # Related device if applicable
+    duration_ms = Column(Integer, nullable=True)  # Operation duration if applicable
+    success = Column(Boolean, nullable=True)  # Success/failure for operations
+
+    # Relationships
+    device = relationship("Device", foreign_keys=[device_id])

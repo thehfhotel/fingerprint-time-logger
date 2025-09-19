@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-SERVICE_NAME="fingerprint-logger"
+SERVICE_NAME="app"
 COMPOSE_FILE="$PROJECT_ROOT/docker-compose.yml"
 BAKE_FILE="$PROJECT_ROOT/docker-bake.hcl"
 PORT=5000
@@ -26,7 +26,7 @@ HEALTH_RETRY_DELAY=2
 
 # Build configuration
 BUILD_METHOD=${BUILD_METHOD:-"auto"}  # auto, bake, compose
-BUILD_TARGET=${BUILD_TARGET:-"fingerprint-logger"}
+BUILD_TARGET=${BUILD_TARGET:-"fingerprint-time-logger"}
 
 # Source common functions if available
 if [[ -f "$SCRIPT_DIR/lib/common.sh" ]]; then
@@ -379,7 +379,7 @@ cache_clear_command() {
 rebuild_command() {
     log_header "RELIABLE REBUILD WITH CACHE BUSTING"
 
-    local target="${BUILD_TARGET:-fingerprint-logger}"
+    local target="${BUILD_TARGET:-fingerprint-time-logger}"
     local cachebust
     cachebust=$(date +%s)
 
@@ -830,8 +830,8 @@ Examples:
 
 Environment Variables:
     BUILD_METHOD              # Build method (auto, bake, compose) (default: auto)
-    BUILD_TARGET              # Docker Bake target (default: fingerprint-logger)
-    SERVICE_NAME              # Docker service name (default: fingerprint-time-logger)
+    BUILD_TARGET              # Docker Bake target (default: fingerprint-time-logger)
+    SERVICE_NAME              # Docker service name (default: app)
     PORT                      # Application port (default: 5000)
     MAX_HEALTH_RETRIES        # Health check retry count (default: 30)
     HEALTH_RETRY_DELAY        # Health check delay in seconds (default: 2)
@@ -845,9 +845,9 @@ Build Methods:
     compose     Force use of standard Docker Compose build
 
 Build Targets (Docker Bake):
-    fingerprint-logger        Standard production build (default)
-    fingerprint-logger-dev    Development build with additional tools
-    fingerprint-logger-prod   Production optimized build
+    fingerprint-time-logger        Standard production build (default)
+    fingerprint-time-logger-dev    Development build with additional tools
+    fingerprint-time-logger-prod   Production optimized build
 
 Cache Management Notes:
     The Docker BuildKit cache can grow very large (40GB+) and may cause build issues where

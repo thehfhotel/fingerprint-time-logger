@@ -7,7 +7,7 @@ variable "IMAGE_TAG" {
 }
 
 variable "IMAGE_NAME" {
-  default = "fingerprint-logger"
+  default = "fingerprint-time-logger"
 }
 
 # Cache busting variable - change this to force cache invalidation
@@ -22,11 +22,11 @@ variable "NO_CACHE" {
 
 # Default group
 group "default" {
-  targets = ["fingerprint-logger"]
+  targets = ["fingerprint-time-logger"]
 }
 
 # Main application target (matches compose service)
-target "fingerprint-logger" {
+target "fingerprint-time-logger" {
   dockerfile = "Dockerfile"
   context = "."
   tags = ["${IMAGE_NAME}:${IMAGE_TAG}"]
@@ -55,8 +55,8 @@ target "fingerprint-logger" {
 }
 
 # Development target
-target "fingerprint-logger-dev" {
-  inherits = ["fingerprint-logger"]
+target "fingerprint-time-logger-dev" {
+  inherits = ["fingerprint-time-logger"]
   tags = ["${IMAGE_NAME}:dev"]
   target = "development"
   args = {
@@ -67,8 +67,8 @@ target "fingerprint-logger-dev" {
 }
 
 # Production optimized target
-target "fingerprint-logger-prod" {
-  inherits = ["fingerprint-logger"]
+target "fingerprint-time-logger-prod" {
+  inherits = ["fingerprint-time-logger"]
   tags = ["${IMAGE_NAME}:prod"]
   args = {
     BUILD_TYPE = "production"

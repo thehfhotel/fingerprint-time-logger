@@ -12,8 +12,9 @@ import os
 import logging
 
 from app.core.database import get_db
-from app.models.models import Employee, AttendanceRecord, Device
+from app.models.models import Employee, AttendanceRecord, Device, ApplicationLog
 from app.services.device_service import device_service
+from app.services.logging_service import app_logger
 
 router = APIRouter()
 
@@ -60,51 +61,82 @@ async def get_system_health(db: Session = Depends(get_db)):
 
 @router.get("/logs")
 async def get_system_logs(
-    log_type: Optional[str] = Query(None, description="Filter by log type: connection, sync, error, all"),
+    level: Optional[str] = Query(None, description="Filter by log level: INFO, WARNING, ERROR, DEBUG"),
+    category: Optional[str] = Query(None, description="Filter by category: sync, connection, api, system, employee, error"),
     limit: int = Query(100, ge=1, le=1000),
-    hours_back: int = Query(24, ge=1, le=168)  # Max 1 week
+    hours_back: int = Query(24, ge=1, le=168),  # Max 1 week
+    search: Optional[str] = Query(None, description="Search in messages"),
+    success_only: Optional[bool] = Query(None, description="Filter by success status")
 ):
     """
-    Get system operational logs with filtering
+    Get comprehensive application logs with advanced filtering
     """
     try:
-        # Read recent logs from unified server log
-        log_file_path = "/home/nut/fingerprint-time-logger/unified_server.log"
-        
-        if not os.path.exists(log_file_path):
-            return {"logs": [], "message": "Log file not found"}
-        
-        # Calculate time filter
-        time_cutoff = datetime.now() - timedelta(hours=hours_back)
-        
-        logs = []
-        try:
-            with open(log_file_path, 'r') as f:
-                lines = f.readlines()
-                
-            # Process recent log lines
-            for line in reversed(lines[-limit*2:]):  # Get more lines to filter from
-                if len(logs) >= limit:
-                    break
-                    
-                log_entry = parse_log_line(line.strip(), log_type, time_cutoff)
-                if log_entry:
-                    logs.append(log_entry)
-                    
-        except Exception as e:
-            logger.warning(f"Error reading log file: {e}")
-            
+        # Get logs from database using new logging service
+        logs = app_logger.get_logs(
+            level=level,
+            category=category,
+            hours_back=hours_back,
+            limit=limit,
+            search=search,
+            success_only=success_only
+        )
+
+        # Get summary statistics
+        summary = app_logger.get_log_summary(hours_back=hours_back)
+
         return {
-            "logs": logs[:limit],
+            "logs": logs,
             "total_returned": len(logs),
-            "filter_applied": log_type or "all",
-            "hours_back": hours_back,
+            "summary": summary,
+            "filters": {
+                "level": level,
+                "category": category,
+                "hours_back": hours_back,
+                "search": search,
+                "success_only": success_only
+            },
             "timestamp": datetime.now().isoformat()
         }
-        
+
     except Exception as e:
         logger.error(f"Error retrieving logs: {e}")
-        return {"error": str(e), "logs": []}
+        return {"error": str(e), "logs": [], "summary": {}}
+
+
+@router.get("/logs/summary")
+async def get_log_summary(
+    hours_back: int = Query(24, ge=1, le=168)
+):
+    """
+    Get log summary and statistics
+    """
+    try:
+        summary = app_logger.get_log_summary(hours_back=hours_back)
+        return summary
+    except Exception as e:
+        logger.error(f"Error getting log summary: {e}")
+        return {"error": str(e)}
+
+
+@router.post("/logs/cleanup")
+async def cleanup_old_logs(
+    days_to_keep: int = Query(30, ge=7, le=365, description="Number of days to keep logs")
+):
+    """
+    Clean up old application logs
+    """
+    try:
+        deleted_count = app_logger.cleanup_old_logs(days_to_keep=days_to_keep)
+        return {
+            "success": True,
+            "deleted_count": deleted_count,
+            "days_kept": days_to_keep,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error cleaning up logs: {e}")
+        return {"error": str(e), "success": False}
 
 
 @router.get("/metrics")
