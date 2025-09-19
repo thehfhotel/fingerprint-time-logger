@@ -68,7 +68,7 @@ async def get_default_device():
     try:
         device = device_service.get_default_device()
         if not device:
-            return {"message": "No default device configured"}
+            return {"message": "ไม่ได้ตั้งค่าเครื่องเริ่มต้น"}
         
         return {
             "id": device.id,
@@ -119,7 +119,7 @@ async def test_device_connection():
                 
                 return {
                     "success": True,
-                    "message": "Connection successful",
+                    "message": "เชื่อมต่อสำเร็จ",
                     "device_info": {
                         "name": device.name,
                         "ip_address": device.ip_address,
@@ -130,13 +130,13 @@ async def test_device_connection():
             except Exception as e:
                 return {
                     "success": True,
-                    "message": "Connected but failed to get device info",
+                    "message": "เชื่อมต่อแล้วแต่ไม่สามารถดึงข้อมูลเครื่องได้",
                     "warning": str(e)
                 }
         else:
             return {
                 "success": False,
-                "message": "Failed to connect to device"
+                "message": "ไม่สามารถเชื่อมต่อเครื่องได้"
             }
     except HTTPException:
         raise
@@ -206,7 +206,7 @@ async def get_device_config():
     try:
         device = device_service.get_default_device()
         if not device:
-            return {"message": "No device configured"}
+            return {"message": "ไม่ได้ตั้งค่าเครื่อง"}
         
         return {
             "device": {
@@ -268,7 +268,7 @@ async def get_device_diagnostics():
     try:
         device = device_service.get_default_device()
         if not device:
-            return {"status": "no_device", "message": "No device configured"}
+            return {"status": "no_device", "message": "ไม่ได้ตั้งค่าเครื่อง"}
         
         # Test connection
         conn = device_service.connect_to_device(device)
@@ -338,7 +338,7 @@ async def devices_health_check():
             return {
                 "status": "warning", 
                 "device_connected": False,
-                "message": "No device configured"
+                "message": "ไม่ได้ตั้งค่าเครื่อง"
             }
         
         # Lightweight check - just test basic connectivity without data retrieval

@@ -86,7 +86,7 @@ async def auto_import_fingerprint_logs():
                     "data": attendance_data,
                     "synced_records": result.get('synced', 0),
                     "timestamp": datetime.now().isoformat(),
-                    "message": f"Auto-imported {result.get('synced', 0)} records (startup)"
+                    "message": f"นำเข้าอัตโนมัติ {result.get('synced', 0)} บันทึก (เริ่มระบบ)"
                 })
             except Exception as broadcast_error:
                 logger.warning(f"Failed to broadcast initial auto-import update: {broadcast_error}")
@@ -121,7 +121,7 @@ async def auto_import_fingerprint_logs():
                         "data": attendance_data,
                         "synced_records": result.get('synced', 0),
                         "timestamp": datetime.now().isoformat(),
-                        "message": f"Auto-imported {result.get('synced', 0)} records"
+                        "message": f"นำเข้าอัตโนมัติ {result.get('synced', 0)} บันทึก"
                     })
                 except Exception as broadcast_error:
                     logger.warning(f"Failed to broadcast auto-import update: {broadcast_error}")
@@ -353,7 +353,7 @@ async def trigger_manual_import():
                     "data": attendance_data,
                     "synced_records": result.get('synced', 0),
                     "timestamp": datetime.now().isoformat(),
-                    "message": f"Manual import: {result.get('synced', 0)} records synced"
+                    "message": f"นำเข้าด้วยตนเอง: ซิงค์แล้ว {result.get('synced', 0)} บันทึก"
                 })
             except Exception as broadcast_error:
                 logger.warning(f"Failed to broadcast manual import update: {broadcast_error}")
@@ -370,13 +370,13 @@ async def trigger_manual_import():
         return {
             "success": result.get("success", False),
             "synced": synced_count,
-            "message": f"Import completed successfully: {synced_count} records processed"
+            "message": f"นำเข้าเสร็จสมบูรณ์: ประมวลผลแล้ว {synced_count} บันทึก"
         }
     except Exception as e:
         logger.error(f"Manual import failed: {e}")
         return {
             "success": False,
-            "message": f"Manual import failed: {str(e)}"
+            "message": f"การนำเข้าด้วยตนเองล้มเหลว: {str(e)}"
         }
 
 # Redirect old routes to new simplified interface
@@ -424,7 +424,7 @@ async def manual_refresh():
         logger.error(f"Manual refresh failed: {e}")
         return {
             "success": False,
-            "message": f"Refresh failed: {str(e)}"
+            "message": f"การรีเฟรชล้มเหลว: {str(e)}"
         }
 
 # Mount the fingerprint app for tunnel support
@@ -433,7 +433,7 @@ app.mount("/fingerprintlogs", fingerprint_app, name="fingerprint_tunnel")
 # Add a root redirect for direct access
 @app.get("/")
 async def root_redirect():
-    return {"message": "Fingerprint Time Logger", "dashboard": "/fingerprintlogs/"}
+    return {"message": "ระบบบันทึกเวลาด้วยลายนิ้วมือ", "dashboard": "/fingerprintlogs/"}
 
 if __name__ == "__main__":
     import uvicorn

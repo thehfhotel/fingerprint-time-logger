@@ -200,7 +200,7 @@ class SimpleDeviceService:
                     sync_type=sync_type,
                     duration_ms=duration_ms
                 )
-                return {"success": True, "message": f"No new records ({sync_type} sync)", "synced": 0, "total_processed": 0}
+                return {"success": True, "message": f"ไม่มีบันทึกใหม่ ({sync_type} sync)", "synced": 0, "total_processed": 0}
             
             # Store in database
             db = next(get_db())
@@ -240,7 +240,7 @@ class SimpleDeviceService:
 
                 return {
                     "success": True,
-                    "message": f"Synced {synced_count} new records ({sync_type} sync)",
+                    "message": f"ซิงค์แล้ว {synced_count} บันทึกใหม่ ({sync_type} sync)",
                     "synced": synced_count,
                     "total_processed": len(records),
                     "sync_type": sync_type
@@ -256,13 +256,13 @@ class SimpleDeviceService:
                 error=str(e),
                 sync_type=sync_type
             )
-            return {"success": False, "message": f"Sync failed: {str(e)}"}
+            return {"success": False, "message": f"การซิงค์ล้มเหลว: {str(e)}"}
     
     def get_device_status(self) -> Dict[str, Any]:
         """Get simple device status"""
         device = self.get_default_device()
         if not device:
-            return {"connected": False, "message": "No device configured"}
+            return {"connected": False, "message": "ไม่ได้ตั้งค่าเครื่อง"}
         
         conn = self.connect_to_device(device)
         if conn:
@@ -282,7 +282,7 @@ class SimpleDeviceService:
                     conn.disconnect()
                 except:
                     pass
-                return {"connected": False, "message": "Device connection failed"}
+                return {"connected": False, "message": "การเชื่อมต่อเครื่องล้มเหลว"}
         else:
             return {"connected": False, "message": "Could not connect to device"}
     
@@ -290,7 +290,7 @@ class SimpleDeviceService:
         """Get device clock time with optional auto-sync when difference > 30 seconds"""
         device = self.get_default_device()
         if not device:
-            return {"success": False, "message": "No device configured"}
+            return {"success": False, "message": "ไม่ได้ตั้งค่าเครื่อง"}
         
         conn = self.connect_to_device(device)
         if conn:
@@ -347,15 +347,15 @@ class SimpleDeviceService:
                     conn.disconnect()
                 except:
                     pass
-                return {"success": False, "message": f"Failed to get device time: {str(e)}"}
+                return {"success": False, "message": f"ไม่สามารถดึงเวลาเครื่องได้: {str(e)}"}
         else:
-            return {"success": False, "message": "Could not connect to device"}
+            return {"success": False, "message": "ไม่สามารถเชื่อมต่อเครื่องได้"}
     
     def set_device_time(self, target_time: Optional[datetime] = None) -> Dict[str, Any]:
         """Set device clock time"""
         device = self.get_default_device()
         if not device:
-            return {"success": False, "message": "No device configured"}
+            return {"success": False, "message": "ไม่ได้ตั้งค่าเครื่อง"}
 
         # Use current server time if no target time specified
         if target_time is None:
@@ -399,7 +399,7 @@ class SimpleDeviceService:
                 conn.disconnect()
                 return {
                     "success": True,
-                    "message": "Device time updated successfully",
+                    "message": "อัปเดตเวลาเครื่องสำเร็จแล้ว",
                     "old_time": old_device_time.isoformat(),
                     "target_time": target_time.isoformat(),
                     "new_time": new_device_time.isoformat(),
@@ -421,7 +421,7 @@ class SimpleDeviceService:
                     conn.disconnect()
                 except:
                     pass
-                return {"success": False, "message": f"Failed to set device time: {str(e)}"}
+                return {"success": False, "message": f"ไม่สามารถตั้งเวลาเครื่องได้: {str(e)}"}
         else:
             app_logger.log_action(
                 level="ERROR",
@@ -431,7 +431,7 @@ class SimpleDeviceService:
                 device_id=device.id,
                 success=False
             )
-            return {"success": False, "message": "Could not connect to device"}
+            return {"success": False, "message": "ไม่สามารถเชื่อมต่อเครื่องได้"}
 
     def sync_time_to_device(self) -> Dict[str, Any]:
         """Sync current system time to device"""

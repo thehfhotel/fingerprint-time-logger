@@ -71,7 +71,7 @@ async def update_employee_nickname(
             
             return {
                 "success": True,
-                "message": "Employee created and nickname set successfully",
+                "message": "สร้างพนักงานและตั้งชื่อเล่นสำเร็จแล้ว",
                 "badge_number": badge_number,
                 "nickname": employee.display_name,
                 "display_name": employee.display_name,
@@ -84,7 +84,7 @@ async def update_employee_nickname(
             
             return {
                 "success": True,
-                "message": "Nickname updated successfully",
+                "message": "อัปเดตชื่อเล่นสำเร็จแล้ว",
                 "badge_number": badge_number,
                 "nickname": employee.display_name,
                 "display_name": employee.display_name,
@@ -126,7 +126,7 @@ async def update_employee_status(
         
         return {
             "success": True,
-            "message": f"Employee status updated to {'active' if employee.is_active else 'inactive'}",
+            "message": f"อัปเดตสถานะพนักงานเป็น {'ใช้งาน' if employee.is_active else 'ไม่ใช้งาน'}",
             "badge_number": badge_number,
             "is_active": employee.is_active
         }
@@ -166,7 +166,7 @@ async def update_employee_hidden_status(
         
         return {
             "success": True,
-            "message": f"Employee visibility updated to {'hidden' if employee.is_hidden else 'visible'}",
+            "message": f"อัปเดตการแสดงพนักงานเป็น {'ซ่อน' if employee.is_hidden else 'แสดง'}",
             "badge_number": badge_number,
             "is_hidden": employee.is_hidden
         }
@@ -368,7 +368,7 @@ async def update_employee(badge_number: str, employee_data: EmployeeUpdate, db: 
 
         return {
             "success": True,
-            "message": "Employee updated successfully",
+            "message": "อัปเดตข้อมูลพนักงานสำเร็จแล้ว",
             "badge_number": employee.badge_number,
             "english_name": employee.english_name,
             "thai_name": employee.thai_name,
@@ -397,7 +397,7 @@ async def delete_employee(badge_number: str, db: Session = Depends(get_db)):
         
         return {
             "success": True,
-            "message": "Employee deactivated successfully"
+            "message": "ยกเลิกการใช้งานพนักงานสำเร็จแล้ว"
         }
     except HTTPException:
         raise
@@ -450,7 +450,7 @@ async def update_thai_name(badge_number: str, thai_name_data: dict, db: Session 
 
         return {
             "success": True,
-            "message": "Thai name updated successfully",
+            "message": "อัปเดตชื่อภาษาไทยสำเร็จแล้ว",
             "thai_name": employee.thai_name,
             "display_name": employee.display_name
         }
