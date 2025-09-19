@@ -56,7 +56,7 @@ class RealTimeManager {
     showOfflineNotification() {
         this.showNotification(
             'Connection Lost',
-            'You are currently offline. Data may not be up to date.',
+            'คุณอยู่ในโหมดออฟไลน์ ข้อมูลอาจไม่เป็นปัจจุบัน',
             'warning'
         );
     }
@@ -124,7 +124,7 @@ class RealTimeManager {
         if (!this.isOnline) {
             this.showNotification(
                 'Offline',
-                'Cannot refresh data while offline.',
+                'ไม่สามารถรีเฟรชข้อมูลในโหมดออฟไลน์ได้',
                 'warning'
             );
             return;
@@ -146,7 +146,7 @@ class RealTimeManager {
                     
                     this.showNotification(
                         'Data Updated',
-                        'Successfully refreshed attendance data',
+                        'รีเฟรชข้อมูลการลงเวลาสำเร็จแล้ว',
                         'success'
                     );
                 } else {
@@ -163,7 +163,7 @@ class RealTimeManager {
             console.error('Data refresh failed:', error);
             this.showNotification(
                 'Refresh Failed',
-                'Unable to refresh data. Please check your connection.',
+                'ไม่สามารถรีเฟรชข้อมูลได้ กรุณาตรวจสอบการเชื่อมต่อ',
                 'error'
             );
         } finally {

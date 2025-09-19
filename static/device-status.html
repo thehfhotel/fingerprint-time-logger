@@ -322,7 +322,7 @@
                 updateDeviceDisplay();
             } catch (error) {
                 console.error('Failed to load device status:', error);
-                showError('Failed to connect to device');
+                showError('ไม่สามารถเชื่อมต่อเครื่องได้');
             }
         }
         
@@ -457,17 +457,17 @@
                     addSyncLog(`Import successful: ${result.imported_count || 0} records imported`);
                     loadDeviceStatus();
                 } else {
-                    addSyncLog('Import failed: ' + result.message);
+                    addSyncLog('การนำเข้าล้มเหลว: ' + result.message);
                 }
             } catch (error) {
-                addSyncLog('Import error: ' + error.message);
+                addSyncLog('ข้อผิดพลาดการนำเข้า: ' + error.message);
                 loadDeviceStatus();
             }
         }
         
         function refreshStatus() {
             loadDeviceStatus();
-            addSyncLog('Status refreshed');
+            addSyncLog('รีเฟรชสถานะแล้ว');
         }
         
         async function loadLogs() {
@@ -493,7 +493,7 @@
             } catch (error) {
                 console.error('Failed to load logs:', error);
                 const logDiv = document.getElementById('syncLog');
-                logDiv.innerHTML = '<div class="log-entry level-error">Failed to load logs: ' + error.message + '</div>';
+                logDiv.innerHTML = '<div class="log-entry level-error">ไม่สามารถโหลดบันทึกได้: ' + error.message + '</div>';
             }
         }
 
@@ -593,7 +593,7 @@
                 </div>
             `;
 
-            if (logDiv.innerHTML.includes('Loading')) {
+            if (logDiv.innerHTML.includes('กำลังโหลด')) {
                 logDiv.innerHTML = tempEntry;
             } else {
                 logDiv.innerHTML = tempEntry + logDiv.innerHTML;
@@ -626,7 +626,7 @@
                 updateAutoImportDisplay();
             } catch (error) {
                 console.error('Failed to load auto-import status:', error);
-                showAutoImportError('Failed to load auto-import status');
+                showAutoImportError('ไม่สามารถโหลดสถานะการนำเข้าอัตโนมัติได้');
             }
         }
         
@@ -737,7 +737,7 @@
             loadDeviceStatus();
             loadAutoImportStatus();
             loadLogs();
-            addSyncLog('Device status page loaded with new logging interface');
+            addSyncLog('โหลดหน้าสถานะเครื่องพร้อมอินเทอร์เฟซบันทึกใหม่');
 
             // Auto-refresh every 30 seconds
             setInterval(() => {

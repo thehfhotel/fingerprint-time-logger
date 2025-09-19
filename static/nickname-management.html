@@ -203,7 +203,7 @@
                 const url = appConfig.getApiUrl(`employees/?${params}`);
                 console.log('Loading employees from:', url);
                 const response = await fetch(url);
-                if (!response.ok) throw new Error('Failed to load employees');
+                if (!response.ok) throw new Error('โหลดข้อมูลพนักงานไม่สำเร็จ');
                 
                 const data = await response.json();
                 employees = data.employees || [];
@@ -304,7 +304,7 @@
                     })
                 });
                 
-                if (!response.ok) throw new Error('Failed to save nickname');
+                if (!response.ok) throw new Error('บันทึกชื่อเล่นไม่สำเร็จ');
                 
                 // Update the original value
                 input.setAttribute('data-original', input.value);
@@ -360,7 +360,7 @@
                     })
                 });
                 
-                if (!response.ok) throw new Error('Failed to update status');
+                if (!response.ok) throw new Error('อัปเดตสถานะไม่สำเร็จ');
                 
                 // Update the employee in our local array
                 const employee = employees.find(e => e.badge_number === badgeNumber);
@@ -392,7 +392,7 @@
                     })
                 });
                 
-                if (!response.ok) throw new Error('Failed to update hidden status');
+                if (!response.ok) throw new Error('อัปเดตสถานะการซ่อนไม่สำเร็จ');
 
                 // Update the employee in our local array
                 const employee = employees.find(e => e.badge_number === badgeNumber);
