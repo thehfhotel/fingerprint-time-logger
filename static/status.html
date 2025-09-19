@@ -364,10 +364,10 @@
         <div class="header-row-2">
             <div class="header-actions">
                 <a href="./" class="action-btn">📊 แดชบอร์ด</a>
-                <a href="./employee-management" class="action-btn">👥 Employee Management</a>
-                <a href="./work-schedules" class="action-btn">⏰ Work Schedules</a>
-                <a href="./attendance-calendar" class="action-btn">📅 Attendance Calendar</a>
-                <a href="./status" class="action-btn" style="background: #4299e1; color: white;">🔍 Status</a>
+                <a href="./nickname-management" class="action-btn">👤 จัดการชื่อเล่น</a>
+                <a href="./device-status" class="action-btn">🔧 สถานะเครื่อง</a>
+                <a href="./export" class="action-btn">📤 ส่งออกข้อมูล</a>
+                <a href="./status" class="action-btn" style="background: #4299e1; color: white;">🔍 สถานะระบบ</a>
             </div>
         </div>
     </div>
@@ -375,7 +375,7 @@
     <div class="status-container">
         <div class="status-header">
             <h1>สถานะระบบ</h1>
-            <p>Comprehensive system health monitoring and operational logs</p>
+            <p>การตรวจสอบสุขภาพระบบและบันทึกการทำงานอย่างครอบคลุม</p>
         </div>
 
         <!-- Status Cards Grid -->
@@ -383,7 +383,7 @@
             <!-- Overall System Health -->
             <div class="status-card">
                 <div class="status-card-header">
-                    <span>🔍 System Health</span>
+                    <span>🔍 สุขภาพระบบ</span>
                 </div>
                 <div class="status-card-content">
                     <div style="text-align: center; margin-bottom: 1rem;">
@@ -393,7 +393,7 @@
                         </span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Last Check</span>
+                        <span class="metric-label">ตรวจสอบล่าสุด</span>
                         <span class="metric-value" id="last-check">กำลังโหลด...</span>
                     </div>
                 </div>
@@ -402,28 +402,28 @@
             <!-- Device Health -->
             <div class="status-card">
                 <div class="status-card-header">
-                    <span>📱 Device Connection</span>
+                    <span>📱 การเชื่อมต่อเครื่อง</span>
                 </div>
                 <div class="status-card-content">
                     <div class="metric-row">
-                        <span class="metric-label">ZKTeco Device</span>
+                        <span class="metric-label">เครื่อง ZKTeco</span>
                         <span class="metric-value" id="device-status">กำลังโหลด...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">IP Address</span>
+                        <span class="metric-label">ที่อยู่ IP</span>
                         <span class="metric-value" id="device-ip">กำลังโหลด...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Firmware</span>
+                        <span class="metric-label">เฟิร์มแวร์</span>
                         <span class="metric-value" id="device-firmware">กำลังโหลด...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Device Clock</span>
+                        <span class="metric-label">เวลาเครื่อง</span>
                         <span class="metric-value" id="device-clock">กำลังโหลด...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Time Sync</span>
-                        <button id="sync-device-time" class="sync-btn" onclick="syncDeviceTime()">🔄 Sync to Server Time</button>
+                        <span class="metric-label">ซิงค์เวลา</span>
+                        <button id="sync-device-time" class="sync-btn" onclick="syncDeviceTime()">🔄 ซิงค์เวลาเซิร์ฟเวอร์</button>
                     </div>
                 </div>
             </div>
@@ -431,19 +431,19 @@
             <!-- Database Health -->
             <div class="status-card">
                 <div class="status-card-header">
-                    <span>🗄️ Database</span>
+                    <span>🗄️ ฐานข้อมูล</span>
                 </div>
                 <div class="status-card-content">
                     <div class="metric-row">
-                        <span class="metric-label">Connection</span>
+                        <span class="metric-label">การเชื่อมต่อ</span>
                         <span class="metric-value" id="db-status">กำลังโหลด...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Total Employees</span>
+                        <span class="metric-label">พนักงานทั้งหมด</span>
                         <span class="metric-value" id="total-employees">กำลังโหลด...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Attendance Records</span>
+                        <span class="metric-label">บันทึกการลงเวลา</span>
                         <span class="metric-value" id="total-records">กำลังโหลด...</span>
                     </div>
                 </div>
@@ -452,19 +452,19 @@
             <!-- System Resources -->
             <div class="status-card">
                 <div class="status-card-header">
-                    <span>💾 System Resources</span>
+                    <span>💾 ทรัพยากรระบบ</span>
                 </div>
                 <div class="status-card-content">
                     <div class="metric-row">
-                        <span class="metric-label">Disk Usage</span>
+                        <span class="metric-label">การใช้ดิสก์</span>
                         <span class="metric-value" id="disk-usage">กำลังโหลด...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Disk Free</span>
+                        <span class="metric-label">ดิสก์ว่าง</span>
                         <span class="metric-value" id="disk-free">กำลังโหลด...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Total Disk</span>
+                        <span class="metric-label">ดิสก์ทั้งหมด</span>
                         <span class="metric-value" id="disk-total">กำลังโหลด...</span>
                     </div>
                 </div>
@@ -473,19 +473,19 @@
             <!-- Application Statistics -->
             <div class="status-card">
                 <div class="status-card-header">
-                    <span>📊 Application Stats</span>
+                    <span>📊 สถิติแอปพลิเคชัน</span>
                 </div>
                 <div class="status-card-content">
                     <div class="metric-row">
-                        <span class="metric-label">Active Employees</span>
+                        <span class="metric-label">พนักงานที่ใช้งาน</span>
                         <span class="metric-value" id="active-employees">กำลังโหลด...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Today's Records</span>
+                        <span class="metric-label">บันทึกวันนี้</span>
                         <span class="metric-value" id="today-records">กำลังโหลด...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Last Record</span>
+                        <span class="metric-label">บันทึกล่าสุด</span>
                         <span class="metric-value" id="last-record">กำลังโหลด...</span>
                     </div>
                 </div>
@@ -494,19 +494,19 @@
             <!-- Performance Metrics -->
             <div class="status-card">
                 <div class="status-card-header">
-                    <span>⚡ Performance</span>
+                    <span>⚡ ประสิทธิภาพ</span>
                 </div>
                 <div class="status-card-content">
                     <div class="metric-row">
-                        <span class="metric-label">DB Query Time</span>
+                        <span class="metric-label">เวลาคิวรี่ฐานข้อมูล</span>
                         <span class="metric-value" id="query-time">กำลังโหลด...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">API Status</span>
+                        <span class="metric-label">สถานะ API</span>
                         <span class="metric-value" id="api-status">กำลังโหลด...</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Recent Activity</span>
+                        <span class="metric-label">กิจกรรมล่าสุด</span>
                         <span class="metric-value" id="recent-activity">กำลังโหลด...</span>
                     </div>
                 </div>
@@ -516,13 +516,13 @@
         <!-- System Logs Section -->
         <div class="logs-section">
             <div class="logs-header">
-                <h2>📋 System Logs</h2>
+                <h2>📋 บันทึกระบบ</h2>
                 <div class="logs-controls">
                     <select id="log-filter">
-                        <option value="all">All Logs</option>
-                        <option value="connection">Connection</option>
-                        <option value="sync">Sync</option>
-                        <option value="error">Errors</option>
+                        <option value="all">บันทึกทั้งหมด</option>
+                        <option value="connection">การเชื่อมต่อ</option>
+                        <option value="sync">การซิงค์</option>
+                        <option value="error">ข้อผิดพลาด</option>
                         <option value="api">API</option>
                     </select>
                     <button id="refresh-logs" class="refresh-button">
@@ -530,7 +530,7 @@
                     </button>
                     <div class="auto-refresh">
                         <input type="checkbox" id="auto-refresh" checked>
-                        <label for="auto-refresh">Auto-refresh (30s)</label>
+                        <label for="auto-refresh">รีเฟรชอัตโนมัติ (30วินาที)</label>
                     </div>
                 </div>
             </div>
@@ -620,18 +620,18 @@
                     statusElement.innerHTML = '<span class="status-dot dot-green"></span>ระบบทำงานปกติ';
                 } else if (status === 'degraded') {
                     statusElement.classList.add('status-warning');
-                    statusElement.innerHTML = '<span class="status-dot dot-yellow"></span>System Degraded';
+                    statusElement.innerHTML = '<span class="status-dot dot-yellow"></span>ระบบทำงานบางส่วน';
                 } else {
                     statusElement.classList.add('status-error');
-                    statusElement.innerHTML = '<span class="status-dot dot-red"></span>System Error';
+                    statusElement.innerHTML = '<span class="status-dot dot-red"></span>ระบบมีข้อผิดพลาด';
                 }
 
                 lastCheckElement.textContent = timestamp;
             }
 
             updateDeviceHealth(deviceHealth) {
-                document.getElementById('device-status').textContent = 
-                    deviceHealth.connected ? '✅ Connected' : '❌ Disconnected';
+                document.getElementById('device-status').textContent =
+                    deviceHealth.connected ? '✅ เชื่อมต่อแล้ว' : '❌ ไม่ได้เชื่อมต่อ';
                 document.getElementById('device-ip').textContent = 
                     deviceHealth.ip_address || 'N/A';
                 document.getElementById('device-firmware').textContent = 
@@ -661,7 +661,7 @@
                         // Add sync indicator
                         const syncIcon = data.synchronized ? '🟢' : '🔴';
                         let displayText = `${syncIcon} ${timeString}`;
-                        
+
                         // Add auto-sync indicator if it occurred
                         if (data.auto_synced) {
                             displayText += ' ⚡';
@@ -670,12 +670,12 @@
                         deviceClockElement.innerHTML = displayText;
                         
                         // Update tooltip
-                        let tooltipText = data.synchronized 
-                            ? 'Device clock is synchronized' 
-                            : `Device clock is ${Math.abs(data.time_difference_seconds).toFixed(0)}s off`;
+                        let tooltipText = data.synchronized
+                            ? 'เวลาเครื่องซิงค์แล้ว'
+                            : `เวลาเครื่องคลาดเคลื่อน ${Math.abs(data.time_difference_seconds).toFixed(0)} วินาที`;
                         
                         if (data.auto_synced) {
-                            tooltipText += ' (Auto-synchronized due to >30s difference)';
+                            tooltipText += ' (ซิงค์อัตโนมัติเนื่องจากคลาดเคลื่อน >30วินาที)';
                         }
                         
                         deviceClockElement.title = tooltipText;
@@ -685,20 +685,20 @@
                             this.showAutoSyncNotification(data.message);
                         }
                     } else {
-                        deviceClockElement.innerHTML = '❌ Unavailable';
-                        deviceClockElement.title = data.message || 'Device clock unavailable';
+                        deviceClockElement.innerHTML = '❌ ไม่สามารถใช้ได้';
+                        deviceClockElement.title = data.message || 'ไม่สามารถเข้าถึงเวลาเครื่องได้';
                     }
                 } catch (error) {
                     console.error('Error loading device clock:', error);
                     const deviceClockElement = document.getElementById('device-clock');
-                    deviceClockElement.innerHTML = '❌ Error';
-                    deviceClockElement.title = 'Error loading device clock';
+                    deviceClockElement.innerHTML = '❌ ข้อผิดพลาด';
+                    deviceClockElement.title = 'เกิดข้อผิดพลาดในการโหลดเวลาเครื่อง';
                 }
             }
 
             updateDatabaseHealth(dbHealth) {
-                document.getElementById('db-status').textContent = 
-                    dbHealth.accessible ? '✅ Connected' : '❌ Error';
+                document.getElementById('db-status').textContent =
+                    dbHealth.accessible ? '✅ เชื่อมต่อแล้ว' : '❌ ข้อผิดพลาด';
                 document.getElementById('total-employees').textContent = 
                     dbHealth.total_employees || '0';
                 document.getElementById('total-records').textContent = 
@@ -722,10 +722,16 @@
                     `${employees.active || 0} / ${employees.total || 0}`;
                 document.getElementById('today-records').textContent = 
                     attendance.today_records || '0';
-                document.getElementById('last-record').textContent = 
-                    attendance.last_record_time ? 
-                        new Date(attendance.last_record_time).toLocaleString() : 
-                        'No records';
+                document.getElementById('last-record').textContent =
+                    attendance.last_record_time ?
+                        new Date(attendance.last_record_time).toLocaleString('th-TH', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        }) :
+                        'ไม่มีบันทึก';
             }
 
             updatePerformanceMetrics(metrics) {
@@ -734,12 +740,12 @@
 
                 document.getElementById('query-time').textContent = 
                     `${apiPerf.db_query_time_ms || 0}ms`;
-                document.getElementById('api-status').textContent = 
-                    apiPerf.status === 'healthy' ? '✅ Fast' : '⚠️ Slow';
+                document.getElementById('api-status').textContent =
+                    apiPerf.status === 'healthy' ? '✅ เร็ว' : '⚠️ ช้า';
                 
                 const last24h = activity.last_24_hours || {};
-                document.getElementById('recent-activity').textContent = 
-                    `${last24h.attendance_records || 0} records`;
+                document.getElementById('recent-activity').textContent =
+                    `${last24h.attendance_records || 0} บันทึก`;
             }
 
             async loadLogs() {
@@ -772,7 +778,7 @@
                 const logsContent = document.getElementById('logs-content');
                 
                 if (logs.length === 0) {
-                    logsContent.innerHTML = '<div class="empty-logs">No logs found for the selected filter.</div>';
+                    logsContent.innerHTML = '<div class="empty-logs">ไม่พบบันทึกสำหรับตัวกรองที่เลือก</div>';
                     return;
                 }
 
@@ -844,7 +850,7 @@
             
             // Disable button and show loading state
             syncBtn.disabled = true;
-            syncBtn.textContent = '⏳ Syncing...';
+            syncBtn.textContent = '⏳ กำลังซิงค์...';
             
             try {
                 const response = await fetch(appConfig.getApiUrl('devices/time/sync'), {
@@ -858,7 +864,7 @@
                 
                 if (result.success) {
                     // Show success message
-                    syncBtn.textContent = '✅ Synced!';
+                    syncBtn.textContent = '✅ ซิงค์เสร็จแล้ว!';
                     syncBtn.style.background = '#10b981';
                     
                     // Update device clock display
@@ -873,13 +879,13 @@
                     });
                     const syncIcon = result.synchronized ? '🟢' : '🔴';
                     deviceClockElement.innerHTML = `${syncIcon} ${timeString}`;
-                    deviceClockElement.title = result.synchronized 
-                        ? 'Device clock is synchronized' 
-                        : `Device clock is ${Math.abs(result.time_difference_seconds).toFixed(0)}s off`;
+                    deviceClockElement.title = result.synchronized
+                        ? 'เวลาเครื่องซิงค์แล้ว'
+                        : `เวลาเครื่องคลาดเคลื่อน ${Math.abs(result.time_difference_seconds).toFixed(0)} วินาที`;
                     
                     // Reset button after 3 seconds
                     setTimeout(() => {
-                        syncBtn.textContent = '🔄 Sync to Server Time';
+                        syncBtn.textContent = '🔄 ซิงค์เวลาเซิร์ฟเวอร์';
                         syncBtn.style.background = '#3b82f6';
                         syncBtn.disabled = false;
                     }, 3000);
@@ -889,12 +895,12 @@
                 
             } catch (error) {
                 console.error('Error syncing device time:', error);
-                syncBtn.textContent = '❌ Failed';
+                syncBtn.textContent = '❌ ล้มเหลว';
                 syncBtn.style.background = '#ef4444';
                 
                 // Reset button after 3 seconds
                 setTimeout(() => {
-                    syncBtn.textContent = '🔄 Sync to Server Time';
+                    syncBtn.textContent = '🔄 ซิงค์เวลาเซิร์ฟเวอร์';
                     syncBtn.style.background = '#3b82f6';
                     syncBtn.disabled = false;
                 }, 3000);
