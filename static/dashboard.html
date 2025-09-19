@@ -136,18 +136,18 @@
                 deviceStatusText.textContent = 'กำลังโหลดข้อมูลเครื่อง...';
             } else if (data.device_status && data.device_status.connected) {
                 deviceStatus.classList.remove('disconnected', 'loading');
-                deviceStatusText.textContent = 'Device Connected';
+                deviceStatusText.textContent = 'เครื่องเชื่อมต่อแล้ว';
             } else {
                 deviceStatus.classList.add('disconnected');
                 deviceStatus.classList.remove('loading');
-                deviceStatusText.textContent = 'Device Disconnected';
+                deviceStatusText.textContent = 'เครื่องไม่ได้เชื่อมต่อ';
             }
             
-            lastUpdate.textContent = new Date().toLocaleString();
+            lastUpdate.textContent = new Date().toLocaleString('th-TH');
             
             // Update last import time if available
             if (data.last_import) {
-                lastImport.textContent = new Date(data.last_import).toLocaleString();
+                lastImport.textContent = new Date(data.last_import).toLocaleString('th-TH');
                 lastImport.style.color = '#90EE90'; // Light green to indicate successful import
             } else {
                 lastImport.textContent = 'ไม่เคย';
@@ -182,7 +182,7 @@
         // Get employee nickname or fallback to badge number
         function getDisplayName(employeeId) {
             const nickname = thaiNamesData[employeeId];
-            return nickname ? `${nickname} (${employeeId})` : `Badge ${employeeId}`;
+            return nickname ? `${nickname} (${employeeId})` : `บัตร ${employeeId}`;
         }
 
         function updateEmployeeGrid(rawApiData = null) {
@@ -206,8 +206,8 @@
                     return {
                         id: record.id,
                         employee_id: record.employee_badge_number || record.employee_id,  // Handle both field names
-                        time: timestamp.toLocaleTimeString('en-US', {hour12: false}),
-                        date: timestamp.toLocaleDateString('en-US', {month: '2-digit', day: '2-digit', year: 'numeric'}),
+                        time: timestamp.toLocaleTimeString('th-TH', {hour12: false}),
+                        date: timestamp.toLocaleDateString('th-TH', {day: '2-digit', month: '2-digit', year: 'numeric'}),
                         timestamp: record.timestamp,
                         adjustment_id: record.adjustment_id || null
                     };
@@ -286,7 +286,7 @@
             
             try {
                 // Show immediate feedback that import was triggered
-                importBtn.textContent = '⏳ Processing...';
+                importBtn.textContent = '⏳ กำลังดำเนินการ...';
                 console.log('Button text set to Processing...');
                 
                 // Trigger background import via WebSocket (non-blocking)
@@ -324,7 +324,7 @@
                     
                     // Fallback: Reset button after 10 seconds
                     setTimeout(() => {
-                        importBtn.textContent = '⏱️ Check completed';
+                        importBtn.textContent = '⏱️ ตรวจสอบเสร็จสิ้น';
                         
                         // Refresh to get any updates
                         loadInitialData();
@@ -338,11 +338,11 @@
                 
             } catch (error) {
                 console.error('Import trigger failed:', error);
-                importBtn.textContent = '❌ Failed to start';
+                importBtn.textContent = '❌ เริ่มต้นล้มเหลว';
                 
                 setTimeout(() => {
                     importBtn.disabled = false;
-                    importBtn.textContent = '📥 Import Fingerprint Log';
+                    importBtn.textContent = '📥 นำเข้าบันทึกลายนิ้วมือ';
                 }, 3000);
             }
         }
@@ -428,13 +428,13 @@
                 const lastUpdate = document.getElementById('lastUpdate');
                 const lastImport = document.getElementById('lastImport');
                 
-                deviceStatusText.textContent = 'API Connected';
+                deviceStatusText.textContent = 'API เชื่อมต่อแล้ว';
                 deviceStatus.classList.remove('disconnected');
-                lastUpdate.textContent = new Date().toLocaleString();
+                lastUpdate.textContent = new Date().toLocaleString('th-TH');
                 
                 // Update last import time if available
                 if (data.last_import) {
-                    lastImport.textContent = new Date(data.last_import).toLocaleString();
+                    lastImport.textContent = new Date(data.last_import).toLocaleString('th-TH');
                     lastImport.style.color = '#90EE90'; // Light green to indicate successful import
                 } else {
                     lastImport.textContent = 'ไม่เคย';
@@ -560,13 +560,13 @@
             const batchSize = document.getElementById('batchSize').value;
             
             if (!startDate || !endDate) {
-                alert('Please select both start and end dates');
+                alert('กรุณาเลือกวันที่เริ่มต้นและสิ้นสุด');
                 return;
             }
             
             // Show progress
             document.querySelector('.export-progress').style.display = 'block';
-            document.getElementById('exportMessage').textContent = 'Starting export...';
+            document.getElementById('exportMessage').textContent = 'กำลังเริ่มส่งออก...';
             
             const queryParams = new URLSearchParams({
                 start_date: startDate,

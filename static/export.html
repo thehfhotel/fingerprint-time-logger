@@ -164,9 +164,9 @@
                 <div class="form-group">
                     <label for="format">รูปแบบการส่งออก:</label>
                     <select id="format" name="format">
-                        <option value="detailed">Detailed (includes employee names)</option>
-                        <option value="simple">Simple (badges and times only)</option>
-                        <option value="summary">Summary (daily totals)</option>
+                        <option value="detailed">รายละเอียด (รวมชื่อพนักงาน)</option>
+                        <option value="simple">แบบง่าย (เฉพาะบัตรและเวลา)</option>
+                        <option value="summary">สรุปรายวัน (ยอดรวมรายวัน)</option>
                     </select>
                 </div>
                 
@@ -227,7 +227,7 @@
                 await appConfig.loadConfig();
 
                 // Show loading status
-                showStatus('กำลังโหลด...', 'loading');
+                showStatus('กำลังเตรียมการส่งออก...', 'loading');
                 exportBtn.disabled = true;
                 exportBtn.textContent = 'กำลังส่งออก...';
 
@@ -241,7 +241,7 @@
                 const response = await fetch(appConfig.getApiUrl(`attendance/export/csv?${params}`));
                 
                 if (!response.ok) {
-                    throw new Error(`Export failed: ${response.statusText}`);
+                    throw new Error(`การส่งออกล้มเหลว: ${response.statusText}`);
                 }
                 
                 // Create download
@@ -260,7 +260,7 @@
                 
             } catch (error) {
                 console.error('Export error:', error);
-                showStatus(`Export failed: ${error.message}`, 'error');
+                showStatus(`การส่งออกล้มเหลว: ${error.message}`, 'error');
             } finally {
                 exportBtn.disabled = false;
                 exportBtn.textContent = 'ส่งออกเป็น CSV';

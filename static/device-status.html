@@ -180,6 +180,49 @@
             color: #6b7280;
             margin-top: 0.25rem;
         }
+
+        /* Enhanced button states */
+        .btn-loading {
+            opacity: 0.8;
+            cursor: not-allowed;
+        }
+
+        .btn-success-flash {
+            background-color: var(--accent-green) !important;
+            border-color: var(--accent-green) !important;
+            animation: success-pulse 0.6s ease-out;
+        }
+
+        .btn-error-flash {
+            background-color: var(--accent-red) !important;
+            border-color: var(--accent-red) !important;
+            animation: error-shake 0.6s ease-out;
+        }
+
+        @keyframes success-pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        @keyframes error-shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+
+        /* Spinner styling */
+        .btn-spinner {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-text, .btn-spinner {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
     </style>
 </head>
 <body>
@@ -205,7 +248,7 @@
         <div class="status-card">
             <div class="status-header">
                 <div class="status-indicator" id="deviceIndicator"></div>
-                <h2>Device Connection</h2>
+                <h2>การเชื่อมต่อเครื่อง</h2>
             </div>
             
             <div class="device-info" id="deviceInfo">
@@ -213,7 +256,10 @@
             </div>
             
             <div class="action-buttons">
-                <button class="btn btn-primary" onclick="syncTime()">Sync Time to Device</button>
+                <button id="syncTimeBtn" class="btn btn-primary" onclick="syncTime()" aria-label="ซิงค์เวลาไปยังเครื่องสแกนลายนิ้วมือ" title="ซิงค์เวลาปัจจุบันไปยังเครื่องสแกนลายนิ้วมือ">
+                    <span class="btn-text">🕒 ซิงค์เวลาไปยังเครื่อง</span>
+                    <span class="btn-spinner" style="display: none;" aria-live="polite">⏳ กำลังซิงค์...</span>
+                </button>
                 <button class="btn btn-primary" onclick="importLogs()">นำเข้าบันทึกลายนิ้วมือ</button>
                 <button class="btn btn-secondary" onclick="refreshStatus()">รีเฟรชสถานะ</button>
             </div>
@@ -237,21 +283,21 @@
         
         <div class="status-card">
             <div class="status-header">
-                <h2>Application Logs <span style="font-size: 0.7em; color: #22c55e; font-weight: normal;">✓ v3.0</span></h2>
+                <h2>บันทึกการทำงาน <span style="font-size: 0.7em; color: #22c55e; font-weight: normal;">✓ v3.0</span></h2>
                 <div class="log-controls">
                     <select id="logLevel" onchange="loadLogs()">
-                        <option value="">All Levels</option>
+                        <option value="">ทุกระดับ</option>
                         <option value="ERROR">ข้อผิดพลาดเท่านั้น</option>
-                        <option value="WARNING">Warnings</option>
-                        <option value="INFO">Info</option>
+                        <option value="WARNING">คำเตือน</option>
+                        <option value="INFO">ข้อมูล</option>
                     </select>
                     <select id="logCategory" onchange="loadLogs()">
-                        <option value="">All Categories</option>
-                        <option value="sync">Sync Operations</option>
-                        <option value="connection">Device Connection</option>
-                        <option value="api">API Requests</option>
-                        <option value="system">System Events</option>
-                        <option value="employee">Employee Actions</option>
+                        <option value="">ทุกหมวดหมู่</option>
+                        <option value="sync">การซิงค์ข้อมูล</option>
+                        <option value="connection">การเชื่อมต่อเครื่อง</option>
+                        <option value="api">คำขอ API</option>
+                        <option value="system">เหตุการณ์ระบบ</option>
+                        <option value="employee">การกระทำพนักงาน</option>
                     </select>
                     <button class="btn btn-secondary btn-sm" onclick="loadLogs()">🔄 รีเฟรช</button>
                     <button class="btn btn-secondary btn-sm" onclick="clearLogDisplay()">🗑️ ล้างการแสดงผล</button>
@@ -288,69 +334,113 @@
                 indicator.className = 'status-indicator status-connected';
                 infoDiv.innerHTML = `
                     <div class="info-item">
-                        <span>Status:</span>
+                        <span>สถานะ:</span>
                         <span style="color: #22c55e; font-weight: 500;">เชื่อมต่อแล้ว</span>
                     </div>
                     <div class="info-item">
-                        <span>Device Model:</span>
+                        <span>ชื่อเครื่อง:</span>
                         <span>${deviceStatus.device_name || deviceStatus.model || 'ZKTeco Device'}</span>
                     </div>
                     <div class="info-item">
-                        <span>IP Address:</span>
-                        <span>${deviceStatus.ip || 'Unknown'}</span>
+                        <span>ที่อยู่ IP:</span>
+                        <span>${deviceStatus.ip || 'ไม่ทราบ'}</span>
                     </div>
                     <div class="info-item">
-                        <span>Serial Number:</span>
-                        <span>${deviceStatus.serial || 'N/A'}</span>
+                        <span>หมายเลขเครื่อง:</span>
+                        <span>${deviceStatus.serial || 'ไม่มีข้อมูล'}</span>
                     </div>
                     <div class="info-item">
-                        <span>Device Time:</span>
-                        <span>${deviceStatus.device_time || 'Unknown'}</span>
+                        <span>เวลาเครื่อง:</span>
+                        <span>${deviceStatus.device_time || 'ไม่ทราบ'}</span>
                     </div>
                     <div class="info-item">
-                        <span>Users Count:</span>
+                        <span>จำนวนผู้ใช้:</span>
                         <span>${deviceStatus.users_count || 0}</span>
                     </div>
                     <div class="info-item">
-                        <span>Records Count:</span>
+                        <span>จำนวนบันทึก:</span>
                         <span>${deviceStatus.records_count || 0}</span>
                     </div>
                     <div class="info-item">
-                        <span>Last Sync:</span>
-                        <span>${deviceStatus.last_sync || 'Never'}</span>
+                        <span>ซิงค์ล่าสุด:</span>
+                        <span>${deviceStatus.last_sync || 'ไม่เคย'}</span>
                     </div>
                 `;
             } else {
                 indicator.className = 'status-indicator status-disconnected';
                 infoDiv.innerHTML = `
                     <div class="info-item">
-                        <span>Status:</span>
+                        <span>สถานะ:</span>
                         <span style="color: #ef4444; font-weight: 500;">ไม่ได้เชื่อมต่อ</span>
                     </div>
                     <div class="info-item">
                         <span>ข้อผิดพลาด:</span>
-                        <span>${deviceStatus.error || 'Unable to connect to device'}</span>
+                        <span>${deviceStatus.error || 'ไม่สามารถเชื่อมต่อกับเครื่องได้'}</span>
                     </div>
                 `;
             }
         }
         
+        // Enhanced error messages in Thai
+        const errorMessages = {
+            'connection_failed': 'ไม่สามารถเชื่อมต่อกับเครื่องได้ กรุณาตรวจสอบการเชื่อมต่อ',
+            'device_busy': 'เครื่องกำลังทำงานอยู่ กรุณารอสักครู่แล้วลองใหม่',
+            'authentication_failed': 'การยืนยันตัวตนล้มเหลว กรุณาตรวจสอบรหัสผ่านเครื่อง',
+            'timeout': 'การเชื่อมต่อหมดเวลา กรุณาลองใหม่อีกครั้ง'
+        };
+
+        function getLocalizedErrorMessage(error) {
+            if (errorMessages[error]) {
+                return errorMessages[error];
+            }
+            return `เกิดข้อผิดพลาด: ${error}`;
+        }
+
         async function syncTime() {
+            // Add confirmation for production safety
+            if (!confirm('คุณต้องการซิงค์เวลาไปยังเครื่องหรือไม่?')) {
+                return;
+            }
+
+            const btn = document.getElementById('syncTimeBtn');
+            const btnText = btn.querySelector('.btn-text');
+            const btnSpinner = btn.querySelector('.btn-spinner');
+
             try {
+                // Show loading state
+                btn.disabled = true;
+                btnText.style.display = 'none';
+                btnSpinner.style.display = 'inline-flex';
+                btn.classList.add('btn-loading');
+
                 const indicator = document.getElementById('deviceIndicator');
                 indicator.className = 'status-indicator status-syncing';
-                
+
                 const response = await fetch(appConfig.getApiUrl('devices/sync-time'), { method: 'POST' });
                 const result = await response.json();
-                
+
                 if (result.success) {
-                    addSyncLog('Time sync successful');
+                    addSyncLog('การซิงค์เวลาสำเร็จ');
+                    btn.classList.add('btn-success-flash');
+                    setTimeout(() => btn.classList.remove('btn-success-flash'), 2000);
                     loadDeviceStatus();
                 } else {
-                    addSyncLog('Time sync failed: ' + result.message);
+                    const errorMsg = getLocalizedErrorMessage(result.error || result.message);
+                    addSyncLog('การซิงค์เวลาล้มเหลว: ' + errorMsg);
+                    btn.classList.add('btn-error-flash');
+                    setTimeout(() => btn.classList.remove('btn-error-flash'), 2000);
                 }
             } catch (error) {
-                addSyncLog('Time sync error: ' + error.message);
+                const errorMsg = getLocalizedErrorMessage(error.message);
+                addSyncLog('เกิดข้อผิดพลาดในการซิงค์เวลา: ' + errorMsg);
+                btn.classList.add('btn-error-flash');
+                setTimeout(() => btn.classList.remove('btn-error-flash'), 2000);
+            } finally {
+                // Reset button state
+                btn.disabled = false;
+                btnText.style.display = 'inline-flex';
+                btnSpinner.style.display = 'none';
+                btn.classList.remove('btn-loading');
                 loadDeviceStatus();
             }
         }
@@ -411,7 +501,7 @@
             const logDiv = document.getElementById('syncLog');
 
             if (logs.length === 0) {
-                logDiv.innerHTML = '<div class="log-entry">No logs found matching the current filters.</div>';
+                logDiv.innerHTML = '<div class="log-entry">ไม่พบบันทึกที่ตรงกับตัวกรองปัจจุบัน</div>';
                 return;
             }
 
@@ -421,17 +511,17 @@
 
                 let details = '';
                 if (log.details && Object.keys(log.details).length > 0) {
-                    details = `<div class="log-details">Details: ${JSON.stringify(log.details)}</div>`;
+                    details = `<div class="log-details">รายละเอียด: ${JSON.stringify(log.details)}</div>`;
                 }
 
                 let badge = '';
                 if (log.employee_badge) {
-                    details += `<div class="log-details">Employee: ${log.employee_badge}</div>`;
+                    details += `<div class="log-details">พนักงาน: ${log.employee_badge}</div>`;
                 }
 
                 let duration = '';
                 if (log.duration_ms) {
-                    details += `<div class="log-details">Duration: ${log.duration_ms}ms</div>`;
+                    details += `<div class="log-details">ระยะเวลา: ${log.duration_ms}ms</div>`;
                 }
 
                 const successIcon = log.success === true ? '✅' : log.success === false ? '❌' : '';
@@ -452,7 +542,7 @@
             const statsDiv = document.getElementById('logStats');
 
             if (!summary || summary.error) {
-                statsDiv.innerHTML = '<div class="loading">Log statistics unavailable</div>';
+                statsDiv.innerHTML = '<div class="loading">สถิติบันทึกไม่พร้อมใช้งาน</div>';
                 return;
             }
 
@@ -462,7 +552,7 @@
             statsDiv.innerHTML = `
                 <div class="stat-item">
                     <div class="stat-value">${summary.total_logs || 0}</div>
-                    <div class="stat-label">Total Logs</div>
+                    <div class="stat-label">บันทึกทั้งหมด</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-value" style="color: #ef4444;">${summary.recent_errors || 0}</div>
@@ -470,19 +560,19 @@
                 </div>
                 <div class="stat-item">
                     <div class="stat-value" style="color: #f59e0b;">${summary.recent_warnings || 0}</div>
-                    <div class="stat-label">Warnings</div>
+                    <div class="stat-label">คำเตือน</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-value" style="color: ${healthColor};">${summary.health_status || 'unknown'}</div>
-                    <div class="stat-label">System Health</div>
+                    <div class="stat-value" style="color: ${healthColor};">${summary.health_status || 'ไม่ทราบ'}</div>
+                    <div class="stat-label">สุขภาพระบบ</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-value">${summary.category_counts?.sync || 0}</div>
-                    <div class="stat-label">Sync Events</div>
+                    <div class="stat-label">เหตุการณ์ซิงค์</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-value">${summary.category_counts?.connection || 0}</div>
-                    <div class="stat-label">Connections</div>
+                    <div class="stat-label">การเชื่อมต่อ</div>
                 </div>
             `;
         }
@@ -548,19 +638,19 @@
                 indicator.className = 'status-indicator status-connected';
                 infoDiv.innerHTML = `
                     <div class="info-item">
-                        <span>Status:</span>
-                        <span style="color: #22c55e; font-weight: 500;">Active</span>
+                        <span>สถานะ:</span>
+                        <span style="color: #22c55e; font-weight: 500;">ทำงาน</span>
                     </div>
                     <div class="info-item">
-                        <span>Import Interval:</span>
-                        <span>${autoImportStatus.interval_minutes} minutes</span>
+                        <span>ช่วงเวลานำเข้า:</span>
+                        <span>${autoImportStatus.interval_minutes} นาที</span>
                     </div>
                     <div class="info-item">
-                        <span>Next Import:</span>
+                        <span>การนำเข้าครั้งต่อไป:</span>
                         <span>${autoImportStatus.next_import_estimate}</span>
                     </div>
                     <div class="info-item">
-                        <span>Task Status:</span>
+                        <span>สถานะงาน:</span>
                         <span style="color: #22c55e;">${autoImportStatus.task_status}</span>
                     </div>
                 `;
@@ -568,16 +658,16 @@
                 indicator.className = 'status-indicator status-disconnected';
                 infoDiv.innerHTML = `
                     <div class="info-item">
-                        <span>Status:</span>
-                        <span style="color: #ef4444; font-weight: 500;">Inactive</span>
+                        <span>สถานะ:</span>
+                        <span style="color: #ef4444; font-weight: 500;">ไม่ทำงาน</span>
                     </div>
                     <div class="info-item">
-                        <span>Task Status:</span>
-                        <span style="color: #ef4444;">${autoImportStatus.task_status || 'stopped'}</span>
+                        <span>สถานะงาน:</span>
+                        <span style="color: #ef4444;">${autoImportStatus.task_status || 'หยุด'}</span>
                     </div>
                     <div class="info-item">
-                        <span>Configured Interval:</span>
-                        <span>${autoImportStatus.interval_minutes || 30} minutes</span>
+                        <span>ช่วงเวลาที่ตั้งค่า:</span>
+                        <span>${autoImportStatus.interval_minutes || 30} นาที</span>
                     </div>
                 `;
             }
@@ -592,14 +682,14 @@
                 const result = await response.json();
                 
                 if (result.success) {
-                    addSyncLog(`Manual import successful: ${result.synced || 0} records synced`);
+                    addSyncLog(`นำเข้าแบบแมนวลสำเร็จ: ซิงค์แล้ว ${result.synced || 0} บันทึก`);
                     loadDeviceStatus();
                     loadAutoImportStatus();
                 } else {
-                    addSyncLog('Manual import failed: ' + result.message);
+                    addSyncLog('นำเข้าแบบแมนวลล้มเหลว: ' + result.message);
                 }
             } catch (error) {
-                addSyncLog('Manual import error: ' + error.message);
+                addSyncLog('เกิดข้อผิดพลาดในการนำเข้าแบบแมนวล: ' + error.message);
                 loadAutoImportStatus();
             }
         }

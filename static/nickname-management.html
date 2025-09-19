@@ -140,7 +140,7 @@
 <body>
     <div class="header">
         <div class="header-row-1">
-            <h1>Employee Nickname Management</h1>
+            <h1>จัดการชื่อเล่นพนักงาน</h1>
         </div>
         <div class="header-row-2">
             <div class="header-actions">
@@ -160,8 +160,8 @@
                 </div>
                 <div class="card-body">
                     <div class="search-box">
-                        <input type="text" id="searchInput" class="search-input" placeholder="Search by Badge ID or Nickname...">
-                        <button id="showHiddenBtn" class="btn btn-secondary" onclick="toggleShowHidden()">Show Hidden</button>
+                        <input type="text" id="searchInput" class="search-input" placeholder="ค้นหาด้วยหมายเลขบัตรหรือชื่อเล่น...">
+                        <button id="showHiddenBtn" class="btn btn-secondary" onclick="toggleShowHidden()">แสดงที่ซ่อน</button>
                     </div>
                     
                     <div id="loadingDiv" class="loading">กำลังโหลดข้อมูลพนักงาน...</div>
@@ -169,11 +169,11 @@
                     <table class="nickname-table" id="nicknameTable" style="display: none;">
                         <thead>
                             <tr>
-                                <th>Badge ID</th>
-                                <th>Nickname</th>
-                                <th>Status</th>
-                                <th>Hidden</th>
-                                <th>Action</th>
+                                <th>หมายเลขบัตร</th>
+                                <th>ชื่อเล่น</th>
+                                <th>สถานะ</th>
+                                <th>การแสดงผล</th>
+                                <th>การดำเนินการ</th>
                             </tr>
                         </thead>
                         <tbody id="nicknameTableBody">
@@ -213,7 +213,7 @@
                 document.getElementById('nicknameTable').style.display = 'table';
             } catch (error) {
                 console.error('Error loading employees:', error);
-                document.getElementById('loadingDiv').innerHTML = 'Failed to load employee data. Make sure ZK device is connected.';
+                document.getElementById('loadingDiv').innerHTML = 'โหลดข้อมูลพนักงานไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่อเครื่อง ZK';
             }
         }
 
@@ -225,13 +225,13 @@
             employeeList.forEach(employee => {
                 const row = document.createElement('tr');
                 const statusClass = employee.is_active ? 'status-active' : 'status-inactive';
-                const statusText = employee.is_active ? 'Active' : 'Inactive';
+                const statusText = employee.is_active ? 'ใช้งาน' : 'ไม่ใช้งาน';
                 const hiddenClass = employee.is_hidden ? 'status-hidden' : 'status-active';
-                const hiddenText = employee.is_hidden ? 'Hidden' : 'Visible';
+                const hiddenText = employee.is_hidden ? 'ซ่อน' : 'แสดง';
                 
                 // Add visual indicator for employees not in database
-                const notInDbIndicator = !employee.in_database ? 
-                    '<span style="color: #ffc107; font-size: 12px; margin-left: 5px;" title="From ZK Device - not in database yet">📋</span>' : '';
+                const notInDbIndicator = !employee.in_database ?
+                    '<span style="color: #ffc107; font-size: 12px; margin-left: 5px;" title="จากเครื่อง ZK - ยังไม่มีในฐานข้อมูล">📋</span>' : '';
                 
                 row.innerHTML = `
                     <td>${employee.badge_number}${notInDbIndicator}</td>
@@ -241,19 +241,19 @@
                                id="nickname-${employee.badge_number}"
                                value="${employee.display_name || ''}" 
                                data-original="${employee.display_name || ''}"
-                               placeholder="${employee.in_database ? 'Enter nickname' : 'Enter nickname (will create employee)'}">
+                               placeholder="${employee.in_database ? 'ใส่ชื่อเล่น' : 'ใส่ชื่อเล่น (จะสร้างข้อมูลพนักงาน)'}">
                     </td>
                     <td>
                         <button class="btn btn-secondary toggle-btn ${employee.is_active ? '' : 'inactive'}"
                                 onclick="toggleStatus('${employee.badge_number}', ${!employee.is_active})">
-                            ${employee.is_active ? 'Set Inactive' : 'Set Active'}
+                            ${employee.is_active ? 'ตั้งเป็นไม่ใช้งาน' : 'ตั้งเป็นใช้งาน'}
                         </button>
                         <span class="status-badge ${statusClass}">${statusText}</span>
                     </td>
                     <td>
                         <button class="btn btn-secondary toggle-btn ${employee.is_hidden ? 'hidden' : ''}"
                                 onclick="toggleHidden('${employee.badge_number}', ${!employee.is_hidden})">
-                            ${employee.is_hidden ? 'Show' : 'Hide'}
+                            ${employee.is_hidden ? 'แสดง' : 'ซ่อน'}
                         </button>
                         <span class="status-badge ${hiddenClass}">${hiddenText}</span>
                     </td>
@@ -262,10 +262,10 @@
                                 onclick="saveNickname('${employee.badge_number}')"
                                 id="save-${employee.badge_number}"
                                 disabled>
-                            ${employee.in_database ? 'Save' : 'Create & Save'}
+                            ${employee.in_database ? 'บันทึก' : 'สร้างและบันทึก'}
                         </button>
-                        <span class="success-message" id="success-${employee.badge_number}">Saved!</span>
-                        <span class="error-message" id="error-${employee.badge_number}">Failed to save</span>
+                        <span class="success-message" id="success-${employee.badge_number}">บันทึกแล้ว!</span>
+                        <span class="error-message" id="error-${employee.badge_number}">บันทึกไม่สำเร็จ</span>
                     </td>
                 `;
                 tbody.appendChild(row);
@@ -326,7 +326,7 @@
                 const result = await response.json();
                 if (result.created) {
                     // Update button text since employee is now in database
-                    saveBtn.textContent = 'Save';
+                    saveBtn.textContent = 'บันทึก';
                     // Refresh the row to remove the "not in database" indicator
                     displayEmployees(getFilteredEmployees());
                 }
@@ -372,7 +372,7 @@
                 displayEmployees(getFilteredEmployees());
             } catch (error) {
                 console.error('Error updating status:', error);
-                alert('Failed to update employee status');
+                alert('อัปเดตสถานะพนักงานไม่สำเร็จ');
             }
         }
 
@@ -404,7 +404,7 @@
                 displayEmployees(getFilteredEmployees());
             } catch (error) {
                 console.error('Error updating hidden status:', error);
-                alert('Failed to update employee hidden status');
+                alert('อัปเดตสถานะการซ่อนพนักงานไม่สำเร็จ');
             }
         }
 
@@ -414,10 +414,10 @@
             const btn = document.getElementById('showHiddenBtn');
 
             if (showHidden) {
-                btn.textContent = 'Hide Hidden';
+                btn.textContent = 'ซ่อนที่ซ่อน';
                 btn.classList.add('active');
             } else {
-                btn.textContent = 'Show Hidden';
+                btn.textContent = 'แสดงที่ซ่อน';
                 btn.classList.remove('active');
             }
 
