@@ -275,80 +275,118 @@
             container.innerHTML = consolidatedCard;
         }
         
-        // Background import function - triggers import and monitors completion
+        // Enhanced import function using modern auto-import API
         async function importFingerprintLog() {
             const importBtn = document.getElementById('importButton');
             const lastImportElem = document.getElementById('lastImport');
-            
-            console.log('Import function called - setting button state');
+
+            console.log('Import function called - using modern auto-import API');
             importBtn.disabled = true;
-            importBtn.textContent = '📥 กำลังนำเข้า...';
-            
+            importBtn.textContent = '📥 เริ่มต้นการนำเข้า...';
+
             try {
-                // Show immediate feedback that import was triggered
-                importBtn.textContent = '⏳ กำลังดำเนินการ...';
-                console.log('Button text set to Processing...');
-                
-                // Trigger background import via WebSocket (non-blocking)
-                socket.emit('refresh', {});
-                console.log('Import triggered via WebSocket');
-                
-                // Also trigger via API as primary method
-                fetch(appConfig.getApiUrl('refresh'), { 
+                // Show progress feedback
+                importBtn.textContent = '⏳ กำลังเชื่อมต่อเครื่อง...';
+
+                // Use modern auto-import trigger endpoint
+                const response = await fetch(appConfig.getApiUrl('auto-import/trigger'), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     }
-                }).then(response => {
-                    console.log('API refresh response:', response.status);
-                    return response.json();
-                }).then(data => {
-                    console.log('API refresh completed:', data);
-                    
-                    // If we get a successful response, update the UI
-                    if (data.success) {
-                        const syncedCount = data.synced || 0;
-                        importBtn.textContent = `✅ นำเข้า ${syncedCount} บันทึก`;
-                        
-                        // Refresh the dashboard to get updated last import time
-                        loadInitialData();
-                        
-                        // Reset button after delay
-                        setTimeout(() => {
-                            importBtn.disabled = false;
-                            importBtn.textContent = '📥 นำเข้าบันทึกลายนิ้วมือ';
-                        }, 3000);
-                    }
-                }).catch(e => {
-                    console.log('API refresh failed:', e);
-                    
-                    // Fallback: Reset button after 10 seconds
-                    setTimeout(() => {
-                        importBtn.textContent = '⏱️ ตรวจสอบเสร็จสิ้น';
-                        
-                        // Refresh to get any updates
-                        loadInitialData();
-                        
-                        setTimeout(() => {
-                            importBtn.disabled = false;
-                            importBtn.textContent = '📥 นำเข้าบันทึกลายนิ้วมือ';
-                        }, 2000);
-                    }, 10000);
                 });
-                
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                console.log('Modern import API response:', result);
+
+                if (result.success) {
+                    const syncedCount = result.synced || 0;
+
+                    if (syncedCount > 0) {
+                        importBtn.textContent = `✅ นำเข้าสำเร็จ: ${syncedCount} บันทึก`;
+                    } else {
+                        importBtn.textContent = `✅ ตรวจสอบแล้ว: ไม่มีข้อมูลใหม่`;
+                    }
+
+                    // Refresh dashboard to show updated data
+                    loadInitialData();
+
+                    // Listen for WebSocket updates from the new API
+                    setupImportWebSocketListener();
+
+                } else {
+                    // Handle API-reported failure
+                    importBtn.textContent = '⚠️ นำเข้าล้มเหลว';
+                    console.warn('Import failed:', result.message);
+                }
+
+                // Reset button after delay
+                setTimeout(() => {
+                    importBtn.disabled = false;
+                    importBtn.textContent = '📥 นำเข้าบันทึกลายนิ้วมือ';
+                }, 3000);
+
             } catch (error) {
                 console.error('Import trigger failed:', error);
-                importBtn.textContent = '❌ เริ่มต้นล้มเหลว';
-                
+                importBtn.textContent = '❌ การเชื่อมต่อล้มเหลว';
+
                 setTimeout(() => {
                     importBtn.disabled = false;
                     importBtn.textContent = '📥 นำเข้าบันทึกลายนิ้วมือ';
                 }, 3000);
             }
         }
+
+        // Enhanced WebSocket listener for real-time import updates
+        function setupImportWebSocketListener() {
+            // Listen for manual import updates from the new API
+            if (typeof socket !== 'undefined' && socket) {
+                socket.addEventListener('message', function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+
+                        if (data.type === 'manual_import_update') {
+                            console.log('Received manual import update:', data);
+
+                            // Update dashboard with new data
+                            if (data.data) {
+                                updateDashboard(data.data);
+                            }
+
+                            // Show notification about the import
+                            if (data.message) {
+                                showImportNotification(data.message, 'success');
+                            }
+                        }
+                    } catch (e) {
+                        console.log('WebSocket message parsing failed:', e);
+                    }
+                });
+            }
+        }
+
+        // Show import notification (can be enhanced with toast notifications)
+        function showImportNotification(message, type = 'info') {
+            console.log(`Import Notification [${type}]:`, message);
+
+            // For now, just update the last import time display
+            // In the future, this could show toast notifications
+            if (type === 'success') {
+                loadInitialData(); // Refresh to show updated data
+            }
+        }
         
-        // Add event listener for import button
+        // Add event listener for import button with enhanced functionality
         document.getElementById('importButton').addEventListener('click', importFingerprintLog);
+
+        // Initialize WebSocket listener for import updates
+        document.addEventListener('DOMContentLoaded', function() {
+            setupImportWebSocketListener();
+        });
         
         // Load device clock
         async function loadDeviceClock() {
