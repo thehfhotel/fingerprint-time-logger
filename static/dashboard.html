@@ -111,6 +111,8 @@
         // Socket event handlers - now using WebSocket adapter
         socket.on('connect', function() {
             console.log('Connected to server');
+            // Setup import listeners when connected
+            setupImportWebSocketListener();
         });
         
         socket.on('attendance_update', function(data) {
@@ -343,27 +345,35 @@
 
         // Enhanced WebSocket listener for real-time import updates
         function setupImportWebSocketListener() {
-            // Listen for manual import updates from the new API
+            // Listen for manual import updates from the new API using Socket.IO
             if (typeof socket !== 'undefined' && socket) {
-                socket.addEventListener('message', function(event) {
-                    try {
-                        const data = JSON.parse(event.data);
+                // Listen for manual import updates
+                socket.on('manual_import_update', function(data) {
+                    console.log('Received manual import update:', data);
 
-                        if (data.type === 'manual_import_update') {
-                            console.log('Received manual import update:', data);
+                    // Update dashboard with new data
+                    if (data.data) {
+                        updateDashboard(data.data);
+                    }
 
-                            // Update dashboard with new data
-                            if (data.data) {
-                                updateDashboard(data.data);
-                            }
+                    // Show notification about the import
+                    if (data.message) {
+                        showImportNotification(data.message, 'success');
+                    }
+                });
 
-                            // Show notification about the import
-                            if (data.message) {
-                                showImportNotification(data.message, 'success');
-                            }
-                        }
-                    } catch (e) {
-                        console.log('WebSocket message parsing failed:', e);
+                // Also listen for auto import updates
+                socket.on('auto_import_update', function(data) {
+                    console.log('Received auto import update:', data);
+
+                    // Update dashboard with new data
+                    if (data.data) {
+                        updateDashboard(data.data);
+                    }
+
+                    // Show notification about the import
+                    if (data.message) {
+                        showImportNotification(data.message, 'info');
                     }
                 });
             }
@@ -382,11 +392,6 @@
         
         // Add event listener for import button with enhanced functionality
         document.getElementById('importButton').addEventListener('click', importFingerprintLog);
-
-        // Initialize WebSocket listener for import updates
-        document.addEventListener('DOMContentLoaded', function() {
-            setupImportWebSocketListener();
-        });
         
         // Load device clock
         async function loadDeviceClock() {
