@@ -116,10 +116,26 @@ class SimpleDeviceService:
 
             # Convert to simple format
             attendance_data = []
+            current_year = datetime.now().year
+            current_date = datetime.now().date()
+
             for record in records_to_process:
+                timestamp = record.timestamp
+
+                # Validate timestamp - only accept records from 2010-2025
+                # and not from future dates
+                if timestamp.year < 2010 or timestamp.year > 2025:
+                    logger.warning(f"Skipping record with invalid year: {timestamp} for user {record.user_id}")
+                    continue
+
+                # Skip future dates
+                if timestamp.date() > current_date:
+                    logger.warning(f"Skipping future date: {timestamp} for user {record.user_id}")
+                    continue
+
                 attendance_data.append({
                     'user_id': str(record.user_id),
-                    'timestamp': record.timestamp,
+                    'timestamp': timestamp,
                     'punch_type': record.punch,  # ZKTeco library uses 'punch' not 'punch_type'
                     'status': record.status
                 })
