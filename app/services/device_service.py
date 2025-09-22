@@ -122,9 +122,10 @@ class SimpleDeviceService:
             for record in records_to_process:
                 timestamp = record.timestamp
 
-                # Validate timestamp - only accept records from 2010-2025
+                # Validate timestamp - only accept records from 2010 to current year
                 # and not from future dates
-                if timestamp.year < 2010 or timestamp.year > 2025:
+                current_year = datetime.now().year
+                if timestamp.year < 2010 or timestamp.year > current_year:
                     logger.warning(f"Skipping record with invalid year: {timestamp} for user {record.user_id}")
                     continue
 
