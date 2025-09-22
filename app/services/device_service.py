@@ -102,7 +102,9 @@ class SimpleDeviceService:
 
         try:
             # Get all attendance records
+            logger.info(f"Attempting to retrieve attendance records from device {device.name}")
             all_records = conn.get_attendance()
+            logger.info(f"Successfully retrieved {len(all_records)} total records from device")
 
             if full_sync:
                 # Full sync: return all records
@@ -144,7 +146,11 @@ class SimpleDeviceService:
             return attendance_data
             
         except Exception as e:
-            logger.error(f"Error getting attendance records: {e}")
+            logger.error(f"Failed to get attendance records from device {device.name}: {e}")
+            logger.error(f"Error type: {type(e).__name__}, Details: {str(e)}")
+            # Log specific network errors for debugging
+            if 'TCP packet invalid' in str(e):
+                logger.error("Network communication error - device may need restart or network is unstable")
             return []
         finally:
             try:
@@ -210,6 +216,8 @@ class SimpleDeviceService:
 
             if not records:
                 duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+                # Check if this was due to connection failure or genuinely no records
+                logger.warning(f"No records retrieved during {sync_type} sync - check device connectivity")
                 app_logger.log_sync_completed(
                     device_id=device.id,
                     synced_count=0,
@@ -222,7 +230,8 @@ class SimpleDeviceService:
             # Store in database
             db = next(get_db())
             synced_count = 0
-            
+            logger.info(f"Processing {len(records)} records for database storage")
+
             try:
                 for record in records:
                     # Check if record already exists
