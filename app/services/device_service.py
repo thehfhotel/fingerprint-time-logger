@@ -4,9 +4,11 @@ Replaces complex connection management, circuit breakers, and enterprise pattern
 """
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import os
+import threading
+import time
 from zk import ZK
 from sqlalchemy.orm import Session
 
@@ -18,11 +20,21 @@ logger = logging.getLogger(__name__)
 
 
 class SimpleDeviceService:
-    """Simplified device service with basic retry logic"""
+    """Simplified device service with connection caching to reduce device load"""
 
     def __init__(self):
         self.max_retries = int(os.getenv('DEVICE_MAX_RETRIES', '3'))
         self.timeout = int(os.getenv('DEVICE_TIMEOUT', '5'))
+
+        # Cache for device status to reduce connection frequency (10 minutes)
+        self._status_cache = {}
+        self._status_cache_lock = threading.Lock()
+        self._cache_duration = 600  # 10 minutes in seconds
+
+        # Cache for device time (1 minute to allow more frequent time checks)
+        self._time_cache = {}
+        self._time_cache_lock = threading.Lock()
+        self._time_cache_duration = 60  # 1 minute for time cache
     
     def get_default_device(self) -> Optional[Device]:
         """Get the default ZKTeco device"""
@@ -243,10 +255,9 @@ class SimpleDeviceService:
 
                 return {
                     "success": True,
-                    "message": f"ซิงค์แล้ว {synced_count} บันทึกใหม่ ({sync_type} sync)",
+                    "message": f"ซิงค์แล้ว {synced_count} บันทึกใหม่",
                     "synced": synced_count,
-                    "total_processed": len(records),
-                    "sync_type": sync_type
+                    "total_processed": len(records)
                 }
                 
             finally:

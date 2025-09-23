@@ -355,7 +355,8 @@ async def export_attendance_csv(
 async def attendance_health_check():
     """Health check for attendance system"""
     try:
-        device_status = device_service.get_device_status()
+        from app.services.device_service_cached import cached_device_service
+        device_status = cached_device_service.get_device_status()
         recent_records = attendance_service.get_attendance_records(limit=1)
         
         return {

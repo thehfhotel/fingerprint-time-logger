@@ -363,9 +363,10 @@ async def devices_health_check():
         
         # Add lightweight device info without overwhelming queries
         if connected:
-            # Get device time efficiently (lightweight operation)
+            # Get device time with caching
             try:
-                time_info = device_service.get_device_time(auto_sync=False)
+                from app.services.device_service_cached import cached_device_service
+                time_info = cached_device_service.get_device_time(auto_sync=False)
                 device_time = time_info.get("device_time", "Unknown")
             except Exception:
                 device_time = "Unavailable"
