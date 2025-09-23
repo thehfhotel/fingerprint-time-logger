@@ -23,8 +23,6 @@ class SimpleDeviceService:
     def __init__(self):
         self.max_retries = int(os.getenv('DEVICE_MAX_RETRIES', '3'))
         self.timeout = int(os.getenv('DEVICE_TIMEOUT', '5'))
-        self.partial_sync_limit = int(os.getenv('PARTIAL_SYNC_LIMIT', '50'))
-        self.full_sync_interval_hours = int(os.getenv('FULL_SYNC_INTERVAL_HOURS', '24'))
     
     def get_default_device(self) -> Optional[Device]:
         """Get the default ZKTeco device"""
@@ -88,33 +86,17 @@ class SimpleDeviceService:
                     return None
         return None
     
-    def get_attendance_records(self, device: Device, limit: Optional[int] = None, full_sync: bool = False) -> List[Dict[str, Any]]:
-        """Get attendance records from device with checkpoint-based sync
-
-        Args:
-            device: Device to sync from
-            limit: Number of latest records to fetch (default: configured partial_sync_limit)
-            full_sync: If True, fetch ALL records for data integrity
-        """
+    def get_attendance_records(self, device: Device) -> List[Dict[str, Any]]:
+        """Get all attendance records from device"""
         conn = self.connect_to_device(device)
         if not conn:
             return []
 
         try:
             # Get all attendance records
-            logger.info(f"Attempting to retrieve attendance records from device {device.name}")
-            all_records = conn.get_attendance()
-            logger.info(f"Successfully retrieved {len(all_records)} total records from device")
-
-            if full_sync:
-                # Full sync: return all records
-                records_to_process = all_records
-                logger.info(f"Full sync: Retrieved {len(all_records)} total attendance records")
-            else:
-                # Partial sync: get latest records only
-                sync_limit = limit or self.partial_sync_limit
-                records_to_process = sorted(all_records, key=lambda x: x.timestamp, reverse=True)[:sync_limit]
-                logger.info(f"Partial sync: Retrieved {len(records_to_process)} latest records (from {len(all_records)} total)")
+            logger.info(f"Retrieving attendance records from device {device.name}")
+            records_to_process = conn.get_attendance()
+            logger.info(f"Retrieved {len(records_to_process)} attendance records from device")
 
             # Convert to simple format
             attendance_data = []
@@ -189,7 +171,7 @@ class SimpleDeviceService:
             except:
                 pass
     
-    def sync_attendance_data(self, force_full_sync: bool = False) -> Dict[str, Any]:
+    def sync_attendance_data(self) -> Dict[str, Any]:
         """Smart sync of attendance data with checkpoint-based approach"""
         device = self.get_default_device()
         if not device:
@@ -198,18 +180,13 @@ class SimpleDeviceService:
             return {"success": False, "message": error_msg}
 
         start_time = datetime.now()
-        sync_type = "full" if force_full_sync else "unknown"
 
         try:
-            # Determine if full sync is needed
-            needs_full_sync = force_full_sync or self._should_do_full_sync(device)
-            sync_type = "full" if needs_full_sync else "partial"
-
             # Log sync start
-            app_logger.log_sync_start(device_id=device.id, sync_type=sync_type)
+            app_logger.log_sync_start(device_id=device.id, sync_type="full")
 
-            # Get records from device (partial or full)
-            records = self.get_attendance_records(device, full_sync=needs_full_sync)
+            # Get all records from device
+            records = self.get_attendance_records(device)
 
             # Always update last sync time when sync is attempted, regardless of new records
             self.update_last_sync()
@@ -217,15 +194,15 @@ class SimpleDeviceService:
             if not records:
                 duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
                 # Check if this was due to connection failure or genuinely no records
-                logger.warning(f"No records retrieved during {sync_type} sync - check device connectivity")
+                logger.warning(f"No records retrieved during sync - check device connectivity")
                 app_logger.log_sync_completed(
                     device_id=device.id,
                     synced_count=0,
                     total_processed=0,
-                    sync_type=sync_type,
+                    sync_type="full",
                     duration_ms=duration_ms
                 )
-                return {"success": True, "message": f"ไม่มีบันทึกใหม่ ({sync_type} sync)", "synced": 0, "total_processed": 0}
+                return {"success": True, "message": "ไม่มีบันทึกใหม่", "synced": 0, "total_processed": 0}
             
             # Store in database
             db = next(get_db())
@@ -260,7 +237,7 @@ class SimpleDeviceService:
                     device_id=device.id,
                     synced_count=synced_count,
                     total_processed=len(records),
-                    sync_type=sync_type,
+                    sync_type="full",
                     duration_ms=duration_ms
                 )
 
@@ -483,24 +460,6 @@ class SimpleDeviceService:
         except Exception as e:
             logger.warning(f"Failed to update last sync time: {e}")
 
-    def _should_do_full_sync(self, device: Device) -> bool:
-        """Determine if full sync is needed - twice daily at 12:00 AM and 12:00 PM"""
-        if not device.last_sync:
-            logger.info("First sync - performing full sync")
-            return True
-
-        current_time = datetime.now()
-
-        # Check if it's 12:00 AM (00:00) or 12:00 PM (12:00)
-        if current_time.hour in [0, 12]:
-            # Check if we haven't done a full sync in the last hour
-            hours_since_last_sync = (current_time - device.last_sync).total_seconds() / 3600
-            if hours_since_last_sync >= 1:
-                logger.info(f"Scheduled full sync at {current_time.strftime('%H:%M')}")
-                return True
-
-        logger.info(f"Partial sync - next full sync at {'12:00 AM' if current_time.hour >= 12 else '12:00 PM'}")
-        return False
 
 
 # Global service instance
