@@ -257,7 +257,7 @@ class SimpleDeviceService:
             app_logger.log_sync_failed(
                 device_id=device.id if device else None,
                 error=str(e),
-                sync_type=sync_type
+                sync_type="full"
             )
             return {"success": False, "message": f"การซิงค์ล้มเหลว: {str(e)}"}
     
