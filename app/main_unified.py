@@ -98,9 +98,10 @@ async def auto_import_fingerprint_logs():
     
     while True:
         try:
+            logger.info(f"Auto-import: Sleeping for {auto_import_interval} seconds ({auto_import_interval/60} minutes)...")
             await asyncio.sleep(auto_import_interval)
-            
-            logger.info("Auto-importing fingerprint logs...")
+
+            logger.info("Auto-import: Woke up from sleep, starting import...")
             
             # Import device service here to avoid circular imports
             from app.services.device_service import device_service
