@@ -175,10 +175,11 @@ async def sync_attendance():
 
 
 @router.get("/time")
-async def get_device_time(auto_sync: bool = Query(True, description="Automatically sync if difference > 30 seconds")):
-    """Get device clock time with optional auto-sync"""
+async def get_device_time(auto_sync: bool = Query(False, description="Automatically sync if difference > 30 seconds")):
+    """Get device clock time (uses 1-minute cache to reduce device connections)"""
     try:
-        result = device_service.get_device_time(auto_sync=auto_sync)
+        from app.services.device_service_cached import cached_device_service
+        result = cached_device_service.get_device_time(auto_sync=auto_sync)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

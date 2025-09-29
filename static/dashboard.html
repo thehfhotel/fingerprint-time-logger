@@ -644,13 +644,13 @@
                 
                 console.log('Initial data load completed successfully');
                 
-                // Set up periodic device clock refresh (every 5 minutes)
-                // Use configurable interval
+                // Set up periodic device clock refresh (uses 2-minute refreshInterval from config)
+                // Device time API uses 1-minute cache, so frequent checks don't overload device
                 appConfig.loadConfig().then(() => {
-                    const interval = appConfig.get('ui.refreshInterval') || 300000;
+                    const interval = appConfig.get('ui.refreshInterval') || 120000;
                     setInterval(loadDeviceClock, interval);
                 }).catch(() => {
-                    setInterval(loadDeviceClock, 300000); // fallback
+                    setInterval(loadDeviceClock, 120000); // fallback to 2 minutes
                 });
                 
             } catch (error) {

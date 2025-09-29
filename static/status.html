@@ -830,7 +830,7 @@
                 this.autoRefreshInterval = setInterval(() => {
                     this.loadSystemHealth();
                     this.loadLogs();
-                }, 30000); // 30 seconds
+                }, 600000); // 10 minutes to reduce device connection frequency
             }
 
             stopAutoRefresh() {
