@@ -54,12 +54,12 @@ class TestConsolidatedAttendanceAPI:
         assert isinstance(data["records"], list)
 
     def test_get_employee_attendance(self, test_client, test_company_setup):
-        """Test GET /api/attendance/employee/{badge_number}"""
+        """Test GET /api/attendance/employee/badge/{badge_number}"""
         # Get first employee from test data
         employees = test_company_setup["employees"]
         if employees:
             badge_number = employees[0].badge_number
-            response = test_client.get(f"/api/attendance/employee/{badge_number}")
+            response = test_client.get(f"/api/attendance/employee/badge/{badge_number}")
             assert response.status_code == 200
             data = response.json()
             assert "employee_badge" in data
@@ -67,8 +67,8 @@ class TestConsolidatedAttendanceAPI:
             assert isinstance(data["records"], list)
 
     def test_get_employee_attendance_not_found(self, test_client):
-        """Test GET /api/attendance/employee/{badge_number} - Employee not found"""
-        response = test_client.get("/api/attendance/employee/9999")
+        """Test GET /api/attendance/employee/badge/{badge_number} - Employee not found"""
+        response = test_client.get("/api/attendance/employee/badge/9999")
         assert response.status_code == 404
 
     def test_attendance_health_check(self, test_client):

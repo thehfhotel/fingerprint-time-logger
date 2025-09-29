@@ -4,7 +4,7 @@ This version implements 10-minute device status caching to prevent overwhelming 
 """
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 import threading
@@ -26,10 +26,10 @@ class CachedDeviceService:
         self.max_retries = int(os.getenv('DEVICE_MAX_RETRIES', '3'))
         self.timeout = int(os.getenv('DEVICE_TIMEOUT', '5'))
 
-        # Cache for device status to reduce connection frequency (10 minutes)
+        # Cache for device status to reduce connection frequency (5 minutes to match frontend)
         self._status_cache = {}
         self._status_cache_lock = threading.Lock()
-        self._cache_duration = 600  # 10 minutes in seconds
+        self._cache_duration = 300  # 5 minutes in seconds to match frontend health check interval
 
         # Cache for device time (1 minute to allow more frequent time checks)
         self._time_cache = {}
@@ -76,7 +76,7 @@ class CachedDeviceService:
                     cache_age = time.time() - cache_time
                     if cache_age < self._time_cache_duration:
                         # Update server time in cached data
-                        cached_data["server_time"] = datetime.now().isoformat()
+                        cached_data["server_time"] = datetime.now(timezone.utc).isoformat()
                         cached_data["cache_age_seconds"] = int(cache_age)
                         logger.debug(f"Using cached device time (age: {int(cache_age)}s)")
                         return cached_data

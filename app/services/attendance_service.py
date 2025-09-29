@@ -68,7 +68,8 @@ class SimpleAttendanceService:
             device = db.query(Device).first()
             last_import_time = None
             if device and device.last_sync:
-                last_import_time = device.last_sync.strftime('%Y-%m-%d %H:%M:%S')
+                # Return ISO format timestamp with timezone info for proper client-side conversion
+                last_import_time = device.last_sync.isoformat()
             
             # Group by employee
             employee_data = {}
