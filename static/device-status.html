@@ -367,17 +367,64 @@
                     </div>
                 `;
             } else {
-                indicator.className = 'status-indicator status-disconnected';
-                infoDiv.innerHTML = `
-                    <div class="info-item">
-                        <span>สถานะ:</span>
-                        <span style="color: #ef4444; font-weight: 500;">ไม่ได้เชื่อมต่อ</span>
-                    </div>
-                    <div class="info-item">
-                        <span>ข้อผิดพลาด:</span>
-                        <span>${deviceStatus.error || 'ไม่สามารถเชื่อมต่อกับเครื่องได้'}</span>
-                    </div>
-                `;
+                // Check if we have cached data even though current connection failed
+                const hasCachedData = deviceStatus.cache_age_seconds !== undefined && deviceStatus.cache_age_seconds >= 0;
+                const cacheAgeMinutes = hasCachedData ? Math.floor(deviceStatus.cache_age_seconds / 60) : null;
+
+                if (hasCachedData && cacheAgeMinutes !== null && cacheAgeMinutes < 30) {
+                    // Recent cache exists - show warning status with cached info
+                    indicator.className = 'status-indicator status-syncing';
+                    infoDiv.innerHTML = `
+                        <div class="info-item">
+                            <span>สถานะ:</span>
+                            <span style="color: #f59e0b; font-weight: 500;">ไม่สามารถเชื่อมต่อได้ในขณะนี้</span>
+                        </div>
+                        <div class="info-item">
+                            <span>การเชื่อมต่อล่าสุด:</span>
+                            <span style="color: #22c55e;">${cacheAgeMinutes} นาทีที่แล้ว (สำเร็จ)</span>
+                        </div>
+                        <div class="info-item">
+                            <span>ชื่อเครื่อง:</span>
+                            <span>${deviceStatus.device_name || deviceStatus.model || 'ZKTeco Device'}</span>
+                        </div>
+                        <div class="info-item">
+                            <span>ที่อยู่ IP:</span>
+                            <span>${deviceStatus.ip || deviceStatus.ip_address || 'ไม่ทราบ'}</span>
+                        </div>
+                        <div class="info-item">
+                            <span>ข้อผิดพลาดปัจจุบัน:</span>
+                            <span style="color: #ef4444;">${deviceStatus.error || 'ไม่สามารถเชื่อมต่อชั่วคราว'}</span>
+                        </div>
+                        <div class="info-item" style="grid-column: 1/-1; background: #fffbeb; padding: 0.75rem; border-radius: 4px; margin-top: 0.5rem;">
+                            <span style="color: #92400e;">ℹ️ แสดงข้อมูลจากแคช - เครื่องเชื่อมต่อได้ปกติ ${cacheAgeMinutes} นาทีที่แล้ว</span>
+                        </div>
+                    `;
+                } else {
+                    // No recent cache or very old cache - show disconnected status
+                    indicator.className = 'status-indicator status-disconnected';
+                    infoDiv.innerHTML = `
+                        <div class="info-item">
+                            <span>สถานะ:</span>
+                            <span style="color: #ef4444; font-weight: 500;">ไม่ได้เชื่อมต่อ</span>
+                        </div>
+                        <div class="info-item">
+                            <span>ข้อผิดพลาด:</span>
+                            <span>${deviceStatus.error || 'ไม่สามารถเชื่อมต่อกับเครื่องได้'}</span>
+                        </div>
+                        ${hasCachedData && cacheAgeMinutes ? `
+                        <div class="info-item">
+                            <span>การเชื่อมต่อล่าสุด:</span>
+                            <span>${cacheAgeMinutes > 60 ? Math.floor(cacheAgeMinutes/60) + ' ชั่วโมง' : cacheAgeMinutes + ' นาที'}ที่แล้ว</span>
+                        </div>
+                        ` : ''}
+                        ${deviceStatus.ip_address || deviceStatus.ip ? `
+                        <div class="info-item">
+                            <span>ที่อยู่ IP:</span>
+                            <span>${deviceStatus.ip_address || deviceStatus.ip}</span>
+                        </div>
+                        ` : ''}
+                    `;
+                }
             }
         }
         
