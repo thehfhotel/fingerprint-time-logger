@@ -22,7 +22,7 @@ services:
       - BEHIND_PROXY=${BEHIND_PROXY:-true}  # Default true for nginx integration
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/fingerprintlogs/health"]
       interval: 600s  # Changed from 5 minutes to 10 minutes to reduce device connections
       timeout: 10s
       retries: 3
