@@ -9,6 +9,7 @@ class RealTimeManager {
         this.healthCheckInterval = null;
         this.refreshInterval = null;
         this.retryAttempts = 0;
+        this.maxRetryAttempts = 3; // Limit to 3 retry attempts
         this.maxRetryAttempts = 3;
         this.apiBaseUrl = '';
         
@@ -81,14 +82,18 @@ class RealTimeManager {
         }, 4000);
     }
     
-    startHealthMonitoring() {
-        this.healthCheckInterval = setInterval(async () => {
+    async performHealthCheckWithRetry() {
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (attempts < maxAttempts) {
             try {
                 const response = await fetch(appConfig.getApiUrl('devices/health'), {
                     method: 'GET',
-                    headers: { 'Accept': 'application/json' }
+                    headers: { 'Accept': 'application/json' },
+                    timeout: 10000 // 10 second timeout
                 });
-                
+
                 if (response.ok) {
                     if (!this.isOnline) {
                         this.isOnline = true;
@@ -96,19 +101,36 @@ class RealTimeManager {
                         this.refreshData();
                     }
                     this.retryAttempts = 0;
+                    return; // Success, exit retry loop
                 } else {
                     throw new Error(`Health check failed: ${response.status}`);
                 }
             } catch (error) {
-                console.warn('Health check failed:', error);
-                this.retryAttempts++;
-                
-                if (this.retryAttempts >= this.maxRetryAttempts && this.isOnline) {
-                    this.isOnline = false;
-                    this.updateConnectionStatus();
+                attempts++;
+                console.warn(`Health check attempt ${attempts} failed:`, error);
+
+                if (attempts < maxAttempts) {
+                    // Exponential backoff: 1s, 2s, 4s
+                    const delay = Math.pow(2, attempts - 1) * 1000;
+                    console.log(`Retrying health check in ${delay}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                } else {
+                    // All retries failed
+                    this.retryAttempts++;
+                    if (this.retryAttempts >= this.maxRetryAttempts && this.isOnline) {
+                        this.isOnline = false;
+                        this.updateConnectionStatus();
+                        console.error('Device health check failed after all retries, marking offline');
+                    }
                 }
             }
-        }, 60000); // Check every 60 seconds (reduced load)
+        }
+    }
+
+    startHealthMonitoring() {
+        this.healthCheckInterval = setInterval(async () => {
+            await this.performHealthCheckWithRetry();
+        }, appConfig.get('ui.healthCheckInterval') || 300000); // Use config value, default 5 minutes
     }
     
     startPeriodicRefresh() {

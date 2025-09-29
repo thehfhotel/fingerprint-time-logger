@@ -331,47 +331,43 @@ async def get_device_diagnostics():
 
 @router.get("/health")
 async def devices_health_check():
-    """Lightweight health check to avoid device overload"""
+    """Lightweight health check with caching to reduce device load"""
     try:
-        device = device_service.get_default_device()
-        if not device:
+        # Use cached device service to reduce frequent connections
+        from app.services.device_service_cached import cached_device_service
+
+        # Get cached device status (5-minute cache)
+        device_status = cached_device_service.get_device_status()
+
+        if not device_status:
             return {
-                "status": "warning", 
+                "status": "warning",
                 "device_connected": False,
                 "message": "ไม่ได้ตั้งค่าเครื่อง"
             }
-        
-        # Lightweight check - just test basic connectivity without data retrieval
-        try:
-            conn = device_service.connect_to_device(device)
-            if conn:
-                # Just verify connection and disconnect immediately
-                conn.disconnect()
-                connected = True
-            else:
-                connected = False
-        except Exception:
-            connected = False
+
+        connected = device_status.get("connected", False)
         
         response = {
             "status": "healthy" if connected else "unhealthy",
             "device_connected": connected,
-            "device_name": device.name,
-            "ip": device.ip_address,
-            "last_sync": device.last_sync.isoformat() if device.last_sync else None
+            "device_name": device_status.get("device_name", "Unknown"),
+            "ip": device_status.get("ip_address", "Unknown"),
+            "cache_age_seconds": device_status.get("cache_age_seconds", 0)
         }
-        
-        # Add lightweight device info without overwhelming queries
+
+        # Add lightweight device info using cached data only
         if connected:
-            # Get device time with caching
+            # Get device time with caching (no auto-sync to avoid connections)
             try:
-                from app.services.device_service_cached import cached_device_service
                 time_info = cached_device_service.get_device_time(auto_sync=False)
                 device_time = time_info.get("device_time", "Unknown")
+                response["device_time"] = device_time
+                response["time_cache_age"] = time_info.get("cache_age_seconds", 0)
             except Exception:
-                device_time = "Unavailable"
-            
-            # Get actual counts from database for better accuracy
+                response["device_time"] = "Unavailable"
+
+            # Get counts from database only (no device queries)
             db = next(get_db())
             try:
                 from app.models.models import Employee, AttendanceRecord

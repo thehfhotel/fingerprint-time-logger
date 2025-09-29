@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <meta name="version" content="v3.0-logs-update-20250919">
+    <meta name="version" content="v3.1-timezone-fix-20250927">
     <title>สถานะเครื่อง - ระบบบันทึกเวลาด้วยลายนิ้วมือ</title>
     <!-- CSS Files with cache busting -->
     <script>
@@ -17,7 +17,7 @@
     <!-- JavaScript Files -->
     <script>
         const timestamp = Date.now();
-        const version = 'v3.0-logs-update-20250919';
+        const version = 'v3.1-timezone-fix-20250927';
         document.write(`<script src="static/js/config.js?v=${timestamp}&version=${version}&bust=2"><\/script>`);
     </script>
     <style>
@@ -506,7 +506,18 @@
             }
 
             const logEntries = logs.map(log => {
-                const timestamp = new Date(log.timestamp).toLocaleString();
+                // TIMEZONE FIX 20250927: Ensure timestamp is treated as UTC by adding Z suffix if missing
+                const utcTimestamp = log.timestamp.endsWith('Z') ? log.timestamp : log.timestamp + 'Z';
+                const timestamp = new Date(utcTimestamp).toLocaleString('th-TH', {
+                    timeZone: 'Asia/Bangkok',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false
+                });
                 const levelClass = `level-${log.level.toLowerCase()}`;
 
                 let details = '';
@@ -585,7 +596,16 @@
         function addSyncLog(message) {
             // Create a temporary log entry for immediate feedback
             const logDiv = document.getElementById('syncLog');
-            const timestamp = new Date().toLocaleString();
+            const timestamp = new Date().toLocaleString('th-TH', {
+                timeZone: 'Asia/Bangkok',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
             const tempEntry = `
                 <div class="log-entry level-info">
                     <div class="log-timestamp">[${timestamp}] INFO - ui.action ✅</div>
@@ -739,12 +759,12 @@
             loadLogs();
             addSyncLog('โหลดหน้าสถานะเครื่องพร้อมอินเทอร์เฟซบันทึกใหม่');
 
-            // Auto-refresh every 30 seconds
+            // Auto-refresh every 5 minutes to match global health check policy
             setInterval(() => {
                 loadDeviceStatus();
                 loadAutoImportStatus();
                 loadLogs(); // Auto-refresh logs too
-            }, 30000);
+            }, 300000); // 5 minutes to reduce device connection frequency
         });
     </script>
 </body>

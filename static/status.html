@@ -609,7 +609,18 @@
                 const lastCheckElement = document.getElementById('last-check');
 
                 const status = data.overall_status || 'unknown';
-                const timestamp = new Date(data.timestamp).toLocaleString();
+                // Ensure timestamp is treated as UTC by adding Z suffix if missing
+                const utcTimestamp = data.timestamp.endsWith('Z') ? data.timestamp : data.timestamp + 'Z';
+                const timestamp = new Date(utcTimestamp).toLocaleString('th-TH', {
+                    timeZone: 'Asia/Bangkok',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false
+                });
 
                 // Update status indicator
                 statusElement.className = 'status-indicator';
@@ -724,13 +735,19 @@
                     attendance.today_records || '0';
                 document.getElementById('last-record').textContent =
                     attendance.last_record_time ?
-                        new Date(attendance.last_record_time).toLocaleString('th-TH', {
-                            year: 'numeric',
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                        }) :
+                        (() => {
+                            // Ensure timestamp is treated as UTC by adding Z suffix if missing
+                            const utcTimestamp = attendance.last_record_time.endsWith('Z') ?
+                                attendance.last_record_time : attendance.last_record_time + 'Z';
+                            return new Date(utcTimestamp).toLocaleString('th-TH', {
+                                timeZone: 'Asia/Bangkok',
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            });
+                        })() :
                         'ไม่มีบันทึก';
             }
 
@@ -784,7 +801,16 @@
 
                 const logsHtml = logs.map(log => `
                     <div class="log-entry">
-                        <span class="log-timestamp">${new Date(log.timestamp).toLocaleTimeString()}</span>
+                        <span class="log-timestamp">${(() => {
+                            const utcTimestamp = log.timestamp.endsWith('Z') ? log.timestamp : log.timestamp + 'Z';
+                            return new Date(utcTimestamp).toLocaleTimeString('th-TH', {
+                            timeZone: 'Asia/Bangkok',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                            hour12: false
+                        });
+                        })()}</span>
                         <span class="log-level ${log.level}">${log.level}</span>
                         <span class="log-message">${this.escapeHtml(log.message)}</span>
                     </div>
