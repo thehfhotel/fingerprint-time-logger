@@ -91,7 +91,6 @@ class SimpleAttendanceService:
             
             return {
                 'data': employee_data,
-                'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'last_import': last_import_time,
                 'total_employees': len(employee_data),
                 'total_records': len(records)

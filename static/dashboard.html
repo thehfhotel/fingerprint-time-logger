@@ -33,7 +33,6 @@
                 <div style="margin-bottom: 5px; font-size: 0.9em; color: #e0e0e0;">
                     นำเข้าล่าสุด: <span id="lastImport" style="color: #e0e0e0;">ไม่เคย</span>
                 </div>
-                อัปเดตล่าสุด: <span id="lastUpdate">ไม่เคย</span>
                 <div style="margin-top: 5px; font-size: 0.9em; color: white;">
                     เวลาเครื่อง: <span id="deviceClock" style="color: white;">กำลังโหลด...</span>
                 </div>
@@ -206,6 +205,27 @@
         const socket = io();
         let attendanceData = {};
         let thaiNamesData = {};
+
+        // Bangkok timezone formatting utility
+        function formatBangkokDateTime(date) {
+            return date.toLocaleString('th-TH', {
+                timeZone: 'Asia/Bangkok',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+        }
+
+        // UTC timestamp string to Bangkok time formatter
+        function formatUTCTimestampToBangkok(timestampString) {
+            // Ensure timestamp is treated as UTC by adding Z suffix if missing
+            const utcTimestamp = timestampString.endsWith('Z') ? timestampString : timestampString + 'Z';
+            return formatBangkokDateTime(new Date(utcTimestamp));
+        }
         
         // Socket event handlers - now using WebSocket adapter
         socket.on('connect', function() {
@@ -227,9 +247,8 @@
             // Update status
             const deviceStatus = document.getElementById('deviceStatus');
             const deviceStatusText = document.getElementById('deviceStatusText');
-            const lastUpdate = document.getElementById('lastUpdate');
             const lastImport = document.getElementById('lastImport');
-            
+
             // Handle loading state first
             if (data.device_status && data.device_status.loading) {
                 deviceStatus.classList.remove('disconnected');
@@ -243,12 +262,10 @@
                 deviceStatus.classList.remove('loading');
                 deviceStatusText.textContent = 'เครื่องไม่ได้เชื่อมต่อ';
             }
-            
-            lastUpdate.textContent = new Date().toLocaleString('th-TH');
-            
+
             // Update last import time if available
             if (data.last_import) {
-                lastImport.textContent = new Date(data.last_import).toLocaleString('th-TH');
+                lastImport.textContent = formatUTCTimestampToBangkok(data.last_import);
                 lastImport.style.color = '#90EE90'; // Light green to indicate successful import
             } else {
                 lastImport.textContent = 'ไม่เคย';
@@ -408,7 +425,7 @@
                     const syncedCount = result.synced || 0;
 
                     // Update last import time immediately
-                    lastImportElem.textContent = new Date().toLocaleString('th-TH');
+                    lastImportElem.textContent = formatBangkokDateTime(new Date());
                     lastImportElem.style.color = '#90EE90';
 
                     // Auto-refresh page after short delay
@@ -454,7 +471,14 @@
 
                     // Update dashboard with new data
                     if (data.data) {
-                        updateDashboard(data.data);
+                        updateEmployeeGrid(data.data);
+
+                        // Update last import time display
+                        const lastImportElem = document.getElementById('lastImport');
+                        if (lastImportElem && data.timestamp) {
+                            lastImportElem.textContent = formatUTCTimestampToBangkok(data.timestamp);
+                            lastImportElem.style.color = '#90EE90';
+                        }
                     }
 
                     // Show notification about the import
@@ -469,7 +493,14 @@
 
                     // Update dashboard with new data
                     if (data.data) {
-                        updateDashboard(data.data);
+                        updateEmployeeGrid(data.data);
+
+                        // Update last import time display
+                        const lastImportElem = document.getElementById('lastImport');
+                        if (lastImportElem && data.timestamp) {
+                            lastImportElem.textContent = formatUTCTimestampToBangkok(data.timestamp);
+                            lastImportElem.style.color = '#90EE90';
+                        }
                     }
 
                     // Show notification about the import
@@ -594,16 +625,14 @@
                 // Update status indicators
                 const deviceStatus = document.getElementById('deviceStatus');
                 const deviceStatusText = document.getElementById('deviceStatusText');
-                const lastUpdate = document.getElementById('lastUpdate');
                 const lastImport = document.getElementById('lastImport');
-                
+
                 deviceStatusText.textContent = 'API เชื่อมต่อแล้ว';
                 deviceStatus.classList.remove('disconnected');
-                lastUpdate.textContent = new Date().toLocaleString('th-TH');
-                
+
                 // Update last import time if available
                 if (data.last_import) {
-                    lastImport.textContent = new Date(data.last_import).toLocaleString('th-TH');
+                    lastImport.textContent = formatUTCTimestampToBangkok(data.last_import);
                     lastImport.style.color = '#90EE90'; // Light green to indicate successful import
                 } else {
                     lastImport.textContent = 'ไม่เคย';

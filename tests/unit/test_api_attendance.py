@@ -20,7 +20,7 @@ class TestAttendanceAPI:
 
         # Verify response structure
         assert "data" in data
-        assert "last_update" in data
+        assert "last_import" in data
         assert "total_employees" in data
         assert "total_records" in data
         assert isinstance(data["data"], dict)

@@ -41,7 +41,7 @@ class TestConsolidatedAttendanceAPI:
         assert "data" in data
         assert "total_employees" in data
         assert "total_records" in data
-        assert "last_update" in data
+        assert "last_import" in data
 
     def test_get_attendance_today(self, test_client, test_company_setup):
         """Test GET /api/attendance/today - Today's attendance"""
