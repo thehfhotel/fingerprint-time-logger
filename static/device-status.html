@@ -759,12 +759,12 @@
             loadLogs();
             addSyncLog('โหลดหน้าสถานะเครื่องพร้อมอินเทอร์เฟซบันทึกใหม่');
 
-            // Auto-refresh every 5 minutes to match global health check policy
+            // Auto-refresh every 10 minutes to reduce device connection frequency
             setInterval(() => {
                 loadDeviceStatus();
                 loadAutoImportStatus();
                 loadLogs(); // Auto-refresh logs too
-            }, 300000); // 5 minutes to reduce device connection frequency
+            }, 600000); // 10 minutes to reduce device connection frequency
         });
     </script>
 </body>

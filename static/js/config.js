@@ -57,7 +57,7 @@ class ConfigManager {
             },
             ui: {
                 refreshInterval: 120000,
-                healthCheckInterval: 300000, // Changed from 60s to 5 minutes
+                healthCheckInterval: 600000, // Changed from 5 minutes to 10 minutes to reduce device connections
                 dateFormat: "en-US",
                 timeFormat: {
                     hour12: false
