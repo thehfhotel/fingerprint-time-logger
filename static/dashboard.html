@@ -222,9 +222,12 @@
 
         // UTC timestamp string to Bangkok time formatter
         function formatUTCTimestampToBangkok(timestampString) {
-            // Ensure timestamp is treated as UTC by adding Z suffix if missing
-            const utcTimestamp = timestampString.endsWith('Z') ? timestampString : timestampString + 'Z';
-            return formatBangkokDateTime(new Date(utcTimestamp));
+            // Parse ISO 8601 timestamp (handles both Z and +00:00 formats)
+            const date = new Date(timestampString);
+            if (isNaN(date.getTime())) {
+                return 'Invalid Date';
+            }
+            return formatBangkokDateTime(date);
         }
         
         // Socket event handlers - now using WebSocket adapter
