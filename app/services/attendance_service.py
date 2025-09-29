@@ -4,7 +4,7 @@ Replaces complex validation, conflict resolution, and enterprise patterns
 """
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, desc
 import logging
@@ -69,7 +69,12 @@ class SimpleAttendanceService:
             last_import_time = None
             if device and device.last_sync:
                 # Return ISO format timestamp with timezone info for proper client-side conversion
-                last_import_time = device.last_sync.isoformat()
+                # Ensure timezone-aware datetime (SQLite stores as text, loses tzinfo on read)
+                dt = device.last_sync
+                if dt.tzinfo is None:
+                    # Assume UTC if no timezone info (backward compatibility)
+                    dt = dt.replace(tzinfo=timezone.utc)
+                last_import_time = dt.isoformat()
             
             # Group by employee
             employee_data = {}
