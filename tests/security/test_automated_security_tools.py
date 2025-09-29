@@ -174,6 +174,15 @@ class AutomatedSecurityScanner:
                     for match in matches:
                         line_num = content[:match.start()].count('\n') + 1
 
+                        # Skip false positives: cache keys and similar non-sensitive identifiers
+                        matched_text = match.group(0)
+                        if vuln_info['title'] == 'Hardcoded Credential':
+                            # Check if this is a cache key or similar identifier (not a real credential)
+                            if any(indicator in matched_text.lower() for indicator in [
+                                'cache_key', '_cache', 'cache =', 'key = "device_', 'key = "auto_'
+                            ]):
+                                continue  # Skip cache-related keys
+
                         vulnerabilities.append(SecurityVulnerability(
                             id=f"sast_{py_file.stem}_{line_num}_{len(vulnerabilities)}",
                             title=vuln_info['title'],

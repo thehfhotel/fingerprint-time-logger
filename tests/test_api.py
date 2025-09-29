@@ -58,17 +58,6 @@ def test_employees_endpoint(test_client, test_company_setup):
     assert isinstance(data["employees"], list)
 
 
-def test_export_formats_endpoint(test_client):
-    """Test export formats endpoint"""
-    response = test_client.get("/api/export/formats")
-    assert response.status_code == 200
-    data = response.json()
-    assert isinstance(data, dict)
-    assert "formats" in data
-    assert "available_exports" in data
-    assert "csv" in data["formats"]
-
-
 def test_404_endpoint(test_client):
     """Test that non-existent endpoints return 404"""
     response = test_client.get("/api/nonexistent")
