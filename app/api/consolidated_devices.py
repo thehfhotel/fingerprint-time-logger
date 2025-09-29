@@ -94,9 +94,10 @@ async def get_default_device():
 
 @router.get("/status")
 async def get_device_status():
-    """Get device connection status"""
+    """Get device connection status (uses 10-minute cache to reduce device connections)"""
     try:
-        status = device_service.get_device_status()
+        from app.services.device_service_cached import cached_device_service
+        status = cached_device_service.get_device_status()
         return status
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -336,7 +337,7 @@ async def devices_health_check():
         # Use cached device service to reduce frequent connections
         from app.services.device_service_cached import cached_device_service
 
-        # Get cached device status (5-minute cache)
+        # Get cached device status (10-minute cache)
         device_status = cached_device_service.get_device_status()
 
         if not device_status:

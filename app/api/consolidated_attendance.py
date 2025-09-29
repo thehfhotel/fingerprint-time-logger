@@ -276,9 +276,10 @@ async def sync_attendance_from_device():
 
 @router.get("/sync/status")
 async def get_sync_status():
-    """Get sync status and device information"""
+    """Get sync status and device information (uses 10-minute cache to reduce device connections)"""
     try:
-        device_status = device_service.get_device_status()
+        from app.services.device_service_cached import cached_device_service
+        device_status = cached_device_service.get_device_status()
         device = device_service.get_default_device()
         
         return {

@@ -26,10 +26,10 @@ class CachedDeviceService:
         self.max_retries = int(os.getenv('DEVICE_MAX_RETRIES', '3'))
         self.timeout = int(os.getenv('DEVICE_TIMEOUT', '5'))
 
-        # Cache for device status to reduce connection frequency (5 minutes to match frontend)
+        # Cache for device status to reduce connection frequency (10 minutes to match frontend)
         self._status_cache = {}
         self._status_cache_lock = threading.Lock()
-        self._cache_duration = 300  # 5 minutes in seconds to match frontend health check interval
+        self._cache_duration = 600  # 10 minutes in seconds to match frontend health check interval
 
         # Cache for device time (1 minute to allow more frequent time checks)
         self._time_cache = {}
