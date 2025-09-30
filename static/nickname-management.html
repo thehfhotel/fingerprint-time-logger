@@ -157,11 +157,30 @@
             <div class="card">
                 <div class="card-header">
                     <h2>จัดการชื่อเล่นพนักงาน</h2>
+                    <button id="adminModeBtn" class="btn btn-primary" onclick="activateAdminMode()" style="float: right; margin-top: -10px;">
+                        🔐 โหมดผู้ดูแลระบบ
+                    </button>
                 </div>
                 <div class="card-body">
                     <div class="search-box">
                         <input type="text" id="searchInput" class="search-input" placeholder="ค้นหาด้วยหมายเลขบัตรหรือชื่อเล่น...">
                         <button id="showHiddenBtn" class="btn btn-secondary" onclick="toggleShowHidden()">แสดงที่ซ่อน</button>
+                    </div>
+
+                    <!-- Admin Mode Panel (Hidden by default) -->
+                    <div id="adminPanel" style="display: none; margin-bottom: 20px; padding: 20px; background: #f8f9fa; border-radius: 6px; border: 2px solid #007bff;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <h3 style="margin: 0; color: #007bff;">🔐 โหมดผู้ดูแลระบบ - จัดการรหัสเชื่อมต่อ LINE</h3>
+                            <button class="btn btn-secondary" onclick="deactivateAdminMode()">ออกจากโหมดผู้ดูแล</button>
+                        </div>
+                        <div id="adminStats" style="margin-bottom: 15px; padding: 10px; background: white; border-radius: 4px;">
+                            กำลังโหลดสถิติ...
+                        </div>
+                        <div style="margin-bottom: 10px;">
+                            <button class="btn btn-primary" onclick="showPendingCodes()">📋 รหัสที่รอเชื่อมต่อ</button>
+                            <button class="btn btn-success" onclick="showLinkedAccounts()">✅ บัญชีที่เชื่อมต่อแล้ว</button>
+                            <button class="btn btn-secondary" onclick="refreshAdminData()">🔄 รีเฟรชข้อมูล</button>
+                        </div>
                     </div>
                     
                     <div id="loadingDiv" class="loading">กำลังโหลดข้อมูลพนักงาน...</div>
@@ -174,6 +193,7 @@
                                 <th>สถานะ</th>
                                 <th>การแสดงผล</th>
                                 <th>การดำเนินการ</th>
+                                <th id="lineCodeHeader" style="display: none;">🔐 รหัสเชื่อมต่อ LINE</th>
                             </tr>
                         </thead>
                         <tbody id="nicknameTableBody">
@@ -233,13 +253,53 @@
                 const notInDbIndicator = !employee.in_database ?
                     '<span style="color: #ffc107; font-size: 12px; margin-left: 5px;" title="จากเครื่อง ZK - ยังไม่มีในฐานข้อมูล">📋</span>' : '';
                 
+                // LINE code column content (only in admin mode)
+                let lineCodeCell = '';
+                if (adminMode) {
+                    if (employee.line_user_id) {
+                        // Already linked
+                        lineCodeCell = `
+                            <td>
+                                <span style="color: #28a745; font-weight: bold;">✅ เชื่อมต่อแล้ว</span><br>
+                                <span style="font-size: 12px; color: #666;">${employee.line_display_name || 'N/A'}</span><br>
+                                <button class="btn btn-secondary" style="font-size: 12px; margin-top: 5px;"
+                                        onclick="unlinkLineAccount('${employee.badge_number}', '${employee.display_name}')">
+                                    ยกเลิกการเชื่อมต่อ
+                                </button>
+                            </td>
+                        `;
+                    } else if (employee.line_linking_code) {
+                        // Has code, waiting for link
+                        lineCodeCell = `
+                            <td>
+                                <span style="color: #007bff; font-weight: bold; font-size: 18px;">${employee.line_linking_code}</span><br>
+                                <span style="font-size: 12px; color: #666;">รอพนักงานเชื่อมต่อ</span><br>
+                                <button class="btn btn-secondary" style="font-size: 12px; margin-top: 5px;"
+                                        onclick="regenerateLinkingCode('${employee.badge_number}')">
+                                    สร้างรหัสใหม่
+                                </button>
+                            </td>
+                        `;
+                    } else {
+                        // No code yet
+                        lineCodeCell = `
+                            <td>
+                                <button class="btn btn-primary"
+                                        onclick="generateLinkingCode('${employee.badge_number}')">
+                                    สร้างรหัสเชื่อมต่อ
+                                </button>
+                            </td>
+                        `;
+                    }
+                }
+
                 row.innerHTML = `
                     <td>${employee.badge_number}${notInDbIndicator}</td>
                     <td>
-                        <input type="text" 
-                               class="nickname-input" 
+                        <input type="text"
+                               class="nickname-input"
                                id="nickname-${employee.badge_number}"
-                               value="${employee.display_name || ''}" 
+                               value="${employee.display_name || ''}"
                                data-original="${employee.display_name || ''}"
                                placeholder="${employee.in_database ? 'ใส่ชื่อเล่น' : 'ใส่ชื่อเล่น (จะสร้างข้อมูลพนักงาน)'}">
                     </td>
@@ -267,6 +327,7 @@
                         <span class="success-message" id="success-${employee.badge_number}">บันทึกแล้ว!</span>
                         <span class="error-message" id="error-${employee.badge_number}">บันทึกไม่สำเร็จ</span>
                     </td>
+                    ${lineCodeCell}
                 `;
                 tbody.appendChild(row);
                 
@@ -448,6 +509,285 @@
 
         // Load employees when page loads
         loadEmployees();
+
+        // ============================================================================
+        // ADMIN MODE FUNCTIONALITY
+        // ============================================================================
+
+        let adminMode = false;
+        let adminPasscode = null;
+
+        // Activate admin mode
+        async function activateAdminMode() {
+            const passcode = prompt('กรุณาใส่รหัสผ่านผู้ดูแลระบบ:');
+
+            if (!passcode) return;
+
+            try {
+                await appConfig.loadConfig();
+
+                const response = await fetch(appConfig.getApiUrl('admin/line-codes/verify-passcode'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ passcode })
+                });
+
+                if (!response.ok) {
+                    alert('รหัสผ่านไม่ถูกต้อง');
+                    return;
+                }
+
+                adminMode = true;
+                adminPasscode = passcode;
+
+                // Show admin panel
+                document.getElementById('adminPanel').style.display = 'block';
+                document.getElementById('lineCodeHeader').style.display = 'table-cell';
+                document.getElementById('adminModeBtn').style.display = 'none';
+
+                // Load admin stats
+                await loadAdminStats();
+
+                // Refresh display to show LINE code column
+                displayEmployees(getFilteredEmployees());
+
+                alert('เข้าสู่โหมดผู้ดูแลระบบสำเร็จ');
+            } catch (error) {
+                console.error('Error activating admin mode:', error);
+                alert('เกิดข้อผิดพลาดในการเข้าสู่โหมดผู้ดูแลระบบ');
+            }
+        }
+
+        // Deactivate admin mode
+        function deactivateAdminMode() {
+            adminMode = false;
+            adminPasscode = null;
+
+            document.getElementById('adminPanel').style.display = 'none';
+            document.getElementById('lineCodeHeader').style.display = 'none';
+            document.getElementById('adminModeBtn').style.display = 'inline-block';
+
+            // Refresh display to hide LINE code column
+            displayEmployees(getFilteredEmployees());
+        }
+
+        // Load admin statistics
+        async function loadAdminStats() {
+            try {
+                await appConfig.loadConfig();
+
+                const response = await fetch(
+                    appConfig.getApiUrl(`admin/line-codes/stats?passcode=${encodeURIComponent(adminPasscode)}`)
+                );
+
+                if (!response.ok) throw new Error('Failed to load stats');
+
+                const stats = await response.json();
+
+                document.getElementById('adminStats').innerHTML = `
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #007bff;">${stats.total_active_employees}</div>
+                            <div style="font-size: 12px; color: #666;">พนักงานทั้งหมด</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #28a745;">${stats.linked_accounts}</div>
+                            <div style="font-size: 12px; color: #666;">เชื่อมต่อแล้ว</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #ffc107;">${stats.pending_codes}</div>
+                            <div style="font-size: 12px; color: #666;">รอเชื่อมต่อ</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #dc3545;">${stats.unlinked}</div>
+                            <div style="font-size: 12px; color: #666;">ยังไม่สร้างรหัส</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px; text-align: center; font-size: 14px; color: #666;">
+                        เชื่อมต่อแล้ว: ${stats.linking_percentage}%
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading admin stats:', error);
+                document.getElementById('adminStats').innerHTML = '<div style="color: red;">โหลดสถิติไม่สำเร็จ</div>';
+            }
+        }
+
+        // Generate LINE linking code
+        async function generateLinkingCode(badgeNumber) {
+            try {
+                await appConfig.loadConfig();
+
+                const response = await fetch(appConfig.getApiUrl('admin/line-codes/generate'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        badge_number: badgeNumber,
+                        passcode: adminPasscode
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(`เกิดข้อผิดพลาด: ${error.detail}`);
+                    return;
+                }
+
+                const result = await response.json();
+
+                // Show code in modal or alert
+                alert(`รหัสเชื่อมต่อ LINE สำหรับ ${result.display_name}:\n\n${result.linking_code}\n\n(หมดอายุใน 24 ชั่วโมง)`);
+
+                // Refresh admin stats
+                await loadAdminStats();
+
+                // Refresh display
+                displayEmployees(getFilteredEmployees());
+            } catch (error) {
+                console.error('Error generating code:', error);
+                alert('เกิดข้อผิดพลาดในการสร้างรหัสเชื่อมต่อ');
+            }
+        }
+
+        // Regenerate LINE linking code
+        async function regenerateLinkingCode(badgeNumber) {
+            if (!confirm('คุณต้องการสร้างรหัสใหม่ใช่หรือไม่? รหัสเก่าจะถูกลบทิ้ง')) return;
+
+            try {
+                await appConfig.loadConfig();
+
+                const response = await fetch(appConfig.getApiUrl('admin/line-codes/regenerate'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        badge_number: badgeNumber,
+                        passcode: adminPasscode,
+                        reason: 'พนักงานทำรหัสหาย'
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(`เกิดข้อผิดพลาด: ${error.detail}`);
+                    return;
+                }
+
+                const result = await response.json();
+
+                alert(`สร้างรหัสใหม่สำเร็จ!\n\nรหัสเก่า: ${result.old_code}\nรหัสใหม่: ${result.new_code}\n\n(หมดอายุใน 24 ชั่วโมง)`);
+
+                await loadAdminStats();
+                displayEmployees(getFilteredEmployees());
+            } catch (error) {
+                console.error('Error regenerating code:', error);
+                alert('เกิดข้อผิดพลาดในการสร้างรหัสใหม่');
+            }
+        }
+
+        // Unlink LINE account
+        async function unlinkLineAccount(badgeNumber, displayName) {
+            if (!confirm(`คุณต้องการยกเลิกการเชื่อมต่อ LINE ของ ${displayName} ใช่หรือไม่?`)) return;
+
+            try {
+                await appConfig.loadConfig();
+
+                const response = await fetch(appConfig.getApiUrl('admin/line-codes/unlink'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        badge_number: badgeNumber,
+                        passcode: adminPasscode,
+                        reason: 'ผู้ดูแลระบบยกเลิกการเชื่อมต่อ'
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(`เกิดข้อผิดพลาด: ${error.detail}`);
+                    return;
+                }
+
+                alert('ยกเลิกการเชื่อมต่อ LINE สำเร็จ');
+
+                await loadAdminStats();
+                displayEmployees(getFilteredEmployees());
+            } catch (error) {
+                console.error('Error unlinking account:', error);
+                alert('เกิดข้อผิดพลาดในการยกเลิกการเชื่อมต่อ');
+            }
+        }
+
+        // Show pending codes modal
+        async function showPendingCodes() {
+            try {
+                await appConfig.loadConfig();
+
+                const response = await fetch(
+                    appConfig.getApiUrl(`admin/line-codes/list?passcode=${encodeURIComponent(adminPasscode)}&include_expired=true`)
+                );
+
+                if (!response.ok) throw new Error('Failed to load pending codes');
+
+                const codes = await response.json();
+
+                if (codes.length === 0) {
+                    alert('ไม่มีรหัสที่รอเชื่อมต่อ');
+                    return;
+                }
+
+                let message = '📋 รหัสที่รอเชื่อมต่อ:\n\n';
+                codes.forEach(code => {
+                    const status = code.is_expired ? '(หมดอายุ)' : '(ใช้งานได้)';
+                    message += `${code.badge_number} - ${code.display_name}\n`;
+                    message += `รหัส: ${code.linking_code} ${status}\n`;
+                    message += `สร้างเมื่อ: ${new Date(code.generated_at).toLocaleString('th-TH')}\n\n`;
+                });
+
+                alert(message);
+            } catch (error) {
+                console.error('Error loading pending codes:', error);
+                alert('เกิดข้อผิดพลาดในการโหลดรหัสที่รอเชื่อมต่อ');
+            }
+        }
+
+        // Show linked accounts modal
+        async function showLinkedAccounts() {
+            try {
+                await appConfig.loadConfig();
+
+                const response = await fetch(
+                    appConfig.getApiUrl(`admin/line-codes/linked?passcode=${encodeURIComponent(adminPasscode)}`)
+                );
+
+                if (!response.ok) throw new Error('Failed to load linked accounts');
+
+                const accounts = await response.json();
+
+                if (accounts.length === 0) {
+                    alert('ยังไม่มีบัญชีที่เชื่อมต่อ');
+                    return;
+                }
+
+                let message = '✅ บัญชีที่เชื่อมต่อแล้ว:\n\n';
+                accounts.forEach(account => {
+                    message += `${account.badge_number} - ${account.display_name}\n`;
+                    message += `LINE: ${account.line_display_name || 'N/A'}\n`;
+                    message += `เชื่อมต่อเมื่อ: ${new Date(account.linked_at).toLocaleString('th-TH')}\n\n`;
+                });
+
+                alert(message);
+            } catch (error) {
+                console.error('Error loading linked accounts:', error);
+                alert('เกิดข้อผิดพลาดในการโหลดบัญชีที่เชื่อมต่อ');
+            }
+        }
+
+        // Refresh admin data
+        async function refreshAdminData() {
+            await loadAdminStats();
+            displayEmployees(getFilteredEmployees());
+            alert('รีเฟรชข้อมูลสำเร็จ');
+        }
     </script>
 </body>
 </html>
