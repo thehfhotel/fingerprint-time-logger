@@ -132,33 +132,78 @@ alembic revision --autogenerate -m "Add LINE integration fields"
 alembic upgrade head
 ```
 
-#### Task 1.2: Create QR Terminal Virtual Device
+#### Task 1.2: Create QR Terminal Virtual Devices (Multiple Locations)
 **Priority**: 🔴 Critical
 
+**Requirement**: Support 2 kiosks at different branch locations with separate GPS validation
+
 ```python
-# database/seeds/create_qr_terminal.py
+# database/seeds/create_qr_terminals.py
 from app.models import Device
 from app.database import SessionLocal
 
-def seed_qr_terminal():
+def seed_qr_terminals():
+    """Create virtual devices for multiple QR terminal locations"""
     db = SessionLocal()
-    qr_terminal = Device(
-        device_name="QR Code Terminal",
+
+    # Terminal 1: Main Office/Branch
+    terminal_1 = Device(
+        device_name="QR Terminal - Main Office",
         ip_address="virtual",
         port=0,
         password="",
         device_type="qr_terminal",
-        is_active=True
+        is_active=True,
+        metadata={
+            "terminal_id": 1,
+            "location_name": "Main Office",
+            "gps": {
+                "latitude": 13.7563,   # Update with actual coordinates
+                "longitude": 100.5018,
+                "radius_meters": 200
+            }
+        }
     )
-    db.add(qr_terminal)
+
+    # Terminal 2: Branch Office/Second Location
+    terminal_2 = Device(
+        device_name="QR Terminal - Branch Office",
+        ip_address="virtual",
+        port=0,
+        password="",
+        device_type="qr_terminal",
+        is_active=True,
+        metadata={
+            "terminal_id": 2,
+            "location_name": "Branch Office",
+            "gps": {
+                "latitude": 13.7200,   # Update with actual coordinates
+                "longitude": 100.5200,
+                "radius_meters": 200
+            }
+        }
+    )
+
+    db.add(terminal_1)
+    db.add(terminal_2)
     db.commit()
-    return qr_terminal.id
+
+    print(f"Created Terminal 1: {terminal_1.id} - {terminal_1.device_name}")
+    print(f"Created Terminal 2: {terminal_2.id} - {terminal_2.device_name}")
+
+    return [terminal_1.id, terminal_2.id]
 ```
 
 **Execution**:
 ```bash
-python database/seeds/create_qr_terminal.py
+python database/seeds/create_qr_terminals.py
 ```
+
+**Key Features**:
+- Each terminal has unique `terminal_id` in QR token
+- Separate GPS coordinates and radius per location
+- GPS validation checks against terminal-specific coordinates
+- Attendance records track which terminal was used
 
 #### Task 1.3: LINE OAuth Service
 **Priority**: 🔴 Critical
@@ -449,16 +494,37 @@ PyJWT==2.8.0
 # app/services/location_service.py
 import math
 from typing import Dict, Tuple, Optional
+from app.core.database import get_db
+from app.models.models import Device
 
 class LocationService:
     def __init__(self):
-        # Office location (configurable per deployment)
-        self.office_location = {
-            "latitude": float(os.getenv("OFFICE_LATITUDE", "13.7563")),
-            "longitude": float(os.getenv("OFFICE_LONGITUDE", "100.5018")),
-            "radius_meters": float(os.getenv("OFFICE_RADIUS_METERS", "200"))
-        }
         self.max_accuracy_meters = 50  # Reject if GPS accuracy > 50m
+
+    def get_terminal_location(self, terminal_id: int) -> Optional[Dict]:
+        """Get GPS coordinates and radius for specific terminal"""
+        db = next(get_db())
+        try:
+            terminal = db.query(Device).filter(
+                Device.id == terminal_id,
+                Device.device_type == "qr_terminal"
+            ).first()
+
+            if not terminal or not terminal.metadata:
+                return None
+
+            gps_config = terminal.metadata.get("gps")
+            if not gps_config:
+                return None
+
+            return {
+                "latitude": float(gps_config["latitude"]),
+                "longitude": float(gps_config["longitude"]),
+                "radius_meters": float(gps_config.get("radius_meters", 200)),
+                "location_name": terminal.metadata.get("location_name", "Unknown")
+            }
+        finally:
+            db.close()
 
     def calculate_distance(
         self,
@@ -484,46 +550,54 @@ class LocationService:
 
     def validate_location(
         self,
+        terminal_id: int,
         latitude: float,
         longitude: float,
         accuracy: Optional[float] = None
     ) -> Dict:
-        """Validate if location is within office radius"""
+        """Validate if location is within terminal-specific radius"""
+        # Get terminal location
+        terminal_location = self.get_terminal_location(terminal_id)
+        if not terminal_location:
+            return {
+                "valid": False,
+                "reason": f"Terminal {terminal_id} not found or not configured",
+                "distance": None,
+                "location_name": None
+            }
+
         # Check GPS accuracy
         if accuracy and accuracy > self.max_accuracy_meters:
             return {
                 "valid": False,
                 "reason": f"GPS accuracy too low: {accuracy}m (max: {self.max_accuracy_meters}m)",
-                "distance": None
+                "distance": None,
+                "location_name": terminal_location["location_name"]
             }
 
-        # Calculate distance from office
+        # Calculate distance from terminal location
         distance = self.calculate_distance(
             latitude,
             longitude,
-            self.office_location["latitude"],
-            self.office_location["longitude"]
+            terminal_location["latitude"],
+            terminal_location["longitude"]
         )
 
         # Check if within radius
-        valid = distance <= self.office_location["radius_meters"]
+        valid = distance <= terminal_location["radius_meters"]
 
         return {
             "valid": valid,
             "distance": round(distance, 2),
-            "radius": self.office_location["radius_meters"],
-            "reason": None if valid else f"Outside office radius: {round(distance, 2)}m (max: {self.office_location['radius_meters']}m)"
+            "radius": terminal_location["radius_meters"],
+            "location_name": terminal_location["location_name"],
+            "reason": None if valid else f"Outside {terminal_location['location_name']} radius: {round(distance, 2)}m (max: {terminal_location['radius_meters']}m)"
         }
 
 location_service = LocationService()
 ```
 
-**Environment Variables**:
-```env
-OFFICE_LATITUDE=13.7563
-OFFICE_LONGITUDE=100.5018
-OFFICE_RADIUS_METERS=200
-```
+**Note**: GPS coordinates are now stored per-terminal in Device metadata, not in environment variables
 
 #### Task 2.3: QR Check-In Endpoints
 **Priority**: 🔴 Critical
@@ -554,22 +628,36 @@ class QRCheckinRequest(BaseModel):
     jwt_token: str
 
 @router.get("/generate")
-async def generate_qr_code():
-    """Generate QR code for terminal display (admin only)"""
-    # Get QR terminal device ID
-    qr_terminal = attendance_service.get_qr_terminal_device()
-    if not qr_terminal:
-        raise HTTPException(status_code=500, detail="QR terminal not configured")
+async def generate_qr_code(terminal_id: int):
+    """Generate QR code for specific terminal display"""
+    # Verify terminal exists
+    from app.core.database import get_db
+    from app.models.models import Device
 
-    # Generate QR code image
-    qr_image = qr_service.generate_qr_image(qr_terminal.id)
+    db = next(get_db())
+    try:
+        terminal = db.query(Device).filter(
+            Device.id == terminal_id,
+            Device.device_type == "qr_terminal",
+            Device.is_active == True
+        ).first()
 
-    return {
-        "qr_image": qr_image,
-        "terminal_id": qr_terminal.id,
-        "valid_seconds": 30,
-        "generated_at": datetime.now().isoformat()
-    }
+        if not terminal:
+            raise HTTPException(status_code=404, detail=f"Terminal {terminal_id} not found")
+
+        # Generate QR code image
+        qr_image = qr_service.generate_qr_image(terminal_id)
+
+        return {
+            "qr_image": qr_image,
+            "terminal_id": terminal_id,
+            "terminal_name": terminal.device_name,
+            "location_name": terminal.metadata.get("location_name", "Unknown"),
+            "valid_seconds": 30,
+            "generated_at": datetime.now().isoformat()
+        }
+    finally:
+        db.close()
 
 @router.post("/checkin")
 async def qr_checkin(request: QRCheckinRequest, req: Request):
@@ -590,11 +678,12 @@ async def qr_checkin(request: QRCheckinRequest, req: Request):
 
         terminal_id = qr_payload.get("terminal_id")
 
-        # 3. Validate GPS location
+        # 3. Validate GPS location (terminal-specific)
         location_validation = location_service.validate_location(
-            request.gps_latitude,
-            request.gps_longitude,
-            request.gps_accuracy
+            terminal_id=terminal_id,
+            latitude=request.gps_latitude,
+            longitude=request.gps_longitude,
+            accuracy=request.gps_accuracy
         )
 
         if not location_validation["valid"]:
@@ -612,16 +701,17 @@ async def qr_checkin(request: QRCheckinRequest, req: Request):
         # 6. Create attendance record
         metadata = {
             "source": "qr_code",
+            "terminal_id": terminal_id,
+            "location_name": location_validation["location_name"],
             "gps": {
                 "latitude": request.gps_latitude,
                 "longitude": request.gps_longitude,
                 "accuracy": request.gps_accuracy,
-                "distance_from_office": location_validation["distance"]
+                "distance_from_terminal": location_validation["distance"]
             },
             "ip_address": req.client.host,
             "user_agent": req.headers.get("user-agent"),
-            "line_user_id": line_user_id,
-            "terminal_id": terminal_id
+            "line_user_id": line_user_id
         }
 
         record = attendance_service.create_qr_record(
@@ -2115,7 +2205,7 @@ def test_qr_image_generation():
 
 **Example Documentation**:
 ```markdown
-# QR Check-In User Guide
+# QR Check-In User Guide (Multi-Location Support)
 
 ## For Employees
 
@@ -2147,8 +2237,9 @@ def test_qr_image_generation():
 - Check that location services are enabled
 
 **"Outside office radius"**:
-- You must be within 200 meters of the office
-- Make sure you're at the correct location
+- You must be within 200 meters of the terminal location
+- Make sure you're scanning the QR from the correct branch
+- Each branch has its own terminal with separate GPS validation
 
 **"Invalid QR code"**:
 - QR codes expire every 30 seconds
@@ -2156,12 +2247,28 @@ def test_qr_image_generation():
 
 ## For Administrators
 
-### Setup QR Terminal Display
+### Setup QR Terminal Displays (Multi-Location)
 
-1. Open terminal page: https://emp.thehfhotel.org/fingerprintlogs/qr-terminal
-2. Display on a large monitor/TV near entrance
-3. Keep browser window open
+**Terminal 1 - Main Office**:
+1. Open: https://emp.thehfhotel.org/fingerprintlogs/qr-terminal?terminal_id=1
+2. Display on large monitor/TV near entrance
+3. Keep browser window open in fullscreen
 4. QR code auto-refreshes every 30 seconds
+5. GPS validates within 200m of Main Office coordinates
+
+**Terminal 2 - Branch Office**:
+1. Open: https://emp.thehfhotel.org/fingerprintlogs/qr-terminal?terminal_id=2
+2. Display on large monitor/TV near entrance
+3. Keep browser window open in fullscreen
+4. QR code auto-refreshes every 30 seconds
+5. GPS validates within 200m of Branch Office coordinates
+
+**Key Points**:
+- Each terminal has unique ID and location
+- Employees can check in at either location
+- GPS validation is location-specific
+- Terminal name displays on kiosk screen
+- Attendance records track which terminal was used
 
 ### Manage Employee Links
 
@@ -2189,7 +2296,18 @@ def test_qr_image_generation():
 2. **Database Migration**:
    ```bash
    alembic upgrade head
-   python database/seeds/create_qr_terminal.py
+   python database/seeds/create_qr_terminals.py
+   ```
+
+   **Update GPS Coordinates** in `database/seeds/create_qr_terminals.py`:
+   ```python
+   # Terminal 1: Main Office
+   "latitude": 13.7563,    # Replace with actual Main Office latitude
+   "longitude": 100.5018,  # Replace with actual Main Office longitude
+
+   # Terminal 2: Branch Office
+   "latitude": 13.7200,    # Replace with actual Branch Office latitude
+   "longitude": 100.5200,  # Replace with actual Branch Office longitude
    ```
 
 3. **Environment Variables**:
@@ -2198,9 +2316,9 @@ def test_qr_image_generation():
    LINE_CHANNEL_SECRET=your_channel_secret
    LINE_CALLBACK_URL=https://emp.thehfhotel.org/fingerprintlogs/api/auth/line/callback
    QR_SECRET_KEY=your_random_secret_key
-   OFFICE_LATITUDE=13.7563
-   OFFICE_LONGITUDE=100.5018
-   OFFICE_RADIUS_METERS=200
+
+   # Note: GPS coordinates are now stored per-terminal in Device.metadata
+   # No need for OFFICE_LATITUDE/LONGITUDE environment variables
    ```
 
 4. **Install Dependencies**:
@@ -2218,13 +2336,23 @@ def test_qr_image_generation():
    ./scripts/manage-app.sh deploy --build-target fingerprint-logger-prod
    ```
 
-7. **Verify**:
+7. **Verify Multi-Location Setup**:
    - Test LINE login flow
-   - Test QR terminal display
-   - Test mobile check-in flow
-   - Verify GPS validation
-   - Check WebSocket updates
-   - Verify database records
+   - Test Terminal 1 (Main Office):
+     - Open qr-terminal?terminal_id=1
+     - Verify location name displayed
+     - Test check-in from Main Office location
+     - Verify GPS validation for Main Office coordinates
+   - Test Terminal 2 (Branch Office):
+     - Open qr-terminal?terminal_id=2
+     - Verify location name displayed
+     - Test check-in from Branch Office location
+     - Verify GPS validation for Branch Office coordinates
+   - Verify cross-location rejection:
+     - Try checking in at Main Office with Branch Office QR (should fail GPS)
+     - Try checking in at Branch Office with Main Office QR (should fail GPS)
+   - Check WebSocket updates at both terminals
+   - Verify database records include terminal_id and location_name in metadata
 
 ---
 
