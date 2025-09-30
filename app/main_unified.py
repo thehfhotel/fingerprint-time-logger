@@ -36,16 +36,28 @@ class ConnectionManager:
 
     async def broadcast(self, message: dict):
         """Broadcast message to all connected clients"""
+        connection_count = len(self.active_connections)
+        logger.info(f"Broadcasting message to {connection_count} connected clients: {message.get('type', 'unknown')}")
+
+        if connection_count == 0:
+            logger.warning("No active WebSocket connections - broadcast skipped")
+            return
+
         disconnected = []
+        successful = 0
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except:
+                successful += 1
+            except Exception as e:
+                logger.error(f"Failed to send message to WebSocket client: {e}")
                 disconnected.append(connection)
-        
+
         # Clean up disconnected clients
         for conn in disconnected:
             self.disconnect(conn)
+
+        logger.info(f"Broadcast complete: {successful} successful, {len(disconnected)} failed")
 
 manager = ConnectionManager()
 

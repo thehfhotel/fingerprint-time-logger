@@ -163,6 +163,27 @@ async def sync_attendance():
     """Sync attendance data from device"""
     try:
         result = device_service.sync_attendance_data()
+
+        # Broadcast update to WebSocket clients
+        if result.get("success"):
+            try:
+                from app.main_unified import manager
+                from app.services.attendance_service import attendance_service
+                from datetime import datetime
+
+                attendance_data = attendance_service.get_attendance_summary()
+                await manager.broadcast({
+                    "type": "manual_import_update",
+                    "data": attendance_data,
+                    "synced_records": result.get('synced', 0),
+                    "timestamp": datetime.now().isoformat(),
+                    "message": f"นำเข้าด้วยตนเอง: ซิงค์แล้ว {result.get('synced', 0)} บันทึก"
+                })
+            except Exception as broadcast_error:
+                # Log but don't fail the request if broadcast fails
+                import logging
+                logging.warning(f"Failed to broadcast manual import update: {broadcast_error}")
+
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
