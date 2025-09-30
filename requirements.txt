@@ -23,6 +23,9 @@ requests==2.31.0
 # Authentication & Security (Phase 2 - LINE OAuth)
 PyJWT==2.8.0
 
+# QR Code Generation (Phase 3 - QR Check-in)
+qrcode[pil]==7.4.2
+
 # Environment & Configuration
 python-dotenv==1.0.0
 
