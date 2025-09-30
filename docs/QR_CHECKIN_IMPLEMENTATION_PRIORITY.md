@@ -233,6 +233,12 @@ JWT_SECRET=your-secret-key-change-in-production
 
 **Validation**: ⏳ LINE OAuth redirects work correctly (requires LINE Developer Console setup)
 
+**Testing the Backend API**:
+You can manually test the LINE OAuth flow by visiting:
+- http://localhost:5000/fingerprintlogs/api/auth/line/login
+
+**Note**: Phase 2 only implements backend APIs. **There is no UI yet!** The LINE login button will be created in Phase 4 (User Interfaces) as part of the mobile check-in page and account linking page.
+
 ---
 
 ## Phase 3: QR Core System (2-3 days)
