@@ -5,11 +5,12 @@
 Add QR code-based check-in/checkout system with LINE authentication and GPS verification as an alternative to fingerprint scanning.
 
 ### Key Requirements
-- ✅ QR code display for employee scanning
+- ✅ **Rotating QR code** display at unattended check-in desk (30-second auto-refresh)
 - ✅ LINE application authentication
 - ✅ GPS/location verification during scan
 - ✅ Unified attendance logging (same as fingerprint logs)
 - ✅ Real-time updates via WebSocket
+- ✅ **No admin supervision required** - kiosk operates autonomously
 
 ---
 
@@ -20,13 +21,14 @@ Add QR code-based check-in/checkout system with LINE authentication and GPS veri
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     QR Check-In System                      │
+│                   (Unattended Kiosk Mode)                   │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │  ┌──────────────┐      ┌──────────────┐   ┌─────────────┐ │
-│  │ Admin        │      │ Employee     │   │ LINE OAuth  │ │
-│  │ QR Display   │◄─────┤ Mobile       │◄──┤ Service     │ │
-│  │ (Large       │      │ Scanner      │   │             │ │
-│  │  Screen)     │      │              │   └─────────────┘ │
+│  │ Kiosk Display│      │ Employee     │   │ LINE OAuth  │ │
+│  │ **ROTATING** │◄─────┤ Mobile       │◄──┤ Service     │ │
+│  │ QR Code      │      │ Scanner      │   │             │ │
+│  │ (30s refresh)│      │ (Camera)     │   └─────────────┘ │
 │  └──────┬───────┘      └──────┬───────┘                    │
 │         │                     │                            │
 │         │    WebSocket        │                            │
@@ -34,10 +36,10 @@ Add QR code-based check-in/checkout system with LINE authentication and GPS veri
 │                    │                                       │
 │         ┌──────────▼──────────┐                           │
 │         │  FastAPI Backend    │                           │
-│         │  - QR Service       │                           │
-│         │  - Auth Service     │                           │
-│         │  - Location Service │                           │
-│         │  - Attendance API   │                           │
+│         │  - QR Service       │  ⚡ Auto-refresh QR       │
+│         │  - Auth Service     │  🔒 Replay protection     │
+│         │  - Location Service │  📍 GPS validation        │
+│         │  - Attendance API   │  📊 Real-time logging     │
 │         └──────────┬──────────┘                           │
 │                    │                                       │
 │         ┌──────────▼──────────┐                           │
@@ -48,6 +50,8 @@ Add QR code-based check-in/checkout system with LINE authentication and GPS veri
 │         └─────────────────────┘                           │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
+
+🔐 Security: Rotating QR prevents screenshot/photo reuse attacks
 ```
 
 ### Data Flow
@@ -56,19 +60,29 @@ Add QR code-based check-in/checkout system with LINE authentication and GPS veri
 Employee Flow:
 1. Employee opens mobile page → LINE Login → JWT Token
 2. LINE User ID linked to Employee Badge
-3. Employee scans QR code from admin display
+3. Employee approaches kiosk, scans ROTATING QR code
 4. App captures GPS coordinates (Geolocation API)
 5. Submit: {qr_token, gps_lat, gps_lon, jwt}
-6. Backend validates: Token expiry, GPS radius, LINE mapping
+6. Backend validates: Token expiry, GPS radius, LINE mapping, nonce
 7. Create AttendanceRecord (same schema as fingerprint)
 8. Broadcast WebSocket update to dashboard
+9. Mobile shows success/failure instantly
 
-Admin Flow:
-1. Admin opens QR terminal page
+Kiosk Flow (Unattended - No Admin Required):
+1. Kiosk page auto-loads on startup (fullscreen mode)
 2. Backend generates time-limited QR code (30s validity)
-3. QR contains JWT: {terminal_id, timestamp, nonce}
-4. Auto-refresh every 30 seconds
-5. Display recent check-ins (WebSocket updates)
+3. QR contains JWT: {terminal_id, timestamp, nonce, exp}
+4. **Auto-refresh every 30 seconds** (WebSocket push)
+5. Display recent check-ins in real-time (WebSocket updates)
+6. Visual countdown timer shows QR expiration (3, 2, 1...)
+7. Large display optimized for scanning from 1-2 meters away
+
+Security Benefits of Rotating QR:
+✅ Screenshot/photo of QR becomes invalid after 30s
+✅ One-time nonce prevents replay attacks
+✅ Expired QR codes automatically rejected
+✅ No admin supervision needed - system is self-validating
+✅ GPS radius validation prevents remote check-ins
 ```
 
 ---
@@ -684,8 +698,16 @@ fingerprint_app.include_router(qr_checkin.router, prefix="/api/qr", tags=["qr-ch
 ### Phase 3: Frontend - Admin QR Display (Week 2)
 **Duration**: 2-3 days
 
-#### Task 3.1: QR Terminal Page
+#### Task 3.1: QR Terminal Page (Unattended Kiosk Mode)
 **Priority**: 🟡 Important
+
+**Design Requirements**:
+- ✅ **Fullscreen kiosk mode** - auto-enter fullscreen on load
+- ✅ **Large QR code** - easily scannable from 1-2 meters away
+- ✅ **Visual countdown timer** - shows seconds until QR expiry
+- ✅ **Auto-refresh** - new QR every 30 seconds via WebSocket
+- ✅ **Recent check-ins** - real-time display of successful scans
+- ✅ **No user interaction required** - completely autonomous operation
 
 **Files to Create**:
 - `static/qr-terminal.html`
@@ -952,6 +974,9 @@ class QRTerminal {
     }
 
     async init() {
+        // Enter fullscreen mode for kiosk display
+        await this.enterFullscreen();
+
         await this.setupWebSocket();
         await this.refreshQRCode();
         this.startClock();
@@ -959,6 +984,29 @@ class QRTerminal {
 
         // Auto-refresh QR code every 30 seconds
         setInterval(() => this.refreshQRCode(), this.refreshInterval);
+
+        // Re-enter fullscreen if user exits
+        document.addEventListener('fullscreenchange', () => {
+            if (!document.fullscreenElement) {
+                setTimeout(() => this.enterFullscreen(), 2000);
+            }
+        });
+    }
+
+    async enterFullscreen() {
+        try {
+            const elem = document.documentElement;
+            if (elem.requestFullscreen) {
+                await elem.requestFullscreen();
+            } else if (elem.webkitRequestFullscreen) {
+                await elem.webkitRequestFullscreen();
+            } else if (elem.msRequestFullscreen) {
+                await elem.msRequestFullscreen();
+            }
+            console.log('Entered fullscreen kiosk mode');
+        } catch (error) {
+            console.warn('Fullscreen not supported or denied:', error);
+        }
     }
 
     async setupWebSocket() {
@@ -2204,18 +2252,71 @@ PyJWT==2.8.0
 
 ### Security Risks
 
-1. **QR Code Replay Attacks**:
-   - ✅ Mitigation: 30-second expiry, one-time nonce
+1. **QR Code Screenshot/Photo Attacks** (PRIMARY CONCERN):
+   - ❌ **Attack**: Employee takes screenshot of QR, shares with others
+   - ❌ **Attack**: Photo of QR display used from remote location
+   - ✅ **Mitigation - ROTATING QR CODE**:
+     - QR code expires every 30 seconds
+     - Screenshot becomes invalid immediately after expiry
+     - Visual countdown timer warns users of expiration
+     - Cannot reuse old QR codes - all expired tokens rejected
+   - ✅ **Additional Protection**: One-time nonce prevents replay even within 30s window
+   - ✅ Testing: Replay attack tests with expired tokens
+
+2. **QR Code Replay Attacks**:
+   - ❌ **Attack**: Capture valid QR token, replay immediately
+   - ✅ **Mitigation - NONCE TRACKING**:
+     - Each QR contains unique nonce (random 16-byte token)
+     - Backend tracks used nonces with TTL
+     - Second use of same nonce rejected even if within 30s
+     - Combined with rotation: double protection layer
    - ✅ Testing: Replay attack tests in security suite
 
-2. **GPS Spoofing**:
-   - ⚠️ Cannot fully prevent
-   - ✅ Mitigation: Check accuracy, pattern analysis, admin review
+3. **GPS Spoofing**:
+   - ❌ **Attack**: Mock GPS location to check in remotely
+   - ⚠️ Cannot fully prevent (OS-level limitation)
+   - ✅ **Mitigations**:
+     - Check GPS accuracy (reject if >50m uncertainty)
+     - Pattern analysis (flag suspicious behavior)
+     - Admin review dashboard for anomalies
+     - Require <200m radius from office
    - ✅ Testing: Manual verification of suspicious patterns
 
-3. **LINE Account Hijacking**:
-   - ✅ Mitigation: LINE OAuth security, JWT with expiry
+4. **LINE Account Hijacking**:
+   - ❌ **Attack**: Stolen LINE account used for check-in
+   - ✅ **Mitigations**:
+     - LINE OAuth security (LINE's responsibility)
+     - JWT tokens with expiry
+     - LINE unlinking requires admin approval
    - ✅ Testing: Token validation tests
+
+### Why Rotating QR is Critical for Unattended Kiosks
+
+**Without Rotation**:
+- ❌ Employee could photograph QR once, check in remotely forever
+- ❌ QR could be shared via messaging apps
+- ❌ No way to invalidate compromised QR without system restart
+
+**With 30-Second Rotation**:
+- ✅ Screenshot attack window reduced to 30 seconds
+- ✅ QR sharing becomes impractical (expires too quickly)
+- ✅ Compromised QR self-heals automatically
+- ✅ Combined with GPS: extremely difficult to abuse
+- ✅ No admin supervision needed - system self-validates
+
+**Real-World Scenario**:
+```
+Without Rotation:
+10:00 AM - Employee takes photo of QR
+10:30 AM - Employee at home, sends photo to friend
+Friend checks in using photo (SUCCESS ❌)
+
+With Rotation:
+10:00 AM - Employee takes photo of QR
+10:00:30 AM - QR expires, new one generated
+10:30 AM - Employee at home, sends photo to friend
+Friend scans expired QR (REJECTED ✅)
+```
 
 ### Operational Risks
 
