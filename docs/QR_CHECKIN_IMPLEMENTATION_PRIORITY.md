@@ -1,0 +1,447 @@
+# QR Check-In Implementation Priority Plan
+
+**Strategy**: Build incrementally from existing systems → new features
+**Total Duration**: ~10 days (vs original 15-20 days)
+**Approach**: Foundation-first with validation gates at each phase
+
+---
+
+## Phase 1: Foundation - Existing Systems (2-3 days)
+
+**Focus**: Modify existing database and UI before building new features
+
+### 1.1 Database Migrations (0.5 day)
+**Priority**: 🔴 Critical
+**Why First**: Foundation for everything else
+
+```python
+# Add to Employee table
+line_user_id: Optional[str]
+line_display_name: Optional[str]
+line_picture_url: Optional[str]
+line_linking_code: Optional[str]  # 6-digit code
+line_linking_code_generated_at: Optional[datetime]
+
+# Add to AttendanceRecord table
+metadata: Optional[JSON]  # {"source": "qr_code", "gps": {...}}
+```
+
+**Commands**:
+```bash
+alembic revision --autogenerate -m "Add LINE integration fields"
+alembic upgrade head
+```
+
+**Validation**: Run migrations successfully, verify schema changes
+
+---
+
+### 1.2 Seed QR Terminal Devices (0.5 day)
+**Priority**: 🔴 Critical
+**Why First**: Required for QR system testing
+
+```python
+# Create 2 virtual QR terminal devices in Device table
+Terminal 1: Main Office (GPS: 13.7563, 100.5018, radius: 200m)
+Terminal 2: Branch Office (GPS: 13.7200, 100.5200, radius: 200m)
+```
+
+**File**: `database/seeds/create_qr_terminals.py`
+
+**Validation**: Query devices, verify metadata contains GPS coordinates
+
+---
+
+### 1.3 Admin Line Codes API (1 day)
+**Priority**: 🔴 Critical
+**Why First**: Needed for admin mode UI in next task
+
+**File**: `app/api/admin_line_codes.py`
+
+**Endpoints**:
+- `POST /api/admin/line-codes/verify-passcode` - Verify "bananabananabanana"
+- `POST /api/admin/line-codes/generate` - Generate 6-digit code
+- `POST /api/admin/line-codes/regenerate` - Regenerate if lost
+- `GET /api/admin/line-codes/list` - List pending codes
+- `GET /api/admin/line-codes/linked` - List linked employees
+
+**Validation**: Test all endpoints with Swagger/Postman, verify code generation
+
+---
+
+### 1.4 Admin Mode in Nickname Management Page (1-2 days)
+**Priority**: 🔴 Critical
+**Why First**: Leverage existing page, gives admin immediate functionality
+
+**Files to Update**:
+- `static/nickname-management.html` - Add admin mode button and panel
+- `static/js/nickname-management.js` - Add admin authentication and code generation
+- `static/css/nickname-management.css` - Style admin mode UI
+
+**Features**:
+- "🔐 Admin Mode" button triggers passcode prompt
+- After authentication, show LINE code management panel
+- Generate code button for each employee
+- Display generated 6-digit code
+- Show linked status
+- Regenerate code option
+
+**Validation**:
+✅ Can authenticate with admin passcode
+✅ Can generate 6-digit codes
+✅ Codes displayed in UI
+✅ Can regenerate codes
+✅ Can see linked status
+
+---
+
+## Phase 2: Authentication Services (2-3 days)
+
+**Focus**: Build LINE authentication backend before UI
+
+### 2.1 LINE OAuth Service (1 day)
+**Priority**: 🔴 Critical
+**Why Now**: Self-contained, proven code from loyalty-app
+
+**File**: `app/services/line_auth_service.py`
+
+**Features**:
+- Generate LINE authorization URL
+- Exchange code for access token
+- Get LINE user profile
+- Create/verify JWT tokens
+- Mobile Safari compatibility (User-Agent headers)
+
+**Source**: Adapted from `/home/nut/loyalty-app/backend/src/services/oauthService.ts`
+
+**Validation**: Unit tests for each method
+
+---
+
+### 2.2 LINE Auth Endpoints (1 day)
+**Priority**: 🔴 Critical
+**Why Now**: Depends on LINE OAuth Service
+
+**File**: `app/api/line_auth.py`
+
+**Endpoints**:
+- `GET /api/auth/line/login` - Initiate LINE OAuth
+- `GET /api/auth/line/callback` - Handle LINE callback
+- `POST /api/auth/line/link-account` - Link with 6-digit code
+- `POST /api/auth/line/unlink-account` - Admin unlink (requires passcode)
+- `GET /api/auth/line/verify-token` - Verify JWT
+
+**Key Features**:
+- Mobile Safari HTML meta refresh redirects
+- State management with 10-minute TTL
+- 6-digit code validation (not badge number)
+- One-time code usage (cleared after link)
+
+**Validation**:
+✅ LINE OAuth flow works
+✅ Can link account with 6-digit code
+✅ Code cleared after successful link
+✅ Mobile Safari redirects work
+
+---
+
+### 2.3 Environment Configuration (0.5 day)
+**Priority**: 🔴 Critical
+**Why Now**: Required for LINE OAuth testing
+
+**Update `.env`**:
+```env
+LINE_CHANNEL_ID=your_channel_id
+LINE_CHANNEL_SECRET=your_channel_secret
+LINE_CALLBACK_URL=https://emp.thehfhotel.org/fingerprintlogs/api/auth/line/callback
+```
+
+**LINE Developer Console Setup**:
+- Create LINE Login channel
+- Configure callback URL
+- Enable email scope (optional)
+
+**Validation**: LINE OAuth redirects work correctly
+
+---
+
+## Phase 3: QR Core System (2-3 days)
+
+**Focus**: Build QR generation, validation, and check-in logic
+
+### 3.1 QR Code Service (1 day)
+**Priority**: 🔴 Critical
+**Why Now**: Core of QR system
+
+**File**: `app/services/qr_service.py`
+
+**Features**:
+- Generate time-limited QR tokens (30s expiry)
+- Create QR code images (base64 PNG)
+- Validate tokens with replay prevention (nonce tracking)
+- JWT-based tokens: `{terminal_id, timestamp, nonce, exp}`
+
+**Dependencies**: `qrcode[pil]`, `PyJWT`
+
+**Validation**:
+✅ QR codes generated
+✅ Tokens expire after 30s
+✅ Nonce prevents replay attacks
+✅ Base64 images valid
+
+---
+
+### 3.2 Location Service (0.5 day)
+**Priority**: 🔴 Critical
+**Why Now**: Required for GPS validation
+
+**File**: `app/services/location_service.py`
+
+**Features**:
+- Get terminal location from Device metadata
+- Haversine distance calculation
+- Validate GPS within terminal-specific radius
+- Check GPS accuracy (<50m)
+- Multi-location support
+
+**Validation**:
+✅ Distance calculations accurate
+✅ Terminal-specific validation works
+✅ GPS accuracy checks work
+
+---
+
+### 3.3 QR Check-In API (1 day)
+**Priority**: 🔴 Critical
+**Why Now**: Integrates QR + GPS + LINE auth
+
+**File**: `app/api/qr_checkin.py`
+
+**Endpoints**:
+- `POST /api/qr-checkin/scan` - Process QR scan
+- `GET /api/qr-checkin/kiosk/{terminal_id}` - Get QR for terminal
+- `POST /api/qr-checkin/refresh/{terminal_id}` - Manual refresh
+
+**Validation Flow**:
+1. Verify JWT token (LINE authentication)
+2. Validate QR token (time + nonce)
+3. Validate GPS location (radius + accuracy)
+4. Verify LINE-to-employee link
+5. Create AttendanceRecord
+6. Broadcast WebSocket update
+
+**Validation**:
+✅ All validation steps work
+✅ Attendance records created correctly
+✅ Metadata stored properly
+✅ WebSocket broadcasts work
+
+---
+
+## Phase 4: User Interfaces (3-4 days)
+
+**Focus**: Build new pages for employees and kiosks
+
+### 4.1 Link-Line Page (1 day)
+**Priority**: 🟡 Important
+**Why Now**: Required for employee onboarding
+
+**Files**: `static/link-line.html`, `static/js/link-line.js`, `static/css/link-line.css`
+
+**Features**:
+- Display LINE profile
+- 6-digit code input (numeric keyboard)
+- Submit linking request
+- Success/error feedback
+- Thai localization
+
+**Validation**:
+✅ Can enter 6-digit code
+✅ Linking works
+✅ Error messages clear
+✅ Mobile-friendly
+
+---
+
+### 4.2 Mobile Check-In Page (1-2 days)
+**Priority**: 🟡 Important
+**Why Now**: Main employee interface
+
+**Files**: `static/mobile-checkin.html`, `static/js/mobile-checkin.js`, `static/css/mobile-checkin.css`
+
+**Features**:
+- LINE login button
+- Camera scanner (HTML5 Media API)
+- GPS capture (Geolocation API)
+- QR scan processing
+- Success/failure feedback
+- Recent check-ins display
+
+**Validation**:
+✅ Camera access works
+✅ GPS capture works
+✅ QR scanning works
+✅ Check-in creates attendance record
+✅ Mobile-friendly
+
+---
+
+### 4.3 QR Terminal Display (1 day)
+**Priority**: 🟡 Important
+**Why Now**: Kiosk interface
+
+**Files**: `static/qr-terminal.html`, `static/js/qr-terminal.js`, `static/css/qr-terminal.css`
+
+**Features**:
+- Fullscreen mode
+- Large rotating QR code display
+- 30-second countdown timer
+- Terminal name display
+- Recent check-ins feed (real-time)
+- Auto-reconnect WebSocket
+- Clock display
+
+**Validation**:
+✅ QR refreshes every 30s
+✅ WebSocket updates work
+✅ Fullscreen mode works
+✅ Multi-terminal support (terminal_id param)
+
+---
+
+### 4.4 Route Integration (0.5 day)
+**Priority**: 🔴 Critical
+**Why Now**: Wire up new pages
+
+**Update `app/main_unified.py`**:
+```python
+@fingerprint_app.get("/qr-checkin/link-account")
+async def serve_link_account():
+    return FileResponse("static/link-line.html")
+
+@fingerprint_app.get("/qr-checkin/mobile")
+async def serve_mobile_checkin():
+    return FileResponse("static/mobile-checkin.html")
+
+@fingerprint_app.get("/qr-checkin/terminal")
+async def serve_qr_terminal():
+    return FileResponse("static/qr-terminal.html")
+```
+
+**Validation**: All pages accessible via URL
+
+---
+
+## Testing & Validation Strategy
+
+### Phase 1 Validation (After Day 3)
+- ✅ Admin can log into admin mode
+- ✅ Admin can generate 6-digit codes
+- ✅ Codes visible in UI
+- ✅ Database migrations successful
+
+### Phase 2 Validation (After Day 6)
+- ✅ LINE OAuth flow works end-to-end
+- ✅ Can link account with 6-digit code
+- ✅ Code cleared after linking
+- ✅ Returning users skip linking
+
+### Phase 3 Validation (After Day 9)
+- ✅ QR codes generate correctly
+- ✅ GPS validation works for both terminals
+- ✅ Check-in API processes scans
+- ✅ Attendance records created with metadata
+
+### Phase 4 Validation (After Day 13)
+- ✅ Complete employee journey works
+- ✅ Kiosk display operational
+- ✅ Mobile check-in works
+- ✅ Multi-location support verified
+
+---
+
+## Deployment Checklist
+
+### Prerequisites
+- LINE Developer Channel configured
+- Environment variables set
+- Database migrations applied
+- QR terminal devices seeded
+
+### Production Deployment
+1. Deploy backend changes
+2. Run database migrations
+3. Seed QR terminal devices
+4. Deploy frontend static files
+5. Configure nginx reverse proxy
+6. Test LINE OAuth callback URL
+7. Test GPS validation at both locations
+8. Train admin on code generation
+9. Train employees on mobile check-in
+
+---
+
+## Risk Mitigation
+
+### High-Risk Areas
+1. **LINE OAuth Mobile Safari**: Mitigated by using proven loyalty-app code
+2. **GPS Accuracy**: Mitigated by accuracy checks and radius tolerance
+3. **WebSocket Reliability**: Mitigated by auto-reconnect logic
+4. **QR Code Security**: Mitigated by 30s expiry + nonce + GPS validation
+
+### Rollback Strategy
+- Each phase is independent
+- Can rollback migrations if needed
+- Feature flag for QR check-in can be added
+- Existing fingerprint system unaffected
+
+---
+
+## Timeline Summary
+
+| Phase | Duration | End Date | Deliverable |
+|-------|----------|----------|-------------|
+| Phase 1: Foundation | 2-3 days | Day 3 | Admin can generate codes |
+| Phase 2: Authentication | 2-3 days | Day 6 | LINE linking works |
+| Phase 3: QR Core | 2-3 days | Day 9 | Backend processes QR scans |
+| Phase 4: User Interfaces | 3-4 days | Day 13 | Complete E2E flow works |
+
+**Total**: ~10-13 days (vs original 15-20 days)
+
+---
+
+## Success Criteria
+
+✅ **Admin Workflow**:
+- Generate linking codes in nickname page
+- View linking status
+- Regenerate codes if needed
+
+✅ **Employee Workflow**:
+- Login with LINE once
+- Link account with 6-digit code
+- Scan QR to check in/out
+- Mobile-friendly experience
+
+✅ **System Behavior**:
+- Rotating QR codes every 30s
+- GPS validation per location
+- Real-time dashboard updates
+- Unified attendance records (fingerprint + QR)
+
+✅ **Security**:
+- Admin passcode protection
+- One-time linking codes
+- JWT token expiration (24h)
+- Replay attack prevention
+- GPS radius validation
+
+---
+
+## Next Steps
+
+1. Review this priority plan
+2. Adjust timeline if needed
+3. Start with Phase 1 (database + admin mode)
+4. Validate at each phase checkpoint
+5. Proceed incrementally to Phase 4
