@@ -26,10 +26,17 @@ engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def create_qr_terminals():
-    """Create 2 virtual QR terminal devices with GPS metadata"""
+def create_qr_terminals(db=None):
+    """Create 2 virtual QR terminal devices with GPS metadata
 
-    db = SessionLocal()
+    Args:
+        db: Optional database session (for testing). If None, creates new session.
+    """
+
+    # Use provided session or create new one
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
 
     try:
         # Terminal 1: Main Office
@@ -58,7 +65,7 @@ def create_qr_terminals():
                 port=0,  # Not applicable for QR terminals
                 password=0,
                 device_type="qr_terminal",
-                metadata=json.dumps(terminal1_metadata),
+                device_metadata=json.dumps(terminal1_metadata),
                 is_active=True,
                 created_at=datetime.now()
             )
@@ -68,7 +75,7 @@ def create_qr_terminals():
             print(f"   Radius: {terminal1_metadata['gps']['radius_meters']}m")
         else:
             terminal1.device_type = "qr_terminal"
-            terminal1.metadata = json.dumps(terminal1_metadata)
+            terminal1.device_metadata = json.dumps(terminal1_metadata)
             terminal1.is_active = True
             print("⚠️  Updated existing Terminal 1: Main Office")
 
@@ -98,7 +105,7 @@ def create_qr_terminals():
                 port=0,  # Not applicable for QR terminals
                 password=0,
                 device_type="qr_terminal",
-                metadata=json.dumps(terminal2_metadata),
+                device_metadata=json.dumps(terminal2_metadata),
                 is_active=True,
                 created_at=datetime.now()
             )
@@ -108,7 +115,7 @@ def create_qr_terminals():
             print(f"   Radius: {terminal2_metadata['gps']['radius_meters']}m")
         else:
             terminal2.device_type = "qr_terminal"
-            terminal2.metadata = json.dumps(terminal2_metadata)
+            terminal2.device_metadata = json.dumps(terminal2_metadata)
             terminal2.is_active = True
             print("⚠️  Updated existing Terminal 2: Branch Office")
 
@@ -128,13 +135,22 @@ def create_qr_terminals():
         return False
 
     finally:
-        db.close()
+        # Only close if we created the session
+        if own_session:
+            db.close()
 
 
-def verify_qr_terminals():
-    """Verify QR terminals were created correctly"""
+def verify_qr_terminals(db=None):
+    """Verify QR terminals were created correctly
 
-    db = SessionLocal()
+    Args:
+        db: Optional database session (for testing). If None, creates new session.
+    """
+
+    # Use provided session or create new one
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
 
     try:
         qr_terminals = db.query(Device).filter(
@@ -150,8 +166,8 @@ def verify_qr_terminals():
             print(f"   Type: {terminal.device_type}")
             print(f"   Active: {terminal.is_active}")
 
-            if terminal.metadata:
-                metadata = json.loads(terminal.metadata)
+            if terminal.device_metadata:
+                metadata = json.loads(terminal.device_metadata)
                 gps = metadata.get('gps', {})
                 print(f"   GPS: {gps.get('latitude')}, {gps.get('longitude')}")
                 print(f"   Radius: {gps.get('radius_meters')}m")
@@ -160,7 +176,9 @@ def verify_qr_terminals():
         return len(qr_terminals) == 2
 
     finally:
-        db.close()
+        # Only close if we created the session
+        if own_session:
+            db.close()
 
 
 if __name__ == "__main__":

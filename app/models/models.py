@@ -15,6 +15,11 @@ class Device(Base):
     password = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
     last_sync = Column(DateTime, nullable=True)
+
+    # QR Terminal support (Phase 1 - QR Check-in Feature)
+    device_type = Column(String(20), nullable=False, default="fingerprint")  # "fingerprint" or "qr_terminal"
+    device_metadata = Column(Text, nullable=True)  # JSON-encoded device metadata (GPS, display settings, etc.)
+
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
@@ -40,7 +45,14 @@ class Employee(Base):
     # Status and visibility
     is_active = Column(Boolean, nullable=False, default=True)              # Merged from both models
     is_hidden = Column(Boolean, nullable=False, default=False)             # From EmployeeThaiName (UI control)
-    
+
+    # LINE integration fields (Phase 1 - QR Check-in Feature)
+    line_user_id = Column(String(100), nullable=True, unique=True)        # LINE user identifier
+    line_display_name = Column(String(100), nullable=True)                # LINE display name
+    line_picture_url = Column(String(500), nullable=True)                 # LINE profile picture URL
+    line_linking_code = Column(String(6), nullable=True, unique=True)     # 6-digit temporary linking code
+    line_linking_code_generated_at = Column(DateTime, nullable=True)      # When linking code was generated
+
     # Metadata
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
