@@ -1,0 +1,499 @@
+"""
+LINE Authentication API
+
+Endpoints for LINE OAuth integration with QR check-in:
+- Initiate LINE OAuth login flow
+- Handle LINE OAuth callback
+- Link LINE account with employee using 6-digit code
+- Verify JWT tokens
+- Unlink LINE accounts (admin only)
+
+Mobile Safari compatible with HTML meta refresh redirects.
+"""
+
+from datetime import datetime, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, status, Query, Request, Depends
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.models.models import Employee
+from app.services.line_auth_service import line_auth_service
+
+router = APIRouter()
+
+
+# ============================================================================
+# Request/Response Models
+# ============================================================================
+
+class LinkAccountRequest(BaseModel):
+    """Request to link LINE account with employee"""
+    linking_code: str
+    jwt_token: str
+
+
+class UnlinkAccountRequest(BaseModel):
+    """Request to unlink LINE account (admin only)"""
+    badge_number: str
+    admin_passcode: str
+    reason: Optional[str] = None
+
+
+class VerifyTokenRequest(BaseModel):
+    """Request to verify JWT token"""
+    token: str
+
+
+# ============================================================================
+# OAuth Flow Endpoints
+# ============================================================================
+
+@router.get("/login")
+async def line_login(request: Request):
+    """
+    Initiate LINE OAuth login flow
+
+    Returns:
+        HTML response with meta refresh redirect for Mobile Safari compatibility
+    """
+    try:
+        auth_data = line_auth_service.generate_authorization_url()
+        auth_url = auth_data["auth_url"]
+
+        # Mobile Safari compatible redirect using HTML meta refresh
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta http-equiv="refresh" content="0; url={auth_url}">
+            <title>เข้าสู่ระบบด้วย LINE</title>
+            <style>
+                body {{
+                    font-family: 'Prompt', sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #06C755 0%, #00B900 100%);
+                }}
+                .loading {{
+                    text-align: center;
+                    color: white;
+                }}
+                .spinner {{
+                    border: 4px solid rgba(255, 255, 255, 0.3);
+                    border-radius: 50%;
+                    border-top: 4px solid white;
+                    width: 40px;
+                    height: 40px;
+                    animation: spin 1s linear infinite;
+                    margin: 0 auto 20px;
+                }}
+                @keyframes spin {{
+                    0% {{ transform: rotate(0deg); }}
+                    100% {{ transform: rotate(360deg); }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="loading">
+                <div class="spinner"></div>
+                <h2>กำลังเชื่อมต่อ LINE...</h2>
+                <p>หากไม่ถูกเปลี่ยนเส้นทางอัตโนมัติ <a href="{auth_url}" style="color: white;">คลิกที่นี่</a></p>
+            </div>
+        </body>
+        </html>
+        """
+
+        return HTMLResponse(content=html_content)
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to initiate LINE login: {str(e)}"
+        )
+
+
+@router.get("/callback")
+async def line_callback(
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+    error_description: Optional[str] = Query(None)
+):
+    """
+    Handle LINE OAuth callback
+
+    Query Parameters:
+        code: Authorization code from LINE
+        state: CSRF state token
+        error: Error code if authentication failed
+        error_description: Error description if authentication failed
+
+    Returns:
+        HTML response redirecting to link account page with LINE profile data
+    """
+    # Handle OAuth errors
+    if error:
+        error_msg = error_description or error
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>การเข้าสู่ระบบล้มเหลว</title>
+            <style>
+                body {{
+                    font-family: 'Prompt', sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: #f5f5f5;
+                }}
+                .error-box {{
+                    background: white;
+                    padding: 30px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    text-align: center;
+                    max-width: 400px;
+                }}
+                .error-icon {{
+                    font-size: 48px;
+                    color: #dc3545;
+                    margin-bottom: 20px;
+                }}
+                h2 {{
+                    color: #333;
+                    margin-bottom: 10px;
+                }}
+                p {{
+                    color: #666;
+                    margin-bottom: 20px;
+                }}
+                a {{
+                    display: inline-block;
+                    padding: 10px 20px;
+                    background: #06C755;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 4px;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="error-box">
+                <div class="error-icon">❌</div>
+                <h2>การเข้าสู่ระบบล้มเหลว</h2>
+                <p>{error_msg}</p>
+                <a href="/fingerprintlogs/qr-checkin/mobile">ลองอีกครั้ง</a>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content, status_code=400)
+
+    # Validate required parameters
+    if not code or not state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing code or state parameter"
+        )
+
+    try:
+        # Validate CSRF state token
+        if not line_auth_service.validate_state(state):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired state token"
+            )
+
+        # Exchange code for access token
+        token_data = line_auth_service.exchange_code_for_token(code)
+        access_token = token_data["access_token"]
+
+        # Get LINE user profile
+        profile = line_auth_service.get_user_profile(access_token)
+
+        # Store profile data for link account page (using URL parameters for simplicity)
+        # In production, consider using encrypted cookies or server-side session
+        line_user_id = profile.get("userId", "")
+        display_name = profile.get("displayName", "ผู้ใช้ LINE")
+        picture_url = profile.get("pictureUrl", "")
+
+        # Redirect to link account page with profile data
+        link_url = (
+            f"/fingerprintlogs/qr-checkin/link-account"
+            f"?line_user_id={line_user_id}"
+            f"&display_name={display_name}"
+            f"&picture_url={picture_url}"
+        )
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta http-equiv="refresh" content="0; url={link_url}">
+            <title>เข้าสู่ระบบสำเร็จ</title>
+            <style>
+                body {{
+                    font-family: 'Prompt', sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #06C755 0%, #00B900 100%);
+                }}
+                .loading {{
+                    text-align: center;
+                    color: white;
+                }}
+                .spinner {{
+                    border: 4px solid rgba(255, 255, 255, 0.3);
+                    border-radius: 50%;
+                    border-top: 4px solid white;
+                    width: 40px;
+                    height: 40px;
+                    animation: spin 1s linear infinite;
+                    margin: 0 auto 20px;
+                }}
+                @keyframes spin {{
+                    0% {{ transform: rotate(0deg); }}
+                    100% {{ transform: rotate(360deg); }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="loading">
+                <div class="spinner"></div>
+                <h2>เข้าสู่ระบบสำเร็จ!</h2>
+                <p>กำลังเชื่อมต่อบัญชี...</p>
+            </div>
+        </body>
+        </html>
+        """
+
+        return HTMLResponse(content=html_content)
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"OAuth callback failed: {str(e)}"
+        )
+
+
+# ============================================================================
+# Account Linking Endpoints
+# ============================================================================
+
+@router.post("/link-account")
+async def link_account(
+    request: LinkAccountRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Link LINE account with employee using 6-digit code
+
+    Request Body:
+        linking_code: 6-digit code from admin
+        jwt_token: JWT token containing LINE user ID
+
+    Returns:
+        Success message with new JWT token for authenticated session
+
+    Raises:
+        400: Invalid linking code or already linked
+        401: Invalid JWT token
+        404: Employee not found
+    """
+    try:
+        # Verify JWT token to get LINE user ID
+        token_payload = line_auth_service.verify_jwt_token(request.jwt_token)
+        line_user_id = token_payload.get("line_user_id")
+
+        if not line_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: missing LINE user ID"
+            )
+
+        # Find employee by linking code
+        employee = db.query(Employee).filter(
+            Employee.line_linking_code == request.linking_code,
+            Employee.is_active == True
+        ).first()
+
+        if not employee:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="รหัสเชื่อมต่อไม่ถูกต้องหรือหมดอายุ"
+            )
+
+        # Check if linking code has expired (24 hours)
+        if employee.line_linking_code_generated_at:
+            now = datetime.utcnow()
+            expiry = employee.line_linking_code_generated_at + timedelta(hours=24)
+            if now > expiry:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="รหัสเชื่อมต่อหมดอายุแล้ว กรุณาติดต่อเจ้าหน้าที่"
+                )
+
+        # Check if employee already has LINE linked
+        if employee.line_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="บัญชีนี้เชื่อมต่อ LINE แล้ว"
+            )
+
+        # Link LINE account to employee
+        employee.line_user_id = line_user_id
+        employee.line_linking_code = None  # Clear code after successful link
+        employee.line_linking_code_generated_at = None
+        employee.updated_at = datetime.utcnow()
+
+        db.commit()
+        db.refresh(employee)
+
+        # Create new JWT token with employee badge for authenticated session
+        new_token = line_auth_service.create_jwt_token(
+            line_user_id=line_user_id,
+            employee_badge=employee.badge_number
+        )
+
+        return {
+            "success": True,
+            "message": "เชื่อมต่อบัญชีสำเร็จ",
+            "employee": {
+                "badge_number": employee.badge_number,
+                "display_name": employee.display_name,
+                "line_user_id": employee.line_user_id
+            },
+            "token": new_token
+        }
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"การเชื่อมต่อบัญชีล้มเหลว: {str(e)}"
+        )
+
+
+@router.post("/unlink-account")
+async def unlink_account(
+    request: UnlinkAccountRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Unlink LINE account from employee (admin only)
+
+    Request Body:
+        badge_number: Employee badge number
+        admin_passcode: Admin password
+        reason: Optional reason for unlinking
+
+    Returns:
+        Success message
+
+    Raises:
+        403: Invalid admin passcode
+        404: Employee not found
+        400: Employee not linked
+    """
+    from app.api.admin_line_codes import ADMIN_PASSCODE
+
+    # Verify admin passcode
+    if request.admin_passcode != ADMIN_PASSCODE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="รหัสผ่านผู้ดูแลระบบไม่ถูกต้อง"
+        )
+
+    try:
+        # Find employee
+        employee = db.query(Employee).filter(
+            Employee.badge_number == request.badge_number,
+            Employee.is_active == True
+        ).first()
+
+        if not employee:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="ไม่พบพนักงาน"
+            )
+
+        # Check if employee has LINE linked
+        if not employee.line_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="พนักงานนี้ไม่ได้เชื่อมต่อ LINE"
+            )
+
+        # Unlink LINE account
+        old_line_user_id = employee.line_user_id
+        employee.line_user_id = None
+        employee.line_display_name = None
+        employee.line_picture_url = None
+        employee.line_linking_code = None
+        employee.line_linking_code_generated_at = None
+        employee.updated_at = datetime.utcnow()
+
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "ยกเลิกการเชื่อมต่อสำเร็จ",
+            "badge_number": employee.badge_number,
+            "old_line_user_id": old_line_user_id,
+            "reason": request.reason
+        }
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"การยกเลิกการเชื่อมต่อล้มเหลว: {str(e)}"
+        )
+
+
+@router.post("/verify-token")
+async def verify_token(request: VerifyTokenRequest):
+    """
+    Verify JWT token
+
+    Request Body:
+        token: JWT token to verify
+
+    Returns:
+        Token payload if valid
+
+    Raises:
+        401: Invalid or expired token
+    """
+    try:
+        payload = line_auth_service.verify_jwt_token(request.token)
+        return {
+            "valid": True,
+            "payload": payload
+        }
+    except HTTPException as e:
+        raise e

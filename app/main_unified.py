@@ -14,7 +14,7 @@ from app.utils.cache_busting import cache_manager
 
 from app.core.database import engine, Base
 from app.api import (
-    consolidated_attendance, consolidated_devices, consolidated_employees, admin_line_codes
+    consolidated_attendance, consolidated_devices, consolidated_employees, admin_line_codes, line_auth
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -230,6 +230,9 @@ fingerprint_app.include_router(system_status.router, prefix="/api/system", tags=
 
 # Admin Line Codes API - QR Check-in Feature Phase 1
 fingerprint_app.include_router(admin_line_codes.router, prefix="/api/admin/line-codes", tags=["admin-line-codes"])
+
+# LINE Authentication API - QR Check-in Feature Phase 2
+fingerprint_app.include_router(line_auth.router, prefix="/api/auth/line", tags=["line-auth"])
 
 
 # WebSocket endpoint for real-time updates
