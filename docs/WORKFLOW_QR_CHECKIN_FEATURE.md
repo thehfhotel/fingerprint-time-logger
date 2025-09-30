@@ -57,16 +57,30 @@ Add QR code-based check-in/checkout system with LINE authentication and GPS veri
 ### Data Flow
 
 ```
-Employee Flow:
-1. Employee opens mobile page → LINE Login → JWT Token
-2. LINE User ID linked to Employee Badge
-3. Employee approaches kiosk, scans ROTATING QR code
-4. App captures GPS coordinates (Geolocation API)
-5. Submit: {qr_token, gps_lat, gps_lon, jwt}
-6. Backend validates: Token expiry, GPS radius, LINE mapping, nonce
-7. Create AttendanceRecord (same schema as fingerprint)
-8. Broadcast WebSocket update to dashboard
-9. Mobile shows success/failure instantly
+Employee Flow (First Time - With 6-Digit Code):
+1. Admin generates 6-digit linking code for employee in nickname page (admin mode)
+2. Admin gives code to employee (e.g., "123456")
+3. Employee opens mobile page → LINE Login
+4. System checks if LINE account already linked:
+   - If linked → Skip to step 8 (JWT token issued)
+   - If not linked → Continue to step 5
+5. Employee enters 6-digit code on linking page
+6. System validates code and links LINE User ID to Employee Badge
+7. Linking code is cleared (one-time use)
+8. Employee receives JWT Token (valid 24 hours)
+9. Employee approaches kiosk, scans ROTATING QR code
+10. App captures GPS coordinates (Geolocation API)
+11. Submit: {qr_token, gps_lat, gps_lon, jwt}
+12. Backend validates: Token expiry, GPS radius, LINE mapping, nonce
+13. Create AttendanceRecord (same schema as fingerprint)
+14. Broadcast WebSocket update to dashboard
+15. Mobile shows success/failure instantly
+
+Employee Flow (Returning User - Already Linked):
+1. Employee opens mobile page → LINE Login
+2. System recognizes LINE User ID → Issues JWT Token immediately
+3. Skip linking page entirely → Ready to scan QR
+4. (Continue from step 9 above)
 
 Kiosk Flow (Unattended - No Admin Required):
 1. Kiosk page auto-loads on startup (fullscreen mode)
@@ -96,12 +110,14 @@ Security Benefits of Rotating QR:
 **Priority**: 🔴 Critical
 
 ```python
-# Migration 1: Add LINE user ID to Employee
+# Migration 1: Add LINE user ID and linking code to Employee
 class Employee(Base):
     # ... existing fields ...
     line_user_id: Optional[str] = None  # LINE unique user ID
     line_display_name: Optional[str] = None  # LINE profile name
     line_picture_url: Optional[str] = None  # LINE profile picture
+    line_linking_code: Optional[str] = None  # 6-digit code for LINE account linking
+    line_linking_code_generated_at: Optional[datetime] = None  # When code was generated
 
 # Migration 2: Add metadata to AttendanceRecord
 class AttendanceRecord(Base):
@@ -130,6 +146,253 @@ class AttendanceRecord(Base):
 ```bash
 alembic revision --autogenerate -m "Add LINE integration fields"
 alembic upgrade head
+```
+
+#### Task 1.1.5: Admin Linking Code Generation API
+**Priority**: 🔴 Critical
+
+**New Requirement**: Admin generates 6-digit codes for employees to link LINE accounts
+
+**Admin Authentication**:
+- Passcode: `bananabananabanana`
+- Admin mode activated in nickname management page
+- Admin mode required for code generation
+
+**Files to Create/Update**:
+- `app/api/admin_line_codes.py` - Admin API for code generation
+- Update: `app/api/consolidated_employees.py` - Add admin endpoints
+
+```python
+# app/api/admin_line_codes.py
+"""
+Admin API for LINE linking code generation
+Requires admin passcode: bananabananabanana
+"""
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
+from app.core.database import get_db
+from app.models.models import Employee
+from datetime import datetime
+import secrets
+import logging
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+# Admin passcode
+ADMIN_PASSCODE = "bananabananabanana"
+
+def verify_admin_passcode(passcode: str):
+    """Verify admin passcode"""
+    if passcode != ADMIN_PASSCODE:
+        raise HTTPException(status_code=403, detail="Invalid admin passcode")
+    return True
+
+def generate_6_digit_code() -> str:
+    """Generate unique 6-digit code"""
+    return f"{secrets.randbelow(1000000):06d}"
+
+@router.post("/admin/line-codes/verify-passcode")
+async def verify_passcode(passcode: str):
+    """Verify admin passcode for admin mode activation"""
+    try:
+        verify_admin_passcode(passcode)
+        return {
+            "success": True,
+            "message": "Admin access granted"
+        }
+    except HTTPException:
+        return {
+            "success": False,
+            "message": "Invalid passcode"
+        }
+
+@router.post("/admin/line-codes/generate")
+async def generate_linking_code(
+    badge_number: str,
+    passcode: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Generate 6-digit LINE linking code for employee
+    Admin only - requires passcode
+    """
+    # Verify admin passcode
+    verify_admin_passcode(passcode)
+
+    # Get employee
+    employee = db.query(Employee).filter(
+        Employee.badge_number == badge_number
+    ).first()
+
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    # Check if already linked
+    if employee.line_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Employee already linked to LINE account: {employee.line_display_name}"
+        )
+
+    # Generate unique code
+    while True:
+        code = generate_6_digit_code()
+        # Check if code already exists (unlikely but possible)
+        existing = db.query(Employee).filter(
+            Employee.line_linking_code == code,
+            Employee.line_user_id.is_(None)  # Only check unlinked employees
+        ).first()
+        if not existing:
+            break
+
+    # Save code to employee
+    employee.line_linking_code = code
+    employee.line_linking_code_generated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(employee)
+
+    logger.info(f"[Admin] Generated LINE linking code for badge {badge_number}: {code}")
+
+    return {
+        "success": True,
+        "badge_number": badge_number,
+        "name_thai": employee.name_thai,
+        "linking_code": code,
+        "generated_at": employee.line_linking_code_generated_at.isoformat(),
+        "message": "รหัสเชื่อมต่อ LINE สำเร็จ"
+    }
+
+@router.post("/admin/line-codes/regenerate")
+async def regenerate_linking_code(
+    badge_number: str,
+    passcode: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Regenerate LINE linking code (if employee lost the code)
+    Admin only - requires passcode
+    """
+    # Verify admin passcode
+    verify_admin_passcode(passcode)
+
+    # Get employee
+    employee = db.query(Employee).filter(
+        Employee.badge_number == badge_number
+    ).first()
+
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    # Check if already linked
+    if employee.line_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Employee already linked - use unlink first"
+        )
+
+    # Generate new unique code
+    while True:
+        code = generate_6_digit_code()
+        existing = db.query(Employee).filter(
+            Employee.line_linking_code == code,
+            Employee.line_user_id.is_(None)
+        ).first()
+        if not existing:
+            break
+
+    # Update code
+    old_code = employee.line_linking_code
+    employee.line_linking_code = code
+    employee.line_linking_code_generated_at = datetime.utcnow()
+    db.commit()
+
+    logger.info(f"[Admin] Regenerated LINE code for badge {badge_number}: {old_code} → {code}")
+
+    return {
+        "success": True,
+        "badge_number": badge_number,
+        "name_thai": employee.name_thai,
+        "linking_code": code,
+        "old_code": old_code,
+        "generated_at": employee.line_linking_code_generated_at.isoformat(),
+        "message": "สร้างรหัสใหม่สำเร็จ"
+    }
+
+@router.get("/admin/line-codes/list")
+async def list_linking_codes(
+    passcode: str,
+    db: Session = Depends(get_db)
+):
+    """
+    List all employees with linking codes (not yet linked)
+    Admin only - requires passcode
+    """
+    # Verify admin passcode
+    verify_admin_passcode(passcode)
+
+    # Get employees with codes but not yet linked
+    employees = db.query(Employee).filter(
+        Employee.line_linking_code.isnot(None),
+        Employee.line_user_id.is_(None)
+    ).order_by(Employee.line_linking_code_generated_at.desc()).all()
+
+    return {
+        "success": True,
+        "count": len(employees),
+        "employees": [
+            {
+                "badge_number": emp.badge_number,
+                "name_thai": emp.name_thai,
+                "linking_code": emp.line_linking_code,
+                "generated_at": emp.line_linking_code_generated_at.isoformat() if emp.line_linking_code_generated_at else None
+            }
+            for emp in employees
+        ]
+    }
+
+@router.get("/admin/line-codes/linked")
+async def list_linked_employees(
+    passcode: str,
+    db: Session = Depends(get_db)
+):
+    """
+    List all employees with linked LINE accounts
+    Admin only - requires passcode
+    """
+    # Verify admin passcode
+    verify_admin_passcode(passcode)
+
+    # Get linked employees
+    employees = db.query(Employee).filter(
+        Employee.line_user_id.isnot(None)
+    ).order_by(Employee.name_thai).all()
+
+    return {
+        "success": True,
+        "count": len(employees),
+        "employees": [
+            {
+                "badge_number": emp.badge_number,
+                "name_thai": emp.name_thai,
+                "line_display_name": emp.line_display_name,
+                "line_user_id": emp.line_user_id
+            }
+            for emp in employees
+        ]
+    }
+```
+
+**Mount Router** (add to `app/main_unified.py`):
+```python
+from app.api import admin_line_codes
+
+fingerprint_app.include_router(
+    admin_line_codes.router,
+    prefix="/api",
+    tags=["Admin LINE Codes"]
+)
 ```
 
 #### Task 1.2: Create QR Terminal Virtual Devices (Multiple Locations)
@@ -555,12 +818,14 @@ async def line_callback(
 @router.post("/link-account")
 async def link_line_account(
     link_token: str,
-    badge_number: str,
+    linking_code: str,  # 6-digit code (not badge_number)
     db: Session = Depends(get_db)
 ):
     """
-    Link LINE account to existing employee
+    Link LINE account to existing employee using 6-digit code
     Required for first-time LINE login users
+
+    NEW FLOW: Employee enters 6-digit code given by admin (not badge number)
     """
     # Get stored LINE profile
     link_key = f"link_{link_token}"
@@ -571,37 +836,54 @@ async def link_line_account(
     line_user_id = line_data["line_user_id"]
     display_name = line_data["display_name"]
 
-    logger.info(f"[LINE Link] Linking {display_name} ({line_user_id}) to badge {badge_number}")
+    logger.info(f"[LINE Link] Linking {display_name} ({line_user_id}) with code {linking_code}")
 
-    # Verify employee exists and is active
-    employee = employee_service.get_by_badge(badge_number)
+    # Find employee by 6-digit linking code
+    employee = db.query(Employee).filter(
+        Employee.line_linking_code == linking_code,
+        Employee.line_user_id.is_(None)  # Not yet linked
+    ).first()
+
     if not employee:
-        raise HTTPException(status_code=404, detail="Employee not found")
+        raise HTTPException(
+            status_code=404,
+            detail="รหัสเชื่อมต่อไม่ถูกต้อง หรือถูกใช้ไปแล้ว (Invalid or already used linking code)"
+        )
 
     if not employee.is_active:
-        raise HTTPException(status_code=403, detail="Employee account is inactive")
+        raise HTTPException(
+            status_code=403,
+            detail="บัญชีพนักงานถูกระงับ (Employee account is inactive)"
+        )
 
-    # Check if LINE ID is already linked to another employee
-    existing_link = employee_service.get_by_line_user_id(line_user_id)
-    if existing_link and existing_link.badge_number != badge_number:
+    # Check if LINE ID is already linked to another employee (security check)
+    existing_link = db.query(Employee).filter(
+        Employee.line_user_id == line_user_id
+    ).first()
+
+    if existing_link:
         raise HTTPException(
             status_code=409,
             detail=f"LINE account already linked to employee {existing_link.badge_number}"
         )
 
-    # Link LINE account to employee
+    # Perform linking
     employee.line_user_id = line_user_id
     employee.line_display_name = display_name
+    # Clear linking code after successful link (one-time use)
+    employee.line_linking_code = None
+    employee.line_linking_code_generated_at = None
     db.commit()
+    db.refresh(employee)
 
-    logger.info(f"[LINE Link] Successfully linked badge {badge_number} to LINE {line_user_id}")
+    logger.info(f"[LINE Link] Successfully linked badge {employee.badge_number} to LINE {line_user_id}")
 
     # Create JWT token for session
-    jwt_token = line_auth_service.create_jwt_token(line_user_id, badge_number)
+    jwt_token = line_auth_service.create_jwt_token(line_user_id, employee.badge_number)
 
     return {
         "success": True,
-        "message": "LINE account linked successfully",
+        "message": "เชื่อมต่อ LINE สำเร็จ (LINE account linked successfully)",
         "token": jwt_token,
         "employee": {
             "badge_number": employee.badge_number,
@@ -613,13 +895,21 @@ async def link_line_account(
 @router.post("/unlink-account")
 async def unlink_line_account(
     badge_number: str,
+    passcode: str,  # Require admin passcode for unlinking
     db: Session = Depends(get_db)
 ):
     """
     Unlink LINE account from employee
-    Admin function for account management
+    Admin function - requires admin passcode
     """
-    employee = employee_service.get_by_badge(badge_number)
+    # Verify admin passcode
+    if passcode != "bananabananabanana":
+        raise HTTPException(status_code=403, detail="Invalid admin passcode")
+
+    employee = db.query(Employee).filter(
+        Employee.badge_number == badge_number
+    ).first()
+
     if not employee:
         raise HTTPException(status_code=404, detail="Employee not found")
 
@@ -628,8 +918,11 @@ async def unlink_line_account(
 
     logger.info(f"[LINE Unlink] Unlinking LINE {employee.line_user_id} from badge {badge_number}")
 
+    # Clear LINE data (employee can link again with new code)
     employee.line_user_id = None
     employee.line_display_name = None
+    employee.line_picture_url = None
+    # Don't clear linking_code - admin can reuse it or regenerate
     db.commit()
 
     return {
@@ -2203,6 +2496,54 @@ async def mobile_checkin_page():
 ### Phase 5: Employee Linking & Testing (Week 3)
 **Duration**: 3-4 days
 
+#### Task 5.0: Admin Mode in Nickname Management Page
+**Priority**: 🔴 Critical
+
+**Requirement**: Add admin mode to existing nickname management page for generating LINE linking codes
+
+**Implementation Notes**:
+- Add "Admin Mode" button to existing `/nickname-management` page
+- Button triggers passcode prompt (`bananabananabanana`)
+- After successful authentication, show additional UI for each employee:
+  - "Generate LINE Code" button next to each employee
+  - Display generated 6-digit code
+  - "Regenerate Code" option if code already exists
+  - Visual indication if employee already linked to LINE
+- Admin mode UI should be simple overlay or additional column in existing table
+- Use admin API endpoints: `POST /api/admin/line-codes/generate`, `POST /api/admin/line-codes/regenerate`
+- Store admin session in sessionStorage (expires on tab close for security)
+
+**Files to Update**:
+- `static/nickname-management.html` - Add admin mode button and UI
+- `static/js/nickname-management.js` - Add admin authentication and code generation logic
+- `static/css/nickname-management.css` - Style admin mode UI
+
+**Example Admin Mode UI**:
+```html
+<!-- Add to nickname-management.html -->
+<button id="adminModeBtn" class="admin-mode-btn">
+    🔐 Admin Mode (LINE Codes)
+</button>
+
+<!-- Admin mode overlay/section (hidden by default) -->
+<div id="adminModePanel" class="admin-panel" style="display: none;">
+    <div class="admin-header">
+        <h3>LINE Linking Code Management</h3>
+        <p>สร้างรหัสเชื่อมต่อ LINE 6 หลักสำหรับพนักงาน</p>
+        <button id="exitAdminMode">Exit Admin Mode</button>
+    </div>
+
+    <!-- For each employee row, add: -->
+    <div class="line-code-actions">
+        <span class="current-code" id="code-{badge}">รหัส: ------</span>
+        <button class="generate-code-btn" data-badge="{badge}">
+            สร้างรหัส
+        </button>
+        <span class="link-status" id="status-{badge}">ยังไม่ลิงก์</span>
+    </div>
+</div>
+```
+
 #### Task 5.1: LINE-to-Employee Linking Page
 **Priority**: 🟡 Important
 
@@ -2227,7 +2568,7 @@ async def mobile_checkin_page():
     <div class="link-container">
         <div class="link-header">
             <h1>เชื่อมต่อบัญชี LINE</h1>
-            <p>กรุณาเลือกหมายเลขพนักงานของคุณ</p>
+            <p>กรุณากรอกรหัส 6 หลักที่ได้รับจากแอดมิน</p>
         </div>
 
         <div class="line-profile">
@@ -2236,14 +2577,20 @@ async def mobile_checkin_page():
             <p class="line-id" id="lineUserId"></p>
         </div>
 
-        <div class="employee-search">
+        <div class="code-input-section">
+            <label for="linkingCodeInput">รหัสเชื่อมต่อ 6 หลัก</label>
             <input
                 type="text"
-                id="badgeInput"
-                placeholder="กรอกหมายเลขพนักงาน หรือค้นหาชื่อ"
+                id="linkingCodeInput"
+                placeholder="กรอกรหัส 6 หลัก (เช่น 123456)"
+                maxlength="6"
+                pattern="[0-9]{6}"
+                inputmode="numeric"
                 autocomplete="off"
             >
-            <div id="employeeList" class="employee-list"></div>
+            <p class="help-text">
+                ℹ️ ขอรหัสจากแอดมินในหน้าจัดการชื่อเล่น
+            </p>
         </div>
 
         <button id="linkBtn" class="link-btn" disabled>
@@ -2267,53 +2614,49 @@ async def mobile_checkin_page():
 
 ```javascript
 // static/js/link-line.js
+// UPDATED: Use 6-digit linking code instead of badge number selection
 class LineLinking {
     constructor() {
-        this.lineUserId = null;
+        this.linkToken = null;
         this.lineName = null;
-        this.selectedBadge = null;
-        this.employees = [];
         this.init();
     }
 
     async init() {
-        // Get LINE info from URL
+        // Get link token from URL (from LINE callback)
         const urlParams = new URLSearchParams(window.location.search);
-        this.lineUserId = urlParams.get('line_user_id');
-        this.lineName = urlParams.get('name');
+        this.linkToken = urlParams.get('token');
 
-        if (!this.lineUserId) {
+        if (!this.linkToken) {
             window.location.href = '/mobile-checkin';
             return;
         }
 
-        // Display LINE profile
-        document.getElementById('lineName').textContent = this.lineName;
-        document.getElementById('lineUserId').textContent = `LINE ID: ${this.lineUserId}`;
-
-        // Load employees
-        await this.loadEmployees();
+        // Display LINE profile (if available in URL)
+        const lineName = urlParams.get('name');
+        if (lineName) {
+            document.getElementById('lineName').textContent = lineName;
+        }
 
         // Attach event listeners
         this.attachEventListeners();
     }
 
-    async loadEmployees() {
-        try {
-            const response = await fetch(appConfig.getApiUrl('employees/'));
-            const data = await response.json();
-            this.employees = data.employees || [];
-        } catch (error) {
-            console.error('Failed to load employees:', error);
-        }
-    }
-
     attachEventListeners() {
-        const badgeInput = document.getElementById('badgeInput');
+        const codeInput = document.getElementById('linkingCodeInput');
         const linkBtn = document.getElementById('linkBtn');
 
-        badgeInput.addEventListener('input', (e) => {
-            this.filterEmployees(e.target.value);
+        // Enable button when 6 digits entered
+        codeInput.addEventListener('input', (e) => {
+            const code = e.target.value.trim();
+            linkBtn.disabled = code.length !== 6 || !/^\d{6}$/.test(code);
+        });
+
+        // Handle Enter key
+        codeInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !linkBtn.disabled) {
+                this.linkAccount();
+            }
         });
 
         linkBtn.addEventListener('click', () => {
@@ -2321,61 +2664,28 @@ class LineLinking {
         });
     }
 
-    filterEmployees(query) {
-        const list = document.getElementById('employeeList');
-        list.innerHTML = '';
-
-        if (!query) {
-            list.style.display = 'none';
-            return;
-        }
-
-        const filtered = this.employees.filter(emp =>
-            emp.employee_id.includes(query) ||
-            emp.display_name.toLowerCase().includes(query.toLowerCase())
-        );
-
-        if (filtered.length === 0) {
-            list.style.display = 'none';
-            return;
-        }
-
-        filtered.slice(0, 5).forEach(emp => {
-            const item = document.createElement('div');
-            item.className = 'employee-item';
-            item.innerHTML = `
-                <div class="employee-name">${emp.display_name}</div>
-                <div class="employee-badge">รหัส: ${emp.employee_id}</div>
-            `;
-            item.addEventListener('click', () => {
-                this.selectEmployee(emp);
-            });
-            list.appendChild(item);
-        });
-
-        list.style.display = 'block';
-    }
-
-    selectEmployee(employee) {
-        this.selectedBadge = employee.employee_id;
-        document.getElementById('badgeInput').value =
-            `${employee.display_name} (${employee.employee_id})`;
-        document.getElementById('employeeList').style.display = 'none';
-        document.getElementById('linkBtn').disabled = false;
-    }
-
     async linkAccount() {
-        if (!this.selectedBadge) return;
+        const codeInput = document.getElementById('linkingCodeInput');
+        const linkingCode = codeInput.value.trim();
+
+        if (linkingCode.length !== 6 || !/^\d{6}$/.test(linkingCode)) {
+            alert('กรุณากรอกรหัส 6 หลักที่ถูกต้อง');
+            return;
+        }
+
+        const linkBtn = document.getElementById('linkBtn');
+        linkBtn.disabled = true;
+        linkBtn.textContent = 'กำลังเชื่อมต่อ...';
 
         try {
-            const response = await fetch(appConfig.getApiUrl('auth/line/link'), {
+            const response = await fetch(appConfig.getApiUrl('auth/line/link-account'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    line_user_id: this.lineUserId,
-                    employee_badge: this.selectedBadge
+                    link_token: this.linkToken,
+                    linking_code: linkingCode
                 })
             });
 
@@ -2389,11 +2699,18 @@ class LineLinking {
             // Store JWT token
             localStorage.setItem('jwt_token', data.token);
 
+            // Show success message
+            alert(`เชื่อมต่อสำเร็จ! พนักงาน: ${data.employee.name_thai}`);
+
             // Redirect to mobile check-in
-            window.location.href = `/mobile-checkin?token=${data.token}`;
+            window.location.href = `/qr-checkin/mobile?token=${data.token}`;
 
         } catch (error) {
             alert(`เกิดข้อผิดพลาด: ${error.message}`);
+            linkBtn.disabled = false;
+            linkBtn.textContent = 'เชื่อมต่อบัญชี';
+            codeInput.value = '';
+            codeInput.focus();
         }
     }
 }
