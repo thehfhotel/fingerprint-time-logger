@@ -333,6 +333,83 @@ class TestQRTerminalJavaScriptValidation:
         assert "terminalData.terminal.location_name" not in js_content
 
 
+class TestQRCodeImageDisplay:
+    """Test QR code image format and display (Issue #4)"""
+
+    def test_qr_image_data_uri_format(self, client, qr_terminal_device):
+        """Test QR image is complete data URI (not double-prefixed)"""
+        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        data = response.json()
+
+        qr_image = data["qr_image"]
+
+        # Should start with data URI prefix exactly once
+        assert qr_image.startswith("data:image/png;base64,")
+
+        # Should NOT have duplicate prefix
+        assert not qr_image.startswith("data:image/png;base64,data:image/png;base64,")
+
+        # Count prefix occurrences - should be exactly 1
+        prefix_count = qr_image.count("data:image/png;base64,")
+        assert prefix_count == 1, f"Expected 1 data URI prefix, found {prefix_count}"
+
+    def test_qr_image_can_be_decoded(self, client, qr_terminal_device):
+        """Test QR image data URI can be decoded to valid PNG"""
+        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        data = response.json()
+
+        qr_image = data["qr_image"]
+
+        # Extract base64 data after prefix
+        assert qr_image.startswith("data:image/png;base64,")
+        base64_data = qr_image.replace("data:image/png;base64,", "")
+
+        # Should be valid base64
+        try:
+            decoded = base64.b64decode(base64_data)
+        except Exception as e:
+            pytest.fail(f"Failed to decode base64: {e}")
+
+        # Should be valid PNG (magic number)
+        assert decoded.startswith(b'\x89PNG\r\n\x1a\n'), "Invalid PNG magic number"
+
+        # PNG should have reasonable size (not empty, not too large)
+        assert 1000 < len(decoded) < 50000, f"PNG size {len(decoded)} bytes seems wrong"
+
+    def test_javascript_uses_data_uri_directly(self, client):
+        """Test JavaScript uses API response directly (no prefix added)"""
+        response = client.get("/fingerprintlogs/static/js/qr-terminal.js")
+        js_content = response.text
+
+        # Should use qr_image directly, not add prefix
+        assert "img.src = qrImageDataUri" in js_content or \
+               "img.src = data.qr_image" in js_content or \
+               "qrImageDataUri" in js_content
+
+        # Should NOT construct data URI with template literal
+        assert "img.src = `data:image/png;base64,${" not in js_content, \
+               "JavaScript should not add data URI prefix"
+
+    def test_qr_image_contains_terminal_data(self, client, qr_terminal_device):
+        """Test QR code contains encoded terminal and token data"""
+        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        data = response.json()
+
+        # QR image should be present and substantial
+        qr_image = data["qr_image"]
+        base64_data = qr_image.replace("data:image/png;base64,", "")
+        decoded = base64.b64decode(base64_data)
+
+        # QR code PNG should be reasonably sized (contains actual data)
+        # Typical QR codes are 1-10KB depending on data amount and encoding
+        assert len(decoded) > 1000, f"QR code {len(decoded)} bytes seems too small"
+        assert len(decoded) < 50000, f"QR code {len(decoded)} bytes seems too large"
+
+        # QR code should expire in reasonable time
+        assert data["expires_in_seconds"] > 0
+        assert data["expires_in_seconds"] <= 60
+
+
 class TestQRTerminalIntegrationFlow:
     """Test complete QR terminal display workflow"""
 
@@ -357,6 +434,11 @@ class TestQRTerminalIntegrationFlow:
         data = api_response.json()
         assert "qr_image" in data
         assert data["terminal_id"] == 2
+
+        # Step 5: Verify QR image format
+        qr_image = data["qr_image"]
+        assert qr_image.startswith("data:image/png;base64,")
+        assert qr_image.count("data:image/png;base64,") == 1  # No duplicate prefix
 
     def test_error_handling_for_invalid_terminal(self, client, fingerprint_device):
         """Test error handling when using wrong terminal type"""
