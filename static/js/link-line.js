@@ -82,18 +82,24 @@
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ jwt_token: jwtToken })
+                body: JSON.stringify({ token: jwtToken })
             });
 
             const data = await response.json();
 
             if (response.ok && data.valid) {
-                lineProfile = data.line_profile;
-                console.log('[Link LINE] Profile loaded:', lineProfile);
+                // Extract LINE profile from JWT payload
+                const payload = data.payload;
+                lineProfile = {
+                    user_id: payload.line_user_id,
+                    display_name: payload.display_name || 'ผู้ใช้ LINE',
+                    picture_url: payload.picture_url || ''
+                };
+                console.log('[Link LINE] Profile loaded from JWT:', lineProfile);
                 showProfileAndForm();
             } else {
                 console.error('[Link LINE] Token verification failed:', data);
-                showError('Token ไม่ถูกต้อง', data.message || 'กรุณาเข้าสู่ระบบใหม่อีกครั้ง');
+                showError('Token ไม่ถูกต้อง', data.detail || data.message || 'กรุณาเข้าสู่ระบบใหม่อีกครั้ง');
             }
         } catch (error) {
             console.error('[Link LINE] Error verifying token:', error);
@@ -167,7 +173,7 @@
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    jwt_token: jwtToken,
+                    jwt_token: jwtToken,  // Backend expects jwt_token field name
                     linking_code: linkingCode
                 })
             });

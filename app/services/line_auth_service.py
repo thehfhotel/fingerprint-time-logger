@@ -190,13 +190,21 @@ class LineAuthService:
                 detail=f"Failed to get LINE profile: {str(e)}"
             )
 
-    def create_jwt_token(self, line_user_id: str, employee_badge: str) -> str:
+    def create_jwt_token(
+        self,
+        line_user_id: str,
+        employee_badge: Optional[str] = None,
+        display_name: Optional[str] = None,
+        picture_url: Optional[str] = None
+    ) -> str:
         """
         Create JWT token for authenticated employee session
 
         Args:
             line_user_id: LINE user ID
-            employee_badge: Employee badge number
+            employee_badge: Employee badge number (None if not yet linked)
+            display_name: LINE display name (optional, for pre-link sessions)
+            picture_url: LINE profile picture URL (optional, for pre-link sessions)
 
         Returns:
             JWT token string
@@ -210,6 +218,12 @@ class LineAuthService:
             "iat": int(now.timestamp()),
             "exp": int(exp.timestamp())
         }
+
+        # Include LINE profile data for pre-link sessions
+        if display_name:
+            payload["display_name"] = display_name
+        if picture_url:
+            payload["picture_url"] = picture_url
 
         token = jwt.encode(payload, self.jwt_secret, algorithm="HS256")
         return token

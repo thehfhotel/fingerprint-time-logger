@@ -225,16 +225,26 @@ async def line_callback(
         # Get LINE user profile
         profile = line_auth_service.get_user_profile(access_token)
 
-        # Store profile data for link account page (using URL parameters for simplicity)
-        # In production, consider using encrypted cookies or server-side session
+        # Extract profile data
         line_user_id = profile.get("userId", "")
         display_name = profile.get("displayName", "ผู้ใช้ LINE")
         picture_url = profile.get("pictureUrl", "")
 
-        # Redirect to link account page with profile data
+        # Create JWT token for this LINE user session
+        # Token contains LINE user ID and profile data for link-account page
+        jwt_token = line_auth_service.create_jwt_token(
+            line_user_id=line_user_id,
+            employee_badge=None,  # Not yet linked to employee
+            display_name=display_name,
+            picture_url=picture_url
+        )
+
+        # Redirect to link account page with JWT token
+        # JWT is passed via URL parameter and will be stored in localStorage by JavaScript
         link_url = (
             f"/fingerprintlogs/qr-checkin/link-account"
-            f"?line_user_id={line_user_id}"
+            f"?jwt={jwt_token}"
+            f"&line_user_id={line_user_id}"
             f"&display_name={display_name}"
             f"&picture_url={picture_url}"
         )
