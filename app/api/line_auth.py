@@ -331,9 +331,11 @@ async def link_account(
         404: Employee not found
     """
     try:
-        # Verify JWT token to get LINE user ID
+        # Verify JWT token to get LINE user data
         token_payload = line_auth_service.verify_jwt_token(request.jwt_token)
         line_user_id = token_payload.get("line_user_id")
+        line_display_name = token_payload.get("display_name")
+        line_picture_url = token_payload.get("picture_url")
 
         if not line_user_id:
             raise HTTPException(
@@ -377,6 +379,8 @@ async def link_account(
 
         # Link LINE account to employee
         employee.line_user_id = line_user_id
+        employee.line_display_name = line_display_name
+        employee.line_picture_url = line_picture_url
         employee.line_linking_code = None  # Clear code after successful link
         employee.line_linking_code_generated_at = None
         employee.updated_at = datetime.now(timezone.utc)
@@ -387,7 +391,9 @@ async def link_account(
         # Create new JWT token with employee badge for authenticated session
         new_token = line_auth_service.create_jwt_token(
             line_user_id=line_user_id,
-            employee_badge=employee.badge_number
+            employee_badge=employee.badge_number,
+            display_name=line_display_name,
+            picture_url=line_picture_url
         )
 
         return {
