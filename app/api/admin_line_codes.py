@@ -91,6 +91,11 @@ def is_code_expired(generated_at: datetime, expiry_hours: int = 24) -> bool:
     """Check if linking code has expired (default 24 hours)"""
     if not generated_at:
         return True
+
+    # Ensure generated_at is timezone-aware for comparison
+    if generated_at.tzinfo is None:
+        generated_at = generated_at.replace(tzinfo=timezone.utc)
+
     expiry_time = generated_at + timedelta(hours=expiry_hours)
     return datetime.now(timezone.utc) > expiry_time
 

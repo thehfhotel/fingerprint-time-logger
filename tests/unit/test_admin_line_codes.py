@@ -87,6 +87,20 @@ class TestHelperFunctions:
         assert not is_code_expired(generated_at, expiry_hours=24)
         assert is_code_expired(generated_at, expiry_hours=12)
 
+    def test_is_code_expired_naive_datetime(self, test_client):
+        """Test that naive datetime (from database) is handled correctly"""
+        # Simulate datetime from database without timezone info (assumes UTC)
+        # Use utcnow() to get UTC time without timezone
+        generated_at_naive = datetime.utcnow() - timedelta(hours=1)
+        # Should not raise TypeError, should convert to UTC and compare
+        assert not is_code_expired(generated_at_naive)
+
+    def test_is_code_expired_naive_datetime_expired(self, test_client):
+        """Test that expired naive datetime is detected correctly"""
+        # 25-hour-old naive datetime (UTC)
+        generated_at_naive = datetime.utcnow() - timedelta(hours=25)
+        assert is_code_expired(generated_at_naive)
+
 
 # ============================================================================
 # API ENDPOINT TESTS
