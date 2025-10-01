@@ -12,7 +12,7 @@ Tests all LINE OAuth authentication service functionality:
 import pytest
 import time
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta, timezone
 from unittest.mock import Mock, patch, MagicMock
 
 from app.services.line_auth_service import LineAuthService
@@ -311,7 +311,7 @@ class TestJWTTokens:
     def test_verify_expired_jwt_token(self, line_auth_service):
         """Test verification of expired JWT token"""
         # Create token with immediate expiry
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         exp = now - timedelta(hours=1)  # Expired 1 hour ago
 
         payload = {
@@ -353,8 +353,8 @@ class TestJWTTokens:
         token = line_auth_service.create_jwt_token("test_user", "EMP001")
         payload = jwt.decode(token, line_auth_service.jwt_secret, algorithms=["HS256"])
 
-        iat = datetime.utcfromtimestamp(payload["iat"])
-        exp = datetime.utcfromtimestamp(payload["exp"])
+        iat = datetime.fromtimestamp(payload["iat"], tz=timezone.utc)
+        exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
         expiry_duration = (exp - iat).total_seconds() / 3600
 
         assert expiry_duration == 24  # 24 hours

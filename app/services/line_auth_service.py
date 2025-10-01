@@ -14,7 +14,7 @@ Adapted from loyalty-app OAuth service for employee account linking.
 import os
 import secrets
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from urllib.parse import urlencode
 
@@ -201,7 +201,7 @@ class LineAuthService:
         Returns:
             JWT token string
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         exp = now + timedelta(hours=self.jwt_expiry_hours)
 
         payload = {

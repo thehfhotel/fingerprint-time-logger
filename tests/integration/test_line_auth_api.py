@@ -10,7 +10,7 @@ Tests complete LINE OAuth authentication flow:
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta, timezone
 
 from app.models.models import Employee
 from app.services.line_auth_service import line_auth_service
@@ -120,7 +120,7 @@ class TestAccountLinking:
             english_name="Expired Code Employee",
             is_active=True,
             line_linking_code="888888",
-            line_linking_code_generated_at=datetime.utcnow() - timedelta(hours=25)
+            line_linking_code_generated_at=datetime.now(timezone.utc) - timedelta(hours=25)
         )
         test_db.add(employee)
         test_db.commit()
@@ -244,7 +244,7 @@ def test_employee_with_code(test_db):
         english_name="Employee With Code",
         is_active=True,
         line_linking_code="123456",
-        line_linking_code_generated_at=datetime.utcnow()
+        line_linking_code_generated_at=datetime.now(timezone.utc)
     )
     test_db.add(employee)
     test_db.commit()

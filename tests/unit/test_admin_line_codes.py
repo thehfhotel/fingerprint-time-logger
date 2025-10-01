@@ -10,7 +10,7 @@ Tests all endpoints for LINE linking code management including:
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta, timezone
 from unittest.mock import Mock, patch
 from sqlalchemy.orm import Session
 
@@ -59,22 +59,22 @@ class TestHelperFunctions:
 
     def test_is_code_expired_fresh_code(self, test_client):
         """Test that recently generated code is not expired"""
-        generated_at = datetime.utcnow()
+        generated_at = datetime.now(timezone.utc)
         assert not is_code_expired(generated_at)
 
     def test_is_code_expired_old_code(self, test_client):
         """Test that 25-hour-old code is expired"""
-        generated_at = datetime.utcnow() - timedelta(hours=25)
+        generated_at = datetime.now(timezone.utc) - timedelta(hours=25)
         assert is_code_expired(generated_at)
 
     def test_is_code_expired_boundary_23_hours(self, test_client):
         """Test code at 23 hours is not expired"""
-        generated_at = datetime.utcnow() - timedelta(hours=23)
+        generated_at = datetime.now(timezone.utc) - timedelta(hours=23)
         assert not is_code_expired(generated_at)
 
     def test_is_code_expired_boundary_24_hours(self, test_client):
         """Test code at exactly 24 hours is not expired (boundary)"""
-        generated_at = datetime.utcnow() - timedelta(hours=24, seconds=-1)
+        generated_at = datetime.now(timezone.utc) - timedelta(hours=24, seconds=-1)
         assert not is_code_expired(generated_at)
 
     def test_is_code_expired_none_generated_at(self, test_client):
@@ -83,7 +83,7 @@ class TestHelperFunctions:
 
     def test_is_code_expired_custom_expiry(self, test_client):
         """Test custom expiry hours parameter"""
-        generated_at = datetime.utcnow() - timedelta(hours=13)
+        generated_at = datetime.now(timezone.utc) - timedelta(hours=13)
         assert not is_code_expired(generated_at, expiry_hours=24)
         assert is_code_expired(generated_at, expiry_hours=12)
 
@@ -432,7 +432,7 @@ class TestEdgeCases:
         """Test code expiry at exact 24-hour boundary"""
         # Set code to expire in 1 second
         test_employee.line_linking_code = "999999"
-        test_employee.line_linking_code_generated_at = datetime.utcnow() - timedelta(hours=24, seconds=-1)
+        test_employee.line_linking_code_generated_at = datetime.now(timezone.utc) - timedelta(hours=24, seconds=-1)
         test_db.commit()
 
         response = test_client.get(
@@ -463,7 +463,7 @@ def test_employee_with_code(test_db):
         english_name="Employee With Code",
         is_active=True,
         line_linking_code="123456",
-        line_linking_code_generated_at=datetime.utcnow()
+        line_linking_code_generated_at=datetime.now(timezone.utc)
     )
     test_db.add(employee)
     test_db.commit()
@@ -482,7 +482,7 @@ def test_employee_with_expired_code(test_db):
         english_name="Employee With Expired Code",
         is_active=True,
         line_linking_code="654321",
-        line_linking_code_generated_at=datetime.utcnow() - timedelta(hours=25)
+        line_linking_code_generated_at=datetime.now(timezone.utc) - timedelta(hours=25)
     )
     test_db.add(employee)
     test_db.commit()

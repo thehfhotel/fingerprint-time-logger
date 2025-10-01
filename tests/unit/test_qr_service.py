@@ -7,7 +7,7 @@ Tests QR token generation, validation, replay prevention, and QR code image gene
 import pytest
 import jwt
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta, timezone
 from fastapi import HTTPException
 
 from app.services.qr_service import QRCodeService
@@ -62,8 +62,8 @@ class TestQRTokenGeneration:
 
         # Decode and check expiry
         payload = jwt.decode(result["token"], qr_service.jwt_secret, algorithms=["HS256"])
-        exp_time = datetime.utcfromtimestamp(payload["exp"])
-        now = datetime.utcnow()
+        exp_time = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        now = datetime.now(timezone.utc)
 
         # Should expire in approximately 30 seconds
         time_diff = (exp_time - now).total_seconds()
@@ -84,7 +84,7 @@ class TestQRTokenValidation:
     def test_validate_qr_token_expired(self, qr_service):
         """Test validation rejects expired token"""
         # Create expired token
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         exp = now - timedelta(seconds=1)  # Expired 1 second ago
 
         payload = {
@@ -108,10 +108,10 @@ class TestQRTokenValidation:
         # Create token with wrong secret
         payload = {
             "terminal_id": 1,
-            "timestamp": int(datetime.utcnow().timestamp()),
+            "timestamp": int(datetime.now(timezone.utc).timestamp()),
             "nonce": "test_nonce",
-            "iat": int(datetime.utcnow().timestamp()),
-            "exp": int((datetime.utcnow() + timedelta(seconds=30)).timestamp())
+            "iat": int(datetime.now(timezone.utc).timestamp()),
+            "exp": int((datetime.now(timezone.utc) + timedelta(seconds=30)).timestamp())
         }
 
         invalid_token = jwt.encode(payload, "wrong_secret", algorithm="HS256")
@@ -126,9 +126,9 @@ class TestQRTokenValidation:
         """Test validation rejects token without nonce"""
         payload = {
             "terminal_id": 1,
-            "timestamp": int(datetime.utcnow().timestamp()),
-            "iat": int(datetime.utcnow().timestamp()),
-            "exp": int((datetime.utcnow() + timedelta(seconds=30)).timestamp())
+            "timestamp": int(datetime.now(timezone.utc).timestamp()),
+            "iat": int(datetime.now(timezone.utc).timestamp()),
+            "exp": int((datetime.now(timezone.utc) + timedelta(seconds=30)).timestamp())
             # nonce is missing
         }
 

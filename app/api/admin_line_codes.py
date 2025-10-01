@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import random
 import string
 
@@ -92,7 +92,7 @@ def is_code_expired(generated_at: datetime, expiry_hours: int = 24) -> bool:
     if not generated_at:
         return True
     expiry_time = generated_at + timedelta(hours=expiry_hours)
-    return datetime.utcnow() > expiry_time
+    return datetime.now(timezone.utc) > expiry_time
 
 
 # ============================================================================
@@ -180,7 +180,7 @@ async def generate_linking_code(
 
     # Save code to employee
     employee.line_linking_code = code
-    employee.line_linking_code_generated_at = datetime.utcnow()
+    employee.line_linking_code_generated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(employee)
 
@@ -247,7 +247,7 @@ async def regenerate_linking_code(
 
     # Update code
     employee.line_linking_code = code
-    employee.line_linking_code_generated_at = datetime.utcnow()
+    employee.line_linking_code_generated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(employee)
 

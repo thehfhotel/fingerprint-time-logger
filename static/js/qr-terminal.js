@@ -105,17 +105,15 @@
     function updateTerminalInfo() {
         if (!terminalData) return;
 
-        const terminal = terminalData.terminal;
-        const location = terminal.location_name || `Terminal ${terminal.id}`;
-        const gps = terminal.gps_location || {};
+        // API returns flat structure: {terminal_id, terminal_name, ...}
+        const location = terminalData.terminal_name || `Terminal ${terminalData.terminal_id}`;
 
         elements.terminalName.textContent = location;
         elements.terminalLocation.textContent = `📍 ${location}`;
 
         elements.footerLocation.textContent = location;
-        if (gps.latitude && gps.longitude) {
-            elements.footerGPS.textContent = `${gps.latitude.toFixed(6)}, ${gps.longitude.toFixed(6)}`;
-        }
+        // GPS coordinates not included in current API response
+        // elements.footerGPS remains empty for now
 
         // Load today's check-in count
         loadTodayCount();

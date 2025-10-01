@@ -11,7 +11,7 @@ Tests the complete end-to-end workflow for admin LINE code management:
 
 import pytest
 from fastapi.testclient import TestClient
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta, timezone
 
 from app.main_unified import fingerprint_app
 from app.models.models import Employee
@@ -249,7 +249,7 @@ class TestAdminLINEWorkflowMultiEmployee:
             display_name="With Code",
             is_active=True,
             line_linking_code="111111",
-            line_linking_code_generated_at=datetime.utcnow()
+            line_linking_code_generated_at=datetime.now(timezone.utc)
         )
         emp_linked = Employee(
             badge_number="STAT003",
@@ -323,7 +323,7 @@ class TestAdminLINEWorkflowErrorRecovery:
             display_name="Expired Test",
             is_active=True,
             line_linking_code="888888",
-            line_linking_code_generated_at=datetime.utcnow() - timedelta(hours=25)
+            line_linking_code_generated_at=datetime.now(timezone.utc) - timedelta(hours=25)
         )
         db_session.add(employee)
         db_session.commit()
@@ -516,7 +516,7 @@ class TestAdminLINEWorkflowPerformance:
             elif state == 1:
                 # With code
                 emp.line_linking_code = f"{i:06d}"
-                emp.line_linking_code_generated_at = datetime.utcnow()
+                emp.line_linking_code_generated_at = datetime.now(timezone.utc)
             else:
                 # Linked
                 emp.line_user_id = f"U_{i:06d}"

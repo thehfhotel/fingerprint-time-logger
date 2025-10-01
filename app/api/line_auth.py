@@ -11,7 +11,7 @@ Endpoints for LINE OAuth integration with QR check-in:
 Mobile Safari compatible with HTML meta refresh redirects.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status, Query, Request, Depends
@@ -345,7 +345,7 @@ async def link_account(
 
         # Check if linking code has expired (24 hours)
         if employee.line_linking_code_generated_at:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             expiry = employee.line_linking_code_generated_at + timedelta(hours=24)
             if now > expiry:
                 raise HTTPException(
@@ -364,7 +364,7 @@ async def link_account(
         employee.line_user_id = line_user_id
         employee.line_linking_code = None  # Clear code after successful link
         employee.line_linking_code_generated_at = None
-        employee.updated_at = datetime.utcnow()
+        employee.updated_at = datetime.now(timezone.utc)
 
         db.commit()
         db.refresh(employee)
@@ -453,7 +453,7 @@ async def unlink_account(
         employee.line_picture_url = None
         employee.line_linking_code = None
         employee.line_linking_code_generated_at = None
-        employee.updated_at = datetime.utcnow()
+        employee.updated_at = datetime.now(timezone.utc)
 
         db.commit()
 

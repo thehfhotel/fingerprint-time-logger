@@ -7,14 +7,13 @@ and attendance record creation.
 
 import pytest
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta, timezone
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.main_unified import fingerprint_app
-from app.database.connection import get_db
-from app.core.database import Base
+from app.core.database import get_db, Base
 from app.models.models import Device, Employee, AttendanceRecord
 from app.services.qr_service import qr_service
 from app.services.line_auth_service import line_auth_service
@@ -193,7 +192,7 @@ class TestQRScanning:
         """Test scan with expired QR token"""
         # Create expired QR token
         import jwt
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         exp = now - timedelta(seconds=1)
 
         payload = {

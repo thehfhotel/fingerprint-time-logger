@@ -12,7 +12,7 @@ import jwt
 import qrcode
 import io
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Set
 from fastapi import HTTPException, status
 from PIL import Image
@@ -44,7 +44,7 @@ class QRCodeService:
             - nonce: Unique nonce for replay prevention
             - expires_at: Token expiration timestamp
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         exp = now + timedelta(seconds=self.qr_token_expiry_seconds)
 
         # Generate unique nonce for replay attack prevention

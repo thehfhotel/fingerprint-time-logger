@@ -5,7 +5,7 @@ Handles QR code scanning, GPS validation, and attendance recording.
 Integrates QR service, location service, and LINE authentication.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.orm import Session
@@ -121,7 +121,7 @@ async def scan_qr_code(
         # Step 5: Create AttendanceRecord
         attendance_record = AttendanceRecord(
             badge_number=employee.badge_number,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             device_id=terminal_id,
             sync_status="synced",  # QR check-in is always synced
             metadata=f"QR Check-in at {location_validation['terminal_location']['location_name']}, "
