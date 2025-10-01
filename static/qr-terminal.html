@@ -117,9 +117,9 @@
 
     <!-- Configuration Script -->
     <script>
-        // Get terminal ID from URL parameter
+        // Get terminal ID from URL parameter (default to 2 - first QR terminal)
         const urlParams = new URLSearchParams(window.location.search);
-        const TERMINAL_ID = urlParams.get('terminal') || '1';
+        const TERMINAL_ID = urlParams.get('terminal') || '2';
     </script>
 
     <script src="/fingerprintlogs/static/js/qr-terminal.js"></script>
