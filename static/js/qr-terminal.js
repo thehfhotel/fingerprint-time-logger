@@ -32,7 +32,10 @@
         errorMessage: document.getElementById('errorMessage'),
         retryButton: document.getElementById('retryButton'),
 
-        fullscreenButton: document.getElementById('fullscreenButton')
+        fullscreenButton: document.getElementById('fullscreenButton'),
+
+        // Location selector elements
+        locationButtons: document.getElementById('locationButtons')
     };
 
     // State
@@ -54,6 +57,9 @@
         updateClock();
         setInterval(updateClock, 1000);
 
+        // Load available terminals for location selector
+        loadAvailableTerminals();
+
         // Load terminal data
         loadTerminalData();
 
@@ -62,6 +68,84 @@
 
         // Connect WebSocket
         connectWebSocket();
+    }
+
+    /**
+     * Load available QR terminals for location selector
+     */
+    async function loadAvailableTerminals() {
+        try {
+            const response = await fetch('/fingerprintlogs/api/qr-checkin/terminals');
+            const terminals = await response.json();
+
+            if (response.ok && terminals.length > 0) {
+                // Only show selector if there are multiple active terminals
+                const activeTerminals = terminals.filter(t => t.is_active);
+
+                if (activeTerminals.length > 1) {
+                    renderLocationButtons(activeTerminals);
+                } else {
+                    // Hide location selector if only one terminal
+                    document.getElementById('locationSelector').style.display = 'none';
+                }
+            } else {
+                // Hide selector if no terminals found
+                document.getElementById('locationSelector').style.display = 'none';
+            }
+        } catch (error) {
+            console.error('[Location Selector] Error loading terminals:', error);
+            // Hide selector on error
+            document.getElementById('locationSelector').style.display = 'none';
+        }
+    }
+
+    /**
+     * Render location selector buttons
+     */
+    function renderLocationButtons(terminals) {
+        const container = elements.locationButtons;
+        container.innerHTML = '';
+
+        terminals.forEach(terminal => {
+            const button = document.createElement('button');
+            button.className = 'location-btn';
+            button.dataset.terminalId = terminal.id;
+
+            // Mark current terminal as active
+            if (terminal.id == TERMINAL_ID) {
+                button.classList.add('active');
+            }
+
+            button.innerHTML = `
+                <span class="location-icon">📍</span>
+                <span class="location-name">${terminal.location_name || terminal.name}</span>
+            `;
+
+            button.addEventListener('click', () => switchTerminal(terminal.id));
+            container.appendChild(button);
+        });
+
+        console.log('[Location Selector] Rendered', terminals.length, 'terminal buttons');
+    }
+
+    /**
+     * Switch to different terminal
+     */
+    function switchTerminal(terminalId) {
+        if (terminalId == TERMINAL_ID) {
+            console.log('[Location Selector] Already on terminal', terminalId);
+            return;
+        }
+
+        console.log('[Location Selector] Switching to terminal', terminalId);
+
+        // Update URL without page reload
+        const url = new URL(window.location);
+        url.searchParams.set('terminal', terminalId);
+        window.history.pushState({}, '', url);
+
+        // Reload page to reinitialize with new terminal
+        window.location.reload();
     }
 
     /**

@@ -48,6 +48,78 @@ body {
     text-align: right;
 }
 
+/* Location Selector */
+.location-selector {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 15px 40px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.location-label {
+    font-size: 16px;
+    font-weight: 600;
+    color: #495057;
+    white-space: nowrap;
+}
+
+.location-buttons {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.location-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    background: white;
+    border: 2px solid #dee2e6;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 500;
+    color: #495057;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.location-btn:hover {
+    background: #f8f9fa;
+    border-color: #667eea;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.2);
+}
+
+.location-btn.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-color: #667eea;
+    color: white;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.location-btn.active:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+}
+
+.location-icon {
+    font-size: 18px;
+}
+
+.location-name {
+    font-weight: 600;
+}
+
+.location-loading {
+    color: #6c757d;
+    font-size: 14px;
+    padding: 5px;
+}
+
 .clock-display {
     margin-bottom: 10px;
 }

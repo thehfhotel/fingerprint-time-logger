@@ -51,6 +51,14 @@ class QRCodeResponse(BaseModel):
     expires_in_seconds: int
 
 
+class TerminalInfo(BaseModel):
+    """Terminal information for location selector"""
+    id: int
+    name: str
+    location_name: Optional[str] = None
+    is_active: bool
+
+
 # ============================================================================
 # QR Check-In Endpoints
 # ============================================================================
@@ -158,6 +166,48 @@ async def scan_qr_code(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"การบันทึกเวลาล้มเหลว: {str(e)}"
+        )
+
+
+@router.get("/terminals", response_model=list[TerminalInfo])
+async def list_qr_terminals(db: Session = Depends(get_db)):
+    """
+    List all available QR terminals for location selector
+
+    Returns:
+        List of QR terminal devices with their information
+    """
+    try:
+        import json
+
+        terminals = db.query(Device).filter(
+            Device.device_type == "qr_terminal"
+        ).all()
+
+        terminal_list = []
+        for terminal in terminals:
+            # Extract location name from metadata
+            location_name = terminal.name
+            try:
+                if terminal.device_metadata:
+                    metadata = json.loads(terminal.device_metadata)
+                    location_name = metadata.get("gps", {}).get("location_name", terminal.name)
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+            terminal_list.append(TerminalInfo(
+                id=terminal.id,
+                name=terminal.name,
+                location_name=location_name,
+                is_active=terminal.is_active
+            ))
+
+        return terminal_list
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"การโหลดรายการเทอร์มินัลล้มเหลว: {str(e)}"
         )
 
 
