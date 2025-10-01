@@ -122,10 +122,11 @@
     /**
      * Display QR code
      */
-    function displayQRCode(qrImageBase64, expiresAt) {
+    function displayQRCode(qrImageDataUri, expiresAt) {
         // Create QR code image
         const img = document.createElement('img');
-        img.src = `data:image/png;base64,${qrImageBase64}`;
+        // API returns complete data URI, use directly
+        img.src = qrImageDataUri;
         img.alt = 'QR Code';
         img.style.width = '100%';
         img.style.maxWidth = '400px';
