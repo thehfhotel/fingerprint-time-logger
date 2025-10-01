@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
-from app.database.connection import get_db
+from app.core.database import get_db
 from app.models.models import Device, Employee, AttendanceRecord
 from app.services.qr_service import qr_service
 from app.services.location_service import location_service

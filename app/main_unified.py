@@ -312,6 +312,22 @@ async def serve_api_docs():
 async def serve_openapi_spec():
     return FileResponse("docs/openapi.yaml")
 
+# QR Check-in UI Pages - Phase 4
+@fingerprint_app.get("/qr-checkin/link-account")
+async def serve_link_account():
+    """Serve LINE account linking page"""
+    return serve_html_with_cache_control("static/link-line.html")
+
+@fingerprint_app.get("/qr-checkin/mobile")
+async def serve_mobile_checkin():
+    """Serve mobile QR check-in page"""
+    return serve_html_with_cache_control("static/mobile-checkin.html")
+
+@fingerprint_app.get("/qr-checkin/terminal")
+async def serve_qr_terminal():
+    """Serve kiosk QR terminal display page"""
+    return serve_html_with_cache_control("static/qr-terminal.html")
+
 @fingerprint_app.get("/health")
 async def health_check():
     return {"status": "healthy", "server": "unified"}

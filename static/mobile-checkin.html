@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>QR Check-in</title>
+    <link rel="stylesheet" href="static/css/mobile-checkin.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>📱 QR Check-in</h1>
+            <p class="subtitle">สแกน QR Code เพื่อบันทึกเวลาเข้า-ออกงาน</p>
+        </div>
+
+        <!-- Login Section -->
+        <div id="loginSection" class="login-section">
+            <div class="login-card">
+                <div class="icon">🔐</div>
+                <h2>เข้าสู่ระบบ</h2>
+                <p>กรุณาเข้าสู่ระบบด้วย LINE เพื่อใช้งาน QR Check-in</p>
+                <a href="/fingerprintlogs/api/auth/line/login?redirect=mobile-checkin" class="login-btn">
+                    🟢 เข้าสู่ระบบด้วย LINE
+                </a>
+            </div>
+        </div>
+
+        <!-- Not Linked Section -->
+        <div id="notLinkedSection" class="not-linked-section" style="display: none;">
+            <div class="warning-card">
+                <div class="icon">⚠️</div>
+                <h2>ยังไม่ได้เชื่อมต่อบัญชี</h2>
+                <p>คุณต้องเชื่อมต่อบัญชี LINE กับระบบก่อนใช้งาน QR Check-in</p>
+                <p class="help-text">💡 กรุณาติดต่อแอดมินเพื่อขอรหัสเชื่อมต่อ 6 หลัก</p>
+                <a href="./link-line" class="link-btn">
+                    🔗 เชื่อมต่อบัญชี LINE
+                </a>
+            </div>
+        </div>
+
+        <!-- Scanner Section -->
+        <div id="scannerSection" class="scanner-section" style="display: none;">
+            <!-- User Profile -->
+            <div class="profile-bar">
+                <img id="profilePicture" class="profile-picture" src="" alt="Profile">
+                <div class="profile-info">
+                    <div id="displayName" class="display-name"></div>
+                    <div id="employeeBadge" class="employee-badge"></div>
+                </div>
+                <button id="logoutButton" class="logout-btn">🚪</button>
+            </div>
+
+            <!-- Camera View -->
+            <div class="camera-container">
+                <video id="videoElement" class="video-preview" autoplay playsinline></video>
+                <canvas id="canvasElement" class="scanner-canvas" style="display: none;"></canvas>
+
+                <!-- Scanning overlay -->
+                <div class="scan-overlay">
+                    <div class="scan-frame"></div>
+                    <p class="scan-instruction">📷 วาง QR Code ให้อยู่ในกรอบ</p>
+                </div>
+            </div>
+
+            <!-- Scanner Controls -->
+            <div class="scanner-controls">
+                <button id="startScanButton" class="control-btn primary">
+                    📷 เริ่มสแกน
+                </button>
+                <button id="stopScanButton" class="control-btn secondary" style="display: none;">
+                    ⏹️ หยุดสแกน
+                </button>
+            </div>
+
+            <!-- GPS Status -->
+            <div id="gpsStatus" class="gps-status">
+                <div class="status-item">
+                    <span class="label">📍 GPS:</span>
+                    <span id="gpsText" class="value">กำลังตรวจสอบ...</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">🎯 ความแม่นยำ:</span>
+                    <span id="gpsAccuracy" class="value">-</span>
+                </div>
+            </div>
+
+            <!-- Recent Check-ins -->
+            <div class="recent-section">
+                <h3>📋 บันทึกล่าสุด</h3>
+                <div id="recentCheckIns" class="recent-list">
+                    <p class="empty-state">ยังไม่มีบันทึก</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+            <div class="loading-content">
+                <div class="spinner"></div>
+                <p id="loadingMessage">กำลังประมวลผล...</p>
+            </div>
+        </div>
+
+        <!-- Result Modal -->
+        <div id="resultModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div id="resultIcon" class="result-icon"></div>
+                <h2 id="resultTitle"></h2>
+                <p id="resultMessage"></p>
+                <div id="resultDetails" class="result-details"></div>
+                <button id="closeModalButton" class="modal-btn">ปิด</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- QR Code Scanner Library -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <script src="static/js/mobile-checkin.js"></script>
+</body>
+</html>

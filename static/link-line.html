@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>เชื่อมต่อบัญชี LINE</title>
+    <link rel="stylesheet" href="static/css/link-line.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🔗 เชื่อมต่อบัญชี LINE</h1>
+            <p class="subtitle">กรุณากรอกรหัส 6 หลักที่ได้รับจากแอดมิน</p>
+        </div>
+
+        <!-- LINE Profile Display -->
+        <div id="profileSection" class="profile-section" style="display: none;">
+            <div class="profile-card">
+                <img id="profilePicture" class="profile-picture" src="" alt="LINE Profile">
+                <div class="profile-info">
+                    <h2 id="displayName" class="display-name"></h2>
+                    <p id="lineUserId" class="line-user-id"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Linking Code Form -->
+        <div id="linkingSection" class="linking-section" style="display: none;">
+            <form id="linkingForm" class="linking-form">
+                <label for="linkingCode" class="form-label">รหัสเชื่อมต่อ (6 หลัก)</label>
+                <input
+                    type="tel"
+                    id="linkingCode"
+                    class="code-input"
+                    placeholder="กรอกรหัส 6 หลัก"
+                    maxlength="6"
+                    pattern="[0-9]{6}"
+                    inputmode="numeric"
+                    autocomplete="off"
+                    required
+                >
+                <button type="submit" id="submitButton" class="submit-btn">
+                    ✅ เชื่อมต่อบัญชี
+                </button>
+            </form>
+
+            <div class="help-text">
+                <p>💡 <strong>วิธีรับรหัส:</strong></p>
+                <ol>
+                    <li>ติดต่อแอดมินเพื่อขอรหัสเชื่อมต่อ</li>
+                    <li>แอดมินจะสร้างรหัส 6 หลักให้คุณ</li>
+                    <li>กรอกรหัสที่ได้รับในช่องด้านบน</li>
+                    <li>กดปุ่ม "เชื่อมต่อบัญชี"</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loadingSection" class="loading-section">
+            <div class="spinner"></div>
+            <p>กำลังโหลดข้อมูล LINE...</p>
+        </div>
+
+        <!-- Success State -->
+        <div id="successSection" class="success-section" style="display: none;">
+            <div class="success-icon">✅</div>
+            <h2>เชื่อมต่อสำเร็จ!</h2>
+            <p>คุณสามารถใช้งาน QR Check-in ได้แล้ว</p>
+            <a href="./qr-checkin/mobile" class="action-btn">
+                📱 ไปหน้า Check-in
+            </a>
+        </div>
+
+        <!-- Error State -->
+        <div id="errorSection" class="error-section" style="display: none;">
+            <div class="error-icon">❌</div>
+            <h2 id="errorTitle">เกิดข้อผิดพลาด</h2>
+            <p id="errorMessage"></p>
+            <button id="retryButton" class="retry-btn">
+                🔄 ลองใหม่
+            </button>
+        </div>
+
+        <!-- No JWT State -->
+        <div id="noJwtSection" class="error-section" style="display: none;">
+            <div class="error-icon">🔐</div>
+            <h2>ไม่พบข้อมูลการเข้าสู่ระบบ</h2>
+            <p>กรุณาเข้าสู่ระบบด้วย LINE ก่อนเชื่อมต่อบัญชี</p>
+            <a href="/fingerprintlogs/api/auth/line/login" class="login-btn">
+                🟢 เข้าสู่ระบบด้วย LINE
+            </a>
+        </div>
+    </div>
+
+    <script src="static/js/link-line.js"></script>
+</body>
+</html>

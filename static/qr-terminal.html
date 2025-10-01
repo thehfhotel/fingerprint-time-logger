@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>QR Terminal - Check-in</title>
+    <link rel="stylesheet" href="static/css/qr-terminal.css">
+</head>
+<body>
+    <div class="terminal-container">
+        <!-- Header -->
+        <div class="terminal-header">
+            <div class="header-left">
+                <h1 id="terminalName">QR Check-in Terminal</h1>
+                <p id="terminalLocation" class="location-text"></p>
+            </div>
+            <div class="header-right">
+                <div class="clock-display">
+                    <div id="currentTime" class="time"></div>
+                    <div id="currentDate" class="date"></div>
+                </div>
+                <div id="connectionStatus" class="connection-status">
+                    <span class="status-dot"></span>
+                    <span class="status-text">กำลังเชื่อมต่อ...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="terminal-content">
+            <!-- QR Code Display -->
+            <div class="qr-section">
+                <div class="qr-card">
+                    <div id="qrCodeContainer" class="qr-code-container">
+                        <div class="qr-loading">
+                            <div class="spinner"></div>
+                            <p>กำลังโหลด QR Code...</p>
+                        </div>
+                    </div>
+
+                    <div class="qr-info">
+                        <div class="timer-section">
+                            <div class="timer-label">QR Code หมดอายุใน</div>
+                            <div id="countdown" class="countdown">30</div>
+                            <div class="timer-unit">วินาที</div>
+                        </div>
+
+                        <div class="progress-bar-container">
+                            <div id="progressBar" class="progress-bar"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="instructions">
+                    <h3>📱 วิธีใช้งาน</h3>
+                    <ol>
+                        <li>เปิดแอป QR Check-in บนมือถือของคุณ</li>
+                        <li>เข้าสู่ระบบด้วย LINE Account</li>
+                        <li>สแกน QR Code บนหน้าจอนี้</li>
+                        <li>ระบบจะบันทึกเวลาเข้า-ออกงานอัตโนมัติ</li>
+                    </ol>
+                </div>
+            </div>
+
+            <!-- Recent Check-ins Feed -->
+            <div class="recent-section">
+                <div class="section-header">
+                    <h3>📋 บันทึกการเข้างานล่าสุด</h3>
+                    <div class="live-indicator">
+                        <span class="live-dot"></span>
+                        <span>LIVE</span>
+                    </div>
+                </div>
+
+                <div id="recentFeed" class="recent-feed">
+                    <div class="empty-state">
+                        <div class="empty-icon">👋</div>
+                        <p>ยินดีต้อนรับ!</p>
+                        <p class="empty-subtext">รอการเข้างานครั้งแรกของวันนี้</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="terminal-footer">
+            <div class="footer-item">
+                <span class="label">🏢 สถานที่:</span>
+                <span id="footerLocation" class="value">-</span>
+            </div>
+            <div class="footer-item">
+                <span class="label">📍 GPS:</span>
+                <span id="footerGPS" class="value">-</span>
+            </div>
+            <div class="footer-item">
+                <span class="label">👥 Check-ins วันนี้:</span>
+                <span id="todayCount" class="value">0</span>
+            </div>
+        </div>
+
+        <!-- Error Overlay -->
+        <div id="errorOverlay" class="error-overlay" style="display: none;">
+            <div class="error-content">
+                <div class="error-icon">❌</div>
+                <h2 id="errorTitle">เกิดข้อผิดพลาด</h2>
+                <p id="errorMessage"></p>
+                <button id="retryButton" class="retry-btn">🔄 ลองใหม่</button>
+            </div>
+        </div>
+
+        <!-- Fullscreen Toggle Button -->
+        <button id="fullscreenButton" class="fullscreen-btn" title="เข้าโหมดเต็มจอ">
+            ⛶
+        </button>
+    </div>
+
+    <!-- Configuration Script -->
+    <script>
+        // Get terminal ID from URL parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const TERMINAL_ID = urlParams.get('terminal') || '1';
+    </script>
+
+    <script src="static/js/qr-terminal.js"></script>
+</body>
+</html>
