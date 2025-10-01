@@ -355,8 +355,13 @@ async def link_account(
 
         # Check if linking code has expired (24 hours)
         if employee.line_linking_code_generated_at:
+            # Ensure timezone-aware datetime for comparison
+            generated_at = employee.line_linking_code_generated_at
+            if generated_at.tzinfo is None:
+                generated_at = generated_at.replace(tzinfo=timezone.utc)
+
             now = datetime.now(timezone.utc)
-            expiry = employee.line_linking_code_generated_at + timedelta(hours=24)
+            expiry = generated_at + timedelta(hours=24)
             if now > expiry:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
