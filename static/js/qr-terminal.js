@@ -74,7 +74,7 @@
             const response = await fetch(`/fingerprintlogs/api/qr-checkin/kiosk/${TERMINAL_ID}`);
             const data = await response.json();
 
-            if (response.ok && data.success) {
+            if (response.ok) {
                 terminalData = data;
                 console.log('[QR Terminal] Terminal data loaded:', terminalData);
 
