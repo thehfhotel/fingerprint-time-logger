@@ -20,6 +20,11 @@ services:
       - ZKTECO_PORT=${ZKTECO_PORT:-4370}
       - TZ=Asia/Bangkok
       - BEHIND_PROXY=${BEHIND_PROXY:-true}  # Default true for nginx integration
+      # LINE OAuth Configuration (Phase 2 - QR Check-in Feature)
+      - LINE_CHANNEL_ID=${LINE_CHANNEL_ID}
+      - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
+      - LINE_CALLBACK_URL=${LINE_CALLBACK_URL}
+      - JWT_SECRET=${JWT_SECRET}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/fingerprintlogs/health"]
