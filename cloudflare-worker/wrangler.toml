@@ -1,0 +1,27 @@
+# Cloudflare Workers Configuration
+# QR Check-in URL Rewriting Worker for Public Access
+
+name = "qr-checkin-proxy"
+main = "src/worker.js"
+compatibility_date = "2024-01-01"
+
+# Worker routes
+routes = [
+    { pattern = "erp.thehfhotel.org/qr-checkin/*", zone_name = "thehfhotel.org" }
+]
+
+# Environment variables
+[vars]
+BACKEND_HOST = "192.168.100.228"
+BACKEND_PORT = "5001"
+PATH_PREFIX = "/fingerprintlogs"
+
+# Development configuration
+[env.development]
+name = "qr-checkin-proxy-dev"
+vars = { BACKEND_HOST = "localhost", BACKEND_PORT = "5001" }
+
+# Production configuration
+[env.production]
+name = "qr-checkin-proxy"
+vars = { BACKEND_HOST = "192.168.100.228", BACKEND_PORT = "5001" }

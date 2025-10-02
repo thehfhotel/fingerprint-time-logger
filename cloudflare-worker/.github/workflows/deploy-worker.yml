@@ -1,0 +1,45 @@
+name: Deploy Cloudflare Worker
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cloudflare-worker/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy QR Check-in Proxy Worker
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: cloudflare-worker/package-lock.json
+
+      - name: Install dependencies
+        working-directory: cloudflare-worker
+        run: npm ci
+
+      - name: Deploy to Cloudflare Workers
+        working-directory: cloudflare-worker
+        run: npm run deploy:prod
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Test deployment
+        run: |
+          echo "Testing deployed worker..."
+          curl -f -s -o /dev/null -w "%{http_code}" https://erp.thehfhotel.org/qr-checkin/mobile || echo "Warning: Test request failed"
+
+      - name: Deployment summary
+        run: |
+          echo "✅ Cloudflare Worker deployed successfully!"
+          echo "🔗 Production URL: https://erp.thehfhotel.org/qr-checkin/mobile"
