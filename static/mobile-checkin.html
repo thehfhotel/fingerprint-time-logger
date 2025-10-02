@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>QR Check-in</title>
-    <link rel="stylesheet" href="/fingerprintlogs/static/css/mobile-checkin.css">
+    <link rel="stylesheet" href="/qr-checkin/static/css/mobile-checkin.css">
 </head>
 <body>
     <div class="container">
@@ -21,7 +21,7 @@
                 <div class="icon">🔐</div>
                 <h2>เข้าสู่ระบบ</h2>
                 <p>กรุณาเข้าสู่ระบบด้วย LINE เพื่อใช้งาน QR Check-in</p>
-                <a href="/fingerprintlogs/api/auth/line/login?redirect=mobile-checkin" class="login-btn">
+                <a href="/qr-checkin/api/auth/line/login?redirect=mobile-checkin" class="login-btn">
                     🟢 เข้าสู่ระบบด้วย LINE
                 </a>
             </div>
@@ -117,6 +117,6 @@
 
     <!-- QR Code Scanner Library -->
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-    <script src="/fingerprintlogs/static/js/mobile-checkin.js"></script>
+    <script src="/qr-checkin/static/js/mobile-checkin.js"></script>
 </body>
 </html>

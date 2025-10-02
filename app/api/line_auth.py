@@ -196,7 +196,7 @@ async def line_callback(
                 <div class="error-icon">❌</div>
                 <h2>การเข้าสู่ระบบล้มเหลว</h2>
                 <p>{error_msg}</p>
-                <a href="/fingerprintlogs/qr-checkin/mobile">ลองอีกครั้ง</a>
+                <a href="/qr-checkin/mobile">ลองอีกครั้ง</a>
             </div>
         </body>
         </html>
@@ -242,7 +242,7 @@ async def line_callback(
         # Redirect to link account page with JWT token
         # JWT is passed via URL parameter and will be stored in localStorage by JavaScript
         link_url = (
-            f"/fingerprintlogs/qr-checkin/link-account"
+            f"/qr-checkin/link-account"
             f"?jwt={jwt_token}"
             f"&line_user_id={line_user_id}"
             f"&display_name={display_name}"

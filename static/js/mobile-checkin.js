@@ -93,7 +93,7 @@
         try {
             showLoading('กำลังตรวจสอบข้อมูล...');
 
-            const response = await fetch('/fingerprintlogs/api/auth/line/verify-token', {
+            const response = await fetch('/qr-checkin/api/auth/line/verify-token', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ jwt_token: jwtToken })
@@ -292,7 +292,7 @@
         showLoading('กำลังบันทึกเวลา...');
 
         try {
-            const response = await fetch('/fingerprintlogs/api/qr-checkin/scan', {
+            const response = await fetch('/qr-checkin/api/qr-checkin/scan', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

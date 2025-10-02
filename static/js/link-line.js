@@ -77,7 +77,7 @@
         try {
             showSection('loadingSection');
 
-            const response = await fetch('/fingerprintlogs/api/auth/line/verify-token', {
+            const response = await fetch('/qr-checkin/api/auth/line/verify-token', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -167,7 +167,7 @@
         elements.submitButton.textContent = '⏳ กำลังเชื่อมต่อ...';
 
         try {
-            const response = await fetch('/fingerprintlogs/api/auth/line/link-account', {
+            const response = await fetch('/qr-checkin/api/auth/line/link-account', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
