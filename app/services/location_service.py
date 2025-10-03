@@ -150,7 +150,7 @@ class LocationService:
             HTTPException: If GPS accuracy is insufficient
         """
         # Check GPS accuracy
-        max_accuracy = 50  # Maximum 50m accuracy required
+        max_accuracy = 300  # Maximum 300m accuracy required
         if user_accuracy and user_accuracy > max_accuracy:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -214,7 +214,7 @@ class LocationService:
             HTTPException: If no QR terminals found or GPS accuracy insufficient
         """
         # Check GPS accuracy
-        max_accuracy = 50
+        max_accuracy = 300  # Maximum 300m accuracy required
         if user_accuracy and user_accuracy > max_accuracy:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

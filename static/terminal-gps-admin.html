@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>จัดการตำแหน่ง GPS - QR Terminal</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin=""/>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Prompt', 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: 400px 1fr;
+            gap: 20px;
+            padding: 30px;
+        }
+
+        .sidebar {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            max-height: calc(100vh - 250px);
+            overflow-y: auto;
+        }
+
+        .sidebar h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.3rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .terminal-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .terminal-card {
+            background: white;
+            border: 2px solid #e1e8ed;
+            border-radius: 10px;
+            padding: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .terminal-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .terminal-card.active {
+            border-color: #667eea;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .terminal-card.active .terminal-info {
+            color: rgba(255,255,255,0.9);
+        }
+
+        .terminal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .terminal-name {
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .terminal-badge {
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+        }
+
+        .terminal-card.active .terminal-badge {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .terminal-info {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .terminal-location {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-top: 5px;
+        }
+
+        .add-terminal-btn {
+            width: 100%;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .add-terminal-btn:hover {
+            background: #5568d3;
+            transform: scale(1.02);
+        }
+
+        .map-section {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        #map {
+            width: 100%;
+            height: 500px;
+            border-radius: 12px 12px 0 0;
+        }
+
+        .map-controls {
+            padding: 20px;
+            background: #f8f9fa;
+            border-top: 2px solid #e1e8ed;
+        }
+
+        .control-group {
+            margin-bottom: 20px;
+        }
+
+        .control-group label {
+            display: block;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+        }
+
+        .control-group input,
+        .control-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .control-group input:focus,
+        .control-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .control-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .gps-display {
+            background: #fff;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'Courier New', monospace;
+            color: #667eea;
+            font-size: 0.95rem;
+        }
+
+        .range-display {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 5px;
+        }
+
+        .range-value {
+            background: #667eea;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-weight: 600;
+            min-width: 80px;
+            text-align: center;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .status-message {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+            font-weight: 500;
+        }
+
+        .status-message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status-message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #667eea;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .office-type-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .office-type-btn {
+            flex: 1;
+            padding: 12px;
+            background: white;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+
+        .office-type-btn:hover {
+            border-color: #667eea;
+        }
+
+        .office-type-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        @media (max-width: 1024px) {
+            .content {
+                grid-template-columns: 1fr;
+            }
+
+            .sidebar {
+                max-height: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📍 จัดการตำแหน่ง GPS - QR Terminal</h1>
+            <p>เลือกตำแหน่งสำหรับสำนักงานใหญ่และสาขา</p>
+        </div>
+
+        <div class="content">
+            <!-- Sidebar - Terminal List -->
+            <div class="sidebar">
+                <h2>🏢 รายการ Terminal</h2>
+                <div id="terminalList" class="terminal-list">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>กำลังโหลดข้อมูล...</p>
+                    </div>
+                </div>
+                <button class="add-terminal-btn" id="addTerminalBtn">
+                    ➕ เพิ่ม QR Terminal
+                </button>
+            </div>
+
+            <!-- Main Map Section -->
+            <div class="map-section">
+                <div id="statusMessage" class="status-message"></div>
+
+                <div id="map"></div>
+
+                <div class="map-controls">
+                    <div class="office-type-selector">
+                        <button class="office-type-btn active" data-type="main">
+                            🏢 สำนักงานใหญ่
+                        </button>
+                        <button class="office-type-btn" data-type="branch">
+                            🏪 สาขา
+                        </button>
+                    </div>
+
+                    <div class="control-group">
+                        <label>📍 ชื่อสถานที่</label>
+                        <input type="text" id="locationName" placeholder="เช่น สำนักงานใหญ่ (กรุงเทพฯ)" />
+                    </div>
+
+                    <div class="control-row">
+                        <div class="control-group">
+                            <label>🌐 ละติจูด (Latitude)</label>
+                            <input type="text" id="latitude" class="gps-display" readonly placeholder="คลิกบนแผนที่" />
+                        </div>
+                        <div class="control-group">
+                            <label>🌐 ลองจิจูด (Longitude)</label>
+                            <input type="text" id="longitude" class="gps-display" readonly placeholder="คลิกบนแผนที่" />
+                        </div>
+                    </div>
+
+                    <div class="control-group">
+                        <label>📏 รัศมีการตรวจสอบ (เมตร)</label>
+                        <div class="range-display">
+                            <input type="range" id="radiusSlider" min="50" max="500" value="200" step="10" style="flex: 1;" />
+                            <span class="range-value" id="radiusValue">200m</span>
+                        </div>
+                    </div>
+
+                    <div class="action-buttons">
+                        <button class="btn btn-primary" id="saveBtn" disabled>
+                            💾 บันทึกตำแหน่ง
+                        </button>
+                        <button class="btn btn-secondary" id="resetBtn">
+                            🔄 รีเซ็ต
+                        </button>
+                        <button class="btn btn-danger" id="deleteBtn" disabled>
+                            🗑️ ลบตำแหน่ง
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+
+    <script src="/fingerprintlogs/static/js/terminal-gps-admin.js"></script>
+</body>
+</html>

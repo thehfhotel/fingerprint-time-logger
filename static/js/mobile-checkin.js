@@ -78,12 +78,15 @@
         const urlToken = urlParams.get('jwt');
 
         if (urlToken) {
+            console.log('[Mobile Check-in] Token found in URL, saving to localStorage');
             localStorage.setItem('line_jwt_token', urlToken);
             window.history.replaceState({}, document.title, window.location.pathname);
             return urlToken;
         }
 
-        return localStorage.getItem('line_jwt_token');
+        const storedToken = localStorage.getItem('line_jwt_token');
+        console.log('[Mobile Check-in] Token from localStorage:', storedToken ? 'Found' : 'Not found');
+        return storedToken;
     }
 
     /**
@@ -93,13 +96,18 @@
         try {
             showLoading('กำลังตรวจสอบข้อมูล...');
 
+            console.log('[Mobile Check-in] Sending verify request with token:', jwtToken ? jwtToken.substring(0, 20) + '...' : 'NULL');
+            const requestBody = { token: jwtToken };
+            console.log('[Mobile Check-in] Request body:', JSON.stringify(requestBody).substring(0, 100));
+
             const response = await fetch('/qr-checkin/api/auth/line/verify-token', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jwt_token: jwtToken })
+                body: JSON.stringify(requestBody)
             });
 
             const data = await response.json();
+            console.log('[Mobile Check-in] Response status:', response.status, 'Data:', data);
 
             if (response.ok && data.valid) {
                 userProfile = data;
@@ -252,7 +260,7 @@
         if (!scanning || !elements.videoElement.videoWidth) return;
 
         const canvas = elements.canvasElement;
-        const context = canvas.getContext('2d');
+        const context = canvas.getContext('2d', { willReadFrequently: true });
 
         canvas.width = elements.videoElement.videoWidth;
         canvas.height = elements.videoElement.videoHeight;
@@ -308,11 +316,19 @@
 
             if (response.ok && data.success) {
                 console.log('[Check-in] Success:', data);
+
+                // DEBUG: Log complete response structure
+                console.log('[DEBUG] Full response data:', JSON.stringify(data, null, 2));
+                console.log('[DEBUG] location_validation object:', data.location_validation);
+                console.log('[DEBUG] location_validation keys:', Object.keys(data.location_validation || {}));
+                console.log('[DEBUG] Trying to access location_name:', data.location_validation?.location_name);
+                console.log('[DEBUG] Trying to access terminal_location:', data.location_validation?.terminal_location);
+
                 hideLoading();
 
                 // Format details
                 const details = `
-                    <div><strong>📍 สถานที่:</strong> ${data.location_validation.terminal_location.location_name}</div>
+                    <div><strong>📍 สถานที่:</strong> ${data.location_validation.location_name}</div>
                     <div><strong>🕐 เวลา:</strong> ${formatDateTime(data.attendance_record.timestamp)}</div>
                     <div><strong>📏 ระยะทาง:</strong> ${data.location_validation.distance}m</div>
                 `;
@@ -340,7 +356,7 @@
      */
     async function loadRecentCheckIns() {
         try {
-            const response = await fetch(`/fingerprintlogs/api/attendance/?badge=${userProfile.employee_badge}&limit=5`);
+            const response = await fetch(`/qr-checkin/api/attendance/?badge=${userProfile.employee_badge}&limit=5`);
             const data = await response.json();
 
             if (response.ok && data.records && data.records.length > 0) {
@@ -444,11 +460,13 @@
     function formatDateTime(dateString) {
         const date = new Date(dateString);
         return date.toLocaleString('th-TH', {
+            timeZone: 'Asia/Bangkok',
             year: 'numeric',
             month: 'short',
             day: 'numeric',
             hour: '2-digit',
-            minute: '2-digit'
+            minute: '2-digit',
+            second: '2-digit'
         });
     }
 

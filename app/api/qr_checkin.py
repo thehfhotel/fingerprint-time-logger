@@ -128,13 +128,14 @@ async def scan_qr_code(
 
         # Step 5: Create AttendanceRecord
         attendance_record = AttendanceRecord(
-            badge_number=employee.badge_number,
+            employee_badge_number=employee.badge_number,
             timestamp=datetime.now(timezone.utc),
             device_id=terminal_id,
+            punch_type=0,  # 0 = check_in (auto-determine based on time)
             sync_status="synced",  # QR check-in is always synced
-            metadata=f"QR Check-in at {location_validation['terminal_location']['location_name']}, "
-                    f"GPS: {request.latitude},{request.longitude}, "
-                    f"Distance: {location_validation['distance']}m"
+            validation_message=f"QR Check-in at {location_validation['terminal_location']['location_name']}, "
+                             f"GPS: {request.latitude},{request.longitude}, "
+                             f"Distance: {location_validation['distance']}m"
         )
 
         db.add(attendance_record)
@@ -142,13 +143,13 @@ async def scan_qr_code(
         db.refresh(attendance_record)
 
         # Step 6: Return success response
-        return QRScanResponse(
+        response_data = QRScanResponse(
             success=True,
             message=f"บันทึกเวลาสำเร็จ ที่ {location_validation['terminal_location']['location_name']}",
             attendance_record={
                 "id": attendance_record.id,
-                "badge_number": attendance_record.badge_number,
-                "timestamp": attendance_record.timestamp.isoformat(),
+                "badge_number": attendance_record.employee_badge_number,
+                "timestamp": attendance_record.timestamp.replace(tzinfo=timezone.utc).isoformat(),
                 "employee_name": employee.display_name,
                 "location": location_validation['terminal_location']['location_name']
             },
@@ -158,6 +159,14 @@ async def scan_qr_code(
                 "message": location_validation["message"]
             }
         )
+
+        # DEBUG: Log response structure
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[QR CHECK-IN DEBUG] Response structure: {response_data.model_dump()}")
+        logger.info(f"[QR CHECK-IN DEBUG] location_validation keys: {list(response_data.location_validation.keys())}")
+
+        return response_data
 
     except HTTPException as e:
         raise e

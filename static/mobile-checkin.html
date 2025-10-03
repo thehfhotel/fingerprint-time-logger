@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>QR Check-in</title>
     <link rel="stylesheet" href="/qr-checkin/static/css/mobile-checkin.css">
 </head>
@@ -34,7 +36,7 @@
                 <h2>ยังไม่ได้เชื่อมต่อบัญชี</h2>
                 <p>คุณต้องเชื่อมต่อบัญชี LINE กับระบบก่อนใช้งาน QR Check-in</p>
                 <p class="help-text">💡 กรุณาติดต่อแอดมินเพื่อขอรหัสเชื่อมต่อ 6 หลัก</p>
-                <a href="./link-line" class="link-btn">
+                <a href="./link-account" class="link-btn">
                     🔗 เชื่อมต่อบัญชี LINE
                 </a>
             </div>
@@ -117,6 +119,6 @@
 
     <!-- QR Code Scanner Library -->
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-    <script src="/qr-checkin/static/js/mobile-checkin.js"></script>
+    <script src="/qr-checkin/static/js/mobile-checkin.js?v=20251004-6&nocache=true"></script>
 </body>
 </html>
