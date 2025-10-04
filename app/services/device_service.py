@@ -223,18 +223,22 @@ class SimpleDeviceService:
 
             try:
                 for record in records:
-                    # Check if record already exists
+                    # ZKTeco device returns Bangkok time (UTC+7), convert to UTC first
+                    bangkok_time = record['timestamp']
+                    utc_time = bangkok_time.replace(tzinfo=timezone(timedelta(hours=7))).astimezone(timezone.utc).replace(tzinfo=None)
+
+                    # Check if record already exists (using UTC time)
                     existing = db.query(AttendanceRecord).filter(
                         AttendanceRecord.employee_badge_number == record['user_id'],
-                        AttendanceRecord.timestamp == record['timestamp']
+                        AttendanceRecord.timestamp == utc_time  # Check against UTC time
                     ).first()
-                    
+
                     if not existing:
                         # Create new record
                         new_record = AttendanceRecord(
                             employee_badge_number=record['user_id'],
                             device_id=device.id,
-                            timestamp=record['timestamp'],
+                            timestamp=utc_time,  # Store as UTC
                             punch_type=record['punch_type'],
                             status=record['status'],
                             sync_status='synced'

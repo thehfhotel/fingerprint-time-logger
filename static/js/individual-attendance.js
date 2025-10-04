@@ -1,5 +1,5 @@
-// Individual Attendance Page JavaScript - Cache Bust v2.8-name-fix-' + Date.now()
-console.log('🚀 Individual Attendance JS Loaded - Version:', '2.8-name-fix-' + Date.now());
+// Individual Attendance Page JavaScript - Cache Bust v2.9-timezone-fix-' + Date.now()
+console.log('🚀 Individual Attendance JS Loaded - Version:', '2.9-timezone-fix-' + Date.now());
 
 class IndividualAttendanceManager {
     constructor() {
@@ -183,25 +183,26 @@ class IndividualAttendanceManager {
             return;
         }
 
-        // Group attendance records by date
+        // Group attendance records by date (Bangkok timezone)
         const groupedData = {};
         this.attendanceData.forEach(record => {
-            // Use timestamp field from actual API response
-            const date = record.timestamp ? record.timestamp.split('T')[0] : null;
+            if (record.timestamp) {
+                // Convert UTC timestamp to Bangkok date
+                const bangkokDate = new Date(record.timestamp).toLocaleDateString('en-CA', {
+                    timeZone: 'Asia/Bangkok'
+                }); // Returns YYYY-MM-DD format
 
-            if (date) {
-                if (!groupedData[date]) {
-                    groupedData[date] = [];
+                if (!groupedData[bangkokDate]) {
+                    groupedData[bangkokDate] = [];
                 }
 
-                // Add timestamp as punch time
-                if (record.timestamp) {
-                    const time = new Date(record.timestamp).toLocaleTimeString('th-TH', {
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    });
-                    groupedData[date].push(time);
-                }
+                // Add timestamp as punch time in Bangkok timezone
+                const time = new Date(record.timestamp).toLocaleTimeString('th-TH', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    timeZone: 'Asia/Bangkok'
+                });
+                groupedData[bangkokDate].push(time);
             }
         });
 
