@@ -21,6 +21,60 @@ const gpsState = {
 };
 
 // ============================================================================
+// LocalStorage Cache Management
+// ============================================================================
+
+const GPS_CACHE_KEY = `qr_terminal_gps_${TERMINAL_ID}`;
+const GPS_CACHE_VERSION = '1.0';
+
+function cacheGPSData(gpsData) {
+    try {
+        const cacheData = {
+            version: GPS_CACHE_VERSION,
+            terminal_id: TERMINAL_ID,
+            gps: gpsData,
+            cached_at: new Date().toISOString()
+        };
+        localStorage.setItem(GPS_CACHE_KEY, JSON.stringify(cacheData));
+        console.log('[GPS Cache] GPS data cached to localStorage:', gpsData);
+    } catch (error) {
+        console.error('[GPS Cache] Failed to cache GPS data:', error);
+    }
+}
+
+function getCachedGPSData() {
+    try {
+        const cached = localStorage.getItem(GPS_CACHE_KEY);
+        if (!cached) return null;
+
+        const cacheData = JSON.parse(cached);
+
+        // Validate cache structure
+        if (!cacheData.gps || cacheData.terminal_id !== TERMINAL_ID) {
+            console.warn('[GPS Cache] Invalid cache data, clearing...');
+            clearGPSCache();
+            return null;
+        }
+
+        console.log('[GPS Cache] GPS data loaded from localStorage:', cacheData.gps);
+        return cacheData.gps;
+    } catch (error) {
+        console.error('[GPS Cache] Failed to read cached GPS data:', error);
+        clearGPSCache();
+        return null;
+    }
+}
+
+function clearGPSCache() {
+    try {
+        localStorage.removeItem(GPS_CACHE_KEY);
+        console.log('[GPS Cache] GPS cache cleared');
+    } catch (error) {
+        console.error('[GPS Cache] Failed to clear GPS cache:', error);
+    }
+}
+
+// ============================================================================
 // Modal Management
 // ============================================================================
 
@@ -194,6 +248,32 @@ function updateGPSRadiusCircle() {
 // Load Terminal GPS Data
 // ============================================================================
 
+function loadGPSDataToForm(gps) {
+    if (!gps || !gps.latitude || !gps.longitude) return;
+
+    console.log('[GPS Form] Loading GPS data to form:', gps);
+
+    // Set location
+    setGPSLocation(gps.latitude, gps.longitude);
+
+    // Set location name
+    document.getElementById('gpsLocationName').value = gps.location_name || '';
+
+    // Set radius
+    const radius = gps.radius || 200;
+    document.getElementById('gpsRadiusSlider').value = radius;
+    document.getElementById('gpsRadiusValue').textContent = radius;
+
+    // Set office type
+    gpsState.officeType = gps.office_type || 'main';
+    updateOfficeTypeUI();
+
+    // Enable delete button
+    document.getElementById('gpsDeleteBtn').disabled = false;
+
+    gpsState.hasChanges = false;
+}
+
 async function loadTerminalGPSData() {
     console.log(`[GPS Modal] Loading GPS data for terminal ${TERMINAL_ID}`);
 
@@ -208,7 +288,15 @@ async function loadTerminalGPSData() {
 
         if (!terminal) {
             console.warn(`[GPS Modal] Terminal ${TERMINAL_ID} not found`);
-            showGPSStatus('⚠️ ไม่พบข้อมูล Terminal', 'warning');
+            // Try to use cached data as fallback
+            const cachedGPS = getCachedGPSData();
+            if (cachedGPS) {
+                console.log('[GPS Modal] Using cached GPS data as fallback');
+                loadGPSDataToForm(cachedGPS);
+                currentGPSData = cachedGPS;
+            } else {
+                showGPSStatus('⚠️ ไม่พบข้อมูล Terminal', 'warning');
+            }
             return;
         }
 
@@ -225,27 +313,9 @@ async function loadTerminalGPSData() {
 
         if (gps.latitude && gps.longitude) {
             console.log('[GPS Modal] Existing GPS data found:', gps);
-
-            // Set location
-            setGPSLocation(gps.latitude, gps.longitude);
-
-            // Set location name
-            document.getElementById('gpsLocationName').value = gps.location_name || '';
-
-            // Set radius
-            const radius = gps.radius || 200;
-            document.getElementById('gpsRadiusSlider').value = radius;
-            document.getElementById('gpsRadiusValue').textContent = radius;
-
-            // Set office type
-            gpsState.officeType = gps.office_type || 'main';
-            updateOfficeTypeUI();
-
-            // Enable delete button
-            document.getElementById('gpsDeleteBtn').disabled = false;
-
-            gpsState.hasChanges = false;
-
+            loadGPSDataToForm(gps);
+            // Cache GPS data to localStorage
+            cacheGPSData(gps);
         } else {
             console.log('[GPS Modal] No GPS data configured yet');
             showGPSStatus('ℹ️ ยังไม่มีข้อมูล GPS กรุณาคลิกบนแผนที่เพื่อตั้งค่า', 'info');
@@ -335,6 +405,9 @@ async function saveGPSConfiguration() {
         // Enable delete button
         document.getElementById('gpsDeleteBtn').disabled = false;
 
+        // Cache GPS data to localStorage
+        cacheGPSData(gpsData);
+
         // Update footer if exists
         updateTerminalFooter(gpsData);
 
@@ -396,6 +469,9 @@ async function deleteGPSConfiguration() {
 
         console.log('[GPS Modal] GPS configuration deleted successfully');
         showGPSStatus('✅ ลบตำแหน่ง GPS สำเร็จ', 'success');
+
+        // Clear localStorage cache
+        clearGPSCache();
 
         // Reset form
         resetGPSForm();
@@ -482,11 +558,36 @@ function updateTerminalFooter(gpsData) {
 }
 
 // ============================================================================
+// Initialize GPS Data from Cache
+// ============================================================================
+
+function initializeGPSFromCache() {
+    console.log('[GPS Init] Attempting to restore GPS data from cache');
+
+    const cachedGPS = getCachedGPSData();
+    if (cachedGPS && cachedGPS.latitude && cachedGPS.longitude) {
+        console.log('[GPS Init] Cached GPS data found, updating footer');
+        currentGPSData = cachedGPS;
+
+        // Update footer display immediately
+        updateTerminalFooter(cachedGPS);
+
+        return true;
+    } else {
+        console.log('[GPS Init] No cached GPS data available');
+        return false;
+    }
+}
+
+// ============================================================================
 // Event Listeners
 // ============================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log('[GPS Modal] Initializing GPS configuration module');
+
+    // Restore GPS data from cache on page load
+    initializeGPSFromCache();
 
     // GPS config button
     const gpsConfigButton = document.getElementById('gpsConfigButton');
