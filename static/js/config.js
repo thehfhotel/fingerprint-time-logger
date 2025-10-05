@@ -95,7 +95,7 @@ class ConfigManager {
         const [endpointPath, queryString] = cleanEndpoint.split('?');
 
         // Add trailing slash for FastAPI routes (except for specific endpoints)
-        const noSlashEndpoints = ['devices/time', 'devices/health', 'auto-import/status', 'devices/sync-time', 'refresh', 'attendance/summary'];
+        const noSlashEndpoints = ['devices/time', 'devices/health', 'auto-import/status', 'devices/sync-time', 'refresh', 'attendance/summary', 'admin/line-codes/verify-passcode', 'admin/line-codes/generate', 'admin/line-codes/regenerate', 'admin/line-codes/unlink'];
         // Also exclude endpoints that match patterns like employees/{id}/status
         const statusEndpointPattern = /^employees\/\d+\/status$/;
         const endpointWithoutSlash = endpointPath ? endpointPath.replace(/\/$/, '') : '';
