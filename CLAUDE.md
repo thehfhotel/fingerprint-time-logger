@@ -78,18 +78,29 @@ python3 -m pytest tests/unit/ -n auto   # Parallel unit tests only
 
 ## Working Features
 
+### Core Attendance System
 ✅ **Device connectivity** - ZKTeco fingerprint device integration
 ✅ **Attendance tracking** - Real-time punch data collection
-✅ **Employee management** - Unified employee records with Thai/English names
-✅ **Nickname management** - Easy display name updates
-✅ **Status management** - Employee active/inactive and hidden/visible toggles
-✅ **CSV export** - Comprehensive data export capabilities
+✅ **Auto-import** - Background fingerprint log synchronization (30-minute intervals)
 ✅ **Dashboard UI** - Real-time web dashboard with WebSocket updates
 ✅ **Calendar view** - Monthly attendance visualization
-✅ **Auto-import** - Background fingerprint log synchronization
+
+### Employee Management
+✅ **Employee management** - Unified employee records with Thai/English names
+✅ **Nickname management** - Easy display name updates
+✅ **Status management** - Active/inactive and hidden/visible toggles
+
+### QR Check-in System
+✅ **LINE authentication** - OAuth integration with persistent login
+✅ **Smart OAuth callback** - Auto-redirect for linked accounts
+✅ **QR terminal GPS** - Google Maps integration for location management
+✅ **Multi-office support** - Main office and branch office GPS configuration
+✅ **GPS persistence** - Browser localStorage caching for instant availability
+
+### Data Management
+✅ **CSV export** - Comprehensive data export capabilities
 ✅ **System monitoring** - Health checks and diagnostics
-✅ **GPS location management** - Google Maps integration for QR terminal locations
-✅ **Multi-office support** - Main office and branch office GPS configuration  
+✅ **Bangkok timezone** - Consistent UTC+7 handling across all features  
 
 ## API Endpoints
 
@@ -143,25 +154,25 @@ ZKTECO_HOST=192.168.100.209
 ZKTECO_PORT=4370
 ```
 
-## Recent Improvements
+## Recent Improvements (October 2025)
 
-### Unit Test Parallelization (Jan 2025)
-- **70% faster test execution**: Sequential 2m19s → Parallel 41s
-- **8-worker auto-detection**: Optimal CPU utilization with `-n auto`
-- **Perfect test isolation**: In-memory SQLite databases per test
-- **Zero configuration conflicts**: Existing fixtures work seamlessly
+### LINE Authentication & QR Check-in
+- **Persistent Login**: JWT tokens remain in localStorage after successful linking
+- **Smart OAuth Callback**: Auto-redirect based on account link status
+- **GPS Persistence**: Browser localStorage caching for instant location availability
+- **Timezone Consistency**: Fixed Bangkok UTC+7 handling across individual attendance and QR check-in
 
-### Codebase Cleanup (Jan 2025)
-- **35% reduction** in backend code complexity
-- **Removed unused code**: 42 unused API endpoints, models, and schemas
+### Testing & Performance
+- **323 Unit Tests**: Complete unit test coverage with zero failures
+- **70% faster execution**: Parallel testing with pytest-xdist (Sequential 2m19s → Parallel 41s)
+- **E2E Framework**: Playwright-based browser automation for critical workflows
+- **Test Consolidation**: Enhanced test-suite-console.sh for comprehensive testing
+
+### Architecture & Build
+- **Docker Bake Build**: 30-50% faster builds with advanced caching
+- **Codebase Cleanup**: 35% reduction in backend complexity
 - **Unified Employee Model**: Consolidated Employee and EmployeeThaiName tables
 - **Simplified Architecture**: Eliminated enterprise complexity for focused functionality
-
-### Key Features Added
-- **Auto-Import System**: 30-minute background sync of fingerprint logs
-- **ZK Device Integration**: Seamless device data integration with employee management
-- **Employee Status Features**: Active/inactive and hidden/visible toggles
-- **Enhanced Monitoring**: Comprehensive system health checks and diagnostics
 
 ## Docker Build Optimization
 
@@ -220,10 +231,22 @@ docker buildx bake fingerprint-logger-dev # Development target
 
 ## Documentation
 
+### Core Documentation
 - **API Reference**: `docs/API_REFERENCE.md` - Complete API documentation
-- **Database Schema**: `database/database_schema.md` - ERD and table documentation
 - **System Architecture**: `docs/SYSTEM_ARCHITECTURE.md` - Technical architecture
 - **Developer Guide**: `docs/DEVELOPER_GUIDE.md` - Setup and development guide
+- **Database Schema**: `database/database_schema.md` - ERD and table documentation
+
+### Deployment & Operations
+- **Deployment Guide**: `docs/DEPLOYMENT_GUIDE.md` - Production deployment procedures
+- **Nginx Deployment**: `docs/NGINX_DEPLOYMENT.md` - Reverse proxy setup
+- **GPS Location Setup**: `docs/GPS_LOCATION_SETUP.md` - QR terminal GPS configuration
+- **Troubleshooting**: `docs/TROUBLESHOOTING.md` - Common issues and solutions
+
+### Development
+- **Commit Strategy**: `COMMIT_STRATEGY.md` - Git commit guidelines
+- **Test Plan**: `tests/TEST_PLAN_PERSISTENT_LOGIN.md` - LINE persistent login testing
+- **Changelog**: `docs/CHANGELOG.md` - Version history and updates
 
 ## Testing
 
