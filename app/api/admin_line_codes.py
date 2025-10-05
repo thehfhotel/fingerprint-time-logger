@@ -129,7 +129,7 @@ async def generate_linking_code(
     Generate 6-digit LINE linking code for employee
     - One code per badge number
     - Code expires after 24 hours
-    - Only unlinked employees can have codes
+    - If already linked: unlinks old account and generates new code for re-linking
     """
     verify_admin_passcode(request.passcode)
 
@@ -144,15 +144,24 @@ async def generate_linking_code(
             detail=f"ไม่พบพนักงาน badge number: {request.badge_number}"
         )
 
-    # Check if already linked
-    if employee.line_user_id:
-        raise HTTPException(
-            status_code=400,
-            detail=f"พนักงาน {employee.display_name} เชื่อมต่อ LINE แล้ว"
-        )
+    # Store old LINE info if re-linking
+    old_line_user_id = None
+    old_line_display_name = None
+    is_relink = False
 
-    # Check if existing code is still valid (not expired)
-    if employee.line_linking_code and employee.line_linking_code_generated_at:
+    # Check if already linked - if so, unlink for re-linking
+    if employee.line_user_id:
+        is_relink = True
+        old_line_user_id = employee.line_user_id
+        old_line_display_name = employee.line_display_name
+
+        # Unlink old account
+        employee.line_user_id = None
+        employee.line_display_name = None
+        employee.line_picture_url = None
+
+    # Check if existing code is still valid (not expired) and not re-linking
+    if not is_relink and employee.line_linking_code and employee.line_linking_code_generated_at:
         if not is_code_expired(employee.line_linking_code_generated_at):
             return {
                 "success": True,
@@ -161,7 +170,8 @@ async def generate_linking_code(
                 "display_name": employee.display_name,
                 "linking_code": employee.line_linking_code,
                 "generated_at": employee.line_linking_code_generated_at.isoformat(),
-                "expires_at": (employee.line_linking_code_generated_at + timedelta(hours=24)).isoformat()
+                "expires_at": (employee.line_linking_code_generated_at + timedelta(hours=24)).isoformat(),
+                "is_relink": False
             }
 
     # Generate unique 6-digit code
@@ -189,14 +199,23 @@ async def generate_linking_code(
     db.commit()
     db.refresh(employee)
 
+    # Different messages for new link vs re-link
+    if is_relink:
+        message = f"ยกเลิกการเชื่อมต่อเดิม ({old_line_display_name}) และสร้างรหัสใหม่สำหรับ {employee.display_name} สำเร็จ"
+    else:
+        message = f"สร้างรหัสเชื่อมต่อสำหรับ {employee.display_name} สำเร็จ"
+
     return {
         "success": True,
-        "message": f"สร้างรหัสเชื่อมต่อสำหรับ {employee.display_name} สำเร็จ",
+        "message": message,
         "badge_number": employee.badge_number,
         "display_name": employee.display_name,
         "linking_code": employee.line_linking_code,
         "generated_at": employee.line_linking_code_generated_at.isoformat(),
-        "expires_at": (employee.line_linking_code_generated_at + timedelta(hours=24)).isoformat()
+        "expires_at": (employee.line_linking_code_generated_at + timedelta(hours=24)).isoformat(),
+        "is_relink": is_relink,
+        "old_line_user_id": old_line_user_id,
+        "old_line_display_name": old_line_display_name
     }
 
 

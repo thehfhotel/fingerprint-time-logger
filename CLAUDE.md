@@ -78,16 +78,18 @@ python3 -m pytest tests/unit/ -n auto   # Parallel unit tests only
 
 ## Working Features
 
-✅ **Device connectivity** - ZKTeco fingerprint device integration  
-✅ **Attendance tracking** - Real-time punch data collection  
-✅ **Employee management** - Unified employee records with Thai/English names  
-✅ **Nickname management** - Easy display name updates  
-✅ **Status management** - Employee active/inactive and hidden/visible toggles  
-✅ **CSV export** - Comprehensive data export capabilities  
-✅ **Dashboard UI** - Real-time web dashboard with WebSocket updates  
-✅ **Calendar view** - Monthly attendance visualization  
-✅ **Auto-import** - Background fingerprint log synchronization  
-✅ **System monitoring** - Health checks and diagnostics  
+✅ **Device connectivity** - ZKTeco fingerprint device integration
+✅ **Attendance tracking** - Real-time punch data collection
+✅ **Employee management** - Unified employee records with Thai/English names
+✅ **Nickname management** - Easy display name updates
+✅ **Status management** - Employee active/inactive and hidden/visible toggles
+✅ **CSV export** - Comprehensive data export capabilities
+✅ **Dashboard UI** - Real-time web dashboard with WebSocket updates
+✅ **Calendar view** - Monthly attendance visualization
+✅ **Auto-import** - Background fingerprint log synchronization
+✅ **System monitoring** - Health checks and diagnostics
+✅ **GPS location management** - Google Maps integration for QR terminal locations
+✅ **Multi-office support** - Main office and branch office GPS configuration  
 
 ## API Endpoints
 
@@ -104,6 +106,7 @@ python3 -m pytest tests/unit/ -n auto   # Parallel unit tests only
 - **Device Status**: `/device-status` - Device connectivity
 - **Nickname Management**: `/nickname-management` - Employee names
 - **Export**: `/export` - Data export interface
+- **GPS Terminal Admin**: `/admin/terminal-gps` - QR terminal GPS location management with Google Maps
 - **API Documentation**: `/docs` - Interactive Swagger UI
 
 ## Development Commands

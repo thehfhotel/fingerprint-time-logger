@@ -328,6 +328,11 @@ async def serve_qr_terminal():
     """Serve kiosk QR terminal display page"""
     return serve_html_with_cache_control("static/qr-terminal.html")
 
+@fingerprint_app.get("/admin/terminal-gps")
+async def serve_terminal_gps_admin():
+    """Serve QR terminal GPS location admin page"""
+    return serve_html_with_cache_control("static/terminal-gps-admin.html")
+
 @fingerprint_app.get("/health")
 async def health_check():
     return {"status": "healthy", "server": "unified"}

@@ -260,14 +260,14 @@
                 let lineCodeCell = '';
                 if (adminMode) {
                     if (employee.line_user_id) {
-                        // Already linked
+                        // Already linked - allow re-linking with new code
                         lineCodeCell = `
                             <td>
                                 <span style="color: #28a745; font-weight: bold;">✅ เชื่อมต่อแล้ว</span><br>
                                 <span style="font-size: 12px; color: #666;">${employee.line_display_name || 'N/A'}</span><br>
-                                <button class="btn btn-secondary" style="font-size: 12px; margin-top: 5px;"
-                                        onclick="unlinkLineAccount('${employee.badge_number}', '${employee.display_name}')">
-                                    ยกเลิกการเชื่อมต่อ
+                                <button class="btn btn-primary" style="font-size: 12px; margin-top: 5px;"
+                                        onclick="generateLinkingCode('${employee.badge_number}')">
+                                    🔄 สร้างรหัสเชื่อมต่อใหม่
                                 </button>
                             </td>
                         `;
@@ -616,7 +616,7 @@
             }
         }
 
-        // Generate LINE linking code
+        // Generate LINE linking code (handles both new and re-linking)
         async function generateLinkingCode(badgeNumber) {
             try {
                 await appConfig.loadConfig();
@@ -638,8 +638,14 @@
 
                 const result = await response.json();
 
-                // Show code in modal or alert
-                alert(`รหัสเชื่อมต่อ LINE สำหรับ ${result.display_name}:\n\n${result.linking_code}\n\n(หมดอายุใน 24 ชั่วโมง)`);
+                // Show different messages for new link vs re-link
+                let message = `รหัสเชื่อมต่อ LINE สำหรับ ${result.display_name}:\n\n${result.linking_code}\n\n(หมดอายุใน 24 ชั่วโมง)`;
+
+                if (result.is_relink) {
+                    message = `🔄 ยกเลิกการเชื่อมต่อเดิม\n(${result.old_line_display_name})\n\nรหัสใหม่สำหรับ ${result.display_name}:\n\n${result.linking_code}\n\n(หมดอายุใน 24 ชั่วโมง)`;
+                }
+
+                alert(message);
 
                 // Refresh admin stats
                 await loadAdminStats();

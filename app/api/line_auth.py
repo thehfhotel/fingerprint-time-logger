@@ -127,7 +127,8 @@ async def line_callback(
     code: Optional[str] = Query(None),
     state: Optional[str] = Query(None),
     error: Optional[str] = Query(None),
-    error_description: Optional[str] = Query(None)
+    error_description: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
 ):
     """
     Handle LINE OAuth callback
@@ -230,24 +231,38 @@ async def line_callback(
         display_name = profile.get("displayName", "ผู้ใช้ LINE")
         picture_url = profile.get("pictureUrl", "")
 
-        # Create JWT token for this LINE user session
-        # Token contains LINE user ID and profile data for link-account page
-        jwt_token = line_auth_service.create_jwt_token(
-            line_user_id=line_user_id,
-            employee_badge=None,  # Not yet linked to employee
-            display_name=display_name,
-            picture_url=picture_url
-        )
+        # Check if this LINE user is already linked to an employee
+        existing_employee = db.query(Employee).filter(
+            Employee.line_user_id == line_user_id
+        ).first()
 
-        # Redirect to link account page with JWT token
-        # JWT is passed via URL parameter and will be stored in localStorage by JavaScript
-        link_url = (
-            f"/qr-checkin/link-account"
-            f"?jwt={jwt_token}"
-            f"&line_user_id={line_user_id}"
-            f"&display_name={display_name}"
-            f"&picture_url={picture_url}"
-        )
+        # Create JWT token with employee_badge if already linked
+        if existing_employee:
+            jwt_token = line_auth_service.create_jwt_token(
+                line_user_id=line_user_id,
+                employee_badge=existing_employee.badge_number,
+                display_name=display_name,
+                picture_url=picture_url
+            )
+            # Already linked - redirect to mobile check-in
+            redirect_url = f"/qr-checkin/mobile?jwt={jwt_token}"
+        else:
+            # Not yet linked - redirect to link account page
+            jwt_token = line_auth_service.create_jwt_token(
+                line_user_id=line_user_id,
+                employee_badge=None,
+                display_name=display_name,
+                picture_url=picture_url
+            )
+            redirect_url = (
+                f"/qr-checkin/link-account"
+                f"?jwt={jwt_token}"
+                f"&line_user_id={line_user_id}"
+                f"&display_name={display_name}"
+                f"&picture_url={picture_url}"
+            )
+
+        link_url = redirect_url
 
         html_content = f"""
         <!DOCTYPE html>
@@ -505,16 +520,36 @@ async def verify_token(request: VerifyTokenRequest):
         token: JWT token to verify
 
     Returns:
-        Token payload if valid
+        Token validation with employee badge and LINE profile data
 
     Raises:
         401: Invalid or expired token
     """
     try:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[verify-token] Received request: {request}")
+        logger.info(f"[verify-token] Token value: {request.token[:20] if request.token else 'None'}...")
+
         payload = line_auth_service.verify_jwt_token(request.token)
-        return {
+
+        # Return structure expected by mobile-checkin.js
+        result = {
             "valid": True,
-            "payload": payload
+            "employee_badge": payload.get("employee_badge"),  # None if not linked
+            "line_profile": {
+                "user_id": payload.get("line_user_id"),
+                "display_name": payload.get("display_name"),
+                "picture_url": payload.get("picture_url")
+            },
+            "payload": payload  # Keep original payload for backward compatibility
         }
+        logger.info(f"[verify-token] Returning: valid=True, employee_badge={result['employee_badge']}")
+        return result
     except HTTPException as e:
         raise e
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"[verify-token] Unexpected error: {str(e)}")
+        raise

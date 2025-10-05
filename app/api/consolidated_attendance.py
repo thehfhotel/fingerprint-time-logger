@@ -3,7 +3,7 @@ Consolidated Attendance API - All attendance operations in one place
 Replaces: attendance.py, attendance_calendar.py, calendar_api.py, simple_calendar.py
 """
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse
@@ -46,7 +46,7 @@ async def get_attendance_records(
             record_list.append({
                 "id": record.id,
                 "employee_badge_number": record.employee_badge_number,
-                "timestamp": record.timestamp,
+                "timestamp": record.timestamp.replace(tzinfo=timezone.utc).isoformat() if record.timestamp else None,
                 "punch_type": record.punch_type,
                 "status": record.status,
                 "device_id": record.device_id,
@@ -151,7 +151,7 @@ async def get_employee_attendance(
             "records": [
                 {
                     "id": record.id,
-                    "timestamp": record.timestamp,
+                    "timestamp": record.timestamp.replace(tzinfo=timezone.utc).isoformat() if record.timestamp else None,
                     "punch_type": record.punch_type,
                     "status": record.status,
                     "device_id": record.device_id
@@ -248,7 +248,7 @@ async def get_today_attendance():
             "records": [
                 {
                     "employee_badge": record.employee_badge_number,
-                    "timestamp": record.timestamp,
+                    "timestamp": record.timestamp.replace(tzinfo=timezone.utc).isoformat() if record.timestamp else None,
                     "punch_type": record.punch_type,
                     "status": record.status
                 }

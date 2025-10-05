@@ -34,6 +34,8 @@ class DeviceUpdate(BaseModel):
     port: Optional[int] = None
     password: Optional[int] = None
     is_active: Optional[bool] = None
+    device_type: Optional[str] = None
+    device_metadata: Optional[str] = None  # JSON string for GPS and other metadata
 
 
 # ============================================================================
@@ -45,19 +47,23 @@ async def get_devices(db: Session = Depends(get_db)):
     """Get all devices"""
     try:
         devices = db.query(Device).all()
-        return [
-            {
-                "id": device.id,
-                "name": device.name,
-                "ip_address": device.ip_address,
-                "port": device.port,
-                "password": device.password,
-                "is_active": device.is_active,
-                "last_sync": device.last_sync.isoformat() if device.last_sync else None,
-                "created_at": device.created_at.isoformat() if device.created_at else None
-            }
-            for device in devices
-        ]
+        return {
+            "devices": [
+                {
+                    "id": device.id,
+                    "name": device.name,
+                    "ip_address": device.ip_address,
+                    "port": device.port,
+                    "password": device.password,
+                    "is_active": device.is_active,
+                    "device_type": device.device_type,
+                    "device_metadata": device.device_metadata,
+                    "last_sync": device.last_sync.isoformat() if device.last_sync else None,
+                    "created_at": device.created_at.isoformat() if device.created_at else None
+                }
+                for device in devices
+            ]
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -85,7 +91,50 @@ async def get_default_device():
 # Device creation endpoint removed - not used by frontend
 
 
-# Device update endpoint removed - not used by frontend
+@router.put("/{device_id}")
+async def update_device(
+    device_id: int,
+    device_update: DeviceUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update device information
+
+    Supports updating GPS metadata for QR terminals via device_metadata field
+    """
+    try:
+        device = db.query(Device).filter(Device.id == device_id).first()
+
+        if not device:
+            raise HTTPException(status_code=404, detail=f"Device ID {device_id} not found")
+
+        # Update fields if provided
+        update_data = device_update.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(device, field, value)
+
+        db.commit()
+        db.refresh(device)
+
+        return {
+            "success": True,
+            "message": f"Device {device.name} updated successfully",
+            "device": {
+                "id": device.id,
+                "name": device.name,
+                "ip_address": device.ip_address,
+                "port": device.port,
+                "is_active": device.is_active,
+                "device_type": device.device_type,
+                "device_metadata": device.device_metadata,
+                "updated_at": device.updated_at.isoformat() if device.updated_at else None
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update device: {str(e)}")
 
 
 # ============================================================================

@@ -328,10 +328,21 @@
                 // Direct API data format - convert to display format (fallback)
                 allRecords = rawApiData.records.map(record => {
                     const timestamp = new Date(record.timestamp);
+                    const formattedTime = timestamp.toLocaleTimeString('th-TH', {hour12: false, timeZone: 'Asia/Bangkok'});
+
+                    // DEBUG: Log timestamp conversion for badge 421
+                    if (record.employee_badge_number === '421') {
+                        console.log('[Dashboard DEBUG] Badge 421 timestamp conversion:');
+                        console.log('  Raw timestamp:', record.timestamp);
+                        console.log('  Date object:', timestamp);
+                        console.log('  Date.toISOString():', timestamp.toISOString());
+                        console.log('  Formatted time:', formattedTime);
+                    }
+
                     return {
                         id: record.id,
                         employee_id: record.employee_badge_number || record.employee_id,  // Handle both field names
-                        time: timestamp.toLocaleTimeString('th-TH', {hour12: false, timeZone: 'Asia/Bangkok'}),
+                        time: formattedTime,
                         date: timestamp.toLocaleDateString('th-TH', {day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Bangkok'}),
                         timestamp: record.timestamp,
                         adjustment_id: record.adjustment_id || null

@@ -88,6 +88,13 @@
             const data = await response.json();
 
             if (response.ok && data.valid) {
+                // Check if account is already linked
+                if (data.employee_badge) {
+                    console.log('[Link LINE] Account already linked, redirecting to mobile check-in...');
+                    window.location.href = '/qr-checkin/mobile';
+                    return;
+                }
+
                 // Extract LINE profile from JWT payload
                 const payload = data.payload;
                 lineProfile = {
@@ -182,6 +189,14 @@
 
             if (response.ok && data.success) {
                 console.log('[Link LINE] Linking successful:', data);
+
+                // Update JWT token with new token that includes employee_badge
+                if (data.token) {
+                    jwtToken = data.token;
+                    localStorage.setItem('line_jwt_token', data.token);
+                    console.log('[Link LINE] JWT token updated with employee badge');
+                }
+
                 showSuccess();
             } else {
                 console.error('[Link LINE] Linking failed:', data);
@@ -238,6 +253,15 @@
     function showSuccess() {
         hideAllSections();
         elements.successSection.style.display = 'block';
+
+        // Keep JWT token for persistent login (don't clear it)
+        console.log('[Link LINE] Account linked successfully, keeping session');
+
+        // Redirect to mobile check-in after brief success message
+        setTimeout(() => {
+            console.log('[Link LINE] Redirecting to mobile check-in...');
+            window.location.href = '/qr-checkin/mobile';
+        }, 2000);
     }
 
     /**
