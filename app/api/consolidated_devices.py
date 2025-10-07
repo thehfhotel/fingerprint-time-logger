@@ -91,6 +91,106 @@ async def get_default_device():
 # Device creation endpoint removed - not used by frontend
 
 
+# ============================================================================
+# HEALTH CHECK (must come before /{device_id} to avoid route conflict)
+# ============================================================================
+
+@router.get("/health")
+async def devices_health_check():
+    """Lightweight health check with caching to reduce device load"""
+    try:
+        # Use cached device service to reduce frequent connections
+        from app.services.device_service_cached import cached_device_service
+
+        # Get cached device status (10-minute cache)
+        device_status = cached_device_service.get_device_status()
+
+        if not device_status:
+            return {
+                "status": "warning",
+                "device_connected": False,
+                "message": "ไม่ได้ตั้งค่าเครื่อง"
+            }
+
+        connected = device_status.get("connected", False)
+
+        response = {
+            "status": "healthy" if connected else "unhealthy",
+            "device_connected": connected,
+            "device_name": device_status.get("device_name", "Unknown"),
+            "ip": device_status.get("ip_address", "Unknown"),
+            "cache_age_seconds": device_status.get("cache_age_seconds", 0)
+        }
+
+        # Add lightweight device info using cached data only
+        if connected:
+            # Get device time with caching (no auto-sync to avoid connections)
+            try:
+                time_info = cached_device_service.get_device_time(auto_sync=False)
+                device_time = time_info.get("device_time", "Unknown")
+                response["device_time"] = device_time
+                response["time_cache_age"] = time_info.get("cache_age_seconds", 0)
+            except Exception:
+                response["device_time"] = "Unavailable"
+
+            # Get counts from database only (no device queries)
+            db = next(get_db())
+            try:
+                from app.models.models import Employee, AttendanceRecord
+                users_count = db.query(Employee).count()
+                records_count = db.query(AttendanceRecord).count()
+            except Exception:
+                users_count = "Unknown"
+                records_count = "Unknown"
+            finally:
+                db.close()
+
+            response.update({
+                "users_count": users_count,
+                "records_count": records_count,
+                "device_time": device_time,
+                "info_note": "Counts from database - sync for latest device data"
+            })
+
+        return response
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }
+
+
+@router.get("/{device_id}")
+async def get_device_by_id(
+    device_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get a specific device by ID"""
+    try:
+        device = db.query(Device).filter(Device.id == device_id).first()
+
+        if not device:
+            raise HTTPException(status_code=404, detail=f"Device ID {device_id} not found")
+
+        return {
+            "id": device.id,
+            "name": device.name,
+            "ip_address": device.ip_address,
+            "port": device.port,
+            "password": device.password,
+            "is_active": device.is_active,
+            "device_type": device.device_type,
+            "device_metadata": device.device_metadata,
+            "last_sync": device.last_sync.isoformat() if device.last_sync else None,
+            "created_at": device.created_at.isoformat() if device.created_at else None,
+            "updated_at": device.updated_at.isoformat() if device.updated_at else None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.put("/{device_id}")
 async def update_device(
     device_id: int,
@@ -135,6 +235,46 @@ async def update_device(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update device: {str(e)}")
+
+
+@router.delete("/{device_id}")
+async def delete_device(
+    device_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete a device by ID"""
+    try:
+        from app.models.models import AttendanceRecord
+
+        device = db.query(Device).filter(Device.id == device_id).first()
+
+        if not device:
+            raise HTTPException(status_code=404, detail=f"Device ID {device_id} not found")
+
+        # Check if device has attendance records
+        attendance_count = db.query(AttendanceRecord).filter(
+            AttendanceRecord.device_id == device_id
+        ).count()
+
+        if attendance_count > 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete device with {attendance_count} attendance records. Delete records first or deactivate device instead."
+            )
+
+        device_name = device.name
+        db.delete(device)
+        db.commit()
+
+        return {
+            "success": True,
+            "message": f"Device {device_name} deleted successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete device: {str(e)}")
 
 
 # ============================================================================
@@ -395,72 +535,3 @@ async def get_device_diagnostics():
                 pass
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# HEALTH CHECK
-# ============================================================================
-
-@router.get("/health")
-async def devices_health_check():
-    """Lightweight health check with caching to reduce device load"""
-    try:
-        # Use cached device service to reduce frequent connections
-        from app.services.device_service_cached import cached_device_service
-
-        # Get cached device status (10-minute cache)
-        device_status = cached_device_service.get_device_status()
-
-        if not device_status:
-            return {
-                "status": "warning",
-                "device_connected": False,
-                "message": "ไม่ได้ตั้งค่าเครื่อง"
-            }
-
-        connected = device_status.get("connected", False)
-        
-        response = {
-            "status": "healthy" if connected else "unhealthy",
-            "device_connected": connected,
-            "device_name": device_status.get("device_name", "Unknown"),
-            "ip": device_status.get("ip_address", "Unknown"),
-            "cache_age_seconds": device_status.get("cache_age_seconds", 0)
-        }
-
-        # Add lightweight device info using cached data only
-        if connected:
-            # Get device time with caching (no auto-sync to avoid connections)
-            try:
-                time_info = cached_device_service.get_device_time(auto_sync=False)
-                device_time = time_info.get("device_time", "Unknown")
-                response["device_time"] = device_time
-                response["time_cache_age"] = time_info.get("cache_age_seconds", 0)
-            except Exception:
-                response["device_time"] = "Unavailable"
-
-            # Get counts from database only (no device queries)
-            db = next(get_db())
-            try:
-                from app.models.models import Employee, AttendanceRecord
-                users_count = db.query(Employee).count()
-                records_count = db.query(AttendanceRecord).count()
-            except Exception:
-                users_count = "Unknown"
-                records_count = "Unknown"
-            finally:
-                db.close()
-            
-            response.update({
-                "users_count": users_count,
-                "records_count": records_count,
-                "device_time": device_time,
-                "info_note": "Counts from database - sync for latest device data"
-            })
-        
-        return response
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e)
-        }

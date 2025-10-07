@@ -15,7 +15,9 @@ class TestConsolidatedDevicesAPI:
         response = test_client.get("/api/devices/")
         assert response.status_code == 200
         data = response.json()
-        assert isinstance(data, list)
+        assert isinstance(data, dict)
+        assert "devices" in data
+        assert isinstance(data["devices"], list)
 
 
     def test_get_device_not_found(self, test_client):
@@ -41,12 +43,16 @@ class TestConsolidatedDevicesAPI:
             assert response.status_code in [200, 404]
 
     def test_delete_device(self, test_client, test_company_setup):
-        """Test DELETE /api/devices/{device_id} - Delete device"""
+        """Test DELETE /api/devices/{device_id} - Delete device (expects 400 if has records)"""
         devices = test_company_setup["devices"]
         if devices:
             device_id = devices[0].id
             response = test_client.delete(f"/api/devices/{device_id}")
-            assert response.status_code in [200, 404]
+            # Device in test setup has attendance records, so should return 400
+            assert response.status_code in [200, 400, 404]
+            if response.status_code == 400:
+                data = response.json()
+                assert "attendance records" in data["detail"].lower()
 
     def test_device_health_check(self, test_client):
         """Test GET /api/devices/health - Health check"""
