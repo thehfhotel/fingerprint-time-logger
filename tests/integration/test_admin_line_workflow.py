@@ -38,21 +38,21 @@ class TestAdminLINEWorkflowComplete:
         try:
             # Step 2: Admin authenticates
             auth_response = client.post(
-                "/fingerprintlogs/api/admin/line-codes/verify-passcode",
+                "/api/admin/line-codes/verify-passcode",
                 json={"passcode": ADMIN_PASSCODE}
             )
             assert auth_response.status_code == 200
 
             # Step 3: Check initial stats
             stats_response = client.get(
-                f"/fingerprintlogs/api/admin/line-codes/stats?passcode={ADMIN_PASSCODE}"
+                f"/api/admin/line-codes/stats?passcode={ADMIN_PASSCODE}"
             )
             assert stats_response.status_code == 200
             initial_stats = stats_response.json()
 
             # Step 4: Generate linking code
             generate_response = client.post(
-                "/fingerprintlogs/api/admin/line-codes/generate",
+                "/api/admin/line-codes/generate",
                 json={
                     "badge_number": "WF001",
                     "passcode": ADMIN_PASSCODE
@@ -64,7 +64,7 @@ class TestAdminLINEWorkflowComplete:
 
             # Step 5: Verify code appears in pending list
             pending_response = client.get(
-                f"/fingerprintlogs/api/admin/line-codes/list?passcode={ADMIN_PASSCODE}"
+                f"/api/admin/line-codes/list?passcode={ADMIN_PASSCODE}"
             )
             assert pending_response.status_code == 200
             pending_codes = pending_response.json()
@@ -79,7 +79,7 @@ class TestAdminLINEWorkflowComplete:
 
             # Step 7: Verify account appears in linked list
             linked_response = client.get(
-                f"/fingerprintlogs/api/admin/line-codes/linked?passcode={ADMIN_PASSCODE}"
+                f"/api/admin/line-codes/linked?passcode={ADMIN_PASSCODE}"
             )
             assert linked_response.status_code == 200
             linked_accounts = linked_response.json()
@@ -87,14 +87,14 @@ class TestAdminLINEWorkflowComplete:
 
             # Step 8: Check updated stats
             final_stats_response = client.get(
-                f"/fingerprintlogs/api/admin/line-codes/stats?passcode={ADMIN_PASSCODE}"
+                f"/api/admin/line-codes/stats?passcode={ADMIN_PASSCODE}"
             )
             final_stats = final_stats_response.json()
             assert final_stats["linked_accounts"] > initial_stats["linked_accounts"]
 
             # Step 9: Admin unlinks account
             unlink_response = client.post(
-                "/fingerprintlogs/api/admin/line-codes/unlink",
+                "/api/admin/line-codes/unlink",
                 json={
                     "badge_number": "WF001",
                     "passcode": ADMIN_PASSCODE,
@@ -105,7 +105,7 @@ class TestAdminLINEWorkflowComplete:
 
             # Step 10: Verify account no longer in linked list
             final_linked_response = client.get(
-                f"/fingerprintlogs/api/admin/line-codes/linked?passcode={ADMIN_PASSCODE}"
+                f"/api/admin/line-codes/linked?passcode={ADMIN_PASSCODE}"
             )
             final_linked = final_linked_response.json()
             assert not any(a["badge_number"] == "WF001" for a in final_linked)
@@ -128,7 +128,7 @@ class TestAdminLINEWorkflowComplete:
         try:
             # Generate initial code
             generate_response = client.post(
-                "/fingerprintlogs/api/admin/line-codes/generate",
+                "/api/admin/line-codes/generate",
                 json={
                     "badge_number": "WF002",
                     "passcode": ADMIN_PASSCODE
@@ -138,7 +138,7 @@ class TestAdminLINEWorkflowComplete:
 
             # Employee loses code, admin regenerates
             regen_response = client.post(
-                "/fingerprintlogs/api/admin/line-codes/regenerate",
+                "/api/admin/line-codes/regenerate",
                 json={
                     "badge_number": "WF002",
                     "passcode": ADMIN_PASSCODE,
@@ -153,7 +153,7 @@ class TestAdminLINEWorkflowComplete:
 
             # New code should be in pending list
             pending_response = client.get(
-                f"/fingerprintlogs/api/admin/line-codes/list?passcode={ADMIN_PASSCODE}"
+                f"/api/admin/line-codes/list?passcode={ADMIN_PASSCODE}"
             )
             pending_codes = pending_response.json()
             employee_code = next(c for c in pending_codes if c["badge_number"] == "WF002")
@@ -176,7 +176,7 @@ class TestAdminLINEWorkflowComplete:
         try:
             # First generation
             first_response = client.post(
-                "/fingerprintlogs/api/admin/line-codes/generate",
+                "/api/admin/line-codes/generate",
                 json={
                     "badge_number": "WF003",
                     "passcode": ADMIN_PASSCODE
@@ -186,7 +186,7 @@ class TestAdminLINEWorkflowComplete:
 
             # Attempt second generation
             second_response = client.post(
-                "/fingerprintlogs/api/admin/line-codes/generate",
+                "/api/admin/line-codes/generate",
                 json={
                     "badge_number": "WF003",
                     "passcode": ADMIN_PASSCODE
@@ -224,7 +224,7 @@ class TestAdminLINEWorkflowMultiEmployee:
             codes = []
             for emp in employees:
                 response = client.post(
-                    "/fingerprintlogs/api/admin/line-codes/generate",
+                    "/api/admin/line-codes/generate",
                     json={
                         "badge_number": emp.badge_number,
                         "passcode": ADMIN_PASSCODE
@@ -263,7 +263,7 @@ class TestAdminLINEWorkflowMultiEmployee:
 
         try:
             stats_response = client.get(
-                f"/fingerprintlogs/api/admin/line-codes/stats?passcode={ADMIN_PASSCODE}"
+                f"/api/admin/line-codes/stats?passcode={ADMIN_PASSCODE}"
             )
             stats = stats_response.json()
 
@@ -285,7 +285,7 @@ class TestAdminLINEWorkflowErrorRecovery:
         """Test workflow continues after attempting invalid badge number"""
         # Try to generate code for non-existent employee
         error_response = client.post(
-            "/fingerprintlogs/api/admin/line-codes/generate",
+            "/api/admin/line-codes/generate",
             json={
                 "badge_number": "INVALID999",
                 "passcode": ADMIN_PASSCODE
@@ -304,7 +304,7 @@ class TestAdminLINEWorkflowErrorRecovery:
 
         try:
             success_response = client.post(
-                "/fingerprintlogs/api/admin/line-codes/generate",
+                "/api/admin/line-codes/generate",
                 json={
                     "badge_number": "RECOVERY001",
                     "passcode": ADMIN_PASSCODE
@@ -331,14 +331,14 @@ class TestAdminLINEWorkflowErrorRecovery:
         try:
             # Expired code should not appear in default pending list
             pending_response = client.get(
-                f"/fingerprintlogs/api/admin/line-codes/list?passcode={ADMIN_PASSCODE}"
+                f"/api/admin/line-codes/list?passcode={ADMIN_PASSCODE}"
             )
             pending_codes = pending_response.json()
             assert not any(c["badge_number"] == "EXPIRED001" for c in pending_codes)
 
             # But should appear when including expired
             with_expired_response = client.get(
-                f"/fingerprintlogs/api/admin/line-codes/list?passcode={ADMIN_PASSCODE}&include_expired=true"
+                f"/api/admin/line-codes/list?passcode={ADMIN_PASSCODE}&include_expired=true"
             )
             with_expired = with_expired_response.json()
             expired_code = next(
@@ -350,7 +350,7 @@ class TestAdminLINEWorkflowErrorRecovery:
 
             # Regenerating should work
             regen_response = client.post(
-                "/fingerprintlogs/api/admin/line-codes/regenerate",
+                "/api/admin/line-codes/regenerate",
                 json={
                     "badge_number": "EXPIRED001",
                     "passcode": ADMIN_PASSCODE
@@ -379,11 +379,11 @@ class TestAdminLINEWorkflowSecurity:
         try:
             # All endpoints should reject invalid passcode
             endpoints = [
-                ("POST", "/fingerprintlogs/api/admin/line-codes/generate",
+                ("POST", "/api/admin/line-codes/generate",
                  {"badge_number": "SEC001", "passcode": "wrong"}),
-                ("POST", "/fingerprintlogs/api/admin/line-codes/regenerate",
+                ("POST", "/api/admin/line-codes/regenerate",
                  {"badge_number": "SEC001", "passcode": "wrong"}),
-                ("POST", "/fingerprintlogs/api/admin/line-codes/unlink",
+                ("POST", "/api/admin/line-codes/unlink",
                  {"badge_number": "SEC001", "passcode": "wrong"}),
             ]
 
@@ -394,9 +394,9 @@ class TestAdminLINEWorkflowSecurity:
 
             # GET endpoints with query param
             get_endpoints = [
-                "/fingerprintlogs/api/admin/line-codes/list?passcode=wrong",
-                "/fingerprintlogs/api/admin/line-codes/linked?passcode=wrong",
-                "/fingerprintlogs/api/admin/line-codes/stats?passcode=wrong"
+                "/api/admin/line-codes/list?passcode=wrong",
+                "/api/admin/line-codes/linked?passcode=wrong",
+                "/api/admin/line-codes/stats?passcode=wrong"
             ]
 
             for url in get_endpoints:
@@ -420,7 +420,7 @@ class TestAdminLINEWorkflowSecurity:
         try:
             # Generate code
             generate_response = client.post(
-                "/fingerprintlogs/api/admin/line-codes/generate",
+                "/api/admin/line-codes/generate",
                 json={
                     "badge_number": "CLEAR001",
                     "passcode": ADMIN_PASSCODE
@@ -440,7 +440,7 @@ class TestAdminLINEWorkflowSecurity:
 
             # Verify cannot generate new code (already linked)
             generate_again_response = client.post(
-                "/fingerprintlogs/api/admin/line-codes/generate",
+                "/api/admin/line-codes/generate",
                 json={
                     "badge_number": "CLEAR001",
                     "passcode": ADMIN_PASSCODE
@@ -478,7 +478,7 @@ class TestAdminLINEWorkflowPerformance:
             # Generate codes for all
             for emp in employees:
                 response = client.post(
-                    "/fingerprintlogs/api/admin/line-codes/generate",
+                    "/api/admin/line-codes/generate",
                     json={
                         "badge_number": emp.badge_number,
                         "passcode": ADMIN_PASSCODE
@@ -531,7 +531,7 @@ class TestAdminLINEWorkflowPerformance:
             # Query stats multiple times
             for _ in range(10):
                 response = client.get(
-                    f"/fingerprintlogs/api/admin/line-codes/stats?passcode={ADMIN_PASSCODE}"
+                    f"/api/admin/line-codes/stats?passcode={ADMIN_PASSCODE}"
                 )
                 assert response.status_code == 200
 
