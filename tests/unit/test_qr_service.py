@@ -167,6 +167,8 @@ class TestReplayPrevention:
         # Verify nonce is in storage
         assert token_data["nonce"] in qr_service._used_nonces
 
+        # Simulate that this nonce is old (older than 2x token expiry = 60s)
+        qr_service._nonce_timestamps[token_data["nonce"]] = time.time() - 61
         # Force cleanup by setting last cleanup time to past
         qr_service._last_cleanup = time.time() - 61  # 61 seconds ago
 

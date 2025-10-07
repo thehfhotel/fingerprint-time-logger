@@ -198,7 +198,10 @@ class TestGenerateLinkingCode:
 
         # Should allow generating new code for re-linking scenarios
         assert response.status_code == 200
-        assert "code" in response.json()
+        data = response.json()
+        assert "linking_code" in data
+        assert data["linking_code"] is not None
+        assert data["is_relink"] is True  # Should indicate this is a re-link operation
 
     def test_generate_code_returns_existing_valid_code(self, test_client, test_employee_with_code):
         """Test that existing non-expired code is returned instead of generating new one"""
