@@ -56,9 +56,15 @@ python3 -m pytest tests/unit/ -n auto   # Parallel unit tests only
 ./scripts/run-complete-test-suite.sh --parallel   # Run with parallel execution
 ./scripts/run-complete-test-suite.sh --verbose    # Run with detailed output
 
-# View latest test report
-cat test-reports/test-report-*.txt | tail -100   # View recent report summary
-ls -lt test-reports/                              # List all test reports
+# Integration & E2E Test Runner (NEW)
+./scripts/run-integration-e2e-tests.sh            # Run integration and E2E tests only
+./scripts/run-integration-e2e-tests.sh --parallel # Run with parallel execution
+./scripts/run-integration-e2e-tests.sh --verbose  # Run with detailed output
+
+# View latest test reports
+cat test-reports/test-report-*.txt | tail -100              # Complete test suite report
+cat test-reports/integration-e2e-report-*.txt | tail -100   # Integration & E2E report
+ls -lt test-reports/                                         # List all test reports
 
 # Interactive Testing & Verification
 ./scripts/test-suite-console.sh    # Enhanced testing console with comprehensive logging
