@@ -51,6 +51,15 @@ python3 -m pytest -n auto               # Parallel test execution (70% faster)
 python3 -m pytest -n 4                  # Parallel with 4 specific workers
 python3 -m pytest tests/unit/ -n auto   # Parallel unit tests only
 
+# Complete Test Suite Runner (RECOMMENDED)
+./scripts/run-complete-test-suite.sh              # Run all tests with detailed report
+./scripts/run-complete-test-suite.sh --parallel   # Run with parallel execution
+./scripts/run-complete-test-suite.sh --verbose    # Run with detailed output
+
+# View latest test report
+cat test-reports/test-report-*.txt | tail -100   # View recent report summary
+ls -lt test-reports/                              # List all test reports
+
 # Interactive Testing & Verification
 ./scripts/test-suite-console.sh    # Enhanced testing console with comprehensive logging
 
@@ -135,15 +144,25 @@ uvicorn app.main_unified:app --reload --port 5000
 alembic -c database/alembic.ini revision --autogenerate -m "description"
 alembic -c database/alembic.ini upgrade head
 
-# Testing with integrated test-suite-console.sh
+# Complete Test Suite with Reporting (PRIMARY METHOD)
+./scripts/run-complete-test-suite.sh              # All tests + detailed report
+./scripts/run-complete-test-suite.sh --parallel   # Parallel execution
+./scripts/run-complete-test-suite.sh --verbose    # Detailed output
+
+# After running, examine the report:
+cat test-reports/test-report-*.txt | tail -200   # View full summary
+ls -lt test-reports/ | head -5                    # List recent reports
+
+# Interactive testing console
 ./scripts/test-suite-console.sh all                    # Complete test suite
 ./scripts/test-suite-console.sh unit                   # Unit tests only
 ./scripts/test-suite-console.sh integration            # Integration tests (parallel)
 ./scripts/test-suite-console.sh e2e                    # E2E tests (parallelized)
 ./scripts/test-suite-console.sh e2e --browser firefox  # E2E with specific browser
 
-# Legacy testing
-python3 -m pytest -v
+# Direct pytest commands
+python3 -m pytest -v                              # Standard execution
+python3 -m pytest -n auto                         # Parallel execution
 ```
 
 ## Environment
@@ -250,36 +269,109 @@ docker buildx bake fingerprint-logger-dev # Development target
 
 ## Testing
 
-### Comprehensive Test Suite
-- **323 Unit Tests**: Complete unit test coverage with zero failures
-- **E2E Testing Framework**: Playwright-based browser automation
-- **Integration Tests**: Full workflow testing including Thai localization
+### Comprehensive Test Suite (507+ Tests)
+- **253 Unit Tests**: Complete unit test coverage
+- **133 Integration Tests**: Full workflow and API testing
+- **121 E2E Tests**: Playwright-based browser automation
+- **Thai Localization**: Unicode validation across all tests
 - **Performance Testing**: Load testing and performance validation
 
-### Running Tests
+### Primary Test Execution Method
+
+**🎯 Complete Test Suite Runner (RECOMMENDED)**
 ```bash
-# Testing and Verification (consolidated script)
+# Run complete test suite with detailed reporting
+./scripts/run-complete-test-suite.sh
+
+# Options:
+./scripts/run-complete-test-suite.sh --parallel   # Parallel execution (faster)
+./scripts/run-complete-test-suite.sh --verbose    # Detailed output
+
+# Features:
+# ✓ Runs ALL tests: Unit, Integration, E2E
+# ✓ Continues on errors (captures all results)
+# ✓ Categorizes results by test type
+# ✓ Generates timestamped reports: test-reports/test-report-YYYYMMDD_HHMMSS.txt
+# ✓ Provides pass/fail statistics
+# ✓ Includes AI-ready analysis recommendations
+```
+
+**📊 Examine Test Reports**
+```bash
+# View latest report summary
+cat test-reports/test-report-*.txt | tail -200
+
+# List all reports
+ls -lt test-reports/ | head -10
+
+# View specific report
+cat test-reports/test-report-20250107_143022.txt
+
+# Find recent failures
+grep -A 3 "FAILED" test-reports/test-report-*.txt | tail -50
+```
+
+**Report Structure:**
+- **Execution Summary**: Overall statistics and timing
+- **Phase 1**: Unit Tests (categorized by module)
+- **Phase 2**: Integration Tests (categorized by feature)
+- **Phase 3**: E2E Tests (browser automation)
+- **Final Summary**: Pass/fail counts, pass rate, recommendations
+- **AI Analysis Section**: Structured for Claude AI review
+
+### Alternative Test Methods
+
+**Interactive Console** (for development)
+```bash
 ./scripts/test-suite-console.sh all            # Complete test suite
 ./scripts/test-suite-console.sh unit           # Unit tests only
 ./scripts/test-suite-console.sh integration    # Integration tests
 ./scripts/test-suite-console.sh e2e            # E2E tests (requires app running)
 ./scripts/test-suite-console.sh security       # Security tests
 ./scripts/test-suite-console.sh quality        # Code quality checks
-./scripts/test-suite-console.sh performance    # Performance tests
-./scripts/test-suite-console.sh report         # Generate test report
+```
 
-# Test options
-./scripts/test-suite-console.sh all --coverage 85 --browser firefox --parallel
-
-# Legacy command still works:
-python3 -m pytest -v
+**Direct pytest** (for specific tests)
+```bash
+python3 -m pytest -v                                    # All tests
+python3 -m pytest tests/unit/test_line_auth_security.py # Specific file
+python3 -m pytest -k "test_jwt" -v                      # By pattern
+python3 -m pytest -n auto                               # Parallel
 ```
 
 ### Test Categories
-- **Smoke Tests**: Critical path validation
-- **Workflow Tests**: Complete user journeys (employee lifecycle, attendance tracking)
-- **Integration Tests**: Device connectivity, WebSocket real-time, Thai Unicode
-- **Performance Tests**: Page load times, sync operations, large datasets
+
+**Phase 1: Unit Tests (253 tests)**
+- LINE Authentication Security (18 tests)
+- Timezone Handling (10 tests)
+- Location Service (GPS validation)
+- QR Service (token generation/validation)
+- Configuration & Cache Busting
+- Admin LINE Codes
+
+**Phase 2: Integration Tests (133 tests)**
+- Auto-Import Scheduler (9 tests)
+- Multi-Office GPS (6 tests)
+- QR Check-in API (30+ tests)
+- QR Terminal Display (79 tests)
+- LINE Auth API Integration
+- Export Service Integration
+
+**Phase 3: E2E Tests (121 tests)**
+- GPS Persistence (8 tests) - Requires app running
+- LINE Persistent Login (9 tests) - Requires app running
+- LINE OAuth Flow (11 tests) - Requires app running
+- QR Terminal Real-time (12 tests) - Requires app running
+- Additional E2E workflows
+
+### Test Report Analysis for Claude AI
+
+When asked to analyze test results:
+1. Run: `./scripts/run-complete-test-suite.sh`
+2. Read: Latest report from `test-reports/`
+3. Analyze: Review "FINAL SUMMARY" and "RECOMMENDATIONS" sections
+4. Focus on: Failed categories and root causes
+5. Note: E2E failures may indicate app not running (expected)
 
 ## Development Workflow
 
