@@ -21,7 +21,7 @@ class TestQRTerminalDisplay:
 
     def test_terminal_page_loads_successfully(self, page: Page, base_url):
         """Test that QR terminal page loads and displays correctly"""
-        page.goto(f"{base_url}/fingerprintlogs/qr-checkin/terminal?terminal=2")
+        page.goto(f"{base_url}/qr-checkin/terminal?terminal=2")
         page.wait_for_load_state("networkidle")
 
         # Check main elements are visible
@@ -31,7 +31,7 @@ class TestQRTerminalDisplay:
 
     def test_qr_code_displays_on_load(self, page: Page, base_url):
         """Test that QR code displays after page load"""
-        page.goto(f"{base_url}/fingerprintlogs/qr-checkin/terminal?terminal=2")
+        page.goto(f"{base_url}/qr-checkin/terminal?terminal=2")
         page.wait_for_load_state("networkidle")
 
         # QR code container should be visible
@@ -46,7 +46,7 @@ class TestQRTerminalDisplay:
 
     def test_terminal_name_displays(self, page: Page, base_url):
         """Test that terminal name is displayed"""
-        page.goto(f"{base_url}/fingerprintlogs/qr-checkin/terminal?terminal=2")
+        page.goto(f"{base_url}/qr-checkin/terminal?terminal=2")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(1000)
 
@@ -64,7 +64,7 @@ class TestQRCodeAutoRefresh:
 
     def test_countdown_timer_displays(self, page: Page, base_url):
         """Test that countdown timer displays and counts down"""
-        page.goto(f"{base_url}/fingerprintlogs/qr-checkin/terminal?terminal=2")
+        page.goto(f"{base_url}/qr-checkin/terminal?terminal=2")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(1000)
 
@@ -82,7 +82,7 @@ class TestQRCodeAutoRefresh:
 
     def test_progress_bar_animation(self, page: Page, base_url):
         """Test that progress bar animates during countdown"""
-        page.goto(f"{base_url}/fingerprintlogs/qr-checkin/terminal?terminal=2")
+        page.goto(f"{base_url}/qr-checkin/terminal?terminal=2")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(1000)
 
@@ -100,7 +100,7 @@ class TestQRCodeAutoRefresh:
 
     def test_qr_code_refreshes_on_expiry(self, page: Page, base_url):
         """Test that QR code refreshes when countdown reaches zero"""
-        page.goto(f"{base_url}/fingerprintlogs/qr-checkin/terminal?terminal=2")
+        page.goto(f"{base_url}/qr-checkin/terminal?terminal=2")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(1000)
 
@@ -125,7 +125,7 @@ class TestRealtimeUpdates:
 
     def test_websocket_connection_established(self, page: Page, base_url):
         """Test that WebSocket connection is established"""
-        page.goto(f"{base_url}/fingerprintlogs/qr-checkin/terminal?terminal=2")
+        page.goto(f"{base_url}/qr-checkin/terminal?terminal=2")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(2000)
 
@@ -139,7 +139,7 @@ class TestRealtimeUpdates:
 
     def test_recent_checkins_feed_displays(self, page: Page, base_url):
         """Test that recent check-ins feed is displayed"""
-        page.goto(f"{base_url}/fingerprintlogs/qr-checkin/terminal?terminal=2")
+        page.goto(f"{base_url}/qr-checkin/terminal?terminal=2")
         page.wait_for_load_state("networkidle")
 
         # Recent feed section should be visible
@@ -155,7 +155,7 @@ class TestLocationSelector:
 
     def test_location_selector_displays(self, page: Page, base_url):
         """Test that location selector displays available terminals"""
-        page.goto(f"{base_url}/fingerprintlogs/qr-checkin/terminal?terminal=2")
+        page.goto(f"{base_url}/qr-checkin/terminal?terminal=2")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(1000)
 
@@ -169,7 +169,7 @@ class TestLocationSelector:
 
     def test_location_switching_updates_terminal(self, page: Page, base_url):
         """Test that clicking location button switches terminal"""
-        page.goto(f"{base_url}/fingerprintlogs/qr-checkin/terminal?terminal=2")
+        page.goto(f"{base_url}/qr-checkin/terminal?terminal=2")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(2000)
 
@@ -195,7 +195,7 @@ class TestRealtimeClockDisplay:
 
     def test_clock_displays_current_time(self, page: Page, base_url):
         """Test that clock displays and updates"""
-        page.goto(f"{base_url}/fingerprintlogs/qr-checkin/terminal?terminal=2")
+        page.goto(f"{base_url}/qr-checkin/terminal?terminal=2")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(1000)
 
@@ -213,7 +213,7 @@ class TestRealtimeClockDisplay:
 
     def test_clock_updates_every_second(self, page: Page, base_url):
         """Test that clock updates in real-time"""
-        page.goto(f"{base_url}/fingerprintlogs/qr-checkin/terminal?terminal=2")
+        page.goto(f"{base_url}/qr-checkin/terminal?terminal=2")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(1000)
 
