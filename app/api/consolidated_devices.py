@@ -160,123 +160,6 @@ async def devices_health_check():
         }
 
 
-@router.get("/{device_id}")
-async def get_device_by_id(
-    device_id: int,
-    db: Session = Depends(get_db)
-):
-    """Get a specific device by ID"""
-    try:
-        device = db.query(Device).filter(Device.id == device_id).first()
-
-        if not device:
-            raise HTTPException(status_code=404, detail=f"Device ID {device_id} not found")
-
-        return {
-            "id": device.id,
-            "name": device.name,
-            "ip_address": device.ip_address,
-            "port": device.port,
-            "password": device.password,
-            "is_active": device.is_active,
-            "device_type": device.device_type,
-            "device_metadata": device.device_metadata,
-            "last_sync": device.last_sync.isoformat() if device.last_sync else None,
-            "created_at": device.created_at.isoformat() if device.created_at else None,
-            "updated_at": device.updated_at.isoformat() if device.updated_at else None
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.put("/{device_id}")
-async def update_device(
-    device_id: int,
-    device_update: DeviceUpdate,
-    db: Session = Depends(get_db)
-):
-    """
-    Update device information
-
-    Supports updating GPS metadata for QR terminals via device_metadata field
-    """
-    try:
-        device = db.query(Device).filter(Device.id == device_id).first()
-
-        if not device:
-            raise HTTPException(status_code=404, detail=f"Device ID {device_id} not found")
-
-        # Update fields if provided
-        update_data = device_update.model_dump(exclude_unset=True)
-        for field, value in update_data.items():
-            setattr(device, field, value)
-
-        db.commit()
-        db.refresh(device)
-
-        return {
-            "success": True,
-            "message": f"Device {device.name} updated successfully",
-            "device": {
-                "id": device.id,
-                "name": device.name,
-                "ip_address": device.ip_address,
-                "port": device.port,
-                "is_active": device.is_active,
-                "device_type": device.device_type,
-                "device_metadata": device.device_metadata,
-                "updated_at": device.updated_at.isoformat() if device.updated_at else None
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to update device: {str(e)}")
-
-
-@router.delete("/{device_id}")
-async def delete_device(
-    device_id: int,
-    db: Session = Depends(get_db)
-):
-    """Delete a device by ID"""
-    try:
-        from app.models.models import AttendanceRecord
-
-        device = db.query(Device).filter(Device.id == device_id).first()
-
-        if not device:
-            raise HTTPException(status_code=404, detail=f"Device ID {device_id} not found")
-
-        # Check if device has attendance records
-        attendance_count = db.query(AttendanceRecord).filter(
-            AttendanceRecord.device_id == device_id
-        ).count()
-
-        if attendance_count > 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot delete device with {attendance_count} attendance records. Delete records first or deactivate device instead."
-            )
-
-        device_name = device.name
-        db.delete(device)
-        db.commit()
-
-        return {
-            "success": True,
-            "message": f"Device {device_name} deleted successfully"
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to delete device: {str(e)}")
-
-
 # ============================================================================
 # DEVICE CONNECTION & STATUS
 # ============================================================================
@@ -535,3 +418,125 @@ async def get_device_diagnostics():
                 pass
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# DEVICE CRUD OPERATIONS (Path Parameters)
+# Note: These routes MUST be defined last to avoid catching specific routes
+# ============================================================================
+
+@router.get("/{device_id}")
+async def get_device_by_id(
+    device_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get a specific device by ID"""
+    try:
+        device = db.query(Device).filter(Device.id == device_id).first()
+
+        if not device:
+            raise HTTPException(status_code=404, detail=f"Device ID {device_id} not found")
+
+        return {
+            "id": device.id,
+            "name": device.name,
+            "ip_address": device.ip_address,
+            "port": device.port,
+            "password": device.password,
+            "is_active": device.is_active,
+            "device_type": device.device_type,
+            "device_metadata": device.device_metadata,
+            "last_sync": device.last_sync.isoformat() if device.last_sync else None,
+            "created_at": device.created_at.isoformat() if device.created_at else None,
+            "updated_at": device.updated_at.isoformat() if device.updated_at else None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{device_id}")
+async def update_device(
+    device_id: int,
+    device_update: DeviceUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Update device information
+
+    Supports updating GPS metadata for QR terminals via device_metadata field
+    """
+    try:
+        device = db.query(Device).filter(Device.id == device_id).first()
+
+        if not device:
+            raise HTTPException(status_code=404, detail=f"Device ID {device_id} not found")
+
+        # Update fields if provided
+        update_data = device_update.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(device, field, value)
+
+        db.commit()
+        db.refresh(device)
+
+        return {
+            "success": True,
+            "message": f"Device {device.name} updated successfully",
+            "device": {
+                "id": device.id,
+                "name": device.name,
+                "ip_address": device.ip_address,
+                "port": device.port,
+                "is_active": device.is_active,
+                "device_type": device.device_type,
+                "device_metadata": device.device_metadata,
+                "updated_at": device.updated_at.isoformat() if device.updated_at else None
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update device: {str(e)}")
+
+
+@router.delete("/{device_id}")
+async def delete_device(
+    device_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete a device by ID"""
+    try:
+        from app.models.models import AttendanceRecord
+
+        device = db.query(Device).filter(Device.id == device_id).first()
+
+        if not device:
+            raise HTTPException(status_code=404, detail=f"Device ID {device_id} not found")
+
+        # Check if device has attendance records
+        attendance_count = db.query(AttendanceRecord).filter(
+            AttendanceRecord.device_id == device_id
+        ).count()
+
+        if attendance_count > 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete device with {attendance_count} attendance records. Delete records first or deactivate device instead."
+            )
+
+        device_name = device.name
+        db.delete(device)
+        db.commit()
+
+        return {
+            "success": True,
+            "message": f"Device {device_name} deleted successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete device: {str(e)}")
