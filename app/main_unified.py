@@ -333,6 +333,11 @@ async def serve_terminal_gps_admin():
     """Serve QR terminal GPS location admin page"""
     return serve_html_with_cache_control("static/terminal-gps-admin.html")
 
+@fingerprint_app.get("/admin-console")
+async def serve_admin_console():
+    """Serve admin console configuration page"""
+    return serve_html_with_cache_control("static/admin-console.html")
+
 @fingerprint_app.get("/health")
 async def health_check():
     return {"status": "healthy", "server": "unified"}
