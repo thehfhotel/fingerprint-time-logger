@@ -31,11 +31,11 @@
         <div class="header-row-1">
             <h1>ระบบบันทึกเวลาด้วยลายนิ้วมือ</h1>
             <div class="last-update-display">
-                <div style="margin-bottom: 5px; font-size: 0.9em; color: #e0e0e0;">
-                    นำเข้าล่าสุด: <span id="lastImport" style="color: #e0e0e0;">ไม่เคย</span>
+                <div style="margin-bottom: 5px; font-size: 0.9em; color: #000000;">
+                    นำเข้าล่าสุด: <span id="lastImport" style="color: #000000;">ไม่เคย</span>
                 </div>
-                <div style="margin-top: 5px; font-size: 0.9em; color: white;">
-                    เวลาเครื่อง: <span id="deviceClock" style="color: white;">กำลังโหลด...</span>
+                <div style="margin-top: 5px; font-size: 0.9em; color: #000000;">
+                    เวลาเครื่อง: <span id="deviceClock" style="color: #000000;">กำลังโหลด...</span>
                 </div>
             </div>
         </div>
@@ -587,6 +587,7 @@
                         hour: '2-digit',
                         minute: '2-digit',
                         second: '2-digit',
+                        hour12: false,
                         month: 'short',
                         day: 'numeric',
                         year: 'numeric'
