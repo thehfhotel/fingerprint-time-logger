@@ -9,6 +9,7 @@ Tests complete LINE OAuth authentication flow:
 - JWT token verification
 """
 
+import os
 import pytest
 from datetime import datetime, timezone, timedelta, timezone
 
@@ -23,6 +24,10 @@ from app.services.line_auth_service import line_auth_service
 class TestLineOAuthFlow:
     """Test LINE OAuth authentication flow"""
 
+    @pytest.mark.skipif(
+        not os.getenv("LINE_CHANNEL_ID") or not os.getenv("LINE_CHANNEL_SECRET"),
+        reason="LINE OAuth credentials not configured (LINE_CHANNEL_ID and LINE_CHANNEL_SECRET required)"
+    )
     def test_login_initiation(self, test_client):
         """Test LINE OAuth login initiation returns HTML redirect"""
         response = test_client.get("/api/auth/line/login")

@@ -24,7 +24,7 @@ class TestLINEOAuthInitiation:
     def test_line_login_endpoint_redirect(self, page: Page, base_url):
         """Test that /login endpoint redirects to LINE authorization"""
         # Navigate to LINE login endpoint
-        page.goto(f"{base_url}/fingerprintlogs/api/auth/line/login")
+        page.goto(f"{base_url}/api/auth/line/login")
 
         # Should show loading screen first
         expect(page.locator("text=กำลังเชื่อมต่อ LINE")).to_be_visible()
@@ -40,7 +40,7 @@ class TestLINEOAuthInitiation:
     def test_oauth_state_parameter_generation(self, page: Page, base_url):
         """Test that OAuth state parameter is properly generated"""
         # Make API call to get authorization URL
-        response = page.request.get(f"{base_url}/fingerprintlogs/api/auth/line/login")
+        response = page.request.get(f"{base_url}/api/auth/line/login")
 
         # Should return HTML with redirect
         assert response.status == 200
@@ -51,7 +51,7 @@ class TestLINEOAuthInitiation:
 
     def test_oauth_scope_includes_profile(self, page: Page, base_url):
         """Test that OAuth scope includes profile access"""
-        response = page.request.get(f"{base_url}/fingerprintlogs/api/auth/line/login")
+        response = page.request.get(f"{base_url}/api/auth/line/login")
         content = response.text()
 
         # Should request profile scope
@@ -66,7 +66,7 @@ class TestLINEOAuthCallback:
         """Test callback endpoint with valid authorization code"""
         # Mock callback with authorization code
         # In real scenario, LINE would redirect here with code
-        callback_url = f"{base_url}/fingerprintlogs/api/auth/line/callback"
+        callback_url = f"{base_url}/api/auth/line/callback"
         callback_url += "?code=mock_auth_code_12345&state=valid_state_token"
 
         page.goto(callback_url)
@@ -77,7 +77,7 @@ class TestLINEOAuthCallback:
 
     def test_callback_missing_code_parameter(self, page: Page, base_url):
         """Test callback rejects request without authorization code"""
-        callback_url = f"{base_url}/fingerprintlogs/api/auth/line/callback"
+        callback_url = f"{base_url}/api/auth/line/callback"
         callback_url += "?state=valid_state_token"
 
         page.goto(callback_url)
@@ -87,7 +87,7 @@ class TestLINEOAuthCallback:
 
     def test_callback_handles_user_cancellation(self, page: Page, base_url):
         """Test callback handles user cancelling OAuth flow"""
-        callback_url = f"{base_url}/fingerprintlogs/api/auth/line/callback"
+        callback_url = f"{base_url}/api/auth/line/callback"
         callback_url += "?error=access_denied&error_description=User%20cancelled"
 
         page.goto(callback_url)
@@ -160,7 +160,7 @@ class TestOAuthErrorHandling:
 
     def test_expired_state_token_rejection(self, page: Page, base_url):
         """Test that expired state tokens are rejected"""
-        callback_url = f"{base_url}/fingerprintlogs/api/auth/line/callback"
+        callback_url = f"{base_url}/api/auth/line/callback"
         callback_url += "?code=auth_code&state=expired_state_12345"
 
         page.goto(callback_url)

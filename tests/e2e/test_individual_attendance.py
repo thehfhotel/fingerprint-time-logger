@@ -35,7 +35,7 @@ class TestIndividualAttendance:
         page.goto(attendance_url)
 
         # Verify page loaded successfully
-        expect(page).to_have_title("เข้า/ออก รายคน - Individual Attendance")
+        expect(page).to_have_title("เข้า/ออก รายคน - การลงเวลารายบุคคล")
 
         # Step 2: Verify users are visible in the left sidebar
         # Wait for employee list to load

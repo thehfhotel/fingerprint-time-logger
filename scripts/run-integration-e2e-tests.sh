@@ -101,7 +101,7 @@ EOF
         $additional_flags \
         2>&1 | tee "$temp_output"
 
-    local exit_code=$?
+    local exit_code=${PIPESTATUS[0]}
 
     # Append results to report
     cat "$temp_output" >> "$REPORT_FILE"
@@ -207,9 +207,10 @@ else
     APP_RUNNING=false
 fi
 
-run_test_category "E2E Tests: GPS Persistence" \
-    "tests/e2e/test_gps_persistence.py"
-category_results["e2e_gps"]=$?
+# GPS Persistence tests removed (test file deleted - brittle tests testing JS internals)
+# run_test_category "E2E Tests: GPS Persistence" \
+#     "tests/e2e/test_gps_persistence.py"
+# category_results["e2e_gps"]=$?
 
 run_test_category "E2E Tests: LINE Persistent Login" \
     "tests/e2e/test_line_persistent_login.py"

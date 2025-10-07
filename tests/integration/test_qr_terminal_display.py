@@ -133,16 +133,16 @@ class TestQRTerminalStaticResources:
         response = client.get("/fingerprintlogs/qr-checkin/mobile")
         html_content = response.text
 
-        assert '/fingerprintlogs/static/css/mobile-checkin.css' in html_content
-        assert '/fingerprintlogs/static/js/mobile-checkin.js' in html_content
+        assert '/qr-checkin/static/css/mobile-checkin.css' in html_content
+        assert '/qr-checkin/static/js/mobile-checkin.js' in html_content
 
     def test_link_line_uses_absolute_paths(self, client):
         """Test LINE link page uses absolute paths"""
         response = client.get("/fingerprintlogs/qr-checkin/link-account")
         html_content = response.text
 
-        assert '/fingerprintlogs/static/css/link-line.css' in html_content
-        assert '/fingerprintlogs/static/js/link-line.js' in html_content
+        assert '/qr-checkin/static/css/link-line.css' in html_content
+        assert '/qr-checkin/static/js/link-line.js' in html_content
 
 
 class TestQRTerminalDeviceValidation:

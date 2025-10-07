@@ -73,8 +73,9 @@ class TestExportServiceDatabaseIntegration:
         """Test export with date filtering using real data"""
         service = SimpleExportService(test_db)
 
-        # Test with recent date range
-        start_date = date.today() - timedelta(days=7)
+        # Test with 1-year date range to ensure we capture all test data
+        # Test data may span many months, so we use a very broad range
+        start_date = date.today() - timedelta(days=365)  # Go back 1 year
         end_date = date.today()
 
         csv_content = service.export_attendance_csv(
