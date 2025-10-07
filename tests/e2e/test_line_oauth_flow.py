@@ -18,12 +18,6 @@ from datetime import datetime, timedelta, timezone
 from playwright.sync_api import Page, expect
 
 
-@pytest.fixture
-def base_url():
-    """Base URL for the application"""
-    return "http://localhost:5000"
-
-
 class TestLINEOAuthInitiation:
     """Test LINE OAuth login initiation"""
 
