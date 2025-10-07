@@ -199,9 +199,9 @@ def browser(playwright: Playwright, browser_type: str, headless_mode: bool):
     browser.close()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def base_url(live_server_url: str) -> str:
-    """Base URL for Playwright tests"""
+    """Base URL for tests - aliases live_server_url to avoid pytest-base-url conflict"""
     return live_server_url
 
 

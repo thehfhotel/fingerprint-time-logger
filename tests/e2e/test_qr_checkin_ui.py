@@ -234,11 +234,33 @@ class TestQRCheckinAPIIntegration:
         response = api_client.get("/api/auth/line/login", allow_redirects=False)
         assert response.status_code in [200, 302, 307]
 
-    def test_admin_line_codes_api_accessible(self, api_client, app_running):
-        """Test that Admin Line Codes API is accessible"""
+    def test_admin_line_codes_stats_requires_passcode(self, api_client, app_running):
+        """Test that stats endpoint requires passcode parameter"""
+        # Without passcode → 422 (missing required parameter)
         response = api_client.get("/api/admin/line-codes/stats")
-        # Should return 401/403 without auth, 422 for validation errors, or 200 with valid auth
-        assert response.status_code in [200, 401, 403, 422]
+        assert response.status_code == 422
+
+    def test_admin_line_codes_stats_rejects_invalid_passcode(self, api_client, app_running):
+        """Test that stats endpoint rejects invalid passcode"""
+        response = api_client.get(
+            "/api/admin/line-codes/stats",
+            params={"passcode": "wrong"}
+        )
+        assert response.status_code == 403
+
+    def test_admin_line_codes_stats_success(self, api_client, app_running):
+        """Test that stats endpoint works with valid passcode"""
+        response = api_client.get(
+            "/api/admin/line-codes/stats",
+            params={"passcode": "bananabananabanana"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "total_active_employees" in data
+        assert "linked_accounts" in data
+        assert "pending_codes" in data
+        assert "unlinked" in data
+        assert "linking_percentage" in data
 
 
 @pytest.mark.e2e
