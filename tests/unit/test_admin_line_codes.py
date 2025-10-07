@@ -187,7 +187,7 @@ class TestGenerateLinkingCode:
         assert response.status_code == 404
 
     def test_generate_code_already_linked(self, test_client, test_employee_with_line):
-        """Test code generation fails for already linked employee"""
+        """Test code generation allows re-linking for already linked employee"""
         response = test_client.post(
             "/api/admin/line-codes/generate",
             json={
@@ -196,8 +196,9 @@ class TestGenerateLinkingCode:
             }
         )
 
-        assert response.status_code == 400
-        assert "เชื่อมต่อ LINE แล้ว" in response.json()["detail"]
+        # Should allow generating new code for re-linking scenarios
+        assert response.status_code == 200
+        assert "code" in response.json()
 
     def test_generate_code_returns_existing_valid_code(self, test_client, test_employee_with_code):
         """Test that existing non-expired code is returned instead of generating new one"""

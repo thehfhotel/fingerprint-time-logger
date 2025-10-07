@@ -28,6 +28,7 @@ class QRCodeService:
         # Nonce storage for replay attack prevention (in-memory)
         # In production, consider Redis for distributed systems
         self._used_nonces: Set[str] = set()
+        self._nonce_timestamps: Dict[str, float] = {}  # Track nonce creation time
         self._nonce_cleanup_interval = 60  # Cleanup every 60 seconds
         self._last_cleanup = time.time()
 
@@ -98,8 +99,9 @@ class QRCodeService:
                     detail="QR code นี้ถูกใช้งานไปแล้ว กรุณาสแกน QR code ใหม่"
                 )
 
-            # Mark nonce as used
+            # Mark nonce as used with timestamp
             self._used_nonces.add(nonce)
+            self._nonce_timestamps[nonce] = time.time()
 
             # Periodic cleanup of old nonces
             self._cleanup_expired_nonces()
@@ -203,9 +205,18 @@ class QRCodeService:
         if now - self._last_cleanup < self._nonce_cleanup_interval:
             return
 
-        # Clear all nonces (they're all expired after 2x token expiry)
-        # In production with Redis, set TTL on nonce keys
-        self._used_nonces.clear()
+        # Remove nonces older than 2x token expiry
+        expiry_threshold = now - (2 * self.qr_token_expiry_seconds)
+        expired_nonces = {
+            nonce for nonce, timestamp in self._nonce_timestamps.items()
+            if timestamp < expiry_threshold
+        }
+
+        # Clean up expired nonces
+        for nonce in expired_nonces:
+            self._used_nonces.discard(nonce)
+            del self._nonce_timestamps[nonce]
+
         self._last_cleanup = now
 
 

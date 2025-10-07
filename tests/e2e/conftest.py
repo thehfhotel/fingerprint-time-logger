@@ -171,3 +171,47 @@ def browser_type() -> str:
 def headless_mode() -> bool:
     """Whether to run browser in headless mode"""
     return os.environ.get("HEADLESS", "true").lower() == "true"
+
+
+# Playwright session-scoped fixtures
+@pytest.fixture(scope="session")
+def playwright():
+    """Playwright instance for browser automation"""
+    if not PLAYWRIGHT_AVAILABLE:
+        pytest.skip("Playwright not available")
+
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        yield p
+
+
+@pytest.fixture(scope="session")
+def browser(playwright: Playwright, browser_type: str, headless_mode: bool):
+    """Shared browser instance for all tests"""
+    if browser_type == "firefox":
+        browser = playwright.firefox.launch(headless=headless_mode)
+    elif browser_type == "webkit":
+        browser = playwright.webkit.launch(headless=headless_mode)
+    else:
+        browser = playwright.chromium.launch(headless=headless_mode)
+
+    yield browser
+    browser.close()
+
+
+@pytest.fixture(scope="session")
+def base_url(live_server_url: str) -> str:
+    """Base URL for Playwright tests"""
+    return live_server_url
+
+
+@pytest.fixture(scope="function")
+def page(browser: Browser):
+    """New page for each test"""
+    context = browser.new_context(
+        viewport={"width": 1280, "height": 720},
+        locale="th-TH"
+    )
+    page = context.new_page()
+    yield page
+    context.close()
