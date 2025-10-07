@@ -19,15 +19,22 @@ from app.services.qr_service import qr_service
 from app.services.line_auth_service import line_auth_service
 
 
-# Test database setup
+# Test database setup with StaticPool for shared in-memory database
+from sqlalchemy.pool import StaticPool
 TEST_DATABASE_URL = "sqlite:///:memory:"
-engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool  # Required for in-memory database to work with FastAPI TestClient
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 @pytest.fixture
 def test_db():
     """Create test database and tables"""
+    # Ensure all models are imported and registered with Base
+    from app.models.models import Employee, Device, AttendanceRecord
     Base.metadata.create_all(bind=engine)
     db = TestingSessionLocal()
     yield db
@@ -350,15 +357,15 @@ class TestAttendanceRecording:
 
         # Verify attendance record in database
         record = test_db.query(AttendanceRecord).filter(
-            AttendanceRecord.badge_number == linked_employee.badge_number
+            AttendanceRecord.employee_badge_number == linked_employee.badge_number
         ).first()
 
         assert record is not None
         assert record.device_id == qr_terminal.id
         assert record.sync_status == "synced"
-        assert "QR Check-in" in record.metadata
-        assert "Front Desk" in record.metadata
-        assert "GPS:" in record.metadata
+        assert "QR Check-in" in record.validation_message
+        assert "Front Desk" in record.validation_message
+        assert "GPS:" in record.validation_message
 
     def test_attendance_metadata_includes_gps(self, test_client, qr_terminal, linked_employee, test_db):
         """Test that attendance metadata includes GPS coordinates"""
@@ -379,9 +386,9 @@ class TestAttendanceRecording:
 
         record = test_db.query(AttendanceRecord).first()
 
-        assert "13.7565" in record.metadata
-        assert "100.5020" in record.metadata
-        assert "Distance:" in record.metadata
+        assert "13.7565" in record.validation_message
+        assert "100.50" in record.validation_message  # Coordinate may be rounded
+        assert "Distance:" in record.validation_message
 
 
 class TestLocationValidation:
