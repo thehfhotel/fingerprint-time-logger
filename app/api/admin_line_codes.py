@@ -2,7 +2,7 @@
 Admin Line Codes API
 
 Endpoints for admin to manage LINE linking codes in nickname management page.
-Admin mode activated with passcode: "bananabananabanana"
+Protected by admin session authentication (same as admin console).
 """
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -15,35 +15,29 @@ import string
 
 from app.core.database import get_db
 from app.models.models import Employee
+from app.api.admin_auth import require_admin_auth
 
 router = APIRouter()
 
-# Admin passcode (hardcoded as per requirements)
-ADMIN_PASSCODE = "bananabananabanana"
+# NOTE: All endpoints now use admin session token authentication
+# No separate passcode needed - page is already protected by admin console auth
 
 
 # ============================================================================
 # PYDANTIC MODELS
 # ============================================================================
 
-class AdminPasscodeVerify(BaseModel):
-    passcode: str
-
-
 class GenerateCodeRequest(BaseModel):
     badge_number: str
-    passcode: str
 
 
 class RegenerateCodeRequest(BaseModel):
     badge_number: str
-    passcode: str
     reason: Optional[str] = None
 
 
 class UnlinkAccountRequest(BaseModel):
     badge_number: str
-    passcode: str
     reason: Optional[str] = None
 
 
@@ -73,14 +67,6 @@ class LinkedAccountResponse(BaseModel):
 # HELPER FUNCTIONS
 # ============================================================================
 
-def verify_admin_passcode(passcode: str):
-    """Verify admin passcode"""
-    if passcode != ADMIN_PASSCODE:
-        raise HTTPException(
-            status_code=403,
-            detail="รหัสผ่านผู้ดูแลระบบไม่ถูกต้อง (Invalid admin passcode)"
-        )
-
 
 def generate_6_digit_code() -> str:
     """Generate random 6-digit numeric code"""
@@ -104,34 +90,19 @@ def is_code_expired(generated_at: datetime, expiry_hours: int = 24) -> bool:
 # API ENDPOINTS
 # ============================================================================
 
-@router.post("/verify-passcode")
-async def verify_passcode(request: AdminPasscodeVerify):
-    """
-    Verify admin passcode
-    Returns success if passcode is correct
-    """
-    try:
-        verify_admin_passcode(request.passcode)
-        return {
-            "success": True,
-            "message": "ยืนยันตัวตนผู้ดูแลระบบสำเร็จ (Admin authenticated)"
-        }
-    except HTTPException as e:
-        raise e
-
-
 @router.post("/generate")
 async def generate_linking_code(
     request: GenerateCodeRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_auth)
 ):
     """
     Generate 6-digit LINE linking code for employee
     - One code per badge number
     - Code expires after 24 hours
     - If already linked: unlinks old account and generates new code for re-linking
+    - Protected by admin session authentication
     """
-    verify_admin_passcode(request.passcode)
 
     # Find employee by badge number
     employee = db.query(Employee).filter(
@@ -222,14 +193,15 @@ async def generate_linking_code(
 @router.post("/regenerate")
 async def regenerate_linking_code(
     request: RegenerateCodeRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_auth)
 ):
     """
     Regenerate LINE linking code if employee lost it
     - Replaces existing code
     - Resets expiry timer
+    - Protected by admin session authentication
     """
-    verify_admin_passcode(request.passcode)
 
     # Find employee
     employee = db.query(Employee).filter(
@@ -290,16 +262,16 @@ async def regenerate_linking_code(
 
 @router.get("/list", response_model=List[PendingCodeResponse])
 async def list_pending_codes(
-    passcode: str,
     include_expired: bool = False,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_auth)
 ):
     """
     List all pending LINE linking codes
     - Shows employees with codes but not yet linked
     - Optionally include expired codes
+    - Protected by admin session authentication
     """
-    verify_admin_passcode(passcode)
 
     # Query employees with linking codes but no LINE account
     employees = db.query(Employee).filter(
@@ -336,13 +308,13 @@ async def list_pending_codes(
 
 @router.get("/linked", response_model=List[LinkedAccountResponse])
 async def list_linked_accounts(
-    passcode: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_auth)
 ):
     """
     List all employees with linked LINE accounts
+    - Protected by admin session authentication
     """
-    verify_admin_passcode(passcode)
 
     # Query employees with LINE accounts
     employees = db.query(Employee).filter(
@@ -368,14 +340,15 @@ async def list_linked_accounts(
 @router.post("/unlink")
 async def unlink_line_account(
     request: UnlinkAccountRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_auth)
 ):
     """
     Unlink LINE account from employee (admin only)
     - Removes LINE user ID and profile data
     - Allows employee to link a different LINE account
+    - Protected by admin session authentication
     """
-    verify_admin_passcode(request.passcode)
 
     # Find employee
     employee = db.query(Employee).filter(
@@ -425,13 +398,13 @@ async def unlink_line_account(
 
 @router.get("/stats")
 async def get_linking_stats(
-    passcode: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_auth)
 ):
     """
     Get LINE linking statistics
+    - Protected by admin session authentication
     """
-    verify_admin_passcode(passcode)
 
     total_employees = db.query(Employee).filter(
         Employee.is_active == True

@@ -2,7 +2,7 @@
 Admin Authentication API
 Secure passcode authentication with session management
 """
-from fastapi import APIRouter, HTTPException, Header, Depends, Response
+from fastapi import APIRouter, HTTPException, Header, Depends, Response, Cookie, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -54,6 +54,42 @@ def get_token_from_header(authorization: Optional[str] = Header(None)) -> str:
         raise HTTPException(status_code=401, detail="Invalid authorization header format")
 
     return parts[1]
+
+def get_token_from_cookie_or_header(
+    admin_session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+) -> str:
+    """
+    Extract token from HttpOnly cookie or Authorization header
+
+    Priority:
+    1. HttpOnly cookie (preferred for browser requests)
+    2. Authorization header (for API clients)
+
+    Args:
+        admin_session_token: Token from HttpOnly cookie
+        authorization: Authorization header value
+
+    Returns:
+        Token string
+
+    Raises:
+        HTTPException: If token is missing from both sources
+    """
+    # Try cookie first (preferred for browser requests)
+    if admin_session_token:
+        return admin_session_token
+
+    # Fall back to Authorization header
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            return parts[1]
+
+    raise HTTPException(
+        status_code=401,
+        detail="Unauthorized: Missing authentication token"
+    )
 
 @router.post("/login")
 async def admin_login(request: LoginRequest):
@@ -189,9 +225,10 @@ async def get_session_info(token: str = Depends(get_token_from_header)):
         )
 
 # Dependency for protected routes
-async def require_admin_auth(token: str = Depends(get_token_from_header)) -> str:
+async def require_admin_auth(token: str = Depends(get_token_from_cookie_or_header)) -> str:
     """
     Dependency to require valid admin authentication
+    Accepts token from HttpOnly cookie or Authorization header
 
     Returns:
         Valid session token

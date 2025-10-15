@@ -511,16 +511,13 @@
         // ============================================================================
 
         let adminMode = false;
-        let adminPasscode = null;
 
         // Activate admin mode (no password required - already authenticated via admin console)
         async function activateAdminMode() {
             try {
                 await appConfig.loadConfig();
 
-                // Use a default admin passcode for API calls (page is already protected by admin authentication)
                 adminMode = true;
-                adminPasscode = 'admin-console-authenticated';
 
                 // Show admin panel
                 document.getElementById('adminPanel').style.display = 'block';
@@ -541,7 +538,6 @@
         // Deactivate admin mode
         function deactivateAdminMode() {
             adminMode = false;
-            adminPasscode = null;
 
             document.getElementById('adminPanel').style.display = 'none';
             document.getElementById('lineCodeHeader').style.display = 'none';
@@ -557,7 +553,10 @@
                 await appConfig.loadConfig();
 
                 const response = await fetch(
-                    appConfig.getApiUrl(`admin/line-codes/stats?passcode=${encodeURIComponent(adminPasscode)}`)
+                    appConfig.getApiUrl('admin/line-codes/stats'),
+                    {
+                        credentials: 'include'
+                    }
                 );
 
                 if (!response.ok) throw new Error('Failed to load stats');
@@ -600,10 +599,12 @@
 
                 const response = await fetch(appConfig.getApiUrl('admin/line-codes/generate'), {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
                     body: JSON.stringify({
-                        badge_number: badgeNumber,
-                        passcode: adminPasscode
+                        badge_number: badgeNumber
                     })
                 });
 
@@ -644,10 +645,12 @@
 
                 const response = await fetch(appConfig.getApiUrl('admin/line-codes/regenerate'), {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
                     body: JSON.stringify({
                         badge_number: badgeNumber,
-                        passcode: adminPasscode,
                         reason: 'พนักงานทำรหัสหาย'
                     })
                 });
@@ -679,10 +682,12 @@
 
                 const response = await fetch(appConfig.getApiUrl('admin/line-codes/unlink'), {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
                     body: JSON.stringify({
                         badge_number: badgeNumber,
-                        passcode: adminPasscode,
                         reason: 'ผู้ดูแลระบบยกเลิกการเชื่อมต่อ'
                     })
                 });
@@ -709,7 +714,10 @@
                 await appConfig.loadConfig();
 
                 const response = await fetch(
-                    appConfig.getApiUrl(`admin/line-codes/list?passcode=${encodeURIComponent(adminPasscode)}&include_expired=true`)
+                    appConfig.getApiUrl('admin/line-codes/list?include_expired=true'),
+                    {
+                        credentials: 'include'
+                    }
                 );
 
                 if (!response.ok) throw new Error('Failed to load pending codes');
@@ -742,7 +750,10 @@
                 await appConfig.loadConfig();
 
                 const response = await fetch(
-                    appConfig.getApiUrl(`admin/line-codes/linked?passcode=${encodeURIComponent(adminPasscode)}`)
+                    appConfig.getApiUrl('admin/line-codes/linked'),
+                    {
+                        credentials: 'include'
+                    }
                 );
 
                 if (!response.ok) throw new Error('Failed to load linked accounts');
