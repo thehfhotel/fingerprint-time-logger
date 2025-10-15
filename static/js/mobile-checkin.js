@@ -460,7 +460,7 @@
      */
     async function loadRecentCheckIns() {
         try {
-            const response = await fetch(`/qr-checkin/api/attendance/?badge=${userProfile.employee_badge}&limit=5`);
+            const response = await fetch(`/qr-checkin/api/qr-checkin/attendance/employee/badge/${userProfile.employee_badge}?limit=5`);
             const data = await response.json();
 
             if (response.ok && data.records && data.records.length > 0) {
@@ -479,10 +479,20 @@
      */
     function displayRecentCheckIns(records) {
         const html = records.map(record => {
-            const metadata = record.metadata || '';
-            const isQR = metadata.includes('QR Check-in');
-            const locationMatch = metadata.match(/at (.+?),/);
-            const location = locationMatch ? locationMatch[1] : 'ลายนิ้วมือ';
+            // QR check-ins have validation_message with "QR Check-in at..."
+            const validationMsg = record.validation_message || '';
+            const isQR = validationMsg.includes('QR Check-in');
+            const locationMatch = validationMsg.match(/at (.+?),/);
+
+            // Determine location with context-appropriate fallback
+            let location;
+            if (locationMatch) {
+                location = locationMatch[1];
+            } else if (isQR) {
+                location = 'QR Check-in';
+            } else {
+                location = 'จากเครื่องสแกนลายนิ้วมือ';
+            }
 
             return `
                 <div class="recent-item">

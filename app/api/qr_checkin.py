@@ -382,3 +382,49 @@ async def validate_user_location(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"การตรวจสอบตำแหน่งล้มเหลว: {str(e)}"
         )
+
+
+# ============================================================================
+# ATTENDANCE RECORDS FOR MOBILE PAGE (Unprotected Path)
+# ============================================================================
+
+@router.get("/attendance/employee/badge/{employee_badge}")
+async def get_employee_attendance_for_mobile(
+    employee_badge: str,
+    limit: int = 5,
+    db: Session = Depends(get_db)
+):
+    """Get recent attendance records for mobile check-in page (unprotected path)"""
+    try:
+        from app.services.attendance_service import attendance_service
+
+        # Check if employee exists
+        employee = db.query(Employee).filter(Employee.badge_number == employee_badge).first()
+        if not employee:
+            raise HTTPException(status_code=404, detail="Employee not found")
+
+        # Get recent attendance records
+        records = attendance_service.get_attendance_records(
+            employee_badge=employee_badge,
+            limit=limit
+        )
+
+        return {
+            "employee_badge": employee_badge,
+            "records": [
+                {
+                    "id": record.id,
+                    "timestamp": record.timestamp.replace(tzinfo=timezone.utc).isoformat() if record.timestamp else None,
+                    "punch_type": record.punch_type,
+                    "status": record.status,
+                    "device_id": record.device_id,
+                    "validation_message": record.validation_message  # Include for QR check-in detection
+                }
+                for record in records
+            ],
+            "total": len(records)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

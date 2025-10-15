@@ -154,7 +154,8 @@ async def get_employee_attendance(
                     "timestamp": record.timestamp.replace(tzinfo=timezone.utc).isoformat() if record.timestamp else None,
                     "punch_type": record.punch_type,
                     "status": record.status,
-                    "device_id": record.device_id
+                    "device_id": record.device_id,
+                    "validation_message": record.validation_message  # Include for QR check-in detection
                 }
                 for record in records
             ],
