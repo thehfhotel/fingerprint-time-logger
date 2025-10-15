@@ -123,7 +123,7 @@ async function loadTerminals() {
     console.log('[GPS Admin] Loading terminals...');
 
     try {
-        const response = await fetch('/api/devices/');
+        const response = await fetch('/fingerprintlogs/api/devices/');
         if (!response.ok) throw new Error('Failed to load terminals');
 
         const data = await response.json();
@@ -283,7 +283,7 @@ async function saveLocation() {
     console.log('[GPS Admin] Saving GPS location:', metadata);
 
     try {
-        const response = await fetch(`/api/devices/${currentTerminal.id}`, {
+        const response = await fetch(`/fingerprintlogs/api/devices/${currentTerminal.id}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
@@ -323,7 +323,7 @@ async function deleteLocation() {
     delete metadata.gps;
 
     try {
-        const response = await fetch(`/api/devices/${currentTerminal.id}`, {
+        const response = await fetch(`/fingerprintlogs/api/devices/${currentTerminal.id}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
