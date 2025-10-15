@@ -398,13 +398,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Add terminal button
     document.getElementById('addTerminalBtn').addEventListener('click', openAddTerminalModal);
 
-    // New terminal radius slider
-    const newRadiusSlider = document.getElementById('newRadiusSlider');
-    const newRadiusValue = document.getElementById('newRadiusValue');
-    newRadiusSlider.addEventListener('input', () => {
-        newRadiusValue.textContent = `${newRadiusSlider.value}m`;
-    });
-
     // Location name change
     document.getElementById('locationName').addEventListener('input', () => {
         state.hasChanges = true;
@@ -429,13 +422,11 @@ function openAddTerminalModal() {
 
     // Reset form
     document.getElementById('newTerminalName').value = '';
-    document.getElementById('newLocationName').value = '';
-    document.getElementById('newLatitude').value = '';
-    document.getElementById('newLongitude').value = '';
-    document.getElementById('newRadiusSlider').value = 200;
-    document.getElementById('newRadiusValue').textContent = '200m';
-    document.getElementById('newIpAddress').value = '';
-    document.getElementById('newPort').value = 4370;
+
+    // Focus on input after modal animation
+    setTimeout(() => {
+        document.getElementById('newTerminalName').focus();
+    }, 300);
 }
 
 function closeAddTerminalModal() {
@@ -445,12 +436,6 @@ function closeAddTerminalModal() {
 
 async function saveNewTerminal() {
     const terminalName = document.getElementById('newTerminalName').value.trim();
-    const locationName = document.getElementById('newLocationName').value.trim();
-    const latitude = parseFloat(document.getElementById('newLatitude').value);
-    const longitude = parseFloat(document.getElementById('newLongitude').value);
-    const radius = parseInt(document.getElementById('newRadiusSlider').value);
-    const ipAddress = document.getElementById('newIpAddress').value.trim();
-    const port = parseInt(document.getElementById('newPort').value);
 
     // Validation
     if (!terminalName) {
@@ -458,38 +443,9 @@ async function saveNewTerminal() {
         return;
     }
 
-    if (!locationName) {
-        alert('กรุณากรอกชื่อสถานที่');
-        return;
-    }
-
-    if (isNaN(latitude) || isNaN(longitude)) {
-        alert('กรุณากรอกพิกัด GPS ให้ถูกต้อง');
-        return;
-    }
-
-    if (!ipAddress) {
-        alert('กรุณากรอก IP Address');
-        return;
-    }
-
-    // Prepare GPS metadata
-    const metadata = {
-        gps: {
-            latitude: latitude,
-            longitude: longitude,
-            radius: radius,
-            location_name: locationName,
-            updated_at: new Date().toISOString()
-        }
-    };
-
     console.log('[GPS Admin] Creating new terminal:', {
         name: terminalName,
-        ip_address: ipAddress,
-        port: port,
-        device_type: 'qr_terminal',
-        metadata: metadata
+        device_type: 'qr_terminal'
     });
 
     try {
@@ -508,17 +464,17 @@ async function saveNewTerminal() {
             },
             body: JSON.stringify({
                 name: terminalName,
-                ip_address: ipAddress,
-                port: port,
+                ip_address: '0.0.0.0',  // Placeholder, can be configured later
+                port: 4370,
                 device_type: 'qr_terminal',
                 is_active: true,
-                device_metadata: JSON.stringify(metadata)
+                device_metadata: JSON.stringify({})  // Empty metadata, configure GPS later
             })
         });
 
         if (!response.ok) throw new Error('Failed to create terminal');
 
-        showStatus('✅ เพิ่ม Terminal สำเร็จ', 'success');
+        showStatus('✅ เพิ่ม Terminal สำเร็จ - กรุณาตั้งค่า GPS และข้อมูลอื่นๆ', 'success');
         closeAddTerminalModal();
 
         // Reload terminals
