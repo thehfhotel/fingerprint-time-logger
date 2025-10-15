@@ -333,6 +333,30 @@
     }
 
     /**
+     * Extract token from QR data (handles both URL and direct token)
+     */
+    function extractToken(qrData) {
+        console.log('[QR Parser] Raw QR data:', qrData);
+
+        // Check if qrData is a URL
+        if (qrData.startsWith('http://') || qrData.startsWith('https://')) {
+            try {
+                const url = new URL(qrData);
+                const token = url.searchParams.get('token');
+                console.log('[QR Parser] Extracted token from URL:', token ? token.substring(0, 20) + '...' : 'NULL');
+                return token;
+            } catch (error) {
+                console.error('[QR Parser] Error parsing URL:', error);
+                return qrData;
+            }
+        }
+
+        // Already a direct token
+        console.log('[QR Parser] Direct token detected');
+        return qrData;
+    }
+
+    /**
      * Process scanned QR code
      */
     async function processQRCode(qrData) {
@@ -347,12 +371,23 @@
         showLoading('กำลังบันทึกเวลา...');
 
         try {
+            // Extract token from QR data (handles both URL and direct token)
+            const qrToken = extractToken(qrData);
+
+            if (!qrToken) {
+                hideLoading();
+                showResult('error', 'QR Code ไม่ถูกต้อง', 'ไม่พบ token ใน QR Code');
+                return;
+            }
+
+            console.log('[Check-in] Sending request with token:', qrToken.substring(0, 20) + '...');
+
             const response = await fetch('/qr-checkin/api/qr-checkin/scan', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     jwt_token: jwtToken,
-                    qr_token: qrData,
+                    qr_token: qrToken,
                     latitude: currentGPS.latitude,
                     longitude: currentGPS.longitude,
                     accuracy: currentGPS.accuracy
