@@ -25,6 +25,8 @@ services:
       - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
       - LINE_CALLBACK_URL=${LINE_CALLBACK_URL}
       - JWT_SECRET=${JWT_SECRET}
+      # Admin Console Security
+      - ADMIN_PASSCODE_HASH=${ADMIN_PASSCODE_HASH}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/fingerprintlogs/health"]
