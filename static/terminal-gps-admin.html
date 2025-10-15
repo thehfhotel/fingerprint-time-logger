@@ -456,6 +456,17 @@
 
                 <div class="map-controls">
                     <div class="control-group">
+                        <label>🏷️ ชื่อ Terminal</label>
+                        <input type="text" id="terminalName" placeholder="เช่น QR Terminal - สาขา 1" />
+                    </div>
+
+                    <div class="action-buttons" style="margin-top: 10px; margin-bottom: 30px;">
+                        <button class="btn btn-primary" id="updateNameBtn" disabled>
+                            ✏️ อัปเดตชื่อ Terminal
+                        </button>
+                    </div>
+
+                    <div class="control-group">
                         <label>📍 ชื่อสถานที่</label>
                         <input type="text" id="locationName" placeholder="เช่น สำนักงานใหญ่ (กรุงเทพฯ)" />
                     </div>
@@ -481,13 +492,16 @@
 
                     <div class="action-buttons">
                         <button class="btn btn-primary" id="saveBtn" disabled>
-                            💾 บันทึกตำแหน่ง
-                        </button>
-                        <button class="btn btn-secondary" id="resetBtn">
-                            🔄 รีเซ็ต
+                            💾 บันทึกตำแหน่ง GPS
                         </button>
                         <button class="btn btn-danger" id="deleteBtn" disabled>
-                            🗑️ ลบตำแหน่ง
+                            🗑️ ลบตำแหน่ง GPS
+                        </button>
+                    </div>
+
+                    <div class="action-buttons" style="margin-top: 10px;">
+                        <button class="btn btn-danger" id="deleteTerminalBtn" disabled>
+                            🗑️ ลบ QR Terminal
                         </button>
                     </div>
                 </div>

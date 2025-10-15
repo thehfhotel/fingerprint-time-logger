@@ -5,9 +5,10 @@ Replaces: devices.py, sync.py, unlimited_sync.py, control.py, diagnostics.py
 
 from typing import List, Dict, Any, Optional
 import os
+import json
 from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.core.database import get_db
 from app.models.models import Device
@@ -22,10 +23,43 @@ router = APIRouter()
 
 class DeviceCreate(BaseModel):
     name: str
-    ip_address: str
-    port: int = 4370
+    device_type: str = "fingerprint"  # "fingerprint" or "qr_terminal"
+    ip_address: Optional[str] = None
+    port: Optional[int] = None
     password: int = 0
     is_active: bool = True
+    device_metadata: Optional[str] = None  # JSON string for GPS and display settings
+
+    @field_validator('device_type')
+    @classmethod
+    def validate_device_type(cls, v):
+        """Validate device_type is one of the allowed values"""
+        if v not in ['fingerprint', 'qr_terminal']:
+            raise ValueError('device_type must be "fingerprint" or "qr_terminal"')
+        return v
+
+    @field_validator('device_metadata')
+    @classmethod
+    def validate_device_metadata(cls, v):
+        """Validate device_metadata is valid JSON if provided"""
+        if v is not None and v.strip():
+            try:
+                json.loads(v)
+            except json.JSONDecodeError:
+                raise ValueError('device_metadata must be valid JSON')
+        return v
+
+    def validate_requirements(self):
+        """Validate device_type-specific requirements"""
+        if self.device_type == 'fingerprint':
+            if not self.ip_address:
+                raise ValueError('ip_address is required for fingerprint devices')
+            if not self.port:
+                raise ValueError('port is required for fingerprint devices')
+        elif self.device_type == 'qr_terminal':
+            # QR terminals should not have IP/port
+            if self.ip_address is not None or self.port is not None:
+                raise ValueError('QR terminals should not have ip_address or port')
 
 
 class DeviceUpdate(BaseModel):
@@ -75,7 +109,7 @@ async def get_default_device():
         device = device_service.get_default_device()
         if not device:
             return {"message": "ไม่ได้ตั้งค่าเครื่องเริ่มต้น"}
-        
+
         return {
             "id": device.id,
             "name": device.name,
@@ -88,7 +122,73 @@ async def get_default_device():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Device creation endpoint removed - not used by frontend
+@router.post("/", status_code=201)
+async def create_device(
+    device_data: DeviceCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new device (fingerprint or QR terminal)
+
+    - For fingerprint devices: ip_address and port are required
+    - For QR terminals: ip_address and port should be None
+    - name must be unique across all devices
+    """
+    try:
+        # Validate device_type-specific requirements
+        device_data.validate_requirements()
+
+        # Check for duplicate device name
+        existing_device = db.query(Device).filter(
+            Device.name == device_data.name
+        ).first()
+
+        if existing_device:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Device with name '{device_data.name}' already exists"
+            )
+
+        # Create device instance
+        new_device = Device(
+            name=device_data.name,
+            device_type=device_data.device_type,
+            ip_address=device_data.ip_address,
+            port=device_data.port if device_data.port else None,
+            password=device_data.password,
+            is_active=device_data.is_active,
+            device_metadata=device_data.device_metadata
+        )
+
+        db.add(new_device)
+        db.commit()
+        db.refresh(new_device)
+
+        return {
+            "success": True,
+            "message": f"Device '{new_device.name}' created successfully",
+            "device": {
+                "id": new_device.id,
+                "name": new_device.name,
+                "device_type": new_device.device_type,
+                "ip_address": new_device.ip_address,
+                "port": new_device.port,
+                "is_active": new_device.is_active,
+                "device_metadata": new_device.device_metadata,
+                "created_at": new_device.created_at.isoformat() if new_device.created_at else None
+            }
+        }
+    except ValueError as e:
+        # Validation errors from validate_requirements()
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create device: {str(e)}"
+        )
 
 
 # ============================================================================
@@ -466,6 +566,7 @@ async def update_device(
     Update device information
 
     Supports updating GPS metadata for QR terminals via device_metadata field
+    Validates name uniqueness if name is being updated
     """
     try:
         device = db.query(Device).filter(Device.id == device_id).first()
@@ -473,8 +574,21 @@ async def update_device(
         if not device:
             raise HTTPException(status_code=404, detail=f"Device ID {device_id} not found")
 
-        # Update fields if provided
+        # Check for duplicate name if name is being updated
         update_data = device_update.model_dump(exclude_unset=True)
+        if 'name' in update_data and update_data['name'] != device.name:
+            existing_device = db.query(Device).filter(
+                Device.name == update_data['name'],
+                Device.id != device_id
+            ).first()
+
+            if existing_device:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Device with name '{update_data['name']}' already exists"
+                )
+
+        # Update fields if provided
         for field, value in update_data.items():
             setattr(device, field, value)
 

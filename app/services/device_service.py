@@ -58,14 +58,23 @@ class SimpleDeviceService:
             db.close()
     
     def connect_to_device(self, device: Device) -> Optional[Any]:
-        """Simple device connection with basic retry"""
+        """Simple device connection with basic retry
+
+        Note: QR terminals don't require connections since they're web-based.
+        Returns None for QR terminals without error.
+        """
+        # Skip connection for QR terminals (they don't have IP addresses)
+        if device.device_type == 'qr_terminal' or not device.ip_address:
+            logger.debug(f"Skipping connection for {device.device_type} device: {device.name}")
+            return None
+
         start_time = datetime.now()
 
         for attempt in range(self.max_retries):
             try:
                 zk = ZK(
                     device.ip_address,
-                    port=device.port,
+                    port=device.port or 4370,  # Use default port if None
                     timeout=self.timeout,
                     password=device.password,
                     force_udp=False,

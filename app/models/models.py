@@ -10,8 +10,8 @@ class Device(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
-    ip_address = Column(String(15), nullable=False)
-    port = Column(Integer, default=4370)
+    ip_address = Column(String(15), nullable=True)  # Nullable for QR terminals (not used)
+    port = Column(Integer, nullable=True, default=4370)  # Nullable for QR terminals (not used)
     password = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
     last_sync = Column(DateTime, nullable=True)

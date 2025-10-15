@@ -61,8 +61,8 @@ def create_qr_terminals(db=None):
         if not terminal1:
             terminal1 = Device(
                 name="QR Terminal - Main Office",
-                ip_address="127.0.0.1",  # Virtual device
-                port=0,  # Not applicable for QR terminals
+                ip_address=None,  # Not used for QR terminals
+                port=None,  # Not used for QR terminals
                 password=0,
                 device_type="qr_terminal",
                 device_metadata=json.dumps(terminal1_metadata),
@@ -101,8 +101,8 @@ def create_qr_terminals(db=None):
         if not terminal2:
             terminal2 = Device(
                 name="QR Terminal - Branch Office",
-                ip_address="127.0.0.1",  # Virtual device
-                port=0,  # Not applicable for QR terminals
+                ip_address=None,  # Not used for QR terminals
+                port=None,  # Not used for QR terminals
                 password=0,
                 device_type="qr_terminal",
                 device_metadata=json.dumps(terminal2_metadata),

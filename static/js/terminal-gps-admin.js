@@ -162,9 +162,6 @@ function renderTerminalList() {
                         📍 ${terminal.name}
                     </div>
                 </div>
-                <div class="terminal-info">
-                    ID: ${terminal.id} | IP: ${terminal.ip_address}
-                </div>
                 ${hasGPS ? `
                     <div class="terminal-location">
                         📍 ${gps.location_name || 'ไม่ระบุชื่อ'}
@@ -206,6 +203,10 @@ function selectTerminal(terminalId) {
     });
     document.querySelector(`[data-terminal-id="${terminalId}"]`).classList.add('active');
 
+    // Load terminal name
+    document.getElementById('terminalName').value = terminal.name;
+    document.getElementById('updateNameBtn').disabled = false;
+
     // Load GPS data
     const metadata = parseMetadata(terminal.device_metadata);
     const gps = metadata.gps || {};
@@ -221,6 +222,9 @@ function selectTerminal(terminalId) {
         // No GPS data - reset form
         resetForm();
     }
+
+    // Enable delete terminal button when a terminal is selected
+    document.getElementById('deleteTerminalBtn').disabled = false;
 
     state.hasChanges = false;
 }
@@ -300,11 +304,14 @@ async function deleteLocation() {
         return;
     }
 
+    // Store terminal ID for re-selection after reload
+    const terminalId = currentTerminal.id;
+
     const metadata = parseMetadata(currentTerminal.device_metadata);
     delete metadata.gps;
 
     try {
-        const response = await fetch(`/fingerprintlogs/api/devices/${currentTerminal.id}`, {
+        const response = await fetch(`/fingerprintlogs/api/devices/${terminalId}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
@@ -318,15 +325,107 @@ async function deleteLocation() {
 
         showStatus('✅ ลบตำแหน่ง GPS สำเร็จ', 'success');
 
-        // Reset form
-        resetForm();
-
-        // Reload terminals
+        // Reload terminals to reflect changes
         await loadTerminals();
+
+        // Re-select terminal to update UI state properly
+        // This will show the terminal without GPS and disable the delete button
+        selectTerminal(terminalId);
 
     } catch (error) {
         console.error('[GPS Admin] Error deleting GPS location:', error);
         showStatus('❌ ไม่สามารถลบตำแหน่ง GPS ได้', 'error');
+    }
+}
+
+async function updateTerminalName() {
+    if (!currentTerminal) return;
+
+    const newName = document.getElementById('terminalName').value.trim();
+
+    // Validation
+    if (!newName) {
+        showStatus('กรุณากรอกชื่อ Terminal', 'error');
+        return;
+    }
+
+    if (newName === currentTerminal.name) {
+        showStatus('ชื่อ Terminal ไม่เปลี่ยนแปลง', 'error');
+        return;
+    }
+
+    console.log(`[GPS Admin] Updating terminal ${currentTerminal.id} name: ${currentTerminal.name} → ${newName}`);
+
+    try {
+        const response = await fetch(`/fingerprintlogs/api/devices/${currentTerminal.id}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: newName
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to update terminal name');
+        }
+
+        const result = await response.json();
+        console.log('[GPS Admin] Terminal name updated:', result);
+
+        showStatus('✅ อัปเดตชื่อ Terminal สำเร็จ', 'success');
+
+        // Reload terminals to reflect changes in sidebar
+        await loadTerminals();
+
+        // Re-select current terminal to refresh UI
+        if (currentTerminal) {
+            selectTerminal(currentTerminal.id);
+        }
+
+    } catch (error) {
+        console.error('[GPS Admin] Error updating terminal name:', error);
+        showStatus(`❌ ไม่สามารถอัปเดตชื่อ Terminal ได้: ${error.message}`, 'error');
+    }
+}
+
+async function deleteTerminal() {
+    if (!currentTerminal) return;
+
+    if (!confirm(`⚠️ คำเตือน: ต้องการลบ QR Terminal "${currentTerminal.name}" ออกจากระบบใช่หรือไม่?\n\nการดำเนินการนี้จะลบ Terminal และข้อมูล GPS ทั้งหมด`)) {
+        return;
+    }
+
+    const terminalId = currentTerminal.id;
+    const terminalName = currentTerminal.name;
+
+    console.log(`[GPS Admin] Deleting terminal ${terminalId}: ${terminalName}`);
+
+    try {
+        const response = await fetch(`/fingerprintlogs/api/devices/${terminalId}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to delete terminal');
+        }
+
+        showStatus(`✅ ลบ Terminal "${terminalName}" สำเร็จ`, 'success');
+
+        // Clear current terminal and reset form
+        currentTerminal = null;
+        state.selectedTerminal = null;
+        resetForm();
+
+        // Reload terminals to reflect changes
+        await loadTerminals();
+
+    } catch (error) {
+        console.error('[GPS Admin] Error deleting terminal:', error);
+        showStatus(`❌ ไม่สามารถลบ Terminal ได้: ${error.message}`, 'error');
     }
 }
 
@@ -335,6 +434,7 @@ async function deleteLocation() {
 // ============================================================================
 
 function resetForm() {
+    document.getElementById('terminalName').value = '';
     document.getElementById('locationName').value = '';
     document.getElementById('latitude').value = '';
     document.getElementById('longitude').value = '';
@@ -354,8 +454,10 @@ function resetForm() {
     state.selectedLocation = null;
     state.hasChanges = false;
 
+    document.getElementById('updateNameBtn').disabled = true;
     document.getElementById('saveBtn').disabled = true;
     document.getElementById('deleteBtn').disabled = true;
+    document.getElementById('deleteTerminalBtn').disabled = true;
 
     // Reset to Bangkok center
     map.setView([13.7563, 100.5018], 12);
@@ -391,9 +493,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Action buttons
+    document.getElementById('updateNameBtn').addEventListener('click', updateTerminalName);
     document.getElementById('saveBtn').addEventListener('click', saveLocation);
-    document.getElementById('resetBtn').addEventListener('click', resetForm);
     document.getElementById('deleteBtn').addEventListener('click', deleteLocation);
+    document.getElementById('deleteTerminalBtn').addEventListener('click', deleteTerminal);
 
     // Add terminal button
     document.getElementById('addTerminalBtn').addEventListener('click', openAddTerminalModal);
@@ -449,14 +552,6 @@ async function saveNewTerminal() {
     });
 
     try {
-        // Note: Backend API endpoint for creating devices is currently not implemented
-        // The endpoint was removed as mentioned in consolidated_devices.py line 91
-        // This would require implementing POST /fingerprintlogs/api/devices/ endpoint
-
-        showStatus('⚠️ ฟีเจอร์การเพิ่ม Terminal ใหม่ต้องการการพัฒนา Backend API เพิ่มเติม', 'error');
-
-        // TODO: Uncomment when backend POST endpoint is implemented
-        /*
         const response = await fetch('/fingerprintlogs/api/devices/', {
             method: 'POST',
             headers: {
@@ -464,25 +559,37 @@ async function saveNewTerminal() {
             },
             body: JSON.stringify({
                 name: terminalName,
-                ip_address: '0.0.0.0',  // Placeholder, can be configured later
-                port: 4370,
                 device_type: 'qr_terminal',
+                ip_address: null,  // QR terminals don't use IP
+                port: null,        // QR terminals don't use port
                 is_active: true,
-                device_metadata: JSON.stringify({})  // Empty metadata, configure GPS later
+                device_metadata: null  // GPS will be configured later via admin page
             })
         });
 
-        if (!response.ok) throw new Error('Failed to create terminal');
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to create terminal');
+        }
 
-        showStatus('✅ เพิ่ม Terminal สำเร็จ - กรุณาตั้งค่า GPS และข้อมูลอื่นๆ', 'success');
+        const result = await response.json();
+        console.log('[GPS Admin] Terminal created:', result);
+
+        showStatus('✅ เพิ่ม Terminal สำเร็จ - คลิกเพื่อตั้งค่า GPS', 'success');
         closeAddTerminalModal();
 
         // Reload terminals
         await loadTerminals();
-        */
+
+        // Auto-select the newly created terminal
+        if (result.device && result.device.id) {
+            setTimeout(() => {
+                selectTerminal(result.device.id);
+            }, 500);
+        }
     } catch (error) {
         console.error('[GPS Admin] Error creating terminal:', error);
-        showStatus('❌ ไม่สามารถเพิ่ม Terminal ได้', 'error');
+        showStatus(`❌ ไม่สามารถเพิ่ม Terminal ได้: ${error.message}`, 'error');
     }
 }
 
