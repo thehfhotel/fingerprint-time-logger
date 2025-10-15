@@ -580,6 +580,29 @@ async def manual_refresh():
 # Mount the fingerprint app for tunnel support
 app.mount("/fingerprintlogs", fingerprint_app, name="fingerprint_tunnel")
 
+# Mount static files at root level for direct IP access (without nginx)
+app.mount("/static", CacheControlStaticFiles(directory="static"), name="static_direct")
+
+# Add direct access routes for QR check-in (for local network access without nginx)
+# These routes handle both nginx-proxied access and direct IP access
+@app.get("/qr-checkin/terminal")
+async def root_serve_qr_terminal():
+    """Serve QR terminal for direct IP access (without nginx proxy)"""
+    return serve_html_with_cache_control("static/qr-terminal.html")
+
+@app.get("/qr-checkin/mobile")
+async def root_serve_mobile_checkin():
+    """Serve mobile check-in for direct IP access (without nginx proxy)"""
+    return serve_html_with_cache_control("static/mobile-checkin.html")
+
+@app.get("/qr-checkin/link-account")
+async def root_serve_link_account():
+    """Serve LINE account linking for direct IP access (without nginx proxy)"""
+    return serve_html_with_cache_control("static/link-line.html")
+
+# Mount QR checkin API router at root level for direct access
+app.include_router(qr_checkin.router, prefix="/qr-checkin/api/qr-checkin", tags=["qr-checkin-direct"])
+
 # Add a root redirect for direct access
 @app.get("/")
 async def root_redirect():
