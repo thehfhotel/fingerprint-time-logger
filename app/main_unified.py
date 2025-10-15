@@ -284,10 +284,6 @@ def serve_html_with_cache_control(file_path: str):
 async def serve_dashboard():
     return serve_html_with_cache_control("static/dashboard.html")
 
-@fingerprint_app.get("/device-status")
-async def serve_device_status():
-    return serve_html_with_cache_control("static/device-status.html")
-
 @fingerprint_app.get("/export")
 async def serve_export():
     return serve_html_with_cache_control("static/export.html")
