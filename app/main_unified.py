@@ -228,6 +228,10 @@ fingerprint_app.include_router(consolidated_employees.router, prefix="/api/emplo
 from app.api import system_status
 fingerprint_app.include_router(system_status.router, prefix="/api/system", tags=["system-status"])
 
+# Admin Authentication API - Secure Admin Console Access
+from app.api import admin_auth
+fingerprint_app.include_router(admin_auth.router, prefix="/api/admin/auth", tags=["admin-auth"])
+
 # Admin Line Codes API - QR Check-in Feature Phase 1
 fingerprint_app.include_router(admin_line_codes.router, prefix="/api/admin/line-codes", tags=["admin-line-codes"])
 
@@ -329,9 +333,14 @@ async def serve_terminal_gps_admin():
     """Serve QR terminal GPS location admin page"""
     return serve_html_with_cache_control("static/terminal-gps-admin.html")
 
+@fingerprint_app.get("/admin-login")
+async def serve_admin_login():
+    """Serve admin login page"""
+    return serve_html_with_cache_control("static/admin-login.html")
+
 @fingerprint_app.get("/admin-console")
 async def serve_admin_console():
-    """Serve admin console configuration page"""
+    """Serve admin console configuration page (requires authentication)"""
     return serve_html_with_cache_control("static/admin-console.html")
 
 @fingerprint_app.get("/health")

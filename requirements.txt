@@ -20,8 +20,9 @@ python-multipart==0.0.6
 httpx==0.25.2
 requests==2.31.0
 
-# Authentication & Security (Phase 2 - LINE OAuth)
+# Authentication & Security (Phase 2 - LINE OAuth, Admin Console)
 PyJWT==2.8.0
+bcrypt==4.1.2
 
 # QR Code Generation (Phase 3 - QR Check-in)
 qrcode[pil]==7.4.2

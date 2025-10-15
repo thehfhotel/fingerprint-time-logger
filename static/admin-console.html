@@ -13,12 +13,19 @@
         const version = 'v1.0-admin-console';
         document.write(`<link rel="stylesheet" href="static/css/admin-console.css?v=${timestamp}&version=${version}">`);
     </script>
+
+    <!-- JavaScript Files -->
+    <script>
+        const jsTimestamp = Date.now();
+        document.write(`<script src="static/js/config.js?v=${jsTimestamp}"><\/script>`);
+    </script>
 </head>
 <body>
     <div class="header">
         <div class="header-row-1">
             <h1>⚙️ Admin Console</h1>
             <div class="header-info">
+                <button id="logoutBtn" class="back-btn" style="margin-right: 1rem; cursor: pointer;">🚪 ออกจากระบบ</button>
                 <a href="./" class="back-btn">← กลับหน้าแดชบอร์ด</a>
             </div>
         </div>
@@ -99,8 +106,93 @@
     </footer>
 
     <script>
+        // Authentication check - redirect to login if not authenticated
+        async function checkAuthentication() {
+            const token = localStorage.getItem('admin_session_token');
+
+            if (!token) {
+                window.location.href = './admin-login';
+                return false;
+            }
+
+            try {
+                await appConfig.loadConfig();
+
+                const response = await fetch(appConfig.getApiUrl('admin/auth/validate'), {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (!response.ok) {
+                    // Session invalid or expired
+                    localStorage.removeItem('admin_session_token');
+                    localStorage.removeItem('admin_session_expires');
+                    window.location.href = './admin-login';
+                    return false;
+                }
+
+                const result = await response.json();
+
+                if (!result.valid) {
+                    // Session expired
+                    localStorage.removeItem('admin_session_token');
+                    localStorage.removeItem('admin_session_expires');
+                    window.location.href = './admin-login';
+                    return false;
+                }
+
+                return true;
+            } catch (error) {
+                console.error('Authentication check error:', error);
+                window.location.href = './admin-login';
+                return false;
+            }
+        }
+
+        // Logout function
+        async function logout() {
+            const token = localStorage.getItem('admin_session_token');
+
+            if (token) {
+                try {
+                    await appConfig.loadConfig();
+
+                    await fetch(appConfig.getApiUrl('admin/auth/logout'), {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+                } catch (error) {
+                    console.error('Logout error:', error);
+                }
+            }
+
+            // Clear local storage
+            localStorage.removeItem('admin_session_token');
+            localStorage.removeItem('admin_session_expires');
+
+            // Redirect to login page
+            window.location.href = './admin-login';
+        }
+
         // Add active state to current page
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', async function() {
+            // Check authentication first
+            const isAuthenticated = await checkAuthentication();
+
+            if (!isAuthenticated) {
+                return;
+            }
+
+            // Add logout button handler
+            const logoutBtn = document.getElementById('logoutBtn');
+            if (logoutBtn) {
+                logoutBtn.addEventListener('click', logout);
+            }
+
+            // Add active state
             const currentPath = window.location.pathname;
             const menuItems = document.querySelectorAll('.admin-menu-item');
 

@@ -1,0 +1,186 @@
+"""
+Admin Authentication API
+Secure passcode authentication with session management
+"""
+from fastapi import APIRouter, HTTPException, Header, Depends
+from pydantic import BaseModel, Field
+from typing import Optional
+import logging
+
+from app.services.admin_auth_service import admin_auth_service
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+class LoginRequest(BaseModel):
+    passcode: str = Field(..., min_length=1, description="Admin passcode")
+
+class LoginResponse(BaseModel):
+    success: bool
+    token: str
+    expires_at: str
+    expires_in_seconds: int
+    message: str
+
+class ValidateResponse(BaseModel):
+    valid: bool
+    expires_in_seconds: Optional[int] = None
+    expires_at: Optional[str] = None
+
+class LogoutResponse(BaseModel):
+    success: bool
+    message: str
+
+def get_token_from_header(authorization: Optional[str] = Header(None)) -> str:
+    """
+    Extract Bearer token from Authorization header
+
+    Args:
+        authorization: Authorization header value
+
+    Returns:
+        Token string
+
+    Raises:
+        HTTPException: If token is missing or invalid format
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Invalid authorization header format")
+
+    return parts[1]
+
+@router.post("/login", response_model=LoginResponse)
+async def admin_login(request: LoginRequest):
+    """
+    Authenticate admin user with passcode
+
+    Returns session token valid for 1 hour
+    """
+    try:
+        # Verify passcode
+        if not admin_auth_service.verify_passcode(request.passcode):
+            logger.warning("Failed login attempt with incorrect passcode")
+            raise HTTPException(
+                status_code=401,
+                detail="รหัสผ่านไม่ถูกต้อง"
+            )
+
+        # Create session
+        token = admin_auth_service.create_session()
+        session_info = admin_auth_service.get_session_info(token)
+
+        logger.info("Admin login successful")
+
+        return LoginResponse(
+            success=True,
+            token=token,
+            expires_at=session_info['expires_at'],
+            expires_in_seconds=session_info['expires_in_seconds'],
+            message="เข้าสู่ระบบสำเร็จ"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="เกิดข้อผิดพลาดในการเข้าสู่ระบบ"
+        )
+
+@router.get("/validate", response_model=ValidateResponse)
+async def validate_session(token: str = Depends(get_token_from_header)):
+    """
+    Validate admin session token
+
+    Returns session validity and remaining time
+    """
+    try:
+        # Clean up expired sessions periodically
+        admin_auth_service.cleanup_expired_sessions()
+
+        # Validate token
+        if not admin_auth_service.validate_session(token):
+            return ValidateResponse(valid=False)
+
+        # Get session info
+        session_info = admin_auth_service.get_session_info(token)
+
+        return ValidateResponse(
+            valid=True,
+            expires_in_seconds=session_info['expires_in_seconds'],
+            expires_at=session_info['expires_at']
+        )
+
+    except Exception as e:
+        logger.error(f"Session validation error: {e}")
+        return ValidateResponse(valid=False)
+
+@router.post("/logout", response_model=LogoutResponse)
+async def admin_logout(token: str = Depends(get_token_from_header)):
+    """
+    Logout admin user and revoke session
+    """
+    try:
+        admin_auth_service.revoke_session(token)
+        logger.info("Admin logout successful")
+
+        return LogoutResponse(
+            success=True,
+            message="ออกจากระบบสำเร็จ"
+        )
+
+    except Exception as e:
+        logger.error(f"Logout error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="เกิดข้อผิดพลาดในการออกจากระบบ"
+        )
+
+@router.get("/session-info")
+async def get_session_info(token: str = Depends(get_token_from_header)):
+    """
+    Get current session information
+    """
+    try:
+        if not admin_auth_service.validate_session(token):
+            raise HTTPException(status_code=401, detail="Session expired or invalid")
+
+        session_info = admin_auth_service.get_session_info(token)
+
+        return {
+            "success": True,
+            "session": session_info
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get session info error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="เกิดข้อผิดพลาดในการดึงข้อมูล session"
+        )
+
+# Dependency for protected routes
+async def require_admin_auth(token: str = Depends(get_token_from_header)) -> str:
+    """
+    Dependency to require valid admin authentication
+
+    Returns:
+        Valid session token
+
+    Raises:
+        HTTPException: If authentication fails
+    """
+    if not admin_auth_service.validate_session(token):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: Session expired or invalid"
+        )
+    return token
