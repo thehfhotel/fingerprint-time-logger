@@ -293,7 +293,28 @@ async def serve_export():
     return serve_html_with_cache_control("static/export.html")
 
 @fingerprint_app.get("/nickname-management")
-async def serve_nickname_management():
+async def serve_nickname_management(request: Request):
+    """Serve employee nickname management page (requires authentication)
+
+    Server-side authentication check to prevent unauthorized access.
+    """
+    # Check for session token in cookie
+    admin_token = request.cookies.get('admin_session_token')
+
+    # If no token, redirect to login page
+    if not admin_token:
+        return RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
+
+    # Validate session server-side
+    from app.services.admin_auth_service import admin_auth_service
+
+    if not admin_auth_service.validate_session(admin_token):
+        # Session expired - clear cookie and redirect
+        response = RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
+        response.delete_cookie('admin_session_token')
+        return response
+
+    # Session valid - serve page
     return serve_html_with_cache_control("static/nickname-management.html")
 
 @fingerprint_app.get("/individual-attendance")
@@ -301,7 +322,28 @@ async def serve_individual_attendance():
     return serve_html_with_cache_control("static/individual-attendance.html")
 
 @fingerprint_app.get("/status")
-async def serve_status():
+async def serve_status(request: Request):
+    """Serve system status page (requires authentication)
+
+    Server-side authentication check to prevent unauthorized access.
+    """
+    # Check for session token in cookie
+    admin_token = request.cookies.get('admin_session_token')
+
+    # If no token, redirect to login page
+    if not admin_token:
+        return RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
+
+    # Validate session server-side
+    from app.services.admin_auth_service import admin_auth_service
+
+    if not admin_auth_service.validate_session(admin_token):
+        # Session expired - clear cookie and redirect
+        response = RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
+        response.delete_cookie('admin_session_token')
+        return response
+
+    # Session valid - serve page
     return serve_html_with_cache_control("static/status.html")
 
 @fingerprint_app.get("/docs")
@@ -329,8 +371,28 @@ async def serve_qr_terminal():
     return serve_html_with_cache_control("static/qr-terminal.html")
 
 @fingerprint_app.get("/admin/terminal-gps")
-async def serve_terminal_gps_admin():
-    """Serve QR terminal GPS location admin page"""
+async def serve_terminal_gps_admin(request: Request):
+    """Serve QR terminal GPS location admin page (requires authentication)
+
+    Server-side authentication check to prevent unauthorized access.
+    """
+    # Check for session token in cookie
+    admin_token = request.cookies.get('admin_session_token')
+
+    # If no token, redirect to login page
+    if not admin_token:
+        return RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
+
+    # Validate session server-side
+    from app.services.admin_auth_service import admin_auth_service
+
+    if not admin_auth_service.validate_session(admin_token):
+        # Session expired - clear cookie and redirect
+        response = RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
+        response.delete_cookie('admin_session_token')
+        return response
+
+    # Session valid - serve page
     return serve_html_with_cache_control("static/terminal-gps-admin.html")
 
 @fingerprint_app.get("/admin-login")
