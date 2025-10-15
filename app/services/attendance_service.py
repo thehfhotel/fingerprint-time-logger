@@ -111,7 +111,7 @@ class SimpleAttendanceService:
                     'employee_id': employee_id,
                     'time': bangkok_timestamp.strftime('%H:%M:%S'),  # Bangkok time for display
                     'date': bangkok_timestamp.strftime('%Y-%m-%d'),  # Bangkok date
-                    'date_display': bangkok_timestamp.strftime('%m/%d/%Y'),  # Bangkok date
+                    'date_display': bangkok_timestamp.strftime('%d/%m/%Y'),  # Bangkok date in DD/MM/YYYY format
                     'status': 'Check-in' if record.punch_type == 0 else 'Check-out',
                     'timestamp': utc_timestamp.isoformat()  # Keep UTC with +00:00 for API consumers
                 })
