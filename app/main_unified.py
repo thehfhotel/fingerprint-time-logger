@@ -353,7 +353,7 @@ async def serve_admin_console(request: Request):
     # If no token, redirect immediately to login page
     # No assets will be loaded - just an HTTP 302 redirect
     if not admin_token:
-        return RedirectResponse(url="/admin-login", status_code=302)
+        return RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
 
     # Validate token server-side before serving any content
     from app.services.admin_auth_service import admin_auth_service
@@ -361,7 +361,7 @@ async def serve_admin_console(request: Request):
     if not admin_auth_service.validate_session(admin_token):
         # Session invalid or expired - clear cookie and redirect
         # Still no assets loaded - just redirect with cookie cleanup
-        response = RedirectResponse(url="/admin-login", status_code=302)
+        response = RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
         response.delete_cookie('admin_session_token')
         return response
 
