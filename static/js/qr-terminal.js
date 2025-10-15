@@ -23,16 +23,10 @@
 
         recentFeed: document.getElementById('recentFeed'),
 
-        footerLocation: document.getElementById('footerLocation'),
-        footerGPS: document.getElementById('footerGPS'),
-        todayCount: document.getElementById('todayCount'),
-
         errorOverlay: document.getElementById('errorOverlay'),
         errorTitle: document.getElementById('errorTitle'),
         errorMessage: document.getElementById('errorMessage'),
         retryButton: document.getElementById('retryButton'),
-
-        fullscreenButton: document.getElementById('fullscreenButton'),
 
         // Location selector elements
         locationButtons: document.getElementById('locationButtons')
@@ -194,13 +188,6 @@
 
         elements.terminalName.textContent = location;
         elements.terminalLocation.textContent = `📍 ${location}`;
-
-        elements.footerLocation.textContent = location;
-        // GPS coordinates not included in current API response
-        // elements.footerGPS remains empty for now
-
-        // Load today's check-in count
-        loadTodayCount();
     }
 
     /**
@@ -277,23 +264,6 @@
     }
 
     /**
-     * Load today's check-in count
-     */
-    async function loadTodayCount() {
-        try {
-            const today = new Date().toISOString().split('T')[0];
-            const response = await fetch(`/fingerprintlogs/api/attendance/?date=${today}&device=${TERMINAL_ID}`);
-            const data = await response.json();
-
-            if (response.ok && data.total) {
-                elements.todayCount.textContent = data.total;
-            }
-        } catch (error) {
-            console.error('[QR Terminal] Error loading today count:', error);
-        }
-    }
-
-    /**
      * Connect WebSocket for real-time updates
      */
     function connectWebSocket() {
@@ -355,7 +325,6 @@
         // Check if this is for our terminal
         if (record.device_id == TERMINAL_ID || record.metadata?.includes('QR Check-in')) {
             addFeedItem(record, true);
-            loadTodayCount();
         }
     }
 
@@ -487,43 +456,6 @@
             hideError();
             loadTerminalData();
         });
-
-        // Fullscreen button
-        elements.fullscreenButton.addEventListener('click', toggleFullscreen);
-
-        // Keyboard shortcut for fullscreen (F11 alternative: F)
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'f' || e.key === 'F') {
-                toggleFullscreen();
-            }
-        });
-    }
-
-    /**
-     * Toggle fullscreen mode
-     */
-    function toggleFullscreen() {
-        const elem = document.documentElement;
-
-        if (!document.fullscreenElement) {
-            if (elem.requestFullscreen) {
-                elem.requestFullscreen();
-            } else if (elem.webkitRequestFullscreen) {
-                elem.webkitRequestFullscreen();
-            } else if (elem.msRequestFullscreen) {
-                elem.msRequestFullscreen();
-            }
-            elements.fullscreenButton.textContent = '⛶';
-        } else {
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
-            } else if (document.webkitExitFullscreen) {
-                document.webkitExitFullscreen();
-            } else if (document.msExitFullscreen) {
-                document.msExitFullscreen();
-            }
-            elements.fullscreenButton.textContent = '⛶';
-        }
     }
 
     // Initialize when DOM is ready
