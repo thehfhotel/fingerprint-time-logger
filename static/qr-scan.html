@@ -119,19 +119,24 @@
                     const jwtToken = localStorage.getItem('line_jwt_token');
 
                     if (!jwtToken) {
-                        // Not logged in → redirect to LINE OAuth with return URL
+                        // Not logged in → redirect to LINE OAuth with QR context in URL
                         updateStatus('📱 เปลี่ยนเส้นทางไปยัง LINE Login...');
                         await new Promise(resolve => setTimeout(resolve, 500));
 
-                        // Store QR context for after OAuth
+                        // Store QR context in both sessionStorage (for same-browser) and URL (for cross-browser)
                         sessionStorage.setItem('qr_scan_context', JSON.stringify({
                             qrToken: qrToken,
                             terminalId: terminalId,
                             timestamp: Date.now()
                         }));
 
-                        // Redirect to LINE OAuth
-                        window.location.href = `/qr-checkin/api/auth/line/login?redirect=qr-scan-callback`;
+                        // Redirect to LINE OAuth with QR context in URL parameters
+                        const qrContext = encodeURIComponent(JSON.stringify({
+                            qrToken: qrToken,
+                            terminalId: terminalId,
+                            timestamp: Date.now()
+                        }));
+                        window.location.href = `/qr-checkin/api/auth/line/login?redirect=qr-scan-callback&qr_context=${qrContext}`;
                         return;
                     }
 

@@ -13,6 +13,7 @@ Mobile Safari compatible with HTML meta refresh redirects.
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, status, Query, Request, Depends
 from fastapi.responses import HTMLResponse
@@ -53,19 +54,30 @@ class VerifyTokenRequest(BaseModel):
 # ============================================================================
 
 @router.get("/login")
-async def line_login(request: Request, redirect: Optional[str] = Query(None)):
+async def line_login(
+    request: Request,
+    redirect: Optional[str] = Query(None),
+    qr_context: Optional[str] = Query(None)
+):
     """
     Initiate LINE OAuth login flow
 
     Query Parameters:
         redirect: Optional redirect destination after OAuth (e.g., 'qr-scan-callback', 'mobile-checkin')
+        qr_context: Optional QR scan context (JSON-encoded token and terminal info) for cross-browser preservation
 
     Returns:
         HTML response with meta refresh redirect for Mobile Safari compatibility
     """
     try:
+        # Build redirect hint that includes both redirect page and qr_context
+        # Format: "qr-scan-callback|{qr_context}" or just "mobile-checkin"
+        redirect_hint = redirect
+        if qr_context and redirect:
+            redirect_hint = f"{redirect}|{qr_context}"
+
         # Store redirect parameter in state for callback
-        auth_data = line_auth_service.generate_authorization_url(redirect_hint=redirect)
+        auth_data = line_auth_service.generate_authorization_url(redirect_hint=redirect_hint)
         auth_url = auth_data["auth_url"]
 
         # Mobile Safari compatible redirect using HTML meta refresh
@@ -226,8 +238,15 @@ async def line_callback(
                 detail="Invalid or expired state token"
             )
 
-        # Use stored redirect_hint from state, fallback to query parameter
-        redirect = stored_redirect_hint or redirect
+        # Parse redirect_hint to extract redirect page and qr_context
+        # Format: "qr-scan-callback|{qr_context}" or just "mobile-checkin"
+        qr_context = None
+        if stored_redirect_hint and '|' in stored_redirect_hint:
+            parts = stored_redirect_hint.split('|', 1)
+            redirect = parts[0]
+            qr_context = parts[1]
+        else:
+            redirect = stored_redirect_hint or redirect
 
         # Exchange code for access token
         token_data = line_auth_service.exchange_code_for_token(code)
@@ -256,11 +275,14 @@ async def line_callback(
             )
             # Already linked - redirect to specified callback or default mobile check-in
             if redirect == 'qr-scan-callback':
-                redirect_url = f"/qr-checkin/scan-callback?jwt={jwt_token}"
+                # Include qr_context if present for cross-browser QR scan flow
+                # qr_context is already URL-encoded from login endpoint, keep it encoded
+                qr_context_param = f"&qr_context={qr_context}" if qr_context else ""
+                redirect_url = f"/qr-checkin/scan-callback?jwt={jwt_token}{qr_context_param}"
             else:
                 redirect_url = f"/qr-checkin/mobile?jwt={jwt_token}"
         else:
-            # Not yet linked - redirect to link account page with redirect hint
+            # Not yet linked - redirect to link account page with redirect hint and qr_context
             jwt_token = line_auth_service.create_jwt_token(
                 line_user_id=line_user_id,
                 employee_badge=None,
@@ -268,6 +290,8 @@ async def line_callback(
                 picture_url=picture_url
             )
             redirect_param = f"&redirect={redirect}" if redirect else ""
+            # qr_context is already URL-encoded from login endpoint, keep it encoded
+            qr_context_param = f"&qr_context={qr_context}" if qr_context else ""
             redirect_url = (
                 f"/qr-checkin/link-account"
                 f"?jwt={jwt_token}"
@@ -275,16 +299,17 @@ async def line_callback(
                 f"&display_name={display_name}"
                 f"&picture_url={picture_url}"
                 f"{redirect_param}"
+                f"{qr_context_param}"
             )
 
         link_url = redirect_url
 
+        # Use JavaScript redirect instead of meta refresh to properly handle URL encoding
         html_content = f"""
         <!DOCTYPE html>
         <html>
         <head>
             <meta charset="UTF-8">
-            <meta http-equiv="refresh" content="0; url={link_url}">
             <title>เข้าสู่ระบบสำเร็จ</title>
             <style>
                 body {{
@@ -314,6 +339,10 @@ async def line_callback(
                     100% {{ transform: rotate(360deg); }}
                 }}
             </style>
+            <script>
+                // Use JavaScript redirect to properly handle URL encoding
+                window.location.href = {repr(link_url)};
+            </script>
         </head>
         <body>
             <div class="loading">

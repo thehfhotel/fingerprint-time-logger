@@ -72,8 +72,12 @@
             // Store JWT token for future use
             localStorage.setItem('line_jwt_token', jwtToken);
 
-            // Retrieve QR scan context from sessionStorage
-            const contextStr = sessionStorage.getItem('qr_scan_context');
+            // Retrieve QR scan context from URL parameter (cross-browser) or sessionStorage (same-browser)
+            const qrContextParam = urlParams.get('qr_context');
+            const contextStr = qrContextParam || sessionStorage.getItem('qr_scan_context');
+
+            console.log('[Callback] QR context from URL:', qrContextParam ? 'YES' : 'NO');
+            console.log('[Callback] QR context from sessionStorage:', sessionStorage.getItem('qr_scan_context') ? 'YES' : 'NO');
 
             if (!contextStr) {
                 // No QR context → user came directly, redirect to mobile check-in
@@ -85,7 +89,7 @@
             }
 
             try {
-                const context = JSON.parse(contextStr);
+                const context = JSON.parse(decodeURIComponent(contextStr));
 
                 // Check if context is still valid (within 5 minutes)
                 const age = Date.now() - context.timestamp;
