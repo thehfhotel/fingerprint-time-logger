@@ -6,11 +6,6 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>QR Terminal - Check-in</title>
     <link rel="stylesheet" href="/fingerprintlogs/static/css/qr-terminal.css">
-
-    <!-- Leaflet CSS for GPS Configuration -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-        crossorigin=""/>
 </head>
 <body>
     <div class="terminal-container">
@@ -29,15 +24,6 @@
                     <span class="status-dot"></span>
                     <span class="status-text">กำลังเชื่อมต่อ...</span>
                 </div>
-            </div>
-        </div>
-
-        <!-- Location Selector -->
-        <div class="location-selector" id="locationSelector">
-            <div class="location-label">📍 เลือกสถานที่:</div>
-            <div class="location-buttons" id="locationButtons">
-                <!-- Buttons populated by JavaScript -->
-                <div class="location-loading">กำลังโหลด...</div>
             </div>
         </div>
 
@@ -127,88 +113,6 @@
         <button id="fullscreenButton" class="fullscreen-btn" title="เข้าโหมดเต็มจอ">
             ⛶
         </button>
-
-        <!-- GPS Config Button (Admin Only) -->
-        <button id="gpsConfigButton" class="gps-config-btn" title="ตั้งค่า GPS (ผู้ดูแลระบบ)">
-            📍
-        </button>
-    </div>
-
-    <!-- GPS Configuration Modal -->
-    <div id="gpsModal" class="gps-modal" style="display: none;">
-        <div class="gps-modal-content">
-            <!-- Admin Password Step -->
-            <div id="gpsAuthStep" class="gps-step">
-                <div class="gps-modal-header">
-                    <h2>🔐 ตั้งค่าตำแหน่ง GPS</h2>
-                    <button class="gps-close-btn" id="gpsCloseBtn">&times;</button>
-                </div>
-                <div class="gps-modal-body">
-                    <p style="margin-bottom: 20px;">กรุณาใส่รหัสผ่านผู้ดูแลระบบ</p>
-                    <input type="password" id="gpsAdminPassword" placeholder="รหัสผ่านผู้ดูแลระบบ"
-                           class="gps-password-input" />
-                    <div id="gpsAuthError" class="gps-error-message" style="display: none;"></div>
-                    <button id="gpsAuthSubmit" class="gps-btn-primary">ยืนยัน</button>
-                </div>
-            </div>
-
-            <!-- GPS Configuration Step -->
-            <div id="gpsConfigStep" class="gps-step" style="display: none;">
-                <div class="gps-modal-header">
-                    <h2>📍 ตั้งค่าตำแหน่ง GPS - Terminal {TERMINAL_ID}</h2>
-                    <button class="gps-close-btn" id="gpsCloseBtn2">&times;</button>
-                </div>
-                <div class="gps-modal-body">
-                    <div class="gps-info-box">
-                        <p><strong>คำแนะนำ:</strong> คลิกบนแผนที่เพื่อเลือกตำแหน่ง GPS ของ Terminal นี้</p>
-                    </div>
-
-                    <!-- Office Type Selector -->
-                    <div class="gps-office-type">
-                        <button class="gps-office-btn active" data-type="main">🏢 สำนักงานใหญ่</button>
-                        <button class="gps-office-btn" data-type="branch">🏪 สาขา</button>
-                    </div>
-
-                    <!-- Location Name -->
-                    <div class="gps-form-group">
-                        <label>📍 ชื่อสถานที่:</label>
-                        <input type="text" id="gpsLocationName" placeholder="เช่น สำนักงานใหญ่ (กรุงเทพฯ)"
-                               class="gps-input" />
-                    </div>
-
-                    <!-- Map Container -->
-                    <div id="gpsMap" class="gps-map-container"></div>
-
-                    <!-- GPS Coordinates Display -->
-                    <div class="gps-coords-display">
-                        <div class="gps-coord-item">
-                            <label>🌐 Latitude:</label>
-                            <input type="text" id="gpsLatitude" readonly class="gps-coord-value" />
-                        </div>
-                        <div class="gps-coord-item">
-                            <label>🌐 Longitude:</label>
-                            <input type="text" id="gpsLongitude" readonly class="gps-coord-value" />
-                        </div>
-                    </div>
-
-                    <!-- Radius Slider -->
-                    <div class="gps-form-group">
-                        <label>📏 รัศมีการตรวจสอบ: <span id="gpsRadiusValue">200</span>m</label>
-                        <input type="range" id="gpsRadiusSlider" min="50" max="500" value="200" step="10"
-                               class="gps-slider" />
-                    </div>
-
-                    <!-- Action Buttons -->
-                    <div class="gps-actions">
-                        <button id="gpsSaveBtn" class="gps-btn-primary" disabled>💾 บันทึก</button>
-                        <button id="gpsResetBtn" class="gps-btn-secondary">🔄 รีเซ็ต</button>
-                        <button id="gpsDeleteBtn" class="gps-btn-danger" disabled>🗑️ ลบ</button>
-                    </div>
-
-                    <div id="gpsStatusMessage" class="gps-status-message" style="display: none;"></div>
-                </div>
-            </div>
-        </div>
     </div>
 
     <!-- Configuration Script -->
@@ -216,15 +120,8 @@
         // Get terminal ID from URL parameter (default to 2 - first QR terminal)
         const urlParams = new URLSearchParams(window.location.search);
         const TERMINAL_ID = urlParams.get('terminal') || '2';
-        const ADMIN_PASSWORD = 'bananabananabanana'; // Admin password
     </script>
 
-    <!-- Leaflet JavaScript for GPS Configuration -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-        crossorigin=""></script>
-
     <script src="/fingerprintlogs/static/js/qr-terminal.js?v=3"></script>
-    <script src="/fingerprintlogs/static/js/qr-terminal-gps.js?v=3"></script>
 </body>
 </html>
