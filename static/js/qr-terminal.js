@@ -9,8 +9,6 @@
 
     // DOM Elements
     const elements = {
-        terminalName: document.getElementById('terminalName'),
-        terminalLocation: document.getElementById('terminalLocation'),
         currentTime: document.getElementById('currentTime'),
         currentDate: document.getElementById('currentDate'),
         connectionStatus: document.querySelector('.connection-status'),
@@ -183,11 +181,8 @@
     function updateTerminalInfo() {
         if (!terminalData) return;
 
-        // API returns flat structure: {terminal_id, terminal_name, ...}
-        const location = terminalData.terminal_name || `Terminal ${terminalData.terminal_id}`;
-
-        elements.terminalName.textContent = location;
-        elements.terminalLocation.textContent = `📍 ${location}`;
+        // Terminal name is now displayed only in the location selector
+        // No additional UI updates needed here
     }
 
     /**
