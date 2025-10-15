@@ -7,6 +7,7 @@ Integrates QR service, location service, and LINE authentication.
 
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -95,7 +96,9 @@ async def scan_qr_code(
             )
 
         # Step 2: Validate QR token (checks expiry and replay)
-        qr_payload = qr_service.validate_qr_token(request.qr_token)
+        # URL-decode token to handle URL-encoded special characters (+, /, =)
+        decoded_qr_token = unquote(request.qr_token)
+        qr_payload = qr_service.validate_qr_token(decoded_qr_token)
         terminal_id = qr_payload.get("terminal_id")
 
         # Step 3: Validate GPS location
