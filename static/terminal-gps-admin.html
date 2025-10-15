@@ -117,17 +117,6 @@
             font-size: 1.1rem;
         }
 
-        .terminal-badge {
-            background: #667eea;
-            color: white;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.85rem;
-        }
-
-        .terminal-card.active .terminal-badge {
-            background: rgba(255,255,255,0.3);
-        }
 
         .terminal-info {
             font-size: 0.9rem;
@@ -336,31 +325,94 @@
             100% { transform: rotate(360deg); }
         }
 
-        .office-type-selector {
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(4px);
+        }
+
+        .modal.show {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 600px;
+            width: 90%;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            animation: modalSlideIn 0.3s ease;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+        }
+
+        .modal-header h2 {
+            color: #667eea;
+            font-size: 1.5rem;
+            margin: 0;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 2rem;
+            color: #999;
+            cursor: pointer;
+            padding: 0;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.3s;
+        }
+
+        .modal-close:hover {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .modal-body {
+            margin-bottom: 25px;
+        }
+
+        .modal-footer {
             display: flex;
             gap: 10px;
-            margin-bottom: 20px;
+            justify-content: flex-end;
         }
 
-        .office-type-btn {
-            flex: 1;
-            padding: 12px;
-            background: white;
-            border: 2px solid #e1e8ed;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            font-weight: 600;
-        }
-
-        .office-type-btn:hover {
-            border-color: #667eea;
-        }
-
-        .office-type-btn.active {
-            background: #667eea;
-            color: white;
-            border-color: #667eea;
+        .modal-footer .btn {
+            padding: 12px 24px;
+            flex: initial;
+            min-width: 100px;
         }
 
         @media (max-width: 1024px) {
@@ -403,15 +455,6 @@
                 <div id="map"></div>
 
                 <div class="map-controls">
-                    <div class="office-type-selector">
-                        <button class="office-type-btn active" data-type="main">
-                            🏢 สำนักงานใหญ่
-                        </button>
-                        <button class="office-type-btn" data-type="branch">
-                            🏪 สาขา
-                        </button>
-                    </div>
-
                     <div class="control-group">
                         <label>📍 ชื่อสถานที่</label>
                         <input type="text" id="locationName" placeholder="เช่น สำนักงานใหญ่ (กรุงเทพฯ)" />
@@ -448,6 +491,64 @@
                         </button>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Terminal Modal -->
+    <div id="addTerminalModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>➕ เพิ่ม QR Terminal</h2>
+                <button class="modal-close" onclick="closeAddTerminalModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="control-group">
+                    <label>🏷️ ชื่อ Terminal</label>
+                    <input type="text" id="newTerminalName" placeholder="เช่น QR Terminal - สาขา 1" />
+                </div>
+
+                <div class="control-group">
+                    <label>📍 ชื่อสถานที่</label>
+                    <input type="text" id="newLocationName" placeholder="เช่น สาขา 1 (สีลม)" />
+                </div>
+
+                <div class="control-row">
+                    <div class="control-group">
+                        <label>🌐 ละติจูด (Latitude)</label>
+                        <input type="number" step="0.000001" id="newLatitude" placeholder="13.7563" />
+                    </div>
+                    <div class="control-group">
+                        <label>🌐 ลองจิจูด (Longitude)</label>
+                        <input type="number" step="0.000001" id="newLongitude" placeholder="100.5018" />
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>📏 รัศมีการตรวจสอบ (เมตร)</label>
+                    <div class="range-display">
+                        <input type="range" id="newRadiusSlider" min="50" max="500" value="200" step="10" style="flex: 1;" />
+                        <span class="range-value" id="newRadiusValue">200m</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>🌐 IP Address</label>
+                    <input type="text" id="newIpAddress" placeholder="192.168.100.210" />
+                </div>
+
+                <div class="control-group">
+                    <label>🔌 Port</label>
+                    <input type="number" id="newPort" value="4370" />
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeAddTerminalModal()">
+                    ❌ ยกเลิก
+                </button>
+                <button class="btn btn-primary" onclick="saveNewTerminal()">
+                    💾 บันทึก
+                </button>
             </div>
         </div>
     </div>

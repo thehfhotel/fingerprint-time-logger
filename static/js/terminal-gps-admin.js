@@ -16,7 +16,6 @@ let currentTerminal = null;
 const state = {
     selectedLocation: null,
     selectedTerminal: null,
-    officeType: 'main', // 'main' or 'branch'
     hasChanges: false
 };
 
@@ -155,16 +154,12 @@ function renderTerminalList() {
         const metadata = parseMetadata(terminal.device_metadata);
         const gps = metadata.gps || {};
         const hasGPS = gps.latitude && gps.longitude;
-        const officeType = gps.office_type || 'branch';
 
         return `
             <div class="terminal-card" data-terminal-id="${terminal.id}">
                 <div class="terminal-header">
                     <div class="terminal-name">
-                        ${officeType === 'main' ? '🏢' : '🏪'} ${terminal.name}
-                    </div>
-                    <div class="terminal-badge">
-                        ${officeType === 'main' ? 'สำนักงานใหญ่' : 'สาขา'}
+                        📍 ${terminal.name}
                     </div>
                 </div>
                 <div class="terminal-info">
@@ -221,10 +216,6 @@ function selectTerminal(terminalId) {
         document.getElementById('radiusSlider').value = gps.radius || 200;
         document.getElementById('radiusValue').textContent = `${gps.radius || 200}m`;
 
-        // Set office type
-        state.officeType = gps.office_type || 'branch';
-        updateOfficeTypeUI();
-
         document.getElementById('deleteBtn').disabled = false;
     } else {
         // No GPS data - reset form
@@ -232,15 +223,6 @@ function selectTerminal(terminalId) {
     }
 
     state.hasChanges = false;
-}
-
-function updateOfficeTypeUI() {
-    document.querySelectorAll('.office-type-btn').forEach(btn => {
-        btn.classList.remove('active');
-        if (btn.dataset.type === state.officeType) {
-            btn.classList.add('active');
-        }
-    });
 }
 
 function parseMetadata(metadataStr) {
@@ -276,7 +258,6 @@ async function saveLocation() {
         longitude: state.selectedLocation.lng,
         radius: radius,
         location_name: locationName,
-        office_type: state.officeType,
         updated_at: new Date().toISOString()
     };
 
@@ -409,23 +390,19 @@ document.addEventListener('DOMContentLoaded', () => {
         state.hasChanges = true;
     });
 
-    // Office type selector
-    document.querySelectorAll('.office-type-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            state.officeType = btn.dataset.type;
-            updateOfficeTypeUI();
-            state.hasChanges = true;
-        });
-    });
-
     // Action buttons
     document.getElementById('saveBtn').addEventListener('click', saveLocation);
     document.getElementById('resetBtn').addEventListener('click', resetForm);
     document.getElementById('deleteBtn').addEventListener('click', deleteLocation);
 
     // Add terminal button
-    document.getElementById('addTerminalBtn').addEventListener('click', () => {
-        alert('กรุณาเพิ่ม QR Terminal ผ่านหน้า Device Management ก่อน จากนั้นจึงมาตั้งค่า GPS ที่นี่');
+    document.getElementById('addTerminalBtn').addEventListener('click', openAddTerminalModal);
+
+    // New terminal radius slider
+    const newRadiusSlider = document.getElementById('newRadiusSlider');
+    const newRadiusValue = document.getElementById('newRadiusValue');
+    newRadiusSlider.addEventListener('input', () => {
+        newRadiusValue.textContent = `${newRadiusSlider.value}m`;
     });
 
     // Location name change
@@ -443,6 +420,117 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ============================================================================
+// Add Terminal Modal Functions
+// ============================================================================
+
+function openAddTerminalModal() {
+    const modal = document.getElementById('addTerminalModal');
+    modal.classList.add('show');
+
+    // Reset form
+    document.getElementById('newTerminalName').value = '';
+    document.getElementById('newLocationName').value = '';
+    document.getElementById('newLatitude').value = '';
+    document.getElementById('newLongitude').value = '';
+    document.getElementById('newRadiusSlider').value = 200;
+    document.getElementById('newRadiusValue').textContent = '200m';
+    document.getElementById('newIpAddress').value = '';
+    document.getElementById('newPort').value = 4370;
+}
+
+function closeAddTerminalModal() {
+    const modal = document.getElementById('addTerminalModal');
+    modal.classList.remove('show');
+}
+
+async function saveNewTerminal() {
+    const terminalName = document.getElementById('newTerminalName').value.trim();
+    const locationName = document.getElementById('newLocationName').value.trim();
+    const latitude = parseFloat(document.getElementById('newLatitude').value);
+    const longitude = parseFloat(document.getElementById('newLongitude').value);
+    const radius = parseInt(document.getElementById('newRadiusSlider').value);
+    const ipAddress = document.getElementById('newIpAddress').value.trim();
+    const port = parseInt(document.getElementById('newPort').value);
+
+    // Validation
+    if (!terminalName) {
+        alert('กรุณากรอกชื่อ Terminal');
+        return;
+    }
+
+    if (!locationName) {
+        alert('กรุณากรอกชื่อสถานที่');
+        return;
+    }
+
+    if (isNaN(latitude) || isNaN(longitude)) {
+        alert('กรุณากรอกพิกัด GPS ให้ถูกต้อง');
+        return;
+    }
+
+    if (!ipAddress) {
+        alert('กรุณากรอก IP Address');
+        return;
+    }
+
+    // Prepare GPS metadata
+    const metadata = {
+        gps: {
+            latitude: latitude,
+            longitude: longitude,
+            radius: radius,
+            location_name: locationName,
+            updated_at: new Date().toISOString()
+        }
+    };
+
+    console.log('[GPS Admin] Creating new terminal:', {
+        name: terminalName,
+        ip_address: ipAddress,
+        port: port,
+        device_type: 'qr_terminal',
+        metadata: metadata
+    });
+
+    try {
+        // Note: Backend API endpoint for creating devices is currently not implemented
+        // The endpoint was removed as mentioned in consolidated_devices.py line 91
+        // This would require implementing POST /fingerprintlogs/api/devices/ endpoint
+
+        showStatus('⚠️ ฟีเจอร์การเพิ่ม Terminal ใหม่ต้องการการพัฒนา Backend API เพิ่มเติม', 'error');
+
+        // TODO: Uncomment when backend POST endpoint is implemented
+        /*
+        const response = await fetch('/fingerprintlogs/api/devices/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                name: terminalName,
+                ip_address: ipAddress,
+                port: port,
+                device_type: 'qr_terminal',
+                is_active: true,
+                device_metadata: JSON.stringify(metadata)
+            })
+        });
+
+        if (!response.ok) throw new Error('Failed to create terminal');
+
+        showStatus('✅ เพิ่ม Terminal สำเร็จ', 'success');
+        closeAddTerminalModal();
+
+        // Reload terminals
+        await loadTerminals();
+        */
+    } catch (error) {
+        console.error('[GPS Admin] Error creating terminal:', error);
+        showStatus('❌ ไม่สามารถเพิ่ม Terminal ได้', 'error');
+    }
+}
+
+// ============================================================================
 // Export for debugging
 // ============================================================================
 
@@ -452,6 +540,9 @@ window.gpsAdmin = {
     terminals,
     loadTerminals,
     saveLocation,
+    openAddTerminalModal,
+    closeAddTerminalModal,
+    saveNewTerminal,
     version: 'Leaflet + OpenStreetMap (Free)'
 };
 
