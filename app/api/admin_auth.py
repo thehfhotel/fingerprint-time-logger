@@ -2,7 +2,8 @@
 Admin Authentication API
 Secure passcode authentication with session management
 """
-from fastapi import APIRouter, HTTPException, Header, Depends
+from fastapi import APIRouter, HTTPException, Header, Depends, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 import logging
@@ -54,12 +55,12 @@ def get_token_from_header(authorization: Optional[str] = Header(None)) -> str:
 
     return parts[1]
 
-@router.post("/login", response_model=LoginResponse)
+@router.post("/login")
 async def admin_login(request: LoginRequest):
     """
     Authenticate admin user with passcode
 
-    Returns session token valid for 1 hour
+    Returns session token valid for 1 hour and sets HttpOnly cookie
     """
     try:
         # Verify passcode
@@ -76,13 +77,27 @@ async def admin_login(request: LoginRequest):
 
         logger.info("Admin login successful")
 
-        return LoginResponse(
-            success=True,
-            token=token,
-            expires_at=session_info['expires_at'],
-            expires_in_seconds=session_info['expires_in_seconds'],
-            message="เข้าสู่ระบบสำเร็จ"
+        # Create JSON response
+        response = JSONResponse(content={
+            "success": True,
+            "token": token,
+            "expires_at": session_info['expires_at'],
+            "expires_in_seconds": session_info['expires_in_seconds'],
+            "message": "เข้าสู่ระบบสำเร็จ"
+        })
+
+        # Set HttpOnly cookie for server-side authentication
+        # This prevents JavaScript access and XSS attacks
+        response.set_cookie(
+            key="admin_session_token",
+            value=token,
+            httponly=True,  # Prevent JavaScript access
+            max_age=3600,  # 1 hour in seconds
+            samesite="lax",  # CSRF protection
+            secure=False  # Set to True in production with HTTPS
         )
+
+        return response
 
     except HTTPException:
         raise
@@ -121,7 +136,7 @@ async def validate_session(token: str = Depends(get_token_from_header)):
         logger.error(f"Session validation error: {e}")
         return ValidateResponse(valid=False)
 
-@router.post("/logout", response_model=LogoutResponse)
+@router.post("/logout")
 async def admin_logout(token: str = Depends(get_token_from_header)):
     """
     Logout admin user and revoke session
@@ -130,10 +145,16 @@ async def admin_logout(token: str = Depends(get_token_from_header)):
         admin_auth_service.revoke_session(token)
         logger.info("Admin logout successful")
 
-        return LogoutResponse(
-            success=True,
-            message="ออกจากระบบสำเร็จ"
-        )
+        # Create JSON response
+        response = JSONResponse(content={
+            "success": True,
+            "message": "ออกจากระบบสำเร็จ"
+        })
+
+        # Clear the HttpOnly cookie
+        response.delete_cookie(key="admin_session_token")
+
+        return response
 
     except Exception as e:
         logger.error(f"Logout error: {e}")

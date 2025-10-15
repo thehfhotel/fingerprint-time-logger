@@ -1,8 +1,8 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from contextlib import asynccontextmanager
 import logging
 import asyncio
@@ -339,8 +339,34 @@ async def serve_admin_login():
     return serve_html_with_cache_control("static/admin-login.html")
 
 @fingerprint_app.get("/admin-console")
-async def serve_admin_console():
-    """Serve admin console configuration page (requires authentication)"""
+async def serve_admin_console(request: Request):
+    """Serve admin console configuration page (requires authentication)
+
+    Server-side authentication check to prevent any client-side assets
+    from loading before authentication is verified. This ensures NO HTML,
+    CSS, JavaScript, or any other assets are sent to the browser before
+    authentication is confirmed on the server side.
+    """
+    # Check for session token in cookie
+    admin_token = request.cookies.get('admin_session_token')
+
+    # If no token, redirect immediately to login page
+    # No assets will be loaded - just an HTTP 302 redirect
+    if not admin_token:
+        return RedirectResponse(url="/admin-login", status_code=302)
+
+    # Validate token server-side before serving any content
+    from app.services.admin_auth_service import admin_auth_service
+
+    if not admin_auth_service.validate_session(admin_token):
+        # Session invalid or expired - clear cookie and redirect
+        # Still no assets loaded - just redirect with cookie cleanup
+        response = RedirectResponse(url="/admin-login", status_code=302)
+        response.delete_cookie('admin_session_token')
+        return response
+
+    # Session valid - NOW we serve admin console HTML
+    # Only at this point will any assets be loaded by the browser
     return serve_html_with_cache_control("static/admin-console.html")
 
 @fingerprint_app.get("/health")
@@ -434,7 +460,6 @@ async def trigger_manual_import():
 
 # Redirect old routes to new simplified interface
 from fastapi import HTTPException
-from fastapi.responses import RedirectResponse
 
 @fingerprint_app.get("/employee-management")
 async def redirect_employee_management():
