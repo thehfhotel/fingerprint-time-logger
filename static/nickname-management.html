@@ -135,6 +135,44 @@
             border-color: var(--accent-blue) !important;
             color: var(--primary-white) !important;
         }
+
+        /* Employee source type tags */
+        .source-tag {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        .source-tag-zkdevice {
+            background-color: #e3f2fd;
+            color: #1565c0;
+            border: 1px solid #90caf9;
+        }
+
+        .source-tag-database {
+            background-color: #fff3e0;
+            color: #e65100;
+            border: 1px solid #ffb74d;
+        }
+
+        /* Delete button styling */
+        .btn-delete {
+            background-color: #dc3545 !important;
+            border-color: #dc3545 !important;
+            color: white !important;
+            padding: 6px 12px;
+            font-size: 13px;
+            margin-top: 5px;
+        }
+
+        .btn-delete:hover {
+            background-color: #c82333 !important;
+            border-color: #bd2130 !important;
+        }
     </style>
 </head>
 <body>
@@ -283,14 +321,14 @@
                 const hiddenClass = employee.is_hidden ? 'status-hidden' : 'status-active';
                 const hiddenText = employee.is_hidden ? 'ซ่อน' : 'แสดง';
                 
-                // Add visual indicator for employee source
-                let sourceIndicator = '';
+                // Generate source type badge tag
+                let sourceTag = '';
                 if (employee.from_database_only) {
                     // Database-only employee (manually created, not from ZK device)
-                    sourceIndicator = '<span style="color: #007bff; font-size: 12px; margin-left: 5px;" title="สร้างด้วยมือ - ไม่ได้มาจากเครื่อง ZK">✏️</span>';
-                } else if (!employee.in_database) {
-                    // From ZK device but not yet in database
-                    sourceIndicator = '<span style="color: #ffc107; font-size: 12px; margin-left: 5px;" title="จากเครื่อง ZK - ยังไม่มีในฐานข้อมูล">📋</span>';
+                    sourceTag = '<span class="source-tag source-tag-database" title="สร้างด้วยมือ - ไม่ได้มาจากเครื่อง ZK">DATABASE</span>';
+                } else {
+                    // From ZK device
+                    sourceTag = '<span class="source-tag source-tag-zkdevice" title="ซิงค์จากเครื่อง ZKTeco">ZKDEVICE</span>';
                 }
                 
                 // LINE code column content (only in admin mode)
@@ -334,7 +372,7 @@
                 }
 
                 row.innerHTML = `
-                    <td>${employee.badge_number}${sourceIndicator}</td>
+                    <td>${employee.badge_number}${sourceTag}</td>
                     <td>
                         <input type="text"
                                class="nickname-input"
@@ -364,6 +402,9 @@
                                 disabled>
                             ${employee.in_database ? 'บันทึก' : 'สร้างและบันทึก'}
                         </button>
+                        ${employee.from_database_only ?
+                            `<br><button class="btn btn-delete" onclick="deleteEmployee('${employee.badge_number}', '${employee.display_name}')">🗑️ ลบ</button>`
+                            : ''}
                         <span class="success-message" id="success-${employee.badge_number}">บันทึกแล้ว!</span>
                         <span class="error-message" id="error-${employee.badge_number}">บันทึกไม่สำเร็จ</span>
                     </td>
@@ -506,6 +547,42 @@
             } catch (error) {
                 console.error('Error updating hidden status:', error);
                 alert('อัปเดตสถานะการซ่อนพนักงานไม่สำเร็จ');
+            }
+        }
+
+        // Delete employee (database-only employees)
+        async function deleteEmployee(badgeNumber, displayName) {
+            if (!confirm(`คุณต้องการลบพนักงาน "${displayName}" (เลขบัตร: ${badgeNumber}) ใช่หรือไม่?\n\n⚠️ การลบนี้ไม่สามารถย้อนกลับได้`)) {
+                return;
+            }
+
+            try {
+                await appConfig.loadConfig();
+
+                const response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}`), {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(`ลบพนักงานไม่สำเร็จ: ${error.detail || 'เกิดข้อผิดพลาด'}`);
+                    return;
+                }
+
+                const result = await response.json();
+                alert(result.message || 'ลบพนักงานสำเร็จแล้ว');
+
+                // Remove employee from local array
+                employees = employees.filter(e => e.badge_number !== badgeNumber);
+
+                // Refresh the display
+                displayEmployees(getFilteredEmployees());
+            } catch (error) {
+                console.error('Error deleting employee:', error);
+                alert('เกิดข้อผิดพลาดในการลบพนักงาน กรุณาลองใหม่อีกครั้ง');
             }
         }
 
