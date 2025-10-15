@@ -152,6 +152,14 @@ class LocationService:
         # Check GPS accuracy (require good GPS signal for check-in security)
         max_accuracy = 50  # Maximum 50m accuracy required for reliable check-in
         if user_accuracy and user_accuracy > max_accuracy:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"[GPS ACCURACY FAILED] Insufficient GPS accuracy - "
+                f"Terminal: {terminal_id}, "
+                f"GPS: ({user_lat}, {user_lon}), "
+                f"Accuracy: {user_accuracy:.1f}m > {max_accuracy}m"
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"ความแม่นยำของ GPS ไม่เพียงพอ ({user_accuracy:.1f}m > {max_accuracy}m) กรุณาลองใหม่ในที่โล่ง"

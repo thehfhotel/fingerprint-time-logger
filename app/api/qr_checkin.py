@@ -108,6 +108,19 @@ async def scan_qr_code(
         )
 
         if not location_validation["valid"]:
+            # Log failed check-in attempt for monitoring
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"[QR CHECK-IN FAILED] Location validation failed - "
+                f"Employee: {employee_badge}, "
+                f"Terminal: {terminal_id} ({location_validation['terminal_location']['location_name']}), "
+                f"Distance: {location_validation['distance']}m, "
+                f"Allowed: {location_validation['allowed_radius']}m, "
+                f"GPS: ({request.latitude}, {request.longitude}), "
+                f"Accuracy: {request.accuracy}m"
+            )
+
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=location_validation["message"]
@@ -141,6 +154,26 @@ async def scan_qr_code(
         db.add(attendance_record)
         db.commit()
         db.refresh(attendance_record)
+
+        # Broadcast attendance update to WebSocket clients (QR terminal display)
+        try:
+            from app.main_unified import manager
+
+            await manager.broadcast({
+                "type": "attendance_update",
+                "data": {
+                    "device_id": terminal_id,
+                    "badge_number": employee.badge_number,
+                    "employee_name": employee.display_name,
+                    "timestamp": attendance_record.timestamp.replace(tzinfo=timezone.utc).isoformat(),
+                    "metadata": attendance_record.validation_message
+                }
+            })
+        except Exception as broadcast_error:
+            # Log but don't fail the request if broadcast fails
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to broadcast QR check-in update: {broadcast_error}")
 
         # Step 6: Return success response
         response_data = QRScanResponse(

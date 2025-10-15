@@ -45,6 +45,9 @@
     let lastScannedCode = null;
     let lastScanTime = 0;
 
+    // GPS Configuration
+    const GPS_REQUIRED_ACCURACY = 30; // meters - stricter than backend 50m requirement
+
     /**
      * Initialize page
      */
@@ -159,39 +162,83 @@
     }
 
     /**
-     * Start GPS tracking
+     * Check if GPS accuracy is acceptable for check-in
+     */
+    function isGPSAccurate(accuracy) {
+        return accuracy <= GPS_REQUIRED_ACCURACY;
+    }
+
+    /**
+     * Update GPS status display and scanner button state
+     */
+    function updateGPSStatus(position) {
+        currentGPS = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy
+        };
+
+        const accuracy = Math.round(currentGPS.accuracy);
+
+        if (isGPSAccurate(accuracy)) {
+            // Good GPS lock achieved - phone GPS (not WiFi)
+            elements.gpsText.textContent = 'GPS พร้อมใช้งาน ✓';
+            elements.gpsText.style.color = '#28a745';
+            elements.gpsAccuracy.textContent = `±${accuracy}m`;
+            elements.gpsAccuracy.style.color = '#28a745';
+
+            // Enable scanner button
+            if (elements.startScanButton) {
+                elements.startScanButton.disabled = false;
+            }
+
+            console.log(`[GPS] Good accuracy achieved: ${accuracy}m (GPS lock)`);
+        } else {
+            // Waiting for GPS lock (likely using WiFi positioning)
+            elements.gpsText.textContent = 'กำลังรอสัญญาณ GPS...';
+            elements.gpsText.style.color = '#ffc107';
+            elements.gpsAccuracy.textContent = `±${accuracy}m`;
+            elements.gpsAccuracy.style.color = '#ffc107';
+
+            // Disable scanner button until GPS accuracy improves
+            if (elements.startScanButton) {
+                elements.startScanButton.disabled = true;
+            }
+
+            console.log(`[GPS] Waiting for better accuracy: ${accuracy}m > ${GPS_REQUIRED_ACCURACY}m (likely WiFi)`);
+        }
+    }
+
+    /**
+     * Start GPS tracking with enhanced configuration for phone GPS
      */
     function startGPSTracking() {
         if (!navigator.geolocation) {
             elements.gpsText.textContent = 'ไม่รองรับ GPS';
             elements.gpsText.style.color = '#dc3545';
+            elements.gpsAccuracy.textContent = '-';
             return;
         }
 
+        console.log('[GPS] Starting GPS tracking with high-accuracy phone GPS mode...');
+
         navigator.geolocation.watchPosition(
-            (position) => {
-                currentGPS = {
-                    latitude: position.coords.latitude,
-                    longitude: position.coords.longitude,
-                    accuracy: position.coords.accuracy
-                };
-
-                elements.gpsText.textContent = 'พร้อมใช้งาน ✓';
-                elements.gpsText.style.color = '#28a745';
-                elements.gpsAccuracy.textContent = `±${Math.round(currentGPS.accuracy)}m`;
-
-                console.log('[GPS] Position updated:', currentGPS);
-            },
+            updateGPSStatus,
             (error) => {
                 console.error('[GPS] Error:', error);
                 elements.gpsText.textContent = 'ไม่สามารถเข้าถึง GPS';
                 elements.gpsText.style.color = '#dc3545';
                 elements.gpsAccuracy.textContent = '-';
+
+                // Disable scanner when GPS unavailable
+                if (elements.startScanButton) {
+                    elements.startScanButton.disabled = true;
+                }
             },
             {
-                enableHighAccuracy: true,
-                maximumAge: 10000,
-                timeout: 5000
+                enableHighAccuracy: true,  // Request phone GPS (not WiFi)
+                maximumAge: 5000,          // Force fresh GPS readings (reduced from 10000ms)
+                timeout: 15000             // Allow GPS satellite lock (increased from 5000ms)
             }
         );
     }
@@ -341,8 +388,30 @@
                 }, 1000);
             } else {
                 console.error('[Check-in] Failed:', data);
+
+                // Log failed attempt details
+                console.warn(
+                    `[Check-in FAILED] ${data.detail || data.message} - ` +
+                    `GPS: (${currentGPS.latitude}, ${currentGPS.longitude}), ` +
+                    `Accuracy: ${currentGPS.accuracy}m`
+                );
+
                 hideLoading();
-                showResult('error', 'บันทึกเวลาไม่สำเร็จ', data.message || data.detail || 'กรุณาลองใหม่อีกครั้ง');
+
+                // Show error with GPS details for debugging
+                const errorDetails = currentGPS ? `
+                    <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #f5c6cb;">
+                        <div><strong>🎯 ความแม่นยำ GPS:</strong> ±${Math.round(currentGPS.accuracy)}m</div>
+                        <div><strong>📍 ตำแหน่ง:</strong> ${currentGPS.latitude.toFixed(6)}, ${currentGPS.longitude.toFixed(6)}</div>
+                    </div>
+                ` : '';
+
+                showResult(
+                    'error',
+                    'บันทึกเวลาไม่สำเร็จ',
+                    data.message || data.detail || 'กรุณาลองใหม่อีกครั้ง',
+                    errorDetails
+                );
             }
         } catch (error) {
             console.error('[Check-in] Error:', error);
