@@ -370,6 +370,16 @@ async def serve_qr_terminal():
     """Serve kiosk QR terminal display page"""
     return serve_html_with_cache_control("static/qr-terminal.html")
 
+@fingerprint_app.get("/qr-checkin/scan")
+async def serve_qr_scan_landing():
+    """Serve QR scan landing page with auto-redirect logic"""
+    return serve_html_with_cache_control("static/qr-scan.html")
+
+@fingerprint_app.get("/qr-checkin/scan-callback")
+async def serve_qr_scan_callback():
+    """Serve QR scan OAuth callback page"""
+    return serve_html_with_cache_control("static/qr-scan-callback.html")
+
 @fingerprint_app.get("/admin/terminal-gps")
 async def serve_terminal_gps_admin(request: Request):
     """Serve QR terminal GPS location admin page (requires authentication)

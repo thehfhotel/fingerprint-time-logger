@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>กำลังดำเนินการ...</title>
+    <style>
+        body {
+            font-family: 'Prompt', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #06C755 0%, #00B900 100%);
+        }
+        .container {
+            background: white;
+            padding: 40px 30px;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            text-align: center;
+            max-width: 400px;
+        }
+        .spinner {
+            border: 4px solid rgba(6, 199, 85, 0.2);
+            border-radius: 50%;
+            border-top: 4px solid #06C755;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 24px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        h1 {
+            color: #333;
+            font-size: 24px;
+            margin: 0 0 12px 0;
+        }
+        p {
+            color: #666;
+            font-size: 16px;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="spinner"></div>
+        <h1>กำลังดำเนินการ...</h1>
+        <p id="status">กรุณารอสักครู่</p>
+    </div>
+
+    <script>
+        (function() {
+            'use strict';
+
+            const statusEl = document.getElementById('status');
+
+            // Get JWT from URL parameter (set by LINE OAuth callback)
+            const urlParams = new URLSearchParams(window.location.search);
+            const jwtToken = urlParams.get('jwt');
+
+            if (!jwtToken) {
+                statusEl.textContent = 'ข้อมูลไม่ถูกต้อง กรุณาลองใหม่';
+                return;
+            }
+
+            // Store JWT token for future use
+            localStorage.setItem('line_jwt_token', jwtToken);
+
+            // Retrieve QR scan context from sessionStorage
+            const contextStr = sessionStorage.getItem('qr_scan_context');
+
+            if (!contextStr) {
+                // No QR context → user came directly, redirect to mobile check-in
+                statusEl.textContent = 'เข้าสู่ระบบสำเร็จ กำลังเปลี่ยนเส้นทาง...';
+                setTimeout(() => {
+                    window.location.href = '/qr-checkin/mobile';
+                }, 1000);
+                return;
+            }
+
+            try {
+                const context = JSON.parse(contextStr);
+
+                // Check if context is still valid (within 5 minutes)
+                const age = Date.now() - context.timestamp;
+                if (age > 5 * 60 * 1000) {
+                    statusEl.textContent = 'QR Code หมดอายุแล้ว กรุณาสแกนใหม่';
+                    sessionStorage.removeItem('qr_scan_context');
+                    setTimeout(() => {
+                        window.location.href = '/qr-checkin/mobile';
+                    }, 2000);
+                    return;
+                }
+
+                // Clear context (one-time use)
+                sessionStorage.removeItem('qr_scan_context');
+
+                // Redirect back to QR scan page with original parameters
+                statusEl.textContent = 'กำลังดำเนินการเช็คอิน...';
+                setTimeout(() => {
+                    window.location.href = `/qr-checkin/scan?token=${context.qrToken}&terminal=${context.terminalId}`;
+                }, 500);
+
+            } catch (error) {
+                console.error('[Callback] Error parsing context:', error);
+                statusEl.textContent = 'เกิดข้อผิดพลาด กำลังเปลี่ยนเส้นทาง...';
+                sessionStorage.removeItem('qr_scan_context');
+                setTimeout(() => {
+                    window.location.href = '/qr-checkin/mobile';
+                }, 2000);
+            }
+        })();
+    </script>
+</body>
+</html>

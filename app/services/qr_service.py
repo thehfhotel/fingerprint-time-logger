@@ -181,12 +181,18 @@ class QRCodeService:
         # Generate token
         token_data = self.generate_qr_token(terminal_id)
 
-        # Generate QR code image
-        qr_image = self.generate_qr_code_image(token_data["token"], size=size)
+        # Create deep link URL for one-scan check-in
+        # This URL can be scanned directly from iPhone Camera or generic QR scanners
+        base_url = os.getenv("BASE_URL", "https://erp.thehfhotel.org")
+        qr_url = f"{base_url}/qr-checkin/scan?token={token_data['token']}&terminal={terminal_id}"
+
+        # Generate QR code image with URL (not just token)
+        qr_image = self.generate_qr_code_image(qr_url, size=size)
 
         return {
             "qr_image": qr_image,
             "token": token_data["token"],
+            "qr_url": qr_url,  # Include URL for debugging
             "expires_at": token_data["expires_at"],
             "expires_in_seconds": token_data["expires_in_seconds"],
             "terminal_id": terminal_id

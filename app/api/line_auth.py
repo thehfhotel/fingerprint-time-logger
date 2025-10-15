@@ -53,15 +53,19 @@ class VerifyTokenRequest(BaseModel):
 # ============================================================================
 
 @router.get("/login")
-async def line_login(request: Request):
+async def line_login(request: Request, redirect: Optional[str] = Query(None)):
     """
     Initiate LINE OAuth login flow
+
+    Query Parameters:
+        redirect: Optional redirect destination after OAuth (e.g., 'qr-scan-callback', 'mobile-checkin')
 
     Returns:
         HTML response with meta refresh redirect for Mobile Safari compatibility
     """
     try:
-        auth_data = line_auth_service.generate_authorization_url()
+        # Store redirect parameter in state for callback
+        auth_data = line_auth_service.generate_authorization_url(redirect_hint=redirect)
         auth_url = auth_data["auth_url"]
 
         # Mobile Safari compatible redirect using HTML meta refresh
@@ -128,6 +132,7 @@ async def line_callback(
     state: Optional[str] = Query(None),
     error: Optional[str] = Query(None),
     error_description: Optional[str] = Query(None),
+    redirect: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """
@@ -138,9 +143,10 @@ async def line_callback(
         state: CSRF state token
         error: Error code if authentication failed
         error_description: Error description if authentication failed
+        redirect: Optional redirect destination (e.g., 'qr-scan-callback')
 
     Returns:
-        HTML response redirecting to link account page with LINE profile data
+        HTML response redirecting to link account page or specified redirect with LINE profile data
     """
     # Handle OAuth errors
     if error:
@@ -244,22 +250,27 @@ async def line_callback(
                 display_name=display_name,
                 picture_url=picture_url
             )
-            # Already linked - redirect to mobile check-in
-            redirect_url = f"/qr-checkin/mobile?jwt={jwt_token}"
+            # Already linked - redirect to specified callback or default mobile check-in
+            if redirect == 'qr-scan-callback':
+                redirect_url = f"/qr-checkin/scan-callback?jwt={jwt_token}"
+            else:
+                redirect_url = f"/qr-checkin/mobile?jwt={jwt_token}"
         else:
-            # Not yet linked - redirect to link account page
+            # Not yet linked - redirect to link account page with redirect hint
             jwt_token = line_auth_service.create_jwt_token(
                 line_user_id=line_user_id,
                 employee_badge=None,
                 display_name=display_name,
                 picture_url=picture_url
             )
+            redirect_param = f"&redirect={redirect}" if redirect else ""
             redirect_url = (
                 f"/qr-checkin/link-account"
                 f"?jwt={jwt_token}"
                 f"&line_user_id={line_user_id}"
                 f"&display_name={display_name}"
                 f"&picture_url={picture_url}"
+                f"{redirect_param}"
             )
 
         link_url = redirect_url

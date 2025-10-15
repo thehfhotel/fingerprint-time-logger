@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>QR Check-in</title>
+    <style>
+        body {
+            font-family: 'Prompt', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #06C755 0%, #00B900 100%);
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 40px 30px;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+        }
+        .spinner {
+            border: 4px solid rgba(6, 199, 85, 0.2);
+            border-radius: 50%;
+            border-top: 4px solid #06C755;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 24px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        h1 {
+            color: #333;
+            font-size: 24px;
+            margin: 0 0 12px 0;
+        }
+        p {
+            color: #666;
+            font-size: 16px;
+            margin: 0;
+            line-height: 1.6;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 12px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #888;
+        }
+        .error {
+            color: #dc3545;
+            background: #fee;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        .error-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+        }
+        .btn {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 12px 24px;
+            background: #06C755;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 16px;
+            border: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="spinner"></div>
+        <h1>🔍 กำลังประมวลผล QR Code...</h1>
+        <p id="statusText">กรุณารอสักครู่</p>
+        <div id="statusDetails" class="status"></div>
+    </div>
+
+    <script>
+        (function() {
+            'use strict';
+
+            const statusText = document.getElementById('statusText');
+            const statusDetails = document.getElementById('statusDetails');
+
+            // Get URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const qrToken = urlParams.get('token');
+            const terminalId = urlParams.get('terminal');
+
+            // Check required parameters
+            if (!qrToken || !terminalId) {
+                showError('QR Code ไม่ถูกต้อง', 'กรุณาสแกน QR Code ใหม่อีกครั้ง');
+                return;
+            }
+
+            // Main processing flow
+            processQRScan();
+
+            async function processQRScan() {
+                try {
+                    updateStatus('🔐 ตรวจสอบสถานะการเข้าสู่ระบบ...');
+
+                    // Check if user is authenticated (has JWT in localStorage)
+                    const jwtToken = localStorage.getItem('line_jwt_token');
+
+                    if (!jwtToken) {
+                        // Not logged in → redirect to LINE OAuth with return URL
+                        updateStatus('📱 เปลี่ยนเส้นทางไปยัง LINE Login...');
+                        await new Promise(resolve => setTimeout(resolve, 500));
+
+                        // Store QR context for after OAuth
+                        sessionStorage.setItem('qr_scan_context', JSON.stringify({
+                            qrToken: qrToken,
+                            terminalId: terminalId,
+                            timestamp: Date.now()
+                        }));
+
+                        // Redirect to LINE OAuth
+                        window.location.href = `/qr-checkin/api/auth/line/login?redirect=qr-scan-callback`;
+                        return;
+                    }
+
+                    // User has JWT → verify it's still valid
+                    updateStatus('✅ ตรวจสอบ Token...');
+                    const verifyResponse = await fetch('/qr-checkin/api/auth/line/verify-token', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token: jwtToken })
+                    });
+
+                    if (!verifyResponse.ok) {
+                        // Token expired or invalid → clear and retry
+                        localStorage.removeItem('line_jwt_token');
+                        updateStatus('🔄 Token หมดอายุ กำลังเข้าสู่ระบบใหม่...');
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        processQRScan(); // Retry without token
+                        return;
+                    }
+
+                    const verifyData = await verifyResponse.json();
+
+                    if (!verifyData.employee_badge) {
+                        // Logged in but not linked → redirect to link account
+                        updateStatus('🔗 ต้องเชื่อมต่อบัญชีก่อน...');
+                        sessionStorage.setItem('qr_scan_context', JSON.stringify({
+                            qrToken: qrToken,
+                            terminalId: terminalId,
+                            timestamp: Date.now()
+                        }));
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        window.location.href = '/qr-checkin/link-account?redirect=qr-scan-callback';
+                        return;
+                    }
+
+                    // User is authenticated and linked → perform check-in
+                    updateStatus('📍 กำลังตรวจสอบตำแหน่ง GPS...');
+
+                    // Get GPS location
+                    const gpsData = await getGPSLocation();
+
+                    updateStatus('✨ กำลังบันทึกเวลา...');
+
+                    // Perform check-in
+                    const checkinResponse = await fetch('/qr-checkin/api/qr-checkin/scan', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            qr_token: qrToken,
+                            jwt_token: jwtToken,
+                            latitude: gpsData.latitude,
+                            longitude: gpsData.longitude,
+                            accuracy: gpsData.accuracy
+                        })
+                    });
+
+                    const checkinData = await checkinResponse.json();
+
+                    if (checkinResponse.ok && checkinData.success) {
+                        // Success!
+                        showSuccess(checkinData);
+                    } else {
+                        // Check-in failed (GPS, expired QR, etc.)
+                        showError('บันทึกเวลาไม่สำเร็จ', checkinData.detail || checkinData.message);
+                    }
+
+                } catch (error) {
+                    console.error('[QR Scan] Error:', error);
+                    showError('เกิดข้อผิดพลาด', error.message || 'กรุณาลองใหม่อีกครั้ง');
+                }
+            }
+
+            async function getGPSLocation() {
+                return new Promise((resolve, reject) => {
+                    if (!navigator.geolocation) {
+                        reject(new Error('เบราว์เซอร์ไม่รองรับ GPS'));
+                        return;
+                    }
+
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            resolve({
+                                latitude: position.coords.latitude,
+                                longitude: position.coords.longitude,
+                                accuracy: position.coords.accuracy
+                            });
+                        },
+                        (error) => {
+                            reject(new Error('ไม่สามารถเข้าถึง GPS ได้ กรุณาเปิดใช้งาน Location Services'));
+                        },
+                        {
+                            enableHighAccuracy: true,
+                            timeout: 10000,
+                            maximumAge: 0
+                        }
+                    );
+                });
+            }
+
+            function updateStatus(message) {
+                statusText.textContent = message;
+                statusDetails.textContent = new Date().toLocaleTimeString('th-TH');
+            }
+
+            function showSuccess(data) {
+                const container = document.querySelector('.container');
+                container.innerHTML = `
+                    <div style="font-size: 64px; margin-bottom: 20px;">✅</div>
+                    <h1 style="color: #06C755;">บันทึกเวลาสำเร็จ!</h1>
+                    <p style="font-size: 18px; margin: 16px 0;">${data.message}</p>
+                    <div style="background: #f5f5f5; padding: 16px; border-radius: 8px; margin: 20px 0; text-align: left;">
+                        <p style="margin: 8px 0;"><strong>👤 พนักงาน:</strong> ${data.attendance_record.employee_name}</p>
+                        <p style="margin: 8px 0;"><strong>🕐 เวลา:</strong> ${new Date(data.attendance_record.timestamp).toLocaleTimeString('th-TH')}</p>
+                        <p style="margin: 8px 0;"><strong>📍 สถานที่:</strong> ${data.attendance_record.location}</p>
+                        ${data.location_validation.distance ? `<p style="margin: 8px 0;"><strong>📏 ระยะทาง:</strong> ${Math.round(data.location_validation.distance)}m</p>` : ''}
+                    </div>
+                    <button class="btn" onclick="window.close()">ปิดหน้าต่าง</button>
+                `;
+            }
+
+            function showError(title, message) {
+                const container = document.querySelector('.container');
+                container.innerHTML = `
+                    <div class="error-icon">❌</div>
+                    <h1 style="color: #dc3545;">${title}</h1>
+                    <div class="error">
+                        <p style="margin: 0;">${message}</p>
+                    </div>
+                    <button class="btn" onclick="window.location.href='/qr-checkin/mobile'">ไปที่หน้าสแกน QR</button>
+                `;
+            }
+        })();
+    </script>
+</body>
+</html>
