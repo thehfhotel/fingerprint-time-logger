@@ -161,6 +161,7 @@
                     <div class="search-box">
                         <input type="text" id="searchInput" class="search-input" placeholder="ค้นหาด้วยหมายเลขบัตรหรือชื่อเล่น...">
                         <button id="showHiddenBtn" class="btn btn-secondary" onclick="toggleShowHidden()">แสดงที่ซ่อน</button>
+                        <button id="addEmployeeBtn" class="btn btn-primary" onclick="showAddEmployeeModal()" style="margin-left: 10px;">➕ เพิ่มพนักงานใหม่</button>
                     </div>
 
                     <!-- Admin Mode Panel (Hidden by default) -->
@@ -210,26 +211,63 @@
             try {
                 // Ensure config is loaded first
                 await appConfig.loadConfig();
-                
+
+                // Fetch employees from both ZK device and database
                 const params = new URLSearchParams({
-                    from_device: 'true',  // Always fetch from ZK device
+                    from_device: 'true',  // Fetch from ZK device
                     include_hidden: showHidden.toString()
                 });
-                
-                const url = appConfig.getApiUrl(`employees/?${params}`);
-                console.log('Loading employees from:', url);
-                const response = await fetch(url);
-                if (!response.ok) throw new Error('โหลดข้อมูลพนักงานไม่สำเร็จ');
-                
-                const data = await response.json();
-                employees = data.employees || [];
-                
+
+                const deviceUrl = appConfig.getApiUrl(`employees/?${params}`);
+                console.log('Loading employees from device:', deviceUrl);
+                const deviceResponse = await fetch(deviceUrl);
+                if (!deviceResponse.ok) throw new Error('โหลดข้อมูลพนักงานจากเครื่อง ZK ไม่สำเร็จ');
+
+                const deviceData = await deviceResponse.json();
+                const deviceEmployees = deviceData.employees || [];
+
+                // Also fetch database-only employees (not from device)
+                const dbParams = new URLSearchParams({
+                    from_device: 'false',  // Fetch from database only
+                    include_hidden: showHidden.toString()
+                });
+
+                const dbUrl = appConfig.getApiUrl(`employees/?${dbParams}`);
+                console.log('Loading employees from database:', dbUrl);
+                const dbResponse = await fetch(dbUrl);
+                if (!dbResponse.ok) throw new Error('โหลดข้อมูลพนักงานจากฐานข้อมูลไม่สำเร็จ');
+
+                const dbData = await dbResponse.json();
+                const dbEmployees = dbData.employees || [];
+
+                // Merge employees: ZK device users + database-only users (exclude duplicates)
+                const deviceBadges = new Set(deviceEmployees.map(e => e.badge_number));
+                const dbOnlyEmployees = dbEmployees.filter(e => !deviceBadges.has(e.badge_number));
+
+                // Mark database-only employees
+                dbOnlyEmployees.forEach(emp => {
+                    emp.in_database = true;
+                    emp.from_database_only = true;  // Flag for special display
+                });
+
+                employees = [...deviceEmployees, ...dbOnlyEmployees];
+
+                // Sort by badge number (numeric sort)
+                employees.sort((a, b) => {
+                    const numA = parseInt(a.badge_number);
+                    const numB = parseInt(b.badge_number);
+                    if (!isNaN(numA) && !isNaN(numB)) {
+                        return numA - numB;
+                    }
+                    return a.badge_number.localeCompare(b.badge_number);
+                });
+
                 displayEmployees(employees);
                 document.getElementById('loadingDiv').style.display = 'none';
                 document.getElementById('nicknameTable').style.display = 'table';
             } catch (error) {
                 console.error('Error loading employees:', error);
-                document.getElementById('loadingDiv').innerHTML = 'โหลดข้อมูลพนักงานไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่อเครื่อง ZK';
+                document.getElementById('loadingDiv').innerHTML = 'โหลดข้อมูลพนักงานไม่สำเร็จ: ' + error.message;
             }
         }
 
@@ -245,9 +283,15 @@
                 const hiddenClass = employee.is_hidden ? 'status-hidden' : 'status-active';
                 const hiddenText = employee.is_hidden ? 'ซ่อน' : 'แสดง';
                 
-                // Add visual indicator for employees not in database
-                const notInDbIndicator = !employee.in_database ?
-                    '<span style="color: #ffc107; font-size: 12px; margin-left: 5px;" title="จากเครื่อง ZK - ยังไม่มีในฐานข้อมูล">📋</span>' : '';
+                // Add visual indicator for employee source
+                let sourceIndicator = '';
+                if (employee.from_database_only) {
+                    // Database-only employee (manually created, not from ZK device)
+                    sourceIndicator = '<span style="color: #007bff; font-size: 12px; margin-left: 5px;" title="สร้างด้วยมือ - ไม่ได้มาจากเครื่อง ZK">✏️</span>';
+                } else if (!employee.in_database) {
+                    // From ZK device but not yet in database
+                    sourceIndicator = '<span style="color: #ffc107; font-size: 12px; margin-left: 5px;" title="จากเครื่อง ZK - ยังไม่มีในฐานข้อมูล">📋</span>';
+                }
                 
                 // LINE code column content (only in admin mode)
                 let lineCodeCell = '';
@@ -290,7 +334,7 @@
                 }
 
                 row.innerHTML = `
-                    <td>${employee.badge_number}${notInDbIndicator}</td>
+                    <td>${employee.badge_number}${sourceIndicator}</td>
                     <td>
                         <input type="text"
                                class="nickname-input"
@@ -785,6 +829,139 @@
             displayEmployees(getFilteredEmployees());
             alert('รีเฟรชข้อมูลสำเร็จ');
         }
+
+        // ============================================================================
+        // ADD NEW EMPLOYEE FUNCTIONALITY
+        // ============================================================================
+
+        // Show add employee modal
+        function showAddEmployeeModal() {
+            document.getElementById('addEmployeeModal').style.display = 'flex';
+            document.getElementById('newBadgeNumber').focus();
+        }
+
+        // Hide add employee modal
+        function hideAddEmployeeModal() {
+            document.getElementById('addEmployeeModal').style.display = 'none';
+            // Clear form
+            document.getElementById('newBadgeNumber').value = '';
+            document.getElementById('newNickname').value = '';
+            document.getElementById('addEmployeeError').style.display = 'none';
+        }
+
+        // Create new employee
+        async function createNewEmployee() {
+            const badgeNumber = document.getElementById('newBadgeNumber').value.trim();
+            const nickname = document.getElementById('newNickname').value.trim();
+            const errorDiv = document.getElementById('addEmployeeError');
+            const submitBtn = document.getElementById('createEmployeeBtn');
+
+            // Validate inputs
+            if (!badgeNumber) {
+                errorDiv.textContent = 'กรุณาระบุหมายเลขบัตร';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            if (!nickname) {
+                errorDiv.textContent = 'กรุณาระบุชื่อเล่น';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            errorDiv.style.display = 'none';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'กำลังสร้าง...';
+
+            try {
+                await appConfig.loadConfig();
+
+                const response = await fetch(appConfig.getApiUrl('employees/'), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        badge_number: badgeNumber,
+                        thai_name: nickname,
+                        is_active: true,
+                        is_hidden: false
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    errorDiv.textContent = error.detail || 'เกิดข้อผิดพลาดในการสร้างพนักงาน';
+                    errorDiv.style.display = 'block';
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'สร้างพนักงาน';
+                    return;
+                }
+
+                const result = await response.json();
+                alert(`สร้างพนักงานสำเร็จ!\n\nหมายเลขบัตร: ${result.badge_number}\nชื่อเล่น: ${result.display_name}`);
+
+                // Hide modal and reload employees
+                hideAddEmployeeModal();
+                await loadEmployees();
+
+            } catch (error) {
+                console.error('Error creating employee:', error);
+                errorDiv.textContent = 'เกิดข้อผิดพลาดในการสร้างพนักงาน กรุณาลองใหม่อีกครั้ง';
+                errorDiv.style.display = 'block';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'สร้างพนักงาน';
+            }
+        }
+
+        // Handle Enter key in form
+        document.addEventListener('DOMContentLoaded', function() {
+            const newBadgeNumber = document.getElementById('newBadgeNumber');
+            const newNickname = document.getElementById('newNickname');
+
+            if (newBadgeNumber) {
+                newBadgeNumber.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        newNickname.focus();
+                    }
+                });
+            }
+
+            if (newNickname) {
+                newNickname.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        createNewEmployee();
+                    }
+                });
+            }
+        });
     </script>
+
+    <!-- Add Employee Modal -->
+    <div id="addEmployeeModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div style="background: white; padding: 30px; border-radius: 8px; max-width: 500px; width: 90%; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+            <h3 style="margin: 0 0 20px 0; color: #333;">➕ เพิ่มพนักงานใหม่</h3>
+
+            <div style="margin-bottom: 15px;">
+                <label for="newBadgeNumber" style="display: block; margin-bottom: 5px; font-weight: 500; color: #555;">หมายเลขบัตร <span style="color: red;">*</span></label>
+                <input type="text" id="newBadgeNumber" placeholder="ระบุหมายเลขบัตร" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; box-sizing: border-box;">
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <label for="newNickname" style="display: block; margin-bottom: 5px; font-weight: 500; color: #555;">ชื่อเล่น <span style="color: red;">*</span></label>
+                <input type="text" id="newNickname" placeholder="ระบุชื่อเล่นพนักงาน" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; box-sizing: border-box;">
+            </div>
+
+            <div id="addEmployeeError" style="display: none; margin-bottom: 15px; padding: 10px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; color: #721c24; font-size: 14px;"></div>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button class="btn btn-secondary" onclick="hideAddEmployeeModal()">ยกเลิก</button>
+                <button id="createEmployeeBtn" class="btn btn-primary" onclick="createNewEmployee()">สร้างพนักงาน</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

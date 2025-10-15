@@ -335,7 +335,63 @@ async def get_employee(badge_number: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Employee creation endpoint removed - not used by frontend
+@router.post("/")
+async def create_employee(employee_data: EmployeeCreate, db: Session = Depends(get_db)):
+    """Manually create a new employee (not from ZK device)"""
+    try:
+        # Check if employee already exists
+        existing = db.query(Employee).filter(Employee.badge_number == employee_data.badge_number).first()
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"พนักงานเลขบัตร {employee_data.badge_number} มีอยู่แล้วในระบบ"
+            )
+
+        # Validate badge number
+        if not employee_data.badge_number or not employee_data.badge_number.strip():
+            raise HTTPException(status_code=400, detail="กรุณาระบุหมายเลขบัตร")
+
+        # Create display name from thai_name or english_name or badge number
+        display_name = (
+            employee_data.thai_name or
+            employee_data.english_name or
+            f"พนักงาน {employee_data.badge_number}"
+        )
+
+        # Create new employee
+        employee = Employee(
+            badge_number=employee_data.badge_number.strip(),
+            english_name=employee_data.english_name,
+            thai_name=employee_data.thai_name,
+            display_name=display_name,
+            department=employee_data.department,
+            position=employee_data.position,
+            is_active=employee_data.is_active,
+            is_hidden=employee_data.is_hidden
+        )
+
+        db.add(employee)
+        db.commit()
+        db.refresh(employee)
+
+        return {
+            "success": True,
+            "message": "สร้างพนักงานใหม่สำเร็จแล้ว",
+            "badge_number": employee.badge_number,
+            "english_name": employee.english_name,
+            "thai_name": employee.thai_name,
+            "display_name": employee.display_name,
+            "department": employee.department,
+            "position": employee.position,
+            "is_active": employee.is_active,
+            "is_hidden": employee.is_hidden,
+            "created_at": employee.created_at.isoformat() if employee.created_at else None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"การสร้างพนักงานล้มเหลว: {str(e)}")
 
 
 @router.put("/{badge_number}")
