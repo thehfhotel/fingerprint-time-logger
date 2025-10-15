@@ -338,6 +338,23 @@
             font-size: 0.875rem;
         }
 
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .stat-label {
+            color: #6b7280;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
         @media (max-width: 768px) {
             .status-container {
                 padding: 1rem;
@@ -364,13 +381,6 @@
         <div class="header-row-2">
             <div class="header-actions">
                 <a href="./" class="action-btn">📊 แดชบอร์ด</a>
-                <a href="./nickname-management" class="action-btn">👤 จัดการชื่อเล่น</a>
-                <a href="/fingerprintlogs/individual-attendance" class="action-btn">📅 เข้า/ออก รายคน</a>
-                <a href="/fingerprintlogs/qr-checkin/mobile" class="action-btn qr-checkin-btn">📱 QR Check-in</a>
-                <a href="/fingerprintlogs/qr-checkin/link-account" class="action-btn qr-link-btn">🔗 เชื่อมต่อ LINE</a>
-                <a href="/fingerprintlogs/qr-checkin/terminal?terminal=2" class="action-btn qr-terminal-btn">🖥️ จอแสดง QR</a>
-                <a href="./export" class="action-btn">📤 ส่งออกข้อมูล</a>
-                <a href="./status" class="action-btn" style="background: #4299e1; color: white;">🔍 สถานะระบบ</a>
             </div>
         </div>
     </div>
@@ -427,6 +437,35 @@
                     <div class="metric-row">
                         <span class="metric-label">ซิงค์เวลา</span>
                         <button id="sync-device-time" class="sync-btn" onclick="syncDeviceTime()">🔄 ซิงค์เวลาเซิร์ฟเวอร์</button>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">การจัดการ</span>
+                        <button class="sync-btn" onclick="importLogs()">📥 นำเข้าบันทึกลายนิ้วมือ</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Auto-Import Service Status -->
+            <div class="status-card">
+                <div class="status-card-header">
+                    <span>🤖 บริการนำเข้าอัตโนมัติ</span>
+                </div>
+                <div class="status-card-content">
+                    <div class="metric-row">
+                        <span class="metric-label">สถานะ</span>
+                        <span class="metric-value" id="auto-import-status">กำลังโหลด...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">ช่วงเวลานำเข้า</span>
+                        <span class="metric-value" id="auto-import-interval">กำลังโหลด...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">การนำเข้าครั้งต่อไป</span>
+                        <span class="metric-value" id="auto-import-next">กำลังโหลด...</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">ดำเนินการ</span>
+                        <button class="sync-btn" onclick="triggerManualImport()">📥 นำเข้าทันที</button>
                     </div>
                 </div>
             </div>
@@ -521,12 +560,19 @@
             <div class="logs-header">
                 <h2>📋 บันทึกระบบ</h2>
                 <div class="logs-controls">
+                    <select id="log-level">
+                        <option value="">ทุกระดับ</option>
+                        <option value="ERROR">ข้อผิดพลาดเท่านั้น</option>
+                        <option value="WARNING">คำเตือน</option>
+                        <option value="INFO">ข้อมูล</option>
+                    </select>
                     <select id="log-filter">
-                        <option value="all">บันทึกทั้งหมด</option>
-                        <option value="connection">การเชื่อมต่อ</option>
-                        <option value="sync">การซิงค์</option>
-                        <option value="error">ข้อผิดพลาด</option>
-                        <option value="api">API</option>
+                        <option value="all">ทุกหมวดหมู่</option>
+                        <option value="sync">การซิงค์ข้อมูล</option>
+                        <option value="connection">การเชื่อมต่อเครื่อง</option>
+                        <option value="api">คำขอ API</option>
+                        <option value="system">เหตุการณ์ระบบ</option>
+                        <option value="employee">การกระทำพนักงาน</option>
                     </select>
                     <button id="refresh-logs" class="refresh-button">
                         <span id="refresh-icon">🔄</span> รีเฟรช
@@ -536,6 +582,9 @@
                         <label for="auto-refresh">รีเฟรชอัตโนมัติ (30วินาที)</label>
                     </div>
                 </div>
+            </div>
+            <div id="log-stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; padding: 1rem; background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                <div class="loading">กำลังโหลดสถิติบันทึก...</div>
             </div>
             <div class="logs-content" id="logs-content">
                 <div class="empty-logs">กำลังโหลดบันทึกระบบ...</div>
@@ -564,6 +613,10 @@
                 });
 
                 document.getElementById('log-filter').addEventListener('change', () => {
+                    this.loadLogs();
+                });
+
+                document.getElementById('log-level').addEventListener('change', () => {
                     this.loadLogs();
                 });
 
@@ -770,20 +823,33 @@
 
             async loadLogs() {
                 if (this.isLoading) return;
-                
+
                 this.isLoading = true;
                 const refreshButton = document.getElementById('refresh-logs');
                 const refreshIcon = document.getElementById('refresh-icon');
-                
+
                 refreshButton.disabled = true;
                 refreshIcon.innerHTML = '<div class="loading-spinner"></div>';
 
                 try {
+                    const level = document.getElementById('log-level').value;
                     const logType = document.getElementById('log-filter').value;
-                    const response = await fetch(appConfig.getApiUrl(`system/logs?log_type=${logType}&limit=50`));
+                    const category = logType !== 'all' ? logType : '';
+
+                    // Build query parameters
+                    const params = new URLSearchParams({
+                        limit: '100',
+                        hours_back: '168' // 1 week
+                    });
+
+                    if (level) params.append('level', level);
+                    if (category) params.append('category', category);
+
+                    const response = await fetch(appConfig.getApiUrl(`system/logs?${params}`));
                     const data = await response.json();
 
                     this.displayLogs(data.logs || []);
+                    this.displayLogStats(data.summary || {});
                 } catch (error) {
                     console.error('Failed to load logs:', error);
                     this.displayLogs([]);
@@ -820,6 +886,45 @@
                 `).join('');
 
                 logsContent.innerHTML = logsHtml;
+            }
+
+            displayLogStats(summary) {
+                const statsDiv = document.getElementById('log-stats');
+
+                if (!summary || summary.error) {
+                    statsDiv.innerHTML = '<div class="loading">สถิติบันทึกไม่พร้อมใช้งาน</div>';
+                    return;
+                }
+
+                const healthColor = summary.health_status === 'good' ? '#22c55e' :
+                                  summary.health_status === 'warning' ? '#f59e0b' : '#ef4444';
+
+                statsDiv.innerHTML = `
+                    <div class="stat-item">
+                        <div class="stat-value">${summary.total_logs || 0}</div>
+                        <div class="stat-label">บันทึกทั้งหมด</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" style="color: #ef4444;">${summary.recent_errors || 0}</div>
+                        <div class="stat-label">ข้อผิดพลาด</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" style="color: #f59e0b;">${summary.recent_warnings || 0}</div>
+                        <div class="stat-label">คำเตือน</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" style="color: ${healthColor};">${summary.health_status || 'ไม่ทราบ'}</div>
+                        <div class="stat-label">สุขภาพระบบ</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${summary.category_counts?.sync || 0}</div>
+                        <div class="stat-label">เหตุการณ์ซิงค์</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${summary.category_counts?.connection || 0}</div>
+                        <div class="stat-label">การเชื่อมต่อ</div>
+                    </div>
+                `;
             }
 
             escapeHtml(text) {
@@ -936,9 +1041,70 @@
             }
         }
 
+        // Import logs function
+        async function importLogs() {
+            try {
+                const response = await fetch(appConfig.getApiUrl('attendance/sync'), { method: 'POST' });
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(`นำเข้าสำเร็จ: ${result.imported_count || 0} บันทึก`);
+                    // Reload system health to update stats
+                    const statusPage = window.statusPageInstance;
+                    if (statusPage) {
+                        statusPage.loadSystemHealth();
+                    }
+                } else {
+                    alert('การนำเข้าล้มเหลว: ' + result.message);
+                }
+            } catch (error) {
+                alert('ข้อผิดพลาดการนำเข้า: ' + error.message);
+            }
+        }
+
+        // Trigger manual import function
+        async function triggerManualImport() {
+            try {
+                const response = await fetch(appConfig.getApiUrl('auto-import/trigger'), { method: 'POST' });
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(`นำเข้าแบบแมนวลสำเร็จ: ซิงค์แล้ว ${result.synced || 0} บันทึก`);
+                    loadAutoImportStatus();
+                } else {
+                    alert('นำเข้าแบบแมนวลล้มเหลว: ' + result.message);
+                }
+            } catch (error) {
+                alert('เกิดข้อผิดพลาดในการนำเข้าแบบแมนวล: ' + error.message);
+            }
+        }
+
+        // Load auto-import status
+        async function loadAutoImportStatus() {
+            try {
+                const response = await fetch(appConfig.getApiUrl('auto-import/status'));
+                const autoImportStatus = await response.json();
+
+                if (autoImportStatus.enabled && autoImportStatus.task_status === 'running') {
+                    document.getElementById('auto-import-status').innerHTML = '<span style="color: #22c55e;">✅ ทำงาน</span>';
+                    document.getElementById('auto-import-interval').textContent = `${autoImportStatus.interval_minutes} นาที`;
+                    document.getElementById('auto-import-next').textContent = autoImportStatus.next_import_estimate || 'N/A';
+                } else {
+                    document.getElementById('auto-import-status').innerHTML = '<span style="color: #ef4444;">❌ ไม่ทำงาน</span>';
+                    document.getElementById('auto-import-interval').textContent = `${autoImportStatus.interval_minutes || 30} นาที`;
+                    document.getElementById('auto-import-next').textContent = 'N/A';
+                }
+            } catch (error) {
+                console.error('Failed to load auto-import status:', error);
+                document.getElementById('auto-import-status').innerHTML = '<span style="color: #ef4444;">❌ ข้อผิดพลาด</span>';
+            }
+        }
+
         // Initialize status page when DOM is loaded
         document.addEventListener('DOMContentLoaded', () => {
-            new StatusPage();
+            const statusPage = new StatusPage();
+            window.statusPageInstance = statusPage;  // Store reference for import logs
+            loadAutoImportStatus();  // Load auto-import status on init
         });
     </script>
 </body>
