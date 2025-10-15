@@ -75,7 +75,7 @@
     margin: 0;
     font-size: 0.875rem;
     opacity: 0.9;
-    color: var(--text-secondary);
+    color: var(--primary-white);
 }
 
 .admin-card-body {
