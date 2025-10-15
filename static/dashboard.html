@@ -342,7 +342,7 @@
                         id: record.id,
                         employee_id: record.employee_badge_number || record.employee_id,  // Handle both field names
                         time: formattedTime,
-                        date: timestamp.toLocaleDateString('th-TH', {day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Bangkok'}),
+                        date: timestamp.toLocaleDateString('en-GB', {day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Bangkok'}),
                         timestamp: record.timestamp,
                         adjustment_id: record.adjustment_id || null
                     };
@@ -582,13 +582,13 @@
                 
                 if (data.success) {
                     const deviceTime = new Date(data.device_time);
-                    const timeString = deviceTime.toLocaleString('en-US', {
+                    const timeString = deviceTime.toLocaleString('en-GB', {
                         hour: '2-digit',
                         minute: '2-digit',
                         second: '2-digit',
                         hour12: false,
-                        month: 'short',
-                        day: 'numeric',
+                        day: '2-digit',
+                        month: '2-digit',
                         year: 'numeric'
                     });
                     

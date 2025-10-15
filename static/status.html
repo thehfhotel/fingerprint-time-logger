@@ -663,12 +663,12 @@
                     
                     if (data.success) {
                         const deviceTime = new Date(data.device_time);
-                        const timeString = deviceTime.toLocaleString('en-US', {
+                        const timeString = deviceTime.toLocaleString('en-GB', {
                             hour: '2-digit',
                             minute: '2-digit',
                             second: '2-digit',
-                            month: 'short',
-                            day: 'numeric',
+                            day: '2-digit',
+                            month: '2-digit',
                             year: 'numeric'
                         });
                         
@@ -898,12 +898,12 @@
                     
                     // Update device clock display
                     const newTime = new Date(result.new_time);
-                    const timeString = newTime.toLocaleString('en-US', {
+                    const timeString = newTime.toLocaleString('en-GB', {
                         hour: '2-digit',
                         minute: '2-digit',
                         second: '2-digit',
-                        month: 'short',
-                        day: 'numeric',
+                        day: '2-digit',
+                        month: '2-digit',
                         year: 'numeric'
                     });
                     const syncIcon = result.synchronized ? '🟢' : '🔴';
