@@ -2,18 +2,17 @@
 QR Code Service for QR Check-In Feature
 
 Generates time-limited QR codes with JWT tokens for terminal authentication.
-Implements replay attack prevention through nonce tracking.
+Security provided through short token expiry, GPS validation, and JWT signatures.
 """
 
 import os
-import time
 import secrets
 import jwt
 import qrcode
 import io
 import base64
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional, Set
+from typing import Dict, Optional
 from fastapi import HTTPException, status
 from PIL import Image
 
@@ -25,13 +24,6 @@ class QRCodeService:
         self.jwt_secret = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
         self.qr_token_expiry_seconds = 30  # 30-second expiry for QR tokens
 
-        # Nonce storage for replay attack prevention (in-memory)
-        # In production, consider Redis for distributed systems
-        self._used_nonces: Set[str] = set()
-        self._nonce_timestamps: Dict[str, float] = {}  # Track nonce creation time
-        self._nonce_cleanup_interval = 60  # Cleanup every 60 seconds
-        self._last_cleanup = time.time()
-
     def generate_qr_token(self, terminal_id: int) -> Dict[str, any]:
         """
         Generate time-limited JWT token for QR code
@@ -42,13 +34,13 @@ class QRCodeService:
         Returns:
             Dict containing:
             - token: JWT token string
-            - nonce: Unique nonce for replay prevention
+            - nonce: Unique nonce for token structure
             - expires_at: Token expiration timestamp
         """
         now = datetime.now(timezone.utc)
         exp = now + timedelta(seconds=self.qr_token_expiry_seconds)
 
-        # Generate unique nonce for replay attack prevention
+        # Generate unique nonce for token uniqueness (not for replay prevention)
         nonce = secrets.token_urlsafe(16)
 
         payload = {
@@ -70,7 +62,7 @@ class QRCodeService:
 
     def validate_qr_token(self, token: str) -> Dict[str, any]:
         """
-        Validate QR token and check for replay attacks
+        Validate QR token for terminal check-in
 
         Args:
             token: JWT token from QR code scan
@@ -79,13 +71,20 @@ class QRCodeService:
             Dict containing decoded token payload
 
         Raises:
-            HTTPException: If token is invalid, expired, or replayed
+            HTTPException: If token is invalid or expired
+
+        Note:
+            Nonce replay prevention is disabled to allow multiple users to scan
+            the same QR code simultaneously. Security is maintained through:
+            - 30-second token expiry (short validity window)
+            - GPS location validation (must be at terminal location)
+            - JWT signature verification (prevents token tampering)
         """
         try:
-            # Decode and verify token
+            # Decode and verify token (checks signature and expiry)
             payload = jwt.decode(token, self.jwt_secret, algorithms=["HS256"])
 
-            # Check if nonce was already used (replay attack)
+            # Verify nonce is present (for token structure validation)
             nonce = payload.get("nonce")
             if not nonce:
                 raise HTTPException(
@@ -93,18 +92,9 @@ class QRCodeService:
                     detail="โทเค็น QR ไม่ถูกต้อง (ไม่มี nonce)"
                 )
 
-            if nonce in self._used_nonces:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="QR code นี้ถูกใช้งานไปแล้ว กรุณาสแกน QR code ใหม่"
-                )
-
-            # Mark nonce as used with timestamp
-            self._used_nonces.add(nonce)
-            self._nonce_timestamps[nonce] = time.time()
-
-            # Periodic cleanup of old nonces
-            self._cleanup_expired_nonces()
+            # NOTE: Nonce replay prevention is intentionally disabled
+            # This allows multiple employees to scan the same QR code within
+            # the 30-second validity window, which is required for shared terminals
 
             return payload
 
@@ -197,33 +187,6 @@ class QRCodeService:
             "expires_in_seconds": token_data["expires_in_seconds"],
             "terminal_id": terminal_id
         }
-
-    def _cleanup_expired_nonces(self):
-        """
-        Cleanup expired nonces to prevent memory growth
-
-        Called periodically during token validation.
-        Nonces older than 2x token expiry are removed.
-        """
-        now = time.time()
-
-        # Only cleanup if interval has passed
-        if now - self._last_cleanup < self._nonce_cleanup_interval:
-            return
-
-        # Remove nonces older than 2x token expiry
-        expiry_threshold = now - (2 * self.qr_token_expiry_seconds)
-        expired_nonces = {
-            nonce for nonce, timestamp in self._nonce_timestamps.items()
-            if timestamp < expiry_threshold
-        }
-
-        # Clean up expired nonces
-        for nonce in expired_nonces:
-            self._used_nonces.discard(nonce)
-            del self._nonce_timestamps[nonce]
-
-        self._last_cleanup = now
 
 
 # Global service instance
