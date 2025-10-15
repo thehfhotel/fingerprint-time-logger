@@ -192,8 +192,10 @@
 
     <!-- JavaScript Files -->
     <script>
+        // Force fresh config.js - version bump for HTTPS fix
         const timestamp = Date.now();
-        document.write(`<script src="static/js/config.js?v=${timestamp}"><\/script>`);
+        const configVersion = 'v4.0-https-fix';
+        document.write(`<script src="static/js/config.js?v=${timestamp}&ver=${configVersion}"><\/script>`);
     </script>
 </head>
 <body>
