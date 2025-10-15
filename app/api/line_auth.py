@@ -218,12 +218,16 @@ async def line_callback(
         )
 
     try:
-        # Validate CSRF state token
-        if not line_auth_service.validate_state(state):
+        # Validate CSRF state token and retrieve redirect hint
+        is_valid, stored_redirect_hint = line_auth_service.validate_state(state)
+        if not is_valid:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired state token"
             )
+
+        # Use stored redirect_hint from state, fallback to query parameter
+        redirect = stored_redirect_hint or redirect
 
         # Exchange code for access token
         token_data = line_auth_service.exchange_code_for_token(code)

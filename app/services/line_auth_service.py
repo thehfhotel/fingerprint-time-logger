@@ -42,15 +42,21 @@ class LineAuthService:
         self.line_profile_url = "https://api.line.me/v2/profile"
 
         # State storage for CSRF protection (in-memory, 10-minute TTL)
-        self._state_storage: Dict[str, float] = {}
+        # Format: {state_token: (timestamp, redirect_hint)}
+        self._state_storage: Dict[str, tuple] = {}
         self._state_ttl = 600  # 10 minutes
 
-    def generate_authorization_url(self, state: Optional[str] = None) -> Dict[str, str]:
+    def generate_authorization_url(
+        self,
+        state: Optional[str] = None,
+        redirect_hint: Optional[str] = None
+    ) -> Dict[str, str]:
         """
         Generate LINE OAuth authorization URL
 
         Args:
             state: Optional CSRF state token (generated if not provided)
+            redirect_hint: Optional redirect destination hint (e.g., 'qr-scan-callback', 'mobile-checkin')
 
         Returns:
             Dict with 'auth_url' and 'state' keys
@@ -65,8 +71,8 @@ class LineAuthService:
         if not state:
             state = secrets.token_urlsafe(32)
 
-        # Store state with timestamp for TTL validation
-        self._state_storage[state] = time.time()
+        # Store state with timestamp and redirect_hint for TTL validation and callback routing
+        self._state_storage[state] = (time.time(), redirect_hint)
         self._cleanup_expired_states()
 
         # Build authorization parameters
@@ -85,7 +91,7 @@ class LineAuthService:
             "state": state
         }
 
-    def validate_state(self, state: str) -> bool:
+    def validate_state(self, state: str) -> tuple[bool, Optional[str]]:
         """
         Validate CSRF state token
 
@@ -93,22 +99,24 @@ class LineAuthService:
             state: State token to validate
 
         Returns:
-            True if state is valid and not expired
+            Tuple of (is_valid, redirect_hint)
+            - is_valid: True if state is valid and not expired
+            - redirect_hint: Redirect destination hint if stored, None otherwise
         """
         self._cleanup_expired_states()
 
         if state not in self._state_storage:
-            return False
+            return (False, None)
 
         # Check if state has expired
-        timestamp = self._state_storage[state]
+        timestamp, redirect_hint = self._state_storage[state]
         if time.time() - timestamp > self._state_ttl:
             del self._state_storage[state]
-            return False
+            return (False, None)
 
         # Remove state after successful validation (one-time use)
         del self._state_storage[state]
-        return True
+        return (True, redirect_hint)
 
     def exchange_code_for_token(self, code: str) -> Dict[str, Any]:
         """
@@ -259,7 +267,7 @@ class LineAuthService:
         """Remove expired state tokens from storage"""
         current_time = time.time()
         expired_states = [
-            state for state, timestamp in self._state_storage.items()
+            state for state, (timestamp, _) in self._state_storage.items()
             if current_time - timestamp > self._state_ttl
         ]
         for state in expired_states:
