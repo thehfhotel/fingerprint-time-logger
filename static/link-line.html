@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>เชื่อมต่อบัญชี LINE</title>
-    <link rel="stylesheet" href="/qr-checkin/static/css/link-line.css">
+    <link rel="stylesheet" href="/static/css/link-line.css">
 </head>
 <body>
     <div class="container">
@@ -88,12 +88,17 @@
             <div class="error-icon">🔐</div>
             <h2>ไม่พบข้อมูลการเข้าสู่ระบบ</h2>
             <p>กรุณาเข้าสู่ระบบด้วย LINE ก่อนเชื่อมต่อบัญชี</p>
-            <a href="/qr-checkin/api/auth/line/login" class="login-btn">
+            <a href="/api/public/auth/line/login" class="login-btn">
                 🟢 เข้าสู่ระบบด้วย LINE
             </a>
         </div>
     </div>
 
-    <script src="/qr-checkin/static/js/link-line.js"></script>
+    <script>
+        // Dynamic cache busting using git commit hash
+        const gitHash = 'f82b5471'; // Updated automatically on deployment
+        const timestamp = Date.now();
+        document.write(`<script src="/static/js/link-line.js?v=${gitHash}&t=${timestamp}"><\/script>`);
+    </script>
 </body>
 </html>

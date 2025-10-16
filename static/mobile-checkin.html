@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>QR Check-in</title>
-    <link rel="stylesheet" href="/qr-checkin/static/css/mobile-checkin.css">
+    <link rel="stylesheet" href="/static/css/mobile-checkin.css">
 </head>
 <body>
     <div class="container">
@@ -23,7 +23,7 @@
                 <div class="icon">🔐</div>
                 <h2>เข้าสู่ระบบ</h2>
                 <p>กรุณาเข้าสู่ระบบด้วย LINE เพื่อใช้งาน QR Check-in</p>
-                <a href="/qr-checkin/api/auth/line/login?redirect=mobile-checkin" class="login-btn">
+                <a href="/api/public/auth/line/login?redirect=mobile-checkin" class="login-btn">
                     🟢 เข้าสู่ระบบด้วย LINE
                 </a>
             </div>
@@ -119,6 +119,11 @@
 
     <!-- QR Code Scanner Library -->
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-    <script src="/qr-checkin/static/js/mobile-checkin.js?v=1760543474&nocache=true"></script>
+    <script>
+        // Dynamic cache busting using git commit hash
+        const gitHash = 'f82b5471'; // Updated automatically on deployment
+        const timestamp = Date.now();
+        document.write(`<script src="/static/js/mobile-checkin.js?v=${gitHash}&t=${timestamp}"><\/script>`);
+    </script>
 </body>
 </html>
