@@ -84,6 +84,104 @@ ls -lt test-reports/                                         # List all test rep
 - **ZKTeco Integration**: pyzk library for device communication
 - **Background Tasks**: Auto-import fingerprint logs every 30 minutes
 
+### FastAPI Application Structure
+
+The application uses a **two-tier FastAPI architecture** with a root app and a mounted sub-app:
+
+```
+app (ROOT APP - port 5000)
+├── /api/private/*        → Protected admin APIs (Cloudflare Access)
+├── /qr-checkin/*         → Public QR check-in pages and APIs
+└── /fingerprintlogs      → MOUNTED: fingerprint_app (legacy admin dashboard)
+```
+
+**File**: `app/main_unified.py`
+
+**Structure**:
+```python
+# Lines 1-170: Imports, utilities, lifespan context
+# Lines 172-428: FINGERPRINT_APP CONFIGURATION (sub-app)
+fingerprint_app = FastAPI(...)
+# ... all fingerprint_app routes, middleware, static files
+
+# Lines 430-539: ROOT APP CONFIGURATION
+app = FastAPI(lifespan=lifespan)  # ⚠️ IMPORTANT: Create AFTER fingerprint_app
+
+# PROTECTED APIs (Cloudflare Access: /api/private/*)
+app.include_router(consolidated_attendance.router, prefix="/api/private/attendance")
+app.include_router(consolidated_devices.router, prefix="/api/private/devices")
+# ... more protected routers
+
+# UNPROTECTED APIs (Public: /api/public/*)
+app.include_router(qr_checkin.router, prefix="/api/public/qr-checkin")
+app.include_router(line_auth.router, prefix="/api/public/auth/line")
+
+# Lines 629+: MOUNT SUB-APP
+app.mount("/fingerprintlogs", fingerprint_app)
+```
+
+### How to Add New Routes
+
+**For Protected Admin APIs** (requires Cloudflare Access):
+```python
+# 1. Create router in app/api/my_new_api.py
+from fastapi import APIRouter
+router = APIRouter()
+
+@router.get("/")
+async def get_items():
+    return {"items": [...]}
+
+# 2. Import in main_unified.py (line ~17)
+from app.api import my_new_api
+
+# 3. Mount on ROOT APP (lines 430-539, PROTECTED APIS section)
+app.include_router(
+    my_new_api.router,
+    prefix="/api/private/my-new-api",
+    tags=["my-new-api-protected"]
+)
+```
+
+**For Public/Unprotected APIs**:
+```python
+# Mount on ROOT APP (lines 660+, UNPROTECTED APIS section)
+app.include_router(
+    my_public_api.router,
+    prefix="/api/public/my-public-api",
+    tags=["my-public-api-public"]
+)
+```
+
+**For Legacy Admin Dashboard** (under `/fingerprintlogs`):
+```python
+# Add routes to FINGERPRINT_APP (lines 172-428)
+@fingerprint_app.get("/my-page")
+async def serve_my_page():
+    return serve_html_with_cache_control("static/my-page.html")
+```
+
+### Important Notes
+
+1. **Router Trailing Slashes**: FastAPI routers require trailing slash
+   - ✅ `/api/private/attendance/` (works)
+   - ❌ `/api/private/attendance` (307 redirect)
+
+2. **Mount Order**: Mount sub-app AFTER registering all root routes
+   ```python
+   app.include_router(...)  # Register root routes first
+   app.mount("/fingerprintlogs", fingerprint_app)  # Mount sub-app last
+   ```
+
+3. **CORS Configuration**: Both apps have separate CORS middleware
+   - `app` CORS: Lines 442-448 (for `/api/private/*` and `/qr-checkin/*`)
+   - `fingerprint_app` CORS: Lines 184-190 (for `/fingerprintlogs/*`)
+
+4. **Docker Restart**: After code changes, use:
+   ```bash
+   docker compose down && docker compose build app && docker compose up -d
+   ```
+
 ## Key Models
 
 - **Device**: ZKTeco device config (IP, port, password, sync status)
@@ -180,6 +278,24 @@ ZKTECO_PORT=4370
 ```
 
 ## Recent Improvements (October 2025)
+
+### Access Control Migration (October 16, 2025)
+- **Protected API Routes**: Migrated all protected APIs to `/api/private/*` pattern
+- **Backend Routing**: Successfully reorganized FastAPI app structure for better separation
+- **Docker Build Gotcha**: Discovered `docker compose restart` doesn't use new images - use `docker compose down && docker compose up -d` instead
+- **Trailing Slash Requirement**: FastAPI routers require trailing slash (`/api/private/attendance/` not `/api/private/attendance`)
+
+**Key Lesson Learned**: When making Python code changes in Docker:
+```bash
+# ❌ WRONG - This restarts old container with old image
+docker compose build app && docker compose restart app
+
+# ✅ RIGHT - This creates new container with new image
+docker compose build --no-cache app && docker compose down && docker compose up -d
+
+# Or even better for code changes:
+docker compose down && docker compose build app && docker compose up -d
+```
 
 ### LINE Authentication & QR Check-in
 - **Persistent Login**: JWT tokens remain in localStorage after successful linking
