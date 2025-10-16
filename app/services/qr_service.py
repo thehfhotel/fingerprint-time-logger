@@ -22,7 +22,8 @@ class QRCodeService:
 
     def __init__(self):
         self.jwt_secret = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
-        self.qr_token_expiry_seconds = 30  # 30-second expiry for QR tokens
+        self.qr_token_expiry_seconds = 60  # 60-second expiry for QR tokens
+        self.qr_grace_period_seconds = 15  # 15-second grace period after expiry
 
     def generate_qr_token(self, terminal_id: int) -> Dict[str, any]:
         """
@@ -62,7 +63,7 @@ class QRCodeService:
 
     def validate_qr_token(self, token: str) -> Dict[str, any]:
         """
-        Validate QR token for terminal check-in
+        Validate QR token for terminal check-in with grace period
 
         Args:
             token: JWT token from QR code scan
@@ -71,12 +72,13 @@ class QRCodeService:
             Dict containing decoded token payload
 
         Raises:
-            HTTPException: If token is invalid or expired
+            HTTPException: If token is invalid or expired beyond grace period
 
         Note:
             Nonce replay prevention is disabled to allow multiple users to scan
             the same QR code simultaneously. Security is maintained through:
-            - 30-second token expiry (short validity window)
+            - 60-second token expiry (short validity window)
+            - 15-second grace period (accepts slightly expired tokens)
             - GPS location validation (must be at terminal location)
             - JWT signature verification (prevents token tampering)
         """
@@ -94,11 +96,36 @@ class QRCodeService:
 
             # NOTE: Nonce replay prevention is intentionally disabled
             # This allows multiple employees to scan the same QR code within
-            # the 30-second validity window, which is required for shared terminals
+            # the validity window + grace period, which is required for shared terminals
 
             return payload
 
         except jwt.ExpiredSignatureError:
+            # Check if token is within grace period
+            try:
+                # Decode without verifying expiry to check timestamp
+                payload = jwt.decode(
+                    token,
+                    self.jwt_secret,
+                    algorithms=["HS256"],
+                    options={"verify_exp": False}
+                )
+
+                exp_timestamp = payload.get("exp")
+                if exp_timestamp:
+                    now = datetime.now(timezone.utc)
+                    exp_time = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
+                    elapsed_seconds = (now - exp_time).total_seconds()
+
+                    # Accept token if within grace period
+                    if elapsed_seconds <= self.qr_grace_period_seconds:
+                        print(f"[QR Service] Accepting expired token within grace period ({elapsed_seconds:.1f}s elapsed)")
+                        return payload
+
+            except Exception as grace_error:
+                print(f"[QR Service] Grace period check failed: {grace_error}")
+
+            # Token expired beyond grace period
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="QR code หมดอายุแล้ว กรุณาสแกน QR code ใหม่"

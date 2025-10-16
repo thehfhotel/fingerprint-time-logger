@@ -4,7 +4,8 @@
     'use strict';
 
     // Configuration
-    const QR_REFRESH_INTERVAL = 30000; // 30 seconds
+    const QR_TOKEN_VALIDITY = 60; // 60 seconds (server-side expiry)
+    const QR_GRACE_PERIOD = 15; // 15 seconds grace period after expiry
     const WEBSOCKET_RECONNECT_DELAY = 5000; // 5 seconds
 
     // DOM Elements
@@ -233,8 +234,8 @@
                 elements.countdown.classList.add('warning');
             }
 
-            // Update progress bar
-            const progress = (remaining / 30) * 100;
+            // Update progress bar based on actual token validity
+            const progress = (remaining / QR_TOKEN_VALIDITY) * 100;
             elements.progressBar.style.width = `${progress}%`;
 
             // Stop countdown when expired
@@ -246,16 +247,29 @@
 
     /**
      * Schedule next QR code refresh
+     * Dynamically calculates refresh time to prevent showing expired QR codes
      */
     function scheduleQRRefresh() {
         if (refreshTimeout) {
             clearTimeout(refreshTimeout);
         }
 
+        // Calculate actual remaining time until expiry
+        const now = new Date();
+        const remainingMs = Math.max(0, qrExpiryTime - now);
+        const remainingSeconds = Math.floor(remainingMs / 1000);
+
+        // Refresh 2 seconds before expiry to allow for processing time
+        // Add grace period to total validity for smooth user experience
+        const totalValiditySeconds = QR_TOKEN_VALIDITY + QR_GRACE_PERIOD;
+        const refreshInMs = Math.max(1000, remainingMs - 2000);
+
+        console.log(`[QR Terminal] Scheduling refresh in ${Math.floor(refreshInMs/1000)}s (${remainingSeconds}s remaining, ${QR_GRACE_PERIOD}s grace period)`);
+
         refreshTimeout = setTimeout(() => {
             console.log('[QR Terminal] Auto-refreshing QR code...');
             loadTerminalData();
-        }, QR_REFRESH_INTERVAL);
+        }, refreshInMs);
     }
 
     /**
