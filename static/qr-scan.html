@@ -253,6 +253,7 @@
                         <p style="margin: 8px 0;"><strong>📍 สถานที่:</strong> ${data.attendance_record.location}</p>
                         ${data.location_validation.distance ? `<p style="margin: 8px 0;"><strong>📏 ระยะทาง:</strong> ${Math.round(data.location_validation.distance)}m</p>` : ''}
                     </div>
+                    <a href="/qr-checkin/mobile" class="btn" style="display: inline-block; margin-right: 10px;">📱 สแกน QR อีกครั้ง</a>
                     <button class="btn" onclick="window.close()">ปิดหน้าต่าง</button>
                 `;
             }
