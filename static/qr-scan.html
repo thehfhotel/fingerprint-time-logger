@@ -136,13 +136,13 @@
                             terminalId: terminalId,
                             timestamp: Date.now()
                         }));
-                        window.location.href = `/qr-checkin/api/auth/line/login?redirect=qr-scan-callback&qr_context=${qrContext}`;
+                        window.location.href = `/api/public/auth/line/login?redirect=qr-scan-callback&qr_context=${qrContext}`;
                         return;
                     }
 
                     // User has JWT → verify it's still valid
                     updateStatus('✅ ตรวจสอบ Token...');
-                    const verifyResponse = await fetch('/qr-checkin/api/auth/line/verify-token', {
+                    const verifyResponse = await fetch('/api/public/auth/line/verify-token', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ token: jwtToken })
@@ -181,7 +181,7 @@
                     updateStatus('✨ กำลังบันทึกเวลา...');
 
                     // Perform check-in
-                    const checkinResponse = await fetch('/qr-checkin/api/qr-checkin/scan', {
+                    const checkinResponse = await fetch('/api/public/qr-checkin/scan', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
