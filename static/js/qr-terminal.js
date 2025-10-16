@@ -67,7 +67,7 @@
      */
     async function loadAvailableTerminals() {
         try {
-            const response = await fetch('/fingerprintlogs/api/qr-checkin/terminals');
+            const response = await fetch('/api/public/qr-checkin/terminals');
             const terminals = await response.json();
 
             if (response.ok && terminals.length > 0) {
@@ -147,7 +147,7 @@
         try {
             console.log(`[QR Terminal] Loading terminal ${TERMINAL_ID} data...`);
 
-            const response = await fetch(`/fingerprintlogs/api/qr-checkin/kiosk/${TERMINAL_ID}`);
+            const response = await fetch(`/api/public/qr-checkin/kiosk/${TERMINAL_ID}`);
             const data = await response.json();
 
             if (response.ok) {
@@ -265,7 +265,7 @@
         try {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const host = window.location.host;
-            const wsUrl = `${protocol}//${host}/fingerprintlogs/ws`;
+            const wsUrl = `${protocol}//${host}/qr-checkin/ws`;
 
             console.log('[WebSocket] Connecting to:', wsUrl);
 

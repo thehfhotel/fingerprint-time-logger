@@ -278,7 +278,7 @@ async function loadTerminalGPSData() {
     console.log(`[GPS Modal] Loading GPS data for terminal ${TERMINAL_ID}`);
 
     try {
-        const response = await fetch('/fingerprintlogs/api/devices/');
+        const response = await fetch('/api/private/devices/');
         if (!response.ok) throw new Error('Failed to load devices');
 
         const data = await response.json();
@@ -381,7 +381,7 @@ async function saveGPSConfiguration() {
         metadata.gps = gpsData;
 
         // Save to server
-        const saveResponse = await fetch(`/fingerprintlogs/api/devices/${TERMINAL_ID}`, {
+        const saveResponse = await fetch(`/api/private/devices/${TERMINAL_ID}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
@@ -452,7 +452,7 @@ async function deleteGPSConfiguration() {
         delete metadata.gps;
 
         // Save to server
-        const saveResponse = await fetch(`/fingerprintlogs/api/devices/${TERMINAL_ID}`, {
+        const saveResponse = await fetch(`/api/private/devices/${TERMINAL_ID}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'

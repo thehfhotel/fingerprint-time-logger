@@ -23,9 +23,9 @@ class ConfigManager {
 
     async loadConfig() {
         if (this.loaded) return this.config;
-        
+
         try {
-            const response = await fetch(`${this.basePath}/api/devices/app-config`);
+            const response = await fetch('/api/private/devices/app-config');
             if (response.ok) {
                 this.config = await response.json();
                 this.loaded = true;
@@ -113,7 +113,8 @@ class ConfigManager {
         // NGINX REVERSE PROXY SOLUTION - RELATIVE URLs ONLY
         // Browser automatically uses same protocol as page (HTTPS)
         // No protocol detection needed - nginx handles everything
-        const relativeUrl = `${this.basePath}/api/${finalEndpoint}`;
+        // Protected APIs now use /api/private/* pattern
+        const relativeUrl = `/api/private/${finalEndpoint}`;
 
         console.log('✅ NGINX PROXY URL:', {
             endpoint,
@@ -121,7 +122,7 @@ class ConfigManager {
             finalEndpoint,
             relativeUrl,
             basePath: this.basePath,
-            version: 'nginx-proxy-v1.0'
+            version: 'nginx-proxy-v2.0-private-api'
         });
 
         return relativeUrl;

@@ -103,7 +103,7 @@
             const requestBody = { token: jwtToken };
             console.log('[Mobile Check-in] Request body:', JSON.stringify(requestBody).substring(0, 100));
 
-            const response = await fetch('/qr-checkin/api/auth/line/verify-token', {
+            const response = await fetch('/api/public/auth/line/verify-token', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(requestBody)
@@ -382,7 +382,7 @@
 
             console.log('[Check-in] Sending request with token:', qrToken.substring(0, 20) + '...');
 
-            const response = await fetch('/qr-checkin/api/qr-checkin/scan', {
+            const response = await fetch('/api/public/qr-checkin/scan', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -460,7 +460,7 @@
      */
     async function loadRecentCheckIns() {
         try {
-            const response = await fetch(`/qr-checkin/api/qr-checkin/attendance/employee/badge/${userProfile.employee_badge}?limit=5`);
+            const response = await fetch(`/api/public/qr-checkin/attendance/employee/badge/${userProfile.employee_badge}?limit=5`);
             const data = await response.json();
 
             if (response.ok && data.records && data.records.length > 0) {

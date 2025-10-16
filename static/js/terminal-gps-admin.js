@@ -122,7 +122,7 @@ async function loadTerminals() {
     console.log('[GPS Admin] Loading terminals...');
 
     try {
-        const response = await fetch('/fingerprintlogs/api/devices/');
+        const response = await fetch('/api/private/devices/');
         if (!response.ok) throw new Error('Failed to load terminals');
 
         const data = await response.json();
@@ -268,7 +268,7 @@ async function saveLocation() {
     console.log('[GPS Admin] Saving GPS location:', metadata);
 
     try {
-        const response = await fetch(`/fingerprintlogs/api/devices/${currentTerminal.id}`, {
+        const response = await fetch(`/api/private/devices/${currentTerminal.id}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
@@ -311,7 +311,7 @@ async function deleteLocation() {
     delete metadata.gps;
 
     try {
-        const response = await fetch(`/fingerprintlogs/api/devices/${terminalId}`, {
+        const response = await fetch(`/api/private/devices/${terminalId}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
@@ -357,7 +357,7 @@ async function updateTerminalName() {
     console.log(`[GPS Admin] Updating terminal ${currentTerminal.id} name: ${currentTerminal.name} → ${newName}`);
 
     try {
-        const response = await fetch(`/fingerprintlogs/api/devices/${currentTerminal.id}`, {
+        const response = await fetch(`/api/private/devices/${currentTerminal.id}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json'
@@ -404,7 +404,7 @@ async function deleteTerminal() {
     console.log(`[GPS Admin] Deleting terminal ${terminalId}: ${terminalName}`);
 
     try {
-        const response = await fetch(`/fingerprintlogs/api/devices/${terminalId}`, {
+        const response = await fetch(`/api/private/devices/${terminalId}`, {
             method: 'DELETE'
         });
 

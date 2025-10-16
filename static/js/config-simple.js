@@ -26,7 +26,8 @@ class ConfigManager {
 
         try {
             // Use relative URL - browser automatically uses correct protocol
-            const response = await fetch(`${this.basePath}/api/devices/app-config`);
+            // Protected admin APIs now use /api/private/* pattern
+            const response = await fetch('/api/private/devices/app-config');
             if (response.ok) {
                 this.config = await response.json();
                 this.loaded = true;
@@ -107,14 +108,16 @@ class ConfigManager {
         const finalEndpoint = queryString ? `${finalEndpointPath}?${queryString}` : finalEndpointPath;
 
         // SIMPLE RELATIVE URL - NO PROTOCOL DETECTION NEEDED
-        const relativeUrl = `${this.basePath}/api/${finalEndpoint}`;
+        // Protected admin APIs now use /api/private/* pattern
+        const relativeUrl = `/api/private/${finalEndpoint}`;
 
         console.log('✅ SIMPLE URL GENERATED:', {
             endpoint,
             cleanEndpoint,
             finalEndpoint,
             relativeUrl,
-            basePath: this.basePath
+            basePath: this.basePath,
+            version: 'v2.0-private-api'
         });
 
         return relativeUrl;
