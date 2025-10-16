@@ -169,15 +169,16 @@ async def lifespan(app: FastAPI):
     
     logger.info("Shutting down unified server...")
 
+# ============================================================================
+# FINGERPRINT_APP CONFIGURATION
+# ============================================================================
+
 # Create the main application
 fingerprint_app = FastAPI(
     title="Fingerprint Time Logger - Unified",
     description="Unified API and Dashboard for ZKTeco fingerprint attendance tracking",
     version="2.0.0"
 )
-
-# Create root app to handle both direct access and tunneled access
-app = FastAPI(title="Fingerprint Logger Root", lifespan=lifespan)
 
 # CORS configuration for fingerprint_app
 fingerprint_app.add_middleware(
@@ -219,27 +220,8 @@ async def get_static_version(file_path: str):
     """Get versioned URL for static file"""
     return {"url": cache_manager.get_versioned_url(file_path)}
 
-# Include Consolidated API routers - Phase 4 Simplification
-fingerprint_app.include_router(consolidated_attendance.router, prefix="/api/attendance", tags=["attendance"])
-fingerprint_app.include_router(consolidated_devices.router, prefix="/api/devices", tags=["devices"])
-fingerprint_app.include_router(consolidated_employees.router, prefix="/api/employees", tags=["employees"])
-
-# System Status API - New comprehensive status monitoring
-from app.api import system_status
-fingerprint_app.include_router(system_status.router, prefix="/api/system", tags=["system-status"])
-
-# Admin Authentication API - Secure Admin Console Access
-from app.api import admin_auth
-fingerprint_app.include_router(admin_auth.router, prefix="/api/admin/auth", tags=["admin-auth"])
-
-# Admin Line Codes API - QR Check-in Feature Phase 1
-fingerprint_app.include_router(admin_line_codes.router, prefix="/api/admin/line-codes", tags=["admin-line-codes"])
-
-# LINE Authentication API - QR Check-in Feature Phase 2
-fingerprint_app.include_router(line_auth.router, prefix="/api/auth/line", tags=["line-auth"])
-
-# QR Check-In API - QR Check-in Feature Phase 3
-fingerprint_app.include_router(qr_checkin.router, prefix="/api/qr-checkin", tags=["qr-checkin"])
+# Note: Protected APIs have been moved to root app with /api/private/* prefix
+# See lines after root app creation for the new routing structure
 
 
 # WebSocket endpoint for real-time updates
@@ -445,7 +427,82 @@ async def serve_admin_console(request: Request):
 async def health_check():
     return {"status": "healthy", "server": "unified"}
 
-@fingerprint_app.get("/api/auto-import/status")
+# ============================================================================
+# ROOT APP CONFIGURATION
+# ============================================================================
+
+logger.info("========== CREATING ROOT APP ==========")
+
+# Create root app to handle both direct access and tunneled access
+app = FastAPI(title="Fingerprint Logger Root", lifespan=lifespan)
+
+logger.info(f"========== ROOT APP CREATED: {app} ==========")
+
+# CORS configuration for root app (for /api/private/* and /qr-checkin/api/* endpoints)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================================================
+# PROTECTED APIs - Admin Management (Cloudflare Access: /api/private/*)
+# ============================================================================
+
+logger.info("========== REGISTERING PROTECTED API ROUTES ==========")
+
+# Import system_status and admin_auth routers
+from app.api import system_status, admin_auth
+
+logger.info("========== IMPORTED system_status AND admin_auth ==========")
+
+# Simple test endpoint to verify root app routing works
+@app.get("/api/private/test")
+async def test_endpoint():
+    """Simple test endpoint to verify routing"""
+    return {"status": "success", "message": "Root app routing works!", "timestamp": datetime.now().isoformat()}
+
+# Mount protected API routers
+app.include_router(
+    consolidated_attendance.router,
+    prefix="/api/private/attendance",
+    tags=["attendance-protected"]
+)
+
+app.include_router(
+    consolidated_devices.router,
+    prefix="/api/private/devices",
+    tags=["devices-protected"]
+)
+
+app.include_router(
+    consolidated_employees.router,
+    prefix="/api/private/employees",
+    tags=["employees-protected"]
+)
+
+app.include_router(
+    system_status.router,
+    prefix="/api/private/system",
+    tags=["system-protected"]
+)
+
+app.include_router(
+    admin_auth.router,
+    prefix="/api/private/admin/auth",
+    tags=["admin-auth-protected"]
+)
+
+app.include_router(
+    admin_line_codes.router,
+    prefix="/api/private/admin/line-codes",
+    tags=["line-codes-protected"]
+)
+
+# Protected endpoint: Auto-import status
+@app.get("/api/private/auto-import/status")
 async def get_auto_import_status():
     """Get auto-import background task status"""
     global background_task, auto_import_start_time, last_auto_import_time
@@ -485,7 +542,7 @@ async def get_auto_import_status():
         "service_started": auto_import_start_time.strftime('%Y-%m-%d %H:%M:%S') if auto_import_start_time else None
     }
 
-@fingerprint_app.post("/api/auto-import/trigger")
+@app.post("/api/private/auto-import/trigger")
 async def trigger_manual_import():
     """Manually trigger fingerprint log import"""
     try:
@@ -549,10 +606,10 @@ async def redirect_attendance_calendar():
 async def favicon():
     return {"status": "no favicon"}
 
-# Legacy API endpoint for manual refresh (from dashboard)
-@fingerprint_app.post("/api/refresh")
+# Manual refresh endpoint for dashboard (protected)
+@app.post("/api/private/refresh")
 async def manual_refresh():
-    """Manual refresh endpoint for backward compatibility"""
+    """Manual refresh endpoint for protected dashboard access"""
     try:
         # Use simplified device service for sync
         from app.services.device_service import device_service
@@ -600,8 +657,116 @@ async def root_serve_link_account():
     """Serve LINE account linking for direct IP access (without nginx proxy)"""
     return serve_html_with_cache_control("static/link-line.html")
 
-# Mount QR checkin API router at root level for direct access
-app.include_router(qr_checkin.router, prefix="/qr-checkin/api/qr-checkin", tags=["qr-checkin-direct"])
+# ============================================================================
+# PUBLIC APIs - QR Check-in & Authentication (No Authentication Required)
+# ============================================================================
+
+# Mount QR checkin API router for public access
+# Pattern: /api/public/* (consistent with /api/private/*)
+app.include_router(
+    qr_checkin.router,
+    prefix="/api/public/qr-checkin",
+    tags=["qr-checkin-public"]
+)
+
+# Mount LINE auth router for public access
+# Pattern: /api/public/* (consistent with /api/private/*)
+app.include_router(
+    line_auth.router,
+    prefix="/api/public/auth/line",
+    tags=["line-auth-public"]
+)
+
+# ============================================================================
+# LEGACY PUBLIC API ROUTES - Backward Compatibility (301 Redirects)
+# ============================================================================
+#
+# DEPRECATION NOTICE (2025-10-16):
+# These routes provide backward compatibility for QR terminals and mobile devices
+# using the old /qr-checkin/api/* URL pattern. All new implementations should use
+# the /api/public/* pattern for consistency with protected /api/private/* endpoints.
+#
+# Migration Path:
+# - Phase 1 (Current): Both old and new URLs work (redirects active)
+# - Phase 2 (Future): Monitor redirect usage, identify devices needing updates
+# - Phase 3 (TBD): Deprecate redirects after all devices updated
+#
+# Redirect Behavior:
+# - GET requests: 301 Permanent Redirect (browsers cache the redirect)
+# - POST requests: 307 Temporary Redirect (preserves POST method and body)
+# ============================================================================
+
+from fastapi.responses import RedirectResponse
+
+@app.get("/qr-checkin/api/qr-checkin/{path:path}")
+async def legacy_qr_checkin_redirect(path: str):
+    """
+    DEPRECATED: Redirect legacy QR check-in API paths to new public API
+
+    Use /api/public/qr-checkin/{path} instead
+    """
+    return RedirectResponse(url=f"/api/public/qr-checkin/{path}", status_code=301)
+
+@app.post("/qr-checkin/api/qr-checkin/{path:path}")
+async def legacy_qr_checkin_post_redirect(path: str):
+    """
+    DEPRECATED: Redirect legacy QR check-in POST requests to new public API
+
+    Use /api/public/qr-checkin/{path} instead
+    """
+    return RedirectResponse(url=f"/api/public/qr-checkin/{path}", status_code=307)
+
+@app.get("/qr-checkin/api/auth/line/{path:path}")
+async def legacy_line_auth_redirect(path: str):
+    """
+    DEPRECATED: Redirect legacy LINE auth paths to new public API
+
+    Use /api/public/auth/line/{path} instead
+    """
+    return RedirectResponse(url=f"/api/public/auth/line/{path}", status_code=301)
+
+@app.post("/qr-checkin/api/auth/line/{path:path}")
+async def legacy_line_auth_post_redirect(path: str):
+    """
+    DEPRECATED: Redirect legacy LINE auth POST requests to new public API
+
+    Use /api/public/auth/line/{path} instead
+    """
+    return RedirectResponse(url=f"/api/public/auth/line/{path}", status_code=307)
+
+# Mount WebSocket at root level for unprotected access
+@app.websocket("/qr-checkin/ws")
+async def root_websocket_endpoint(websocket: WebSocket):
+    """Root-level WebSocket for unprotected QR terminal access"""
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive and handle incoming messages
+            data = await websocket.receive_text()
+
+            # Handle different message types
+            message = json.loads(data)
+            if message.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+            elif message.get("type") == "refresh":
+                # Trigger manual refresh using simplified services
+                from app.services.device_service import device_service
+                from app.services.attendance_service import attendance_service
+
+                sync_result = device_service.sync_attendance_data()
+                if sync_result["success"]:
+                    attendance_data = attendance_service.get_attendance_summary()
+                    await websocket.send_json({
+                        "type": "attendance_update",
+                        "data": attendance_data,
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        manager.disconnect(websocket)
 
 # Add a root redirect for direct access
 @app.get("/")
