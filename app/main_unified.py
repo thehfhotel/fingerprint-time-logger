@@ -542,7 +542,7 @@ async def get_auto_import_status():
         "service_started": auto_import_start_time.strftime('%Y-%m-%d %H:%M:%S') if auto_import_start_time else None
     }
 
-@app.post("/api/private/auto-import/trigger")
+@app.post("/api/private/auto-import/trigger/")
 async def trigger_manual_import():
     """Manually trigger fingerprint log import"""
     try:
