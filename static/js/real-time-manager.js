@@ -165,9 +165,11 @@ class RealTimeManager {
                     method: 'GET',
                     headers: { 'Accept': 'application/json' }
                 });
-                
+
                 if (response.ok) {
-                    const data = await response.json();
+                    const response_data = await response.json();
+                    // Extract nested data from cache-first architecture response
+                    const data = response_data.data || response_data;
                     window.updateDashboard(data);
                     
                     this.showNotification(
