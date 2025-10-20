@@ -116,7 +116,7 @@
         }
 
         .metric-value#device-clock {
-            color: white !important;
+            color: #374151;
         }
 
         .metric-row .metric-label {
@@ -124,7 +124,7 @@
         }
 
         .status-card-content .metric-row:nth-child(4) .metric-label {
-            color: white !important;
+            color: #6b7280;
         }
 
         .logs-section {
@@ -409,6 +409,10 @@
                         <span class="metric-label">ตรวจสอบล่าสุด</span>
                         <span class="metric-value" id="last-check">กำลังโหลด...</span>
                     </div>
+                    <div id="status-details" style="display: none; margin-top: 1rem; padding: 0.75rem; background: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 4px; font-size: 0.875rem;">
+                        <div style="font-weight: 600; color: #92400e; margin-bottom: 0.5rem;">ปัญหาที่พบ:</div>
+                        <div id="status-issues" style="color: #78350f;"></div>
+                    </div>
                 </div>
             </div>
 
@@ -437,10 +441,6 @@
                     <div class="metric-row">
                         <span class="metric-label">ซิงค์เวลา</span>
                         <button id="sync-device-time" class="sync-btn" onclick="syncDeviceTime()">🔄 ซิงค์เวลาเซิร์ฟเวอร์</button>
-                    </div>
-                    <div class="metric-row">
-                        <span class="metric-label">การจัดการ</span>
-                        <button class="sync-btn" onclick="importLogs()">📥 นำเข้าบันทึกลายนิ้วมือ</button>
                     </div>
                 </div>
             </div>
@@ -663,6 +663,8 @@
             updateOverallStatus(data) {
                 const statusElement = document.getElementById('overall-status');
                 const lastCheckElement = document.getElementById('last-check');
+                const statusDetailsElement = document.getElementById('status-details');
+                const statusIssuesElement = document.getElementById('status-issues');
 
                 const status = data.overall_status || 'unknown';
                 // Ensure timestamp is treated as UTC by adding Z suffix if missing
@@ -682,15 +684,50 @@
                 statusElement.className = 'status-indicator';
                 statusElement.innerHTML = '';
 
+                // Collect issues for degraded/error status
+                const issues = [];
+                const deviceHealth = data.device_health || {};
+                const dbHealth = data.database_health || {};
+                const cacheHealth = data.cache_health || {};
+
+                if (!deviceHealth.connected) {
+                    issues.push('⚠️ เครื่อง ZKTeco: ' + (deviceHealth.message || 'ไม่สามารถเชื่อมต่อได้'));
+                }
+                if (!dbHealth.accessible) {
+                    issues.push('❌ ฐานข้อมูล: ไม่สามารถเข้าถึงได้');
+                }
+                if (!cacheHealth.healthy) {
+                    issues.push('⚠️ แคช: ระบบแคชไม่สมบูรณ์');
+                }
+
                 if (status === 'healthy') {
                     statusElement.classList.add('status-healthy');
                     statusElement.innerHTML = '<span class="status-dot dot-green"></span>ระบบทำงานปกติ';
+                    statusDetailsElement.style.display = 'none';
                 } else if (status === 'degraded') {
                     statusElement.classList.add('status-warning');
                     statusElement.innerHTML = '<span class="status-dot dot-yellow"></span>ระบบทำงานบางส่วน';
+
+                    // Show issues for degraded status
+                    if (issues.length > 0) {
+                        statusDetailsElement.style.display = 'block';
+                        statusIssuesElement.innerHTML = issues.map(issue => `<div style="margin-bottom: 0.25rem;">• ${issue}</div>`).join('');
+                    } else {
+                        statusDetailsElement.style.display = 'none';
+                    }
                 } else {
                     statusElement.classList.add('status-error');
                     statusElement.innerHTML = '<span class="status-dot dot-red"></span>ระบบมีข้อผิดพลาด';
+
+                    // Show issues for error status
+                    if (issues.length > 0) {
+                        statusDetailsElement.style.display = 'block';
+                        statusDetailsElement.style.background = '#fee2e2';
+                        statusDetailsElement.style.borderColor = '#dc2626';
+                        statusIssuesElement.innerHTML = issues.map(issue => `<div style="margin-bottom: 0.25rem;">• ${issue}</div>`).join('');
+                    } else {
+                        statusDetailsElement.style.display = 'none';
+                    }
                 }
 
                 lastCheckElement.textContent = timestamp;
@@ -711,9 +748,13 @@
             async loadDeviceClock() {
                 try {
                     const response = await fetch(appConfig.getApiUrl('devices/time'));
-                    const data = await response.json();
+                    const result = await response.json();
                     const deviceClockElement = document.getElementById('device-clock');
-                    
+
+                    // CACHE-FIRST ARCHITECTURE: Handle nested data structure
+                    // Response format: { data: {...}, cache_metadata: {...} }
+                    const data = result.data || result;
+
                     if (data.success) {
                         const deviceTime = new Date(data.device_time);
                         const timeString = deviceTime.toLocaleString('en-GB', {
@@ -724,7 +765,7 @@
                             month: '2-digit',
                             year: 'numeric'
                         });
-                        
+
                         // Add sync indicator
                         const syncIcon = data.synchronized ? '🟢' : '🔴';
                         let displayText = `${syncIcon} ${timeString}`;
@@ -733,20 +774,20 @@
                         if (data.auto_synced) {
                             displayText += ' ⚡';
                         }
-                        
+
                         deviceClockElement.innerHTML = displayText;
-                        
+
                         // Update tooltip
                         let tooltipText = data.synchronized
                             ? 'เวลาเครื่องซิงค์แล้ว'
                             : `เวลาเครื่องคลาดเคลื่อน ${Math.abs(data.time_difference_seconds).toFixed(0)} วินาที`;
-                        
+
                         if (data.auto_synced) {
                             tooltipText += ' (ซิงค์อัตโนมัติเนื่องจากคลาดเคลื่อน >30วินาที)';
                         }
-                        
+
                         deviceClockElement.title = tooltipText;
-                        
+
                         // Show auto-sync notification
                         if (data.auto_synced && data.message) {
                             this.showAutoSyncNotification(data.message);
@@ -1041,62 +1082,69 @@
             }
         }
 
-        // Import logs function
-        async function importLogs() {
+        // Trigger manual import function
+        // CACHE-FIRST ARCHITECTURE: Uses attendance sync endpoint
+        async function triggerManualImport() {
             try {
                 const response = await fetch(appConfig.getApiUrl('attendance/sync'), { method: 'POST' });
                 const result = await response.json();
 
                 if (result.success) {
-                    alert(`นำเข้าสำเร็จ: ${result.imported_count || 0} บันทึก`);
+                    alert(`นำเข้าทันทีสำเร็จ: ซิงค์แล้ว ${result.imported_count || 0} บันทึก`);
+
                     // Reload system health to update stats
                     const statusPage = window.statusPageInstance;
                     if (statusPage) {
                         statusPage.loadSystemHealth();
                     }
-                } else {
-                    alert('การนำเข้าล้มเหลว: ' + result.message);
-                }
-            } catch (error) {
-                alert('ข้อผิดพลาดการนำเข้า: ' + error.message);
-            }
-        }
-
-        // Trigger manual import function
-        async function triggerManualImport() {
-            try {
-                const response = await fetch(appConfig.getApiUrl('auto-import/trigger'), { method: 'POST' });
-                const result = await response.json();
-
-                if (result.success) {
-                    alert(`นำเข้าแบบแมนวลสำเร็จ: ซิงค์แล้ว ${result.synced || 0} บันทึก`);
                     loadAutoImportStatus();
                 } else {
-                    alert('นำเข้าแบบแมนวลล้มเหลว: ' + result.message);
+                    alert('นำเข้าทันทีล้มเหลว: ' + result.message);
                 }
             } catch (error) {
-                alert('เกิดข้อผิดพลาดในการนำเข้าแบบแมนวล: ' + error.message);
+                alert('เกิดข้อผิดพลาดในการนำเข้าทันที: ' + error.message);
             }
         }
 
-        // Load auto-import status
+        // Load auto-import status - CACHE-FIRST ARCHITECTURE
+        // Background scheduler handles sync_attendance_data job every 30 minutes (default)
         async function loadAutoImportStatus() {
             try {
-                const response = await fetch(appConfig.getApiUrl('auto-import/status'));
-                const autoImportStatus = await response.json();
+                const response = await fetch(appConfig.getApiUrl('system/health'));
+                const healthData = await response.json();
 
-                if (autoImportStatus.enabled && autoImportStatus.task_status === 'running') {
+                // Check cache health to verify scheduler is running
+                const cacheHealth = healthData.cache_health || {};
+
+                // Fingerprint sync interval: 30 minutes (configurable via AUTO_IMPORT_INTERVAL_MINUTES)
+                const syncInterval = 30; // Default interval in minutes
+
+                if (cacheHealth.healthy && cacheHealth.total_entries > 0) {
+                    // Scheduler is running and cache is being refreshed
                     document.getElementById('auto-import-status').innerHTML = '<span style="color: #22c55e;">✅ ทำงาน</span>';
-                    document.getElementById('auto-import-interval').textContent = `${autoImportStatus.interval_minutes} นาที`;
-                    document.getElementById('auto-import-next').textContent = autoImportStatus.next_import_estimate || 'N/A';
+                    document.getElementById('auto-import-interval').textContent = `${syncInterval} นาที`;
+
+                    // Calculate next sync time (estimate based on interval)
+                    // Note: Actual next run time comes from scheduler, this is an approximation
+                    const now = new Date();
+                    const nextSync = new Date(now.getTime() + (syncInterval * 60 * 1000));
+                    const nextTimeString = nextSync.toLocaleString('th-TH', {
+                        timeZone: 'Asia/Bangkok',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false
+                    });
+                    document.getElementById('auto-import-next').textContent = `~${nextTimeString}`;
                 } else {
                     document.getElementById('auto-import-status').innerHTML = '<span style="color: #ef4444;">❌ ไม่ทำงาน</span>';
-                    document.getElementById('auto-import-interval').textContent = `${autoImportStatus.interval_minutes || 30} นาที`;
+                    document.getElementById('auto-import-interval').textContent = `${syncInterval} นาที`;
                     document.getElementById('auto-import-next').textContent = 'N/A';
                 }
             } catch (error) {
                 console.error('Failed to load auto-import status:', error);
                 document.getElementById('auto-import-status').innerHTML = '<span style="color: #ef4444;">❌ ข้อผิดพลาด</span>';
+                document.getElementById('auto-import-interval').textContent = '30 นาที';
+                document.getElementById('auto-import-next').textContent = 'N/A';
             }
         }
 

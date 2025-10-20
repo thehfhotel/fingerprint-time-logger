@@ -1,6 +1,15 @@
 """
 Simplified Device Service - Direct ZKTeco Operations
-Replaces complex connection management, circuit breakers, and enterprise patterns
+
+ARCHITECTURE NOTE (Cache-First Design):
+- Frontend API requests DO NOT call this service directly
+- Frontend requests are served from device_cache_service (cached data)
+- Background scheduler calls this service every 5 minutes to refresh cache
+- This ensures minimal device connections and fast API responses
+
+Usage:
+- background_scheduler.py -> device_service.py -> ZKTeco Device (every 5 minutes)
+- Frontend API -> device_cache_service.py -> Cached Data (instant response)
 """
 
 from typing import List, Dict, Any, Optional
@@ -57,15 +66,26 @@ class SimpleDeviceService:
         finally:
             db.close()
     
-    def connect_to_device(self, device: Device) -> Optional[Any]:
+    def connect_to_device(self, device: Device, caller: str = None) -> Optional[Any]:
         """Simple device connection with basic retry
 
         Note: QR terminals don't require connections since they're web-based.
         Returns None for QR terminals without error.
+
+        Args:
+            device: Device to connect to
+            caller: Optional caller identification for logging (e.g., 'get_device_status', 'get_device_time')
         """
+        # Auto-detect caller if not provided
+        if caller is None:
+            import inspect
+            frame = inspect.currentframe()
+            if frame and frame.f_back:
+                caller = frame.f_back.f_code.co_name
+
         # Skip connection for QR terminals (they don't have IP addresses)
         if device.device_type == 'qr_terminal' or not device.ip_address:
-            logger.debug(f"Skipping connection for {device.device_type} device: {device.name}")
+            logger.debug(f"[{caller}] Skipping connection for {device.device_type} device: {device.name}")
             return None
 
         start_time = datetime.now()
@@ -83,26 +103,28 @@ class SimpleDeviceService:
                 conn = zk.connect()
                 duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
 
-                logger.info(f"Connected to device {device.name}")
+                logger.info(f"[{caller}] Device {device.name} ({device.ip_address}) connected")
                 app_logger.log_device_connection(
                     device_id=device.id,
                     device_name=device.name,
                     ip_address=device.ip_address,
-                    success=True
+                    success=True,
+                    caller=caller
                 )
                 return conn
 
             except Exception as e:
-                logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
+                logger.warning(f"[{caller}] Connection attempt {attempt + 1} failed: {e}")
                 if attempt == self.max_retries - 1:
                     duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-                    logger.error(f"Failed to connect to device after {self.max_retries} attempts")
+                    logger.error(f"[{caller}] Failed to connect to device after {self.max_retries} attempts")
                     app_logger.log_device_connection(
                         device_id=device.id,
                         device_name=device.name,
                         ip_address=device.ip_address,
                         success=False,
-                        error=str(e)
+                        error=str(e),
+                        caller=caller
                     )
                     return None
         return None
@@ -286,32 +308,43 @@ class SimpleDeviceService:
             return {"success": False, "message": f"การซิงค์ล้มเหลว: {str(e)}"}
     
     def get_device_status(self) -> Dict[str, Any]:
-        """Get simple device status"""
+        """
+        Get simple device status
+
+        Returns device connection status and basic info.
+        Connection success is determined by successful connection,
+        not by firmware query success.
+        """
         device = self.get_default_device()
         if not device:
             return {"connected": False, "message": "ไม่ได้ตั้งค่าเครื่อง"}
-        
+
         conn = self.connect_to_device(device)
         if conn:
+            firmware_version = "N/A"
             try:
-                # Basic device info
+                # Try to get firmware info (optional, not critical for connection status)
                 firmware_version = conn.get_firmware_version()
+            except Exception as e:
+                # Firmware query failed, but device is still connected
+                logger.warning(f"Connected to device but firmware query failed: {e}")
+                firmware_version = "Unknown"
+
+            try:
                 conn.disconnect()
-                return {
-                    "connected": True,
-                    "device_name": device.name,
-                    "ip_address": device.ip_address,
-                    "firmware": firmware_version,
-                    "last_sync": device.last_sync.isoformat() if device.last_sync else None
-                }
-            except:
-                try:
-                    conn.disconnect()
-                except:
-                    pass
-                return {"connected": False, "message": "การเชื่อมต่อเครื่องล้มเหลว"}
+            except Exception as e:
+                logger.warning(f"Error disconnecting from device: {e}")
+
+            # Return success - connection worked even if firmware query didn't
+            return {
+                "connected": True,
+                "device_name": device.name,
+                "ip_address": device.ip_address,
+                "firmware": firmware_version,
+                "last_sync": device.last_sync.isoformat() if device.last_sync else None
+            }
         else:
-            return {"connected": False, "message": "Could not connect to device"}
+            return {"connected": False, "message": "ไม่สามารถเชื่อมต่อเครื่องได้"}
     
     def get_device_time(self, auto_sync: bool = True) -> Dict[str, Any]:
         """Get device clock time with optional auto-sync when difference > 30 seconds"""

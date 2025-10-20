@@ -68,10 +68,34 @@ async def get_attendance_records(
 
 @router.get("/summary")
 async def get_attendance_summary():
-    """Get attendance summary for dashboard"""
+    """
+    Get attendance summary for dashboard
+
+    CACHE-FIRST ARCHITECTURE:
+    - Serves data from cache (refreshed every 5 minutes by background scheduler)
+    - No database query overhead, instant response from memory cache
+    """
     try:
-        summary = attendance_service.get_attendance_summary()
-        return summary
+        from app.services.device_cache_service import device_cache_service
+
+        # Get cached summary (includes metadata)
+        cached_data = device_cache_service.get('attendance_summary', include_metadata=True)
+
+        if cached_data is None:
+            # Cache miss - fallback to direct query (graceful degradation)
+            summary = attendance_service.get_attendance_summary()
+            return {
+                "data": summary,
+                "cache_metadata": {
+                    "cached_at": None,
+                    "age_seconds": 0,
+                    "stale": True,
+                    "source": "direct_query"
+                }
+            }
+
+        return cached_data
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

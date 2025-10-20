@@ -99,11 +99,26 @@ class ApplicationLoggingService:
         )
 
     def log_device_connection(self, device_id: int, device_name: str, ip_address: str, success: bool,
-                             error: Optional[str] = None) -> None:
-        """Log device connection attempt"""
+                             error: Optional[str] = None, caller: Optional[str] = None) -> None:
+        """Log device connection attempt with caller identification
+
+        Args:
+            device_id: Device ID
+            device_name: Device name
+            ip_address: Device IP address
+            success: Whether connection was successful
+            error: Optional error message
+            caller: Optional caller function name (e.g., 'get_device_status', 'get_device_time')
+        """
         level = "INFO" if success else "WARNING"
         action = "device_connected" if success else "device_connection_failed"
-        message = f"Device {device_name} ({ip_address}) {'connected' if success else 'connection failed'}"
+
+        # Include caller in message if provided
+        if caller:
+            message = f"[{caller}] Device {device_name} ({ip_address}) {'connected' if success else 'connection failed'}"
+        else:
+            message = f"Device {device_name} ({ip_address}) {'connected' if success else 'connection failed'}"
+
         if error:
             message += f": {error}"
 
@@ -114,7 +129,7 @@ class ApplicationLoggingService:
             message=message,
             device_id=device_id,
             success=success,
-            details={"device_name": device_name, "ip_address": ip_address, "error": error}
+            details={"device_name": device_name, "ip_address": ip_address, "error": error, "caller": caller}
         )
 
     def log_api_request(self, method: str, endpoint: str, status_code: int, duration_ms: int,

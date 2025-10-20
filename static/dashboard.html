@@ -574,9 +574,11 @@
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
-                const data = await response.json();
+                const response_data = await response.json();
+                // Extract nested data from cache-first architecture response
+                const data = response_data.data || response_data;
                 const deviceClockElement = document.getElementById('deviceClock');
-                
+
                 if (data.success) {
                     const deviceTime = new Date(data.device_time);
                     const timeString = deviceTime.toLocaleString('en-GB', {
@@ -588,12 +590,12 @@
                         month: '2-digit',
                         year: 'numeric'
                     });
-                    
+
                     // Add sync indicator
                     const syncIcon = data.synchronized ? '🟢' : '🔴';
                     deviceClockElement.innerHTML = `${syncIcon} ${timeString}`;
-                    deviceClockElement.title = data.synchronized 
-                        ? 'Device clock is synchronized' 
+                    deviceClockElement.title = data.synchronized
+                        ? 'Device clock is synchronized'
                         : `Device clock is ${Math.abs(data.time_difference_seconds).toFixed(0)}s off`;
                 } else {
                     deviceClockElement.innerHTML = '❌ Unavailable';
@@ -630,9 +632,12 @@
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
-                const data = await response.json();
-                console.log('Attendance data loaded:', data);
-                
+                const response_data = await response.json();
+                console.log('Attendance data loaded:', response_data);
+
+                // Extract nested data from cache-first architecture response
+                const data = response_data.data || response_data;
+
                 // Update dashboard with API data format
                 updateEmployeeGrid(data);
                 console.log('Dashboard updated with data');
@@ -656,13 +661,16 @@
                 
                 console.log('Initial data load completed successfully');
                 
-                // Set up periodic device clock refresh (uses 2-minute refreshInterval from config)
-                // Device time API uses 1-minute cache, so frequent checks don't overload device
+                // Set up periodic device clock refresh
+                // CACHE-FIRST ARCHITECTURE: Backend cache refreshes every 5 minutes
+                // Frontend polls every 5 minutes (aligned with backend refresh cycle)
+                // This ensures minimal device connections and fresh data
                 appConfig.loadConfig().then(() => {
-                    const interval = appConfig.get('ui.refreshInterval') || 120000;
+                    const interval = appConfig.get('ui.refreshInterval') || 300000; // Default 5 minutes (was 2 minutes)
+                    console.log(`Device clock refresh interval: ${interval / 1000}s (aligned with backend 5-minute cache)`);
                     setInterval(loadDeviceClock, interval);
                 }).catch(() => {
-                    setInterval(loadDeviceClock, 120000); // fallback to 2 minutes
+                    setInterval(loadDeviceClock, 300000); // fallback to 5 minutes
                 });
                 
             } catch (error) {

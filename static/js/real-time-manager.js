@@ -128,18 +128,22 @@ class RealTimeManager {
     }
 
     startHealthMonitoring() {
+        // CACHE-FIRST ARCHITECTURE: Backend cache refreshes every 5 minutes
+        // Frontend health check aligned with backend refresh cycle
         this.healthCheckInterval = setInterval(async () => {
             await this.performHealthCheckWithRetry();
-        }, appConfig.get('ui.healthCheckInterval') || 300000); // Use config value, default 5 minutes
+        }, appConfig.get('ui.healthCheckInterval') || 300000); // 5 minutes (aligned with backend cache)
     }
-    
+
     startPeriodicRefresh() {
-        // Refresh data every 30 seconds when online and page is visible
+        // CACHE-FIRST ARCHITECTURE: Reduce frontend polling frequency
+        // Backend serves from cache (instant response), so we can poll more aggressively
+        // Refresh data every 1 minute when online and page is visible
         this.refreshInterval = setInterval(() => {
             if (this.isOnline && !document.hidden) {
                 this.refreshData();
             }
-        }, 120000); // 120 seconds (reduced load)
+        }, 60000); // 1 minute (was 2 minutes) - backend serves from cache instantly
     }
     
     async refreshData() {

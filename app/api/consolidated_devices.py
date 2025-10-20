@@ -266,11 +266,33 @@ async def devices_health_check():
 
 @router.get("/status")
 async def get_device_status():
-    """Get device connection status (uses 10-minute cache to reduce device connections)"""
+    """
+    Get device connection status
+
+    CACHE-FIRST ARCHITECTURE:
+    - Serves data from cache (refreshed every 5 minutes by background scheduler)
+    - No direct device connection from this API endpoint
+    - Response includes cache metadata (age, next_refresh)
+    """
     try:
-        from app.services.device_service_cached import cached_device_service
-        status = cached_device_service.get_device_status()
-        return status
+        from app.services.device_cache_service import device_cache_service
+
+        # Get cached status (includes metadata)
+        cached_data = device_cache_service.get('device_status', include_metadata=True)
+
+        if cached_data is None:
+            # Cache miss - return graceful degradation
+            return {
+                "data": {"connected": False, "message": "Cache warming up..."},
+                "cache_metadata": {
+                    "cached_at": None,
+                    "age_seconds": 0,
+                    "stale": True
+                }
+            }
+
+        return cached_data
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -369,11 +391,39 @@ async def sync_attendance():
 
 @router.get("/time")
 async def get_device_time(auto_sync: bool = Query(False, description="Automatically sync if difference > 30 seconds")):
-    """Get device clock time (uses 1-minute cache to reduce device connections)"""
+    """
+    Get device clock time
+
+    CACHE-FIRST ARCHITECTURE:
+    - Serves data from cache (refreshed every 5 minutes by background scheduler)
+    - No direct device connection from this API endpoint
+    - auto_sync parameter is now ignored (time sync handled by scheduler)
+    - Response includes cache metadata (age, next_refresh)
+    """
     try:
-        from app.services.device_service_cached import cached_device_service
-        result = cached_device_service.get_device_time(auto_sync=auto_sync)
-        return result
+        from app.services.device_cache_service import device_cache_service
+
+        # Get cached time (includes metadata)
+        cached_data = device_cache_service.get('device_time', include_metadata=True)
+
+        if cached_data is None:
+            # Cache miss - return graceful degradation
+            from datetime import datetime
+            return {
+                "data": {
+                    "success": False,
+                    "message": "Cache warming up...",
+                    "server_time": datetime.now().isoformat()
+                },
+                "cache_metadata": {
+                    "cached_at": None,
+                    "age_seconds": 0,
+                    "stale": True
+                }
+            }
+
+        return cached_data
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
