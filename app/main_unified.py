@@ -447,6 +447,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Proxy headers middleware for nginx reverse proxy - ROOT APP
+# This ensures FastAPI generates correct HTTPS URLs in redirects when behind nginx
+if os.getenv("BEHIND_PROXY", "false").lower() == "true":
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+    logger.info("Proxy headers middleware enabled for root app (nginx reverse proxy)")
+
 # ============================================================================
 # PROTECTED APIs - Admin Management (Cloudflare Access: /api/private/*)
 # ============================================================================
