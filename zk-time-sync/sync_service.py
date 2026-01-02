@@ -134,7 +134,7 @@ class ZKTimeSyncService:
                     {
                         "color": color,
                         "title": f"{icon} ZK Time Sync {'Error' if is_error else 'Notification'}",
-                        "text": message,
+                        "text": f"<@winut.hf> {message}" if is_error else message,
                         "footer": "ZK Time Sync Service",
                         "ts": int(time.time())
                     }
