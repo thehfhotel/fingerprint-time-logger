@@ -6,7 +6,17 @@
     // Configuration
     const QR_TOKEN_VALIDITY = 60; // 60 seconds (server-side expiry)
     const QR_GRACE_PERIOD = 15; // 15 seconds grace period after expiry
-    const WEBSOCKET_RECONNECT_DELAY = 5000; // 5 seconds
+    const WEBSOCKET_RECONNECT_BASE_DELAY = 5000; // 5 seconds initial delay
+    const WEBSOCKET_RECONNECT_MAX_DELAY = 60000; // 60 seconds cap
+
+    /**
+     * Escape HTML-special characters to prevent stored XSS via innerHTML.
+     */
+    function escapeHtml(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, function(c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
 
     // DOM Elements
     const elements = {
@@ -109,9 +119,10 @@
                 button.classList.add('active');
             }
 
+            const locationLabel = escapeHtml(terminal.location_name || terminal.name);
             button.innerHTML = `
                 <span class="location-icon">📍</span>
-                <span class="location-name">${terminal.location_name || terminal.name}</span>
+                <span class="location-name">${locationLabel}</span>
             `;
 
             button.addEventListener('click', () => switchTerminal(terminal.id));
@@ -291,6 +302,8 @@
                 updateConnectionStatus('connected', 'เชื่อมต่อแล้ว');
             };
 
+            // (websocketReconnectAttempt is reset on successful open above)
+
             websocket.onmessage = (event) => {
                 try {
                     const message = JSON.parse(event.data);
@@ -311,14 +324,24 @@
 
             websocket.onclose = () => {
                 console.log('[WebSocket] Disconnected');
-                updateConnectionStatus('disconnected', 'ไม่ได้เชื่อมต่อ');
 
-                // Attempt reconnection
-                setTimeout(() => {
-                    websocketReconnectAttempt++;
-                    console.log(`[WebSocket] Reconnecting (attempt ${websocketReconnectAttempt})...`);
-                    connectWebSocket();
-                }, WEBSOCKET_RECONNECT_DELAY);
+                // Exponential backoff capped at WEBSOCKET_RECONNECT_MAX_DELAY
+                websocketReconnectAttempt++;
+                const backoffDelay = Math.min(
+                    WEBSOCKET_RECONNECT_MAX_DELAY,
+                    WEBSOCKET_RECONNECT_BASE_DELAY * Math.pow(2, websocketReconnectAttempt - 1)
+                );
+
+                updateConnectionStatus(
+                    'disconnected',
+                    `กำลังลองเชื่อมต่อใหม่... (ครั้งที่ ${websocketReconnectAttempt})`
+                );
+
+                console.log(
+                    `[WebSocket] Reconnecting in ${Math.floor(backoffDelay / 1000)}s ` +
+                    `(attempt ${websocketReconnectAttempt})...`
+                );
+                setTimeout(connectWebSocket, backoffDelay);
             };
         } catch (error) {
             console.error('[WebSocket] Error creating connection:', error);
@@ -356,15 +379,19 @@
         const locationMatch = metadata.match(/at (.+?),/);
         const location = locationMatch ? locationMatch[1] : terminalData?.terminal.location_name || '';
 
+        const safeBadge = escapeHtml(record.badge_number);
+        const safeName = escapeHtml(record.employee_name || `รหัส ${record.badge_number}`);
+        const safeTime = escapeHtml(formatTime(record.timestamp));
+        const safeLocation = escapeHtml(location);
         item.innerHTML = `
             <div class="feed-header">
-                <div class="feed-name">${record.employee_name || `รหัส ${record.badge_number}`}</div>
-                <div class="feed-badge">${record.badge_number}</div>
+                <div class="feed-name">${safeName}</div>
+                <div class="feed-badge">${safeBadge}</div>
             </div>
             <div class="feed-details">
                 <div class="feed-detail">
                     <span>🕐</span>
-                    <span>${formatTime(record.timestamp)}</span>
+                    <span>${safeTime}</span>
                 </div>
                 <div class="feed-detail">
                     <span>${isQR ? '📱' : '👆'}</span>
@@ -373,7 +400,7 @@
                 ${location ? `
                 <div class="feed-detail">
                     <span>📍</span>
-                    <span>${location}</span>
+                    <span>${safeLocation}</span>
                 </div>
                 ` : ''}
             </div>

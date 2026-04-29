@@ -3,13 +3,17 @@ System Status API - Comprehensive system health and operational logs
 Replaces floating connection status with dedicated status endpoint
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, text
 import os
 import logging
+
+
+# Bangkok timezone (UTC+7) — "today" filters must use Bangkok-local day boundaries.
+BANGKOK_TZ = timezone(timedelta(hours=7))
 
 from app.core.database import get_db
 from app.models.models import Employee, AttendanceRecord, Device, ApplicationLog
@@ -232,10 +236,16 @@ async def get_application_statistics(db: Session) -> Dict[str, Any]:
         active_employees = db.query(Employee).filter(Employee.is_active == True).count()
         total_employees = db.query(Employee).count()
         
-        # Recent attendance activity
-        today = datetime.now().date()
+        # Recent attendance activity — count records that fall within Bangkok-today.
+        # Database stores UTC; convert Bangkok day boundaries to UTC range for the filter.
+        bkk_now = datetime.now(BANGKOK_TZ)
+        bkk_start = datetime.combine(bkk_now.date(), datetime.min.time(), tzinfo=BANGKOK_TZ)
+        bkk_end = bkk_start + timedelta(days=1)
+        utc_start = bkk_start.astimezone(timezone.utc).replace(tzinfo=None)
+        utc_end = bkk_end.astimezone(timezone.utc).replace(tzinfo=None)
         today_records = db.query(AttendanceRecord).filter(
-            func.date(AttendanceRecord.timestamp) == today
+            AttendanceRecord.timestamp >= utc_start,
+            AttendanceRecord.timestamp < utc_end
         ).count()
         
         # Last sync info

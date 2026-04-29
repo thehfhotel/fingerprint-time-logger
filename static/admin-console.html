@@ -25,7 +25,7 @@
         <div class="header-row-1">
             <h1>⚙️ Admin Console</h1>
             <div class="header-info">
-                <button id="logoutBtn" class="back-btn" style="margin-right: 1rem; cursor: pointer;">🚪 ออกจากระบบ</button>
+                <button id="logoutBtn" class="back-btn" type="button" style="margin-right: 1rem; cursor: pointer;">🚪 ออกจากระบบ</button>
                 <a href="./" class="back-btn">← กลับหน้าแดชบอร์ด</a>
             </div>
         </div>
@@ -106,27 +106,19 @@
     </footer>
 
     <script>
-        // Authentication check - redirect to login if not authenticated
+        // Authentication check - relies on the HttpOnly admin_session_token
+        // cookie set by the server. Browsers send it automatically with
+        // same-origin requests; we use credentials: 'include' for safety.
         async function checkAuthentication() {
-            const token = localStorage.getItem('admin_session_token');
-
-            if (!token) {
-                window.location.href = './admin-login';
-                return false;
-            }
-
             try {
                 await appConfig.loadConfig();
 
                 const response = await fetch(appConfig.getApiUrl('admin/auth/validate'), {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
+                    credentials: 'include'
                 });
 
                 if (!response.ok) {
                     // Session invalid or expired
-                    localStorage.removeItem('admin_session_token');
                     localStorage.removeItem('admin_session_expires');
                     window.location.href = './admin-login';
                     return false;
@@ -136,7 +128,6 @@
 
                 if (!result.valid) {
                     // Session expired
-                    localStorage.removeItem('admin_session_token');
                     localStorage.removeItem('admin_session_expires');
                     window.location.href = './admin-login';
                     return false;
@@ -150,27 +141,20 @@
             }
         }
 
-        // Logout function
+        // Logout function - cookie is cleared by the server response.
         async function logout() {
-            const token = localStorage.getItem('admin_session_token');
+            try {
+                await appConfig.loadConfig();
 
-            if (token) {
-                try {
-                    await appConfig.loadConfig();
-
-                    await fetch(appConfig.getApiUrl('admin/auth/logout'), {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${token}`
-                        }
-                    });
-                } catch (error) {
-                    console.error('Logout error:', error);
-                }
+                await fetch(appConfig.getApiUrl('admin/auth/logout'), {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+            } catch (error) {
+                console.error('Logout error:', error);
             }
 
-            // Clear local storage
-            localStorage.removeItem('admin_session_token');
+            // Clear local UX state (server clears the HttpOnly cookie itself).
             localStorage.removeItem('admin_session_expires');
 
             // Redirect to login page

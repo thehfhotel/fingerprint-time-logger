@@ -38,7 +38,7 @@
                     maxlength="6"
                     pattern="[0-9]{6}"
                     inputmode="numeric"
-                    autocomplete="off"
+                    autocomplete="one-time-code"
                     required
                 >
                 <button type="submit" id="submitButton" class="submit-btn">
@@ -78,7 +78,7 @@
             <div class="error-icon">❌</div>
             <h2 id="errorTitle">เกิดข้อผิดพลาด</h2>
             <p id="errorMessage"></p>
-            <button id="retryButton" class="retry-btn">
+            <button id="retryButton" class="retry-btn" type="button">
                 🔄 ลองใหม่
             </button>
         </div>

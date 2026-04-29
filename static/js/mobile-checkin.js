@@ -3,6 +3,15 @@
 (function() {
     'use strict';
 
+    /**
+     * Escape HTML-special characters to prevent stored XSS via innerHTML.
+     */
+    function escapeHtml(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, function(c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
+
     // DOM Elements
     const elements = {
         loginSection: document.getElementById('loginSection'),
@@ -143,10 +152,27 @@
     }
 
     /**
+     * Inline SVG fallback avatar (used when LINE picture URL is missing/broken).
+     * Avoids dependency on a static PNG asset.
+     */
+    const DEFAULT_AVATAR_SVG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+        '<circle cx="32" cy="32" r="32" fill="#e0e0e0"/>' +
+        '<circle cx="32" cy="26" r="11" fill="#bdbdbd"/>' +
+        '<path d="M10 58c4-12 14-18 22-18s18 6 22 18z" fill="#bdbdbd"/>' +
+        '</svg>'
+    );
+
+    /**
      * Display user profile
      */
     function displayProfile() {
-        elements.profilePicture.src = userProfile.line_profile.picture_url || '/static/img/default-avatar.png';
+        const pictureUrl = userProfile.line_profile.picture_url || DEFAULT_AVATAR_SVG;
+        elements.profilePicture.src = pictureUrl;
+        elements.profilePicture.onerror = function() {
+            this.onerror = null;
+            this.src = DEFAULT_AVATAR_SVG;
+        };
         elements.displayName.textContent = userProfile.line_profile.display_name;
         elements.employeeBadge.textContent = `รหัสพนักงาน: ${userProfile.employee_badge}`;
     }
@@ -270,7 +296,11 @@
             console.log('[Scanner] Camera started successfully');
         } catch (error) {
             console.error('[Scanner] Error starting camera:', error);
-            alert('ไม่สามารถเข้าถึงกล้องได้ กรุณาอนุญาตการเข้าถึงกล้องในเบราว์เซอร์');
+            showResult(
+                'error',
+                'ไม่สามารถเข้าถึงกล้องได้',
+                'กรุณาอนุญาตการเข้าถึงกล้องในเบราว์เซอร์'
+            );
             elements.startScanButton.disabled = false;
         }
     }
@@ -408,11 +438,14 @@
 
                 hideLoading();
 
-                // Format details
+                // Format details (escape server-supplied strings to prevent XSS)
+                const safeLocationName = escapeHtml(data.location_validation.location_name);
+                const safeTimestamp = escapeHtml(formatDateTime(data.attendance_record.timestamp));
+                const safeDistance = escapeHtml(data.location_validation.distance);
                 const details = `
-                    <div><strong>📍 สถานที่:</strong> ${data.location_validation.location_name}</div>
-                    <div><strong>🕐 เวลา:</strong> ${formatDateTime(data.attendance_record.timestamp)}</div>
-                    <div><strong>📏 ระยะทาง:</strong> ${data.location_validation.distance}m</div>
+                    <div><strong>📍 สถานที่:</strong> ${safeLocationName}</div>
+                    <div><strong>🕐 เวลา:</strong> ${safeTimestamp}</div>
+                    <div><strong>📏 ระยะทาง:</strong> ${safeDistance}m</div>
                 `;
 
                 showResult('success', 'บันทึกเวลาสำเร็จ!', data.message, details);
@@ -494,13 +527,15 @@
                 location = 'จากเครื่องสแกนลายนิ้วมือ';
             }
 
+            const safeTime = escapeHtml(formatDateTime(record.timestamp));
+            const safeLocation = escapeHtml(location);
             return `
                 <div class="recent-item">
                     <div class="recent-item-header">
-                        <div class="recent-time">${formatDateTime(record.timestamp)}</div>
+                        <div class="recent-time">${safeTime}</div>
                         <div class="recent-badge">${isQR ? '📱 QR' : '👆 ลายนิ้วมือ'}</div>
                     </div>
-                    <div class="recent-location">📍 ${location}</div>
+                    <div class="recent-location">📍 ${safeLocation}</div>
                 </div>
             `;
         }).join('');

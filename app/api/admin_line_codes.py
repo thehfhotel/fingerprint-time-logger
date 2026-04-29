@@ -6,11 +6,12 @@ Protected by admin session authentication (same as admin console).
 """
 
 from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
-import random
+import secrets
 import string
 
 from app.core.database import get_db
@@ -69,8 +70,48 @@ class LinkedAccountResponse(BaseModel):
 
 
 def generate_6_digit_code() -> str:
-    """Generate random 6-digit numeric code"""
-    return ''.join(random.choices(string.digits, k=6))
+    """Generate cryptographically random 6-digit numeric code"""
+    return ''.join(secrets.choice(string.digits) for _ in range(6))
+
+
+def commit_unique_linking_code(
+    db: Session,
+    employee: Employee,
+    max_attempts: int = 5,
+) -> str:
+    """
+    Generate a unique 6-digit linking code, set it on employee, and commit.
+
+    Retries up to max_attempts on IntegrityError or pre-check collisions.
+    Returns the committed code on success.
+    """
+    last_error: Optional[Exception] = None
+    for _ in range(max_attempts):
+        code = generate_6_digit_code()
+
+        # Pre-check uniqueness among pending (unlinked) codes
+        existing = db.query(Employee).filter(
+            Employee.line_linking_code == code,
+            Employee.line_user_id.is_(None),
+        ).first()
+        if existing:
+            continue
+
+        employee.line_linking_code = code
+        employee.line_linking_code_generated_at = datetime.now(timezone.utc)
+        try:
+            db.commit()
+            db.refresh(employee)
+            return code
+        except IntegrityError as exc:
+            db.rollback()
+            last_error = exc
+            continue
+
+    raise HTTPException(
+        status_code=500,
+        detail="ไม่สามารถสร้างรหัสที่ไม่ซ้ำได้ กรุณาลองอีกครั้ง",
+    )
 
 
 def is_code_expired(generated_at: datetime, expiry_hours: int = 24) -> bool:
@@ -145,30 +186,8 @@ async def generate_linking_code(
                 "is_relink": False
             }
 
-    # Generate unique 6-digit code
-    max_attempts = 100
-    for _ in range(max_attempts):
-        code = generate_6_digit_code()
-
-        # Check if code is unique among pending (unexpired) codes
-        existing = db.query(Employee).filter(
-            Employee.line_linking_code == code,
-            Employee.line_user_id.is_(None)  # Only unlinked accounts
-        ).first()
-
-        if not existing:
-            break
-    else:
-        raise HTTPException(
-            status_code=500,
-            detail="ไม่สามารถสร้างรหัสที่ไม่ซ้ำได้ กรุณาลองอีกครั้ง"
-        )
-
-    # Save code to employee
-    employee.line_linking_code = code
-    employee.line_linking_code_generated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(employee)
+    # Generate unique 6-digit code (cryptographically random + IntegrityError retry)
+    commit_unique_linking_code(db, employee)
 
     # Different messages for new link vs re-link
     if is_relink:
@@ -221,31 +240,10 @@ async def regenerate_linking_code(
             detail=f"พนักงาน {employee.display_name} เชื่อมต่อ LINE แล้ว ไม่สามารถสร้างรหัสใหม่ได้"
         )
 
-    # Generate new unique code
-    max_attempts = 100
-    for _ in range(max_attempts):
-        code = generate_6_digit_code()
-
-        existing = db.query(Employee).filter(
-            Employee.line_linking_code == code,
-            Employee.line_user_id.is_(None)
-        ).first()
-
-        if not existing:
-            break
-    else:
-        raise HTTPException(
-            status_code=500,
-            detail="ไม่สามารถสร้างรหัสที่ไม่ซ้ำได้ กรุณาลองอีกครั้ง"
-        )
-
     old_code = employee.line_linking_code
 
-    # Update code
-    employee.line_linking_code = code
-    employee.line_linking_code_generated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(employee)
+    # Generate new unique code (cryptographically random + IntegrityError retry)
+    commit_unique_linking_code(db, employee)
 
     return {
         "success": True,

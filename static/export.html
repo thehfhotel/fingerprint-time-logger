@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="th">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,18 +9,28 @@
     <title>ส่งออกข้อมูล - ระบบบันทึกเวลาด้วยลายนิ้วมือ</title>
     <!-- CSS Files with cache busting -->
     <script>
-        const cssTimestamp = Date.now();
-        document.write(`<link rel="stylesheet" href="static/css/base.css?v=${cssTimestamp}">`);
+        // Guarded document.write: synchronous injection during initial parse is
+        // intentional so the cache-busted config.js below is available before any
+        // body inline scripts reference appConfig. The readyState guard prevents
+        // accidental document overwrite if the block were re-executed.
+        (function injectCacheBustedCss() {
+            if (document.readyState !== 'loading') return;
+            const cssTimestamp = Date.now();
+            document.write(`<link rel="stylesheet" href="static/css/base.css?v=${cssTimestamp}">`);
+        })();
     </script>
 
     <!-- JavaScript Files -->
     <script>
-        const timestamp = Date.now();
-        const randomId = Math.random().toString(36).substring(7);
-        const buildNumber = '2025011800'; // Build timestamp - FORCE CACHE BREAK
-        const version = `v2.5-debug-${buildNumber}`;
-        const cacheBuster = `${timestamp}.${randomId}&build=${buildNumber}`;
-        document.write(`<script src="static/js/config.js?v=${cacheBuster}&version=${version}&force=${Date.now()}"><\/script>`);
+        (function injectCacheBustedJs() {
+            if (document.readyState !== 'loading') return;
+            const timestamp = Date.now();
+            const randomId = Math.random().toString(36).substring(7);
+            const buildNumber = '2025011800'; // Build timestamp - FORCE CACHE BREAK
+            const version = `v2.5-debug-${buildNumber}`;
+            const cacheBuster = `${timestamp}.${randomId}&build=${buildNumber}`;
+            document.write(`<script src="static/js/config.js?v=${cacheBuster}&version=${version}&force=${Date.now()}"><\/script>`);
+        })();
     </script>
     <style>
         .export-container {

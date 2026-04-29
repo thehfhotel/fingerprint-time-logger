@@ -7,11 +7,25 @@ Supports multi-location validation with terminal-specific radius settings.
 
 import json
 import math
+import re
 from typing import Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 
 from app.models.models import Device
+
+
+def safe_location_name(name) -> str:
+    """Defense-in-depth sanitizer for terminal location_name.
+
+    Strips HTML-special characters and control characters from the operator-supplied
+    location name before it is interpolated into user-facing messages or response
+    bodies. The frontend escapes too, but stripping here means the stored / logged
+    value is always safe to render even when callers forget to escape.
+    """
+    if not name:
+        return ""
+    return re.sub(r'[<>"\'&]', '', str(name))[:100]
 
 
 class LocationService:
@@ -118,7 +132,9 @@ class LocationService:
             "latitude": latitude,
             "longitude": longitude,
             "radius": radius,
-            "location_name": gps_data.get("location_name", f"Terminal {terminal_id}")
+            "location_name": safe_location_name(
+                gps_data.get("location_name") or f"Terminal {terminal_id}"
+            )
         }
 
     def validate_gps_location(

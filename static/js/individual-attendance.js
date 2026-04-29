@@ -1,6 +1,16 @@
 // Individual Attendance Page JavaScript - Cache Bust v2.9-timezone-fix-' + Date.now()
 console.log('🚀 Individual Attendance JS Loaded - Version:', '2.9-timezone-fix-' + Date.now());
 
+/**
+ * Escape HTML-special characters to prevent stored XSS via innerHTML.
+ * Use anywhere server-supplied strings are interpolated into HTML.
+ */
+function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+
 class IndividualAttendanceManager {
     constructor() {
         this.selectedEmployeeId = null;
@@ -94,13 +104,22 @@ class IndividualAttendanceManager {
             .map(employee => {
                 const displayName = employee.display_name || `Employee #${employee.badge_number}` || 'No Name';
                 const activeClass = employee.badge_number === this.selectedEmployeeId ? 'active' : '';
+                const safeDisplayName = escapeHtml(displayName);
+                const safeBadge = escapeHtml(employee.badge_number);
+                // Two layers: first JS-escape for the string literal, then HTML-escape
+                // because the result is interpolated into a double-quoted attribute.
+                const jsEscapedName = String(displayName).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                const jsEscapedBadge = String(employee.badge_number).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                const onclickAttr = escapeHtml(
+                    `attendanceManager.selectEmployee('${jsEscapedBadge}', '${jsEscapedName}')`
+                );
                 return `
                     <div class="nickname-item ${activeClass}"
-                         data-employee-id="${employee.badge_number}"
-                         data-employee-name="${displayName}"
-                         onclick="attendanceManager.selectEmployee('${employee.badge_number}', '${displayName.replace(/'/g, "\\'")}')"
-                        <span>${displayName}</span>
-                        <span class="badge-id">#${employee.badge_number}</span>
+                         data-employee-id="${safeBadge}"
+                         data-employee-name="${safeDisplayName}"
+                         onclick="${onclickAttr}">
+                        <span>${safeDisplayName}</span>
+                        <span class="badge-id">#${safeBadge}</span>
                     </div>
                 `;
             }).join('');
@@ -151,7 +170,7 @@ class IndividualAttendanceManager {
         const endDate = document.getElementById('endDate').value;
 
         if (!startDate || !endDate) {
-            alert('กรุณาเลือกช่วงวันที่');
+            this.showNoDataMessage('กรุณาเลือกช่วงวันที่');
             return;
         }
 
@@ -236,7 +255,7 @@ class IndividualAttendanceManager {
         const tableBody = document.getElementById('attendanceTableBody');
         tableBody.innerHTML = `
             <tr>
-                <td colspan="2" class="no-data">${message}</td>
+                <td colspan="2" class="no-data">${escapeHtml(message)}</td>
             </tr>
         `;
     }

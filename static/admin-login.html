@@ -284,14 +284,16 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
+                    credentials: 'include',
                     body: JSON.stringify({ passcode })
                 });
 
                 const result = await response.json();
 
                 if (response.ok && result.success) {
-                    // Store session token in localStorage
-                    localStorage.setItem('admin_session_token', result.token);
+                    // Auth token is stored in an HttpOnly cookie set by the
+                    // server — we do NOT mirror it into localStorage. We keep
+                    // only the expiry timestamp for UX (e.g., countdown).
                     localStorage.setItem('admin_session_expires', result.expires_at);
 
                     showAlert('เข้าสู่ระบบสำเร็จ! กำลังเข้าหน้า Admin Console...', 'success');
@@ -319,30 +321,24 @@
             passcodeInput.focus();
         });
 
-        // Check if already logged in
+        // Check if already logged in by validating the HttpOnly session cookie.
         window.addEventListener('DOMContentLoaded', async () => {
-            const token = localStorage.getItem('admin_session_token');
+            try {
+                await appConfig.loadConfig();
 
-            if (token) {
-                try {
-                    await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl('admin/auth/validate'), {
+                    credentials: 'include'
+                });
 
-                    const response = await fetch(appConfig.getApiUrl('admin/auth/validate'), {
-                        headers: {
-                            'Authorization': `Bearer ${token}`
-                        }
-                    });
-
-                    if (response.ok) {
-                        const result = await response.json();
-                        if (result.valid) {
-                            // Already logged in, redirect to admin console
-                            window.location.href = './admin-console';
-                        }
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.valid) {
+                        // Already logged in, redirect to admin console
+                        window.location.href = './admin-console';
                     }
-                } catch (error) {
-                    console.error('Session validation error:', error);
                 }
+            } catch (error) {
+                console.error('Session validation error:', error);
             }
         });
     </script>

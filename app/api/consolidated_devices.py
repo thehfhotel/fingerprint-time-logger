@@ -248,7 +248,6 @@ async def devices_health_check():
             response.update({
                 "users_count": users_count,
                 "records_count": records_count,
-                "device_time": device_time,
                 "info_note": "Counts from database - sync for latest device data"
             })
 

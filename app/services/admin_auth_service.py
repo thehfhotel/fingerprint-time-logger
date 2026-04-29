@@ -4,6 +4,7 @@ Secure passcode-based authentication with bcrypt hashing and session management
 """
 import os
 import secrets
+import threading
 import bcrypt
 from datetime import datetime, timedelta
 from typing import Optional, Dict
@@ -11,23 +12,45 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Environments where running without ADMIN_PASSCODE_HASH is permitted.
+_DEV_ENVIRONMENTS = ("dev", "development", "local", "test")
+# Generic placeholder used only when explicitly running in a dev environment
+# without ADMIN_PASSCODE_HASH set. NOT a real production credential.
+_DEV_DEFAULT_PASSCODE = "dev-passcode-CHANGE-ME"
+
+
 class AdminAuthService:
     def __init__(self):
         # Session storage: {token: {expires_at: datetime, created_at: datetime}}
         self._sessions: Dict[str, dict] = {}
+        self._sessions_lock = threading.RLock()
         self._session_duration = timedelta(hours=1)
 
-        # Get hashed passcode from environment variable
-        # If not set, hash the provided passcode and log warning
-        self._hashed_passcode = os.getenv('ADMIN_PASSCODE_HASH', '').encode('utf-8')
+        # Get hashed passcode from environment variable.
+        # In production it MUST be set; in dev environments we fall back to a
+        # placeholder dev passcode so the service can boot for local testing.
+        hashed = os.getenv('ADMIN_PASSCODE_HASH', '').strip()
 
-        if not self._hashed_passcode:
-            logger.warning("ADMIN_PASSCODE_HASH not set in environment variables!")
-            logger.warning("Using temporary hash - THIS IS NOT SECURE FOR PRODUCTION!")
-            # Hash the provided passcode for first-time setup
-            temp_passcode = 'H]sN4@Wa3wA9Fg9%<^2^VtJ^mWLDQ9!"j>Eptf,'
-            self._hashed_passcode = bcrypt.hashpw(temp_passcode.encode('utf-8'), bcrypt.gensalt())
-            logger.info(f"Generated hash (add to .env): ADMIN_PASSCODE_HASH={self._hashed_passcode.decode('utf-8')}")
+        if not hashed:
+            env = os.getenv('ENV', os.getenv('ENVIRONMENT', 'production')).lower()
+            if env not in _DEV_ENVIRONMENTS:
+                raise RuntimeError(
+                    "ADMIN_PASSCODE_HASH environment variable is required in production"
+                )
+            logger.warning(
+                "ADMIN_PASSCODE_HASH not set — using insecure dev default. "
+                "DO NOT use in production."
+            )
+            dev_passcode = os.getenv('ADMIN_PASSCODE_DEV_DEFAULT', _DEV_DEFAULT_PASSCODE)
+            self._hashed_passcode = bcrypt.hashpw(
+                dev_passcode.encode('utf-8'), bcrypt.gensalt()
+            )
+            logger.info(
+                "Generated dev hash (add to .env to override): "
+                f"ADMIN_PASSCODE_HASH={self._hashed_passcode.decode('utf-8')}"
+            )
+        else:
+            self._hashed_passcode = hashed.encode('utf-8')
 
     def verify_passcode(self, passcode: str) -> bool:
         """
@@ -60,10 +83,11 @@ class AdminAuthService:
         token = secrets.token_urlsafe(32)
 
         # Store session with expiration
-        self._sessions[token] = {
-            'expires_at': datetime.now() + self._session_duration,
-            'created_at': datetime.now()
-        }
+        with self._sessions_lock:
+            self._sessions[token] = {
+                'expires_at': datetime.now() + self._session_duration,
+                'created_at': datetime.now()
+            }
 
         logger.info(f"Session created: {token[:8]}... (expires in 1 hour)")
         return token
@@ -78,16 +102,20 @@ class AdminAuthService:
         Returns:
             True if session is valid and not expired, False otherwise
         """
-        if not token or token not in self._sessions:
+        if not token:
             return False
 
-        session = self._sessions[token]
+        with self._sessions_lock:
+            session = self._sessions.get(token)
+            if session is None:
+                return False
 
-        # Check if session has expired
-        if datetime.now() > session['expires_at']:
-            logger.info(f"Session expired: {token[:8]}...")
-            self.revoke_session(token)
-            return False
+            # Check if session has expired
+            if datetime.now() > session['expires_at']:
+                # Inline removal to avoid lock re-entry / TOCTOU.
+                self._sessions.pop(token, None)
+                logger.info(f"Session expired: {token[:8]}...")
+                return False
 
         return True
 
@@ -98,8 +126,9 @@ class AdminAuthService:
         Args:
             token: Session token to revoke
         """
-        if token in self._sessions:
-            del self._sessions[token]
+        with self._sessions_lock:
+            removed = self._sessions.pop(token, None)
+        if removed is not None:
             logger.info(f"Session revoked: {token[:8]}...")
 
     def cleanup_expired_sessions(self) -> int:
@@ -110,13 +139,14 @@ class AdminAuthService:
             Number of sessions cleaned up
         """
         now = datetime.now()
-        expired_tokens = [
-            token for token, session in self._sessions.items()
-            if now > session['expires_at']
-        ]
-
-        for token in expired_tokens:
-            del self._sessions[token]
+        with self._sessions_lock:
+            # Snapshot the items to avoid mutating while iterating.
+            expired_tokens = [
+                token for token, session in list(self._sessions.items())
+                if now > session['expires_at']
+            ]
+            for token in expired_tokens:
+                self._sessions.pop(token, None)
 
         if expired_tokens:
             logger.info(f"Cleaned up {len(expired_tokens)} expired sessions")
@@ -133,15 +163,19 @@ class AdminAuthService:
         Returns:
             Session info dict or None if session doesn't exist
         """
-        if token not in self._sessions:
-            return None
+        with self._sessions_lock:
+            session = self._sessions.get(token)
+            if session is None:
+                return None
+            # Copy out the fields we need so we can release the lock quickly.
+            created_at = session['created_at']
+            expires_at = session['expires_at']
 
-        session = self._sessions[token]
-        expires_in = (session['expires_at'] - datetime.now()).total_seconds()
+        expires_in = (expires_at - datetime.now()).total_seconds()
 
         return {
-            'created_at': session['created_at'].isoformat(),
-            'expires_at': session['expires_at'].isoformat(),
+            'created_at': created_at.isoformat(),
+            'expires_at': expires_at.isoformat(),
             'expires_in_seconds': int(expires_in),
             'expires_in_minutes': int(expires_in / 60)
         }

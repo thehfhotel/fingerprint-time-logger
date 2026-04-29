@@ -20,6 +20,42 @@ from app.api import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ----------------------------------------------------------------------------
+# CORS / WebSocket origin allowlist
+# ----------------------------------------------------------------------------
+DEFAULT_CORS_ALLOWED_ORIGINS = "https://erp.thehfhotel.org,https://emp.thehfhotel.org"
+
+def _parse_allowed_origins() -> List[str]:
+    """Parse CORS_ALLOWED_ORIGINS env var into a clean allowlist.
+
+    Comma-separated; whitespace stripped; empty values dropped.
+    """
+    raw = os.getenv("CORS_ALLOWED_ORIGINS", DEFAULT_CORS_ALLOWED_ORIGINS)
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+ALLOWED_ORIGINS = _parse_allowed_origins()
+logger.info(f"CORS allowlist: {ALLOWED_ORIGINS}")
+
+# ----------------------------------------------------------------------------
+# Security headers middleware (shared by both apps)
+# ----------------------------------------------------------------------------
+async def _add_security_headers(request: Request, call_next):
+    """Add baseline security headers to every response.
+
+    HSTS is only added when running behind a TLS-terminating proxy.
+    CSP is intentionally omitted (requires per-page tuning).
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if os.getenv("BEHIND_PROXY", "false").lower() == "true":
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
+    return response
+
 # WebSocket connection manager
 class ConnectionManager:
     def __init__(self):
@@ -81,18 +117,18 @@ async def auto_import_fingerprint_logs():
         
         # Import device service here to avoid circular imports
         from app.services.device_service import device_service
-        
-        # Perform sync
-        result = device_service.sync_attendance_data()
+
+        # Perform sync (offload blocking ZK I/O to a thread)
+        result = await asyncio.to_thread(device_service.sync_attendance_data)
         last_auto_import_time = datetime.now()
-        
+
         if result["success"]:
             logger.info(f"Initial auto-import successful: {result.get('synced', 0)} records synced")
-            
+
             # Broadcast update to WebSocket clients
             from app.services.attendance_service import attendance_service
             try:
-                attendance_data = attendance_service.get_attendance_summary()
+                attendance_data = await asyncio.to_thread(attendance_service.get_attendance_summary)
                 await manager.broadcast({
                     "type": "auto_import_update",
                     "data": attendance_data,
@@ -117,18 +153,18 @@ async def auto_import_fingerprint_logs():
             
             # Import device service here to avoid circular imports
             from app.services.device_service import device_service
-            
-            # Perform sync
-            result = device_service.sync_attendance_data()
+
+            # Perform sync (offload blocking ZK I/O to a thread)
+            result = await asyncio.to_thread(device_service.sync_attendance_data)
             last_auto_import_time = datetime.now()
-            
+
             if result["success"]:
                 logger.info(f"Auto-import successful: {result.get('synced', 0)} records synced")
-                
+
                 # Broadcast update to WebSocket clients
                 from app.services.attendance_service import attendance_service
                 try:
-                    attendance_data = attendance_service.get_attendance_summary()
+                    attendance_data = await asyncio.to_thread(attendance_service.get_attendance_summary)
                     await manager.broadcast({
                         "type": "auto_import_update",
                         "data": attendance_data,
@@ -183,11 +219,14 @@ fingerprint_app = FastAPI(
 # CORS configuration for fingerprint_app
 fingerprint_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Security headers for fingerprint_app
+fingerprint_app.middleware("http")(_add_security_headers)
 
 # Proxy headers middleware for nginx reverse proxy
 if os.getenv("BEHIND_PROXY", "false").lower() == "true":
@@ -227,30 +266,51 @@ async def get_static_version(file_path: str):
 # WebSocket endpoint for real-time updates
 @fingerprint_app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # Origin check (browser clients only — None means same-origin/non-browser)
+    origin = websocket.headers.get("origin")
+    if origin is not None and origin not in ALLOWED_ORIGINS:
+        await websocket.close(code=1008)
+        return
+
+    # Admin session required for the privileged dashboard WebSocket
+    from app.services.admin_auth_service import admin_auth_service
+    admin_token = websocket.cookies.get("admin_session_token")
+    if not admin_token or not admin_auth_service.validate_session(admin_token):
+        await websocket.close(code=1008)
+        return
+
     await manager.connect(websocket)
+    last_refresh_at = None
     try:
         while True:
             # Keep connection alive and handle incoming messages
             data = await websocket.receive_text()
-            
+
             # Handle different message types
             message = json.loads(data)
             if message.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
             elif message.get("type") == "refresh":
+                # Per-connection rate limit: 1 refresh per 60 seconds
+                now_ts = datetime.now()
+                if last_refresh_at is not None and (now_ts - last_refresh_at).total_seconds() < 60:
+                    await websocket.send_json({"type": "rate_limited"})
+                    continue
+                last_refresh_at = now_ts
+
                 # Trigger manual refresh using simplified services
                 from app.services.device_service import device_service
                 from app.services.attendance_service import attendance_service
-                
-                sync_result = device_service.sync_attendance_data()
+
+                sync_result = await asyncio.to_thread(device_service.sync_attendance_data)
                 if sync_result["success"]:
-                    attendance_data = attendance_service.get_attendance_summary()
+                    attendance_data = await asyncio.to_thread(attendance_service.get_attendance_summary)
                     await websocket.send_json({
                         "type": "attendance_update",
                         "data": attendance_data,
                         "timestamp": datetime.now().isoformat()
                     })
-                
+
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
@@ -441,11 +501,14 @@ logger.info(f"========== ROOT APP CREATED: {app} ==========")
 # CORS configuration for root app (for /api/private/* and /qr-checkin/api/* endpoints)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Security headers for root app
+app.middleware("http")(_add_security_headers)
 
 # Proxy headers middleware for nginx reverse proxy - ROOT APP
 # This ensures FastAPI generates correct HTTPS URLs in redirects when behind nginx
@@ -462,13 +525,15 @@ logger.info("========== REGISTERING PROTECTED API ROUTES ==========")
 
 # Import system_status and admin_auth routers
 from app.api import system_status, admin_auth
+from app.api.admin_auth import require_admin_auth
+from fastapi import Depends
 
 logger.info("========== IMPORTED system_status AND admin_auth ==========")
 
-# Simple test endpoint to verify root app routing works
+# Simple test endpoint to verify root app routing works (admin-auth required)
 @app.get("/api/private/test")
-async def test_endpoint():
-    """Simple test endpoint to verify routing"""
+async def test_endpoint(_: str = Depends(require_admin_auth)):
+    """Simple test endpoint to verify routing (admin-auth required)."""
     return {"status": "success", "message": "Root app routing works!", "timestamp": datetime.now().isoformat()}
 
 # Mount protected API routers
@@ -554,15 +619,15 @@ async def trigger_manual_import():
     """Manually trigger fingerprint log import"""
     try:
         from app.services.device_service import device_service
-        
+
         logger.info("Manual import triggered via API")
-        result = device_service.sync_attendance_data()
-        
+        result = await asyncio.to_thread(device_service.sync_attendance_data)
+
         if result["success"]:
             # Broadcast update to WebSocket clients
             try:
                 from app.services.attendance_service import attendance_service
-                attendance_data = attendance_service.get_attendance_summary()
+                attendance_data = await asyncio.to_thread(attendance_service.get_attendance_summary)
                 await manager.broadcast({
                     "type": "manual_import_update",
                     "data": attendance_data,
@@ -620,13 +685,13 @@ async def manual_refresh():
     try:
         # Use simplified device service for sync
         from app.services.device_service import device_service
-        result = device_service.sync_attendance_data()
-        
+        result = await asyncio.to_thread(device_service.sync_attendance_data)
+
         if result["success"]:
             # Broadcast update to WebSocket clients
             from app.services.attendance_service import attendance_service
-            attendance_data = attendance_service.get_attendance_summary()
-            
+            attendance_data = await asyncio.to_thread(attendance_service.get_attendance_summary)
+
             await manager.broadcast({
                 "type": "attendance_update",
                 "data": attendance_data,
@@ -744,8 +809,19 @@ async def legacy_line_auth_post_redirect(path: str):
 # Mount WebSocket at root level for unprotected access
 @app.websocket("/qr-checkin/ws")
 async def root_websocket_endpoint(websocket: WebSocket):
-    """Root-level WebSocket for unprotected QR terminal access"""
+    """Root-level WebSocket for unprotected QR terminal access.
+
+    Public endpoint (kiosk display); no admin session required, but the Origin
+    header is validated against the CORS allowlist when present.
+    """
+    # Origin check (browser clients only — None means same-origin/non-browser)
+    origin = websocket.headers.get("origin")
+    if origin is not None and origin not in ALLOWED_ORIGINS:
+        await websocket.close(code=1008)
+        return
+
     await manager.connect(websocket)
+    last_refresh_at = None
     try:
         while True:
             # Keep connection alive and handle incoming messages
@@ -756,13 +832,20 @@ async def root_websocket_endpoint(websocket: WebSocket):
             if message.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
             elif message.get("type") == "refresh":
+                # Per-connection rate limit: 1 refresh per 60 seconds
+                now_ts = datetime.now()
+                if last_refresh_at is not None and (now_ts - last_refresh_at).total_seconds() < 60:
+                    await websocket.send_json({"type": "rate_limited"})
+                    continue
+                last_refresh_at = now_ts
+
                 # Trigger manual refresh using simplified services
                 from app.services.device_service import device_service
                 from app.services.attendance_service import attendance_service
 
-                sync_result = device_service.sync_attendance_data()
+                sync_result = await asyncio.to_thread(device_service.sync_attendance_data)
                 if sync_result["success"]:
-                    attendance_data = attendance_service.get_attendance_summary()
+                    attendance_data = await asyncio.to_thread(attendance_service.get_attendance_summary)
                     await websocket.send_json({
                         "type": "attendance_update",
                         "data": attendance_data,

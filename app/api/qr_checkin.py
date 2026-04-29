@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from app.core.database import get_db
 from app.models.models import Device, Employee, AttendanceRecord
 from app.services.qr_service import qr_service
-from app.services.location_service import location_service
+from app.services.location_service import location_service, safe_location_name
 from app.services.line_auth_service import line_auth_service
 
 
@@ -240,10 +240,11 @@ async def list_qr_terminals(db: Session = Depends(get_db)):
             except (json.JSONDecodeError, AttributeError):
                 pass
 
+            # Defense-in-depth: strip HTML-special chars before returning to clients
             terminal_list.append(TerminalInfo(
                 id=terminal.id,
                 name=terminal.name,
-                location_name=location_name,
+                location_name=safe_location_name(location_name),
                 is_active=terminal.is_active
             ))
 
@@ -290,6 +291,9 @@ async def get_qr_code_for_kiosk(
             terminal_name = metadata.get("gps", {}).get("location_name", f"Terminal {terminal_id}")
         except json.JSONDecodeError:
             terminal_name = f"Terminal {terminal_id}"
+
+        # Defense-in-depth: strip HTML-special chars before returning to clients
+        terminal_name = safe_location_name(terminal_name) or f"Terminal {terminal_id}"
 
         # Generate QR code
         qr_data = qr_service.generate_qr_code_for_terminal(terminal_id, size=400)

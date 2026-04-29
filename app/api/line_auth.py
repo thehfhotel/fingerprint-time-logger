@@ -11,11 +11,15 @@ Endpoints for LINE OAuth integration with QR check-in:
 Mobile Safari compatible with HTML meta refresh redirects.
 """
 
+import logging
+import os
+import threading
+import time
+import urllib.parse
 from datetime import datetime, timedelta, timezone
-from typing import Optional
-from urllib.parse import quote
+from typing import Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException, status, Query, Request, Depends
+from fastapi import APIRouter, HTTPException, status, Query, Request, Depends, Header
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -24,7 +28,124 @@ from app.core.database import get_db
 from app.models.models import Employee
 from app.services.line_auth_service import line_auth_service
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+# ============================================================================
+# Link-account brute-force protection
+# ============================================================================
+#
+# In-memory tracking of failed link-account attempts. Two layers:
+#   1) Per-(IP, line_user_id) sliding window: 5 attempts/minute, 5-minute lockout
+#      after 20 failed attempts.
+#   2) Per-linking-code: after 5 wrong attempts on the same code, the code is
+#      invalidated (set to NULL on the employee record). Admin must regenerate.
+#
+# Pure in-process protection — sufficient for the single-instance deployment
+# documented in CLAUDE.md / PLAN.md.
+
+_LINK_ATTEMPT_WINDOW_SECONDS = 60
+_LINK_ATTEMPT_MAX_PER_WINDOW = 5
+_LINK_ATTEMPT_LOCKOUT_THRESHOLD = 20
+_LINK_ATTEMPT_LOCKOUT_SECONDS = 300  # 5 minutes
+_LINK_ATTEMPT_RETENTION_SECONDS = 300  # prune older entries
+_LINK_CODE_INVALIDATE_THRESHOLD = 5
+
+# (ip, line_user_id) -> list[timestamps of failed attempts]
+_link_attempts: Dict[Tuple[str, str], List[float]] = {}
+# (ip, line_user_id) -> lockout_until timestamp
+_link_lockouts: Dict[Tuple[str, str], float] = {}
+# linking_code -> count of failed attempts
+_link_code_failures: Dict[str, int] = {}
+_link_attempts_lock = threading.Lock()
+
+
+def _client_ip(request: Request) -> str:
+    """Resolve the client IP, honoring X-Forwarded-For when behind a proxy."""
+    if os.getenv("BEHIND_PROXY", "false").lower() == "true":
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            # First hop is the original client.
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _enforce_link_rate_limit(ip: str, line_user_id: str) -> None:
+    """
+    Enforce per-(IP, line_user_id) brute-force protection.
+    Raises HTTPException(429) when the limit is exceeded.
+    """
+    key = (ip, line_user_id)
+    now = time.time()
+
+    with _link_attempts_lock:
+        # Lockout check
+        lockout_until = _link_lockouts.get(key)
+        if lockout_until and now < lockout_until:
+            retry_after = int(lockout_until - now) + 1
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="พยายามเชื่อมต่อบัญชีเกินกำหนด กรุณาลองใหม่ภายหลัง",
+                headers={"Retry-After": str(retry_after)},
+            )
+        if lockout_until and now >= lockout_until:
+            _link_lockouts.pop(key, None)
+
+        # Prune attempt history older than the retention window.
+        timestamps = _link_attempts.get(key, [])
+        cutoff = now - _LINK_ATTEMPT_RETENTION_SECONDS
+        timestamps = [t for t in timestamps if t > cutoff]
+        _link_attempts[key] = timestamps
+
+        # Attempts within the sliding window
+        window_cutoff = now - _LINK_ATTEMPT_WINDOW_SECONDS
+        in_window = [t for t in timestamps if t > window_cutoff]
+        if len(in_window) >= _LINK_ATTEMPT_MAX_PER_WINDOW:
+            retry_after = int(_LINK_ATTEMPT_WINDOW_SECONDS - (now - in_window[0])) + 1
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="พยายามเชื่อมต่อบัญชีเกินกำหนด กรุณาลองใหม่ภายหลัง",
+                headers={"Retry-After": str(max(1, retry_after))},
+            )
+
+
+def _record_link_failure(ip: str, line_user_id: str) -> None:
+    """Track a failed link attempt and apply lockout when threshold is reached."""
+    key = (ip, line_user_id)
+    now = time.time()
+    with _link_attempts_lock:
+        timestamps = _link_attempts.get(key, [])
+        timestamps.append(now)
+        # Prune older entries
+        cutoff = now - _LINK_ATTEMPT_RETENTION_SECONDS
+        timestamps = [t for t in timestamps if t > cutoff]
+        _link_attempts[key] = timestamps
+
+        if len(timestamps) >= _LINK_ATTEMPT_LOCKOUT_THRESHOLD:
+            _link_lockouts[key] = now + _LINK_ATTEMPT_LOCKOUT_SECONDS
+
+
+def _clear_link_failures(ip: str, line_user_id: str) -> None:
+    """Clear failure tracking for a successful (ip, line_user_id) link."""
+    key = (ip, line_user_id)
+    with _link_attempts_lock:
+        _link_attempts.pop(key, None)
+        _link_lockouts.pop(key, None)
+
+
+def _record_code_failure(linking_code: str) -> int:
+    """Increment failure count for a specific linking code; return new total."""
+    with _link_attempts_lock:
+        new_count = _link_code_failures.get(linking_code, 0) + 1
+        _link_code_failures[linking_code] = new_count
+        return new_count
+
+
+def _clear_code_failures(linking_code: str) -> None:
+    with _link_attempts_lock:
+        _link_code_failures.pop(linking_code, None)
 
 
 # ============================================================================
@@ -38,9 +159,13 @@ class LinkAccountRequest(BaseModel):
 
 
 class UnlinkAccountRequest(BaseModel):
-    """Request to unlink LINE account (admin only)"""
-    badge_number: str
-    admin_passcode: str
+    """
+    Request body for self-unlink of LINE account.
+
+    The authenticated LINE user (identified via the Authorization Bearer JWT)
+    can only unlink their OWN linked employee account. Administrative unlink
+    of other users is performed via /api/private/admin/line-codes/unlink.
+    """
     reason: Optional[str] = None
 
 
@@ -289,15 +414,23 @@ async def line_callback(
                 display_name=display_name,
                 picture_url=picture_url
             )
-            redirect_param = f"&redirect={redirect}" if redirect else ""
+            redirect_param = (
+                f"&redirect={urllib.parse.quote(redirect or '', safe='')}"
+                if redirect else ""
+            )
             # qr_context is already URL-encoded from login endpoint, keep it encoded
             qr_context_param = f"&qr_context={qr_context}" if qr_context else ""
+            # URL-encode LINE-supplied profile values to prevent unsafe characters
+            # (spaces, &, =, #, Unicode) from breaking the redirect URL.
+            encoded_line_user_id = urllib.parse.quote(line_user_id or "", safe="")
+            encoded_display_name = urllib.parse.quote(display_name or "", safe="")
+            encoded_picture_url = urllib.parse.quote(picture_url or "", safe="")
             redirect_url = (
                 f"/qr-checkin/link-account"
                 f"?jwt={jwt_token}"
-                f"&line_user_id={line_user_id}"
-                f"&display_name={display_name}"
-                f"&picture_url={picture_url}"
+                f"&line_user_id={encoded_line_user_id}"
+                f"&display_name={encoded_display_name}"
+                f"&picture_url={encoded_picture_url}"
                 f"{redirect_param}"
                 f"{qr_context_param}"
             )
@@ -372,6 +505,7 @@ async def line_callback(
 @router.post("/link-account")
 async def link_account(
     request: LinkAccountRequest,
+    http_request: Request,
     db: Session = Depends(get_db)
 ):
     """
@@ -388,6 +522,7 @@ async def link_account(
         400: Invalid linking code or already linked
         401: Invalid JWT token
         404: Employee not found
+        429: Too many failed attempts (per-IP+LINE-user rate limit)
     """
     try:
         # Verify JWT token to get LINE user data
@@ -402,6 +537,11 @@ async def link_account(
                 detail="Invalid token: missing LINE user ID"
             )
 
+        # Brute-force protection: enforce per-(IP, LINE user) rate limit BEFORE
+        # touching the database. This raises 429 when over budget.
+        client_ip = _client_ip(http_request)
+        _enforce_link_rate_limit(client_ip, line_user_id)
+
         # Find employee by linking code
         employee = db.query(Employee).filter(
             Employee.line_linking_code == request.linking_code,
@@ -409,6 +549,30 @@ async def link_account(
         ).first()
 
         if not employee:
+            # Wrong code: increment per-IP/user failure counter and per-code counter.
+            _record_link_failure(client_ip, line_user_id)
+            code_failures = _record_code_failure(request.linking_code)
+
+            # Distributed-attack protection: if a SPECIFIC code accumulates too
+            # many failed attempts (across any IPs), invalidate the code so the
+            # admin must regenerate. We only invalidate codes that actually
+            # exist on an employee record (the request body could be garbage).
+            if code_failures >= _LINK_CODE_INVALIDATE_THRESHOLD:
+                target_employee = db.query(Employee).filter(
+                    Employee.line_linking_code == request.linking_code
+                ).first()
+                if target_employee:
+                    target_employee.line_linking_code = None
+                    target_employee.line_linking_code_generated_at = None
+                    target_employee.updated_at = datetime.now(timezone.utc)
+                    db.commit()
+                    logger.warning(
+                        "Invalidated linking code after %d failed attempts for badge=%s",
+                        code_failures,
+                        target_employee.badge_number,
+                    )
+                _clear_code_failures(request.linking_code)
+
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="รหัสเชื่อมต่อไม่ถูกต้องหรือหมดอายุ"
@@ -424,6 +588,7 @@ async def link_account(
             now = datetime.now(timezone.utc)
             expiry = generated_at + timedelta(hours=24)
             if now > expiry:
+                _record_link_failure(client_ip, line_user_id)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="รหัสเชื่อมต่อหมดอายุแล้ว กรุณาติดต่อเจ้าหน้าที่"
@@ -431,6 +596,7 @@ async def link_account(
 
         # Check if employee already has LINE linked
         if employee.line_user_id:
+            _record_link_failure(client_ip, line_user_id)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="บัญชีนี้เชื่อมต่อ LINE แล้ว"
@@ -446,6 +612,10 @@ async def link_account(
 
         db.commit()
         db.refresh(employee)
+
+        # Successful link: clear failure counters for this client and the code.
+        _clear_link_failures(client_ip, line_user_id)
+        _clear_code_failures(request.linking_code)
 
         # Create new JWT token with employee badge for authenticated session
         new_token = line_auth_service.create_jwt_token(
@@ -476,54 +646,69 @@ async def link_account(
         )
 
 
+def _extract_bearer_token(authorization: Optional[str]) -> str:
+    """Extract a bearer token from an Authorization header."""
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing",
+        )
+    parts = authorization.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header must be 'Bearer <token>'",
+        )
+    return parts[1].strip()
+
+
 @router.post("/unlink-account")
 async def unlink_account(
     request: UnlinkAccountRequest,
+    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
     """
-    Unlink LINE account from employee (admin only)
+    Unlink the caller's own LINE account.
+
+    Authentication:
+        Authorization: Bearer <LINE-JWT>
+
+    The LINE JWT identifies the caller's LINE user ID. The caller can only
+    unlink the employee that their LINE account is currently linked to.
+    Administrative unlink of arbitrary users is performed via
+    /api/private/admin/line-codes/unlink (Cloudflare Access protected).
 
     Request Body:
-        badge_number: Employee badge number
-        admin_passcode: Admin password
         reason: Optional reason for unlinking
 
     Returns:
         Success message
 
     Raises:
-        403: Invalid admin passcode
-        404: Employee not found
-        400: Employee not linked
+        401: Missing/invalid LINE JWT
+        404: No linked employee for this LINE user
     """
-    from app.api.admin_line_codes import ADMIN_PASSCODE
-
-    # Verify admin passcode
-    if request.admin_passcode != ADMIN_PASSCODE:
+    token = _extract_bearer_token(authorization)
+    payload = line_auth_service.verify_jwt_token(token)
+    line_user_id = payload.get("line_user_id")
+    if not line_user_id:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="รหัสผ่านผู้ดูแลระบบไม่ถูกต้อง"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing LINE user ID",
         )
 
     try:
-        # Find employee
+        # Find the employee currently linked to this LINE user.
         employee = db.query(Employee).filter(
-            Employee.badge_number == request.badge_number,
+            Employee.line_user_id == line_user_id,
             Employee.is_active == True
         ).first()
 
         if not employee:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="ไม่พบพนักงาน"
-            )
-
-        # Check if employee has LINE linked
-        if not employee.line_user_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="พนักงานนี้ไม่ได้เชื่อมต่อ LINE"
+                detail="ไม่พบบัญชีที่เชื่อมต่อกับ LINE นี้"
             )
 
         # Unlink LINE account

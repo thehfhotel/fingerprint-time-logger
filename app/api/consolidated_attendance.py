@@ -3,13 +3,25 @@ Consolidated Attendance API - All attendance operations in one place
 Replaces: attendance.py, attendance_calendar.py, calendar_api.py, simple_calendar.py
 """
 
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+import calendar as _calendar
 import csv
 import io
+
+
+# Bangkok timezone (UTC+7) — user-facing output must be Bangkok-local
+BANGKOK_TZ = timezone(timedelta(hours=7))
+
+
+def _to_bangkok(dt: datetime) -> datetime:
+    """Convert a (possibly naive UTC) datetime to Bangkok timezone."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BANGKOK_TZ)
 
 from app.core.database import get_db
 from app.models.models import AttendanceRecord, Employee
@@ -130,8 +142,8 @@ async def get_employee_attendance_by_id(
         for record in records:
             formatted_records.append({
                 "id": record.id,
-                "check_in_time": record.timestamp.isoformat() if record.punch_type == "IN" else None,
-                "check_out_time": record.timestamp.isoformat() if record.punch_type == "OUT" else None,
+                "check_in_time": record.timestamp.isoformat() if record.punch_type == 0 else None,
+                "check_out_time": record.timestamp.isoformat() if record.punch_type == 1 else None,
                 "punch_type": record.punch_type,
                 "timestamp": record.timestamp.isoformat()
             })
@@ -216,33 +228,35 @@ async def get_calendar_data(year: int, month: int):
     """Get attendance data for calendar view"""
     try:
         # Get start and end dates for the month
+        # NOTE: attendance_service interprets end_date as INCLUSIVE Bangkok end-of-day,
+        # so end_date must be the LAST day of the month, not the first day of the next.
         start_date = date(year, month, 1)
-        if month == 12:
-            end_date = date(year + 1, 1, 1)
-        else:
-            end_date = date(year, month + 1, 1)
-        
+        last_day = _calendar.monthrange(year, month)[1]
+        end_date = date(year, month, last_day)
+
         # Get all attendance records for the month
         records = attendance_service.get_attendance_records(
             start_date=start_date,
             end_date=end_date,
             limit=10000
         )
-        
-        # Group by employee and date
+
+        # Group by employee and date — convert UTC-stored timestamps to Bangkok
+        # for user-facing date grouping and time display.
         calendar_data = {}
         for record in records:
             employee_badge = record.employee_badge_number
-            record_date = record.timestamp.date().isoformat()
-            
+            bangkok_timestamp = _to_bangkok(record.timestamp)
+            record_date = bangkok_timestamp.date().isoformat()
+
             if employee_badge not in calendar_data:
                 calendar_data[employee_badge] = {}
-            
+
             if record_date not in calendar_data[employee_badge]:
                 calendar_data[employee_badge][record_date] = []
-            
+
             calendar_data[employee_badge][record_date].append({
-                "time": record.timestamp.strftime("%H:%M"),
+                "time": bangkok_timestamp.strftime("%H:%M"),
                 "type": "check-in" if record.punch_type == 0 else "check-out",
                 "status": record.status
             })

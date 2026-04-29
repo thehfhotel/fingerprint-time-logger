@@ -4,7 +4,7 @@ Replaces complex streaming, batch processing, and enterprise patterns
 """
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 import csv
 import io
 import logging
@@ -13,6 +13,17 @@ from app.models.models import AttendanceRecord, Employee
 from app.services.attendance_service import attendance_service
 
 logger = logging.getLogger(__name__)
+
+
+# Bangkok timezone (UTC+7) — CSV exports must show Bangkok-local date/time.
+BANGKOK_TZ = timezone(timedelta(hours=7))
+
+
+def _to_bangkok(dt: datetime) -> datetime:
+    """Convert a (possibly naive UTC) datetime to Bangkok timezone."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BANGKOK_TZ)
 
 
 class SimpleExportService:
@@ -69,11 +80,12 @@ class SimpleExportService:
                 elif record.status == 2:
                     status_text = 'Early'
                 
+                bangkok_timestamp = _to_bangkok(record.timestamp)
                 writer.writerow([
                     record.employee_badge_number,
                     employee_name,
-                    record.timestamp.strftime('%Y-%m-%d'),
-                    record.timestamp.strftime('%H:%M:%S'),
+                    bangkok_timestamp.strftime('%Y-%m-%d'),
+                    bangkok_timestamp.strftime('%H:%M:%S'),
                     action,
                     status_text,
                     record.device_id
@@ -222,6 +234,7 @@ class SimpleExportService:
                                            f"Employee {record.employee_badge_number}")
                 action = 'Check-in' if record.punch_type == 0 else 'Check-out'
                 
+                bangkok_timestamp = _to_bangkok(record.timestamp)
                 if format_type == "detailed":
                     status_text = 'Normal'
                     if hasattr(record, 'status'):
@@ -229,12 +242,12 @@ class SimpleExportService:
                             status_text = 'Late'
                         elif record.status == 2:
                             status_text = 'Early'
-                    
+
                     row = [
                         record.employee_badge_number,
                         employee_name if include_employee_names else record.employee_badge_number,
-                        record.timestamp.strftime('%Y-%m-%d'),
-                        record.timestamp.strftime('%H:%M:%S'),
+                        bangkok_timestamp.strftime('%Y-%m-%d'),
+                        bangkok_timestamp.strftime('%H:%M:%S'),
                         action,
                         status_text,
                         record.device_id if include_device_names else ''
@@ -242,8 +255,8 @@ class SimpleExportService:
                 else:
                     row = [
                         record.employee_badge_number,
-                        record.timestamp.strftime('%Y-%m-%d'),
-                        record.timestamp.strftime('%H:%M:%S'),
+                        bangkok_timestamp.strftime('%Y-%m-%d'),
+                        bangkok_timestamp.strftime('%H:%M:%S'),
                         action
                     ]
                 

@@ -27,20 +27,22 @@ class RealTimeManager {
         // Browser online/offline detection
         window.addEventListener('online', () => {
             this.isOnline = true;
+            // Mark a pending reconnect so the next successful refresh shows a toast.
+            this._pendingReconnectToast = true;
             this.updateConnectionStatus();
-            this.refreshData();
+            this.refreshData(false);
         });
-        
+
         window.addEventListener('offline', () => {
             this.isOnline = false;
             this.updateConnectionStatus();
             this.showOfflineNotification();
         });
-        
+
         // Visibility change for refresh on tab focus
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden && this.isOnline) {
-                this.refreshData();
+                this.refreshData(false);
             }
         });
     }
@@ -97,8 +99,10 @@ class RealTimeManager {
                 if (response.ok) {
                     if (!this.isOnline) {
                         this.isOnline = true;
+                        // Health-check recovery: surface a one-time reconnect toast.
+                        this._pendingReconnectToast = true;
                         this.updateConnectionStatus();
-                        this.refreshData();
+                        this.refreshData(false);
                     }
                     this.retryAttempts = 0;
                     return; // Success, exit retry loop
@@ -138,15 +142,22 @@ class RealTimeManager {
     startPeriodicRefresh() {
         // CACHE-FIRST ARCHITECTURE: Reduce frontend polling frequency
         // Backend serves from cache (instant response), so we can poll more aggressively
-        // Refresh data every 1 minute when online and page is visible
+        // Refresh data every 1 minute when online and page is visible.
+        // Pass isUserTriggered=false so the success toast does not spam every minute.
         this.refreshInterval = setInterval(() => {
             if (this.isOnline && !document.hidden) {
-                this.refreshData();
+                this.refreshData(false);
             }
         }, 60000); // 1 minute (was 2 minutes) - backend serves from cache instantly
     }
-    
-    async refreshData() {
+
+    /**
+     * Refresh dashboard data.
+     * @param {boolean} isUserTriggered - If true, always show a success toast.
+     *   For background polling (every 60s, visibility change), pass false; the toast
+     *   only fires for user-triggered refreshes or one-time after reconnect.
+     */
+    async refreshData(isUserTriggered = true) {
         if (!this.isOnline) {
             this.showNotification(
                 'Offline',
@@ -155,10 +166,10 @@ class RealTimeManager {
             );
             return;
         }
-        
+
         try {
             // Status UI removed - functionality moved to /status page
-            
+
             // Refresh attendance data
             if (window.updateDashboard) {
                 const response = await fetch(appConfig.getApiUrl('attendance/summary'), {
@@ -171,22 +182,32 @@ class RealTimeManager {
                     // Extract nested data from cache-first architecture response
                     const data = response_data.data || response_data;
                     window.updateDashboard(data);
-                    
-                    this.showNotification(
-                        'Data Updated',
-                        'รีเฟรชข้อมูลการลงเวลาสำเร็จแล้ว',
-                        'success'
-                    );
+
+                    if (this._pendingReconnectToast) {
+                        // One-time toast on offline→online transition.
+                        this._pendingReconnectToast = false;
+                        this.showNotification(
+                            'Reconnected',
+                            'เชื่อมต่ออีกครั้งและรีเฟรชข้อมูลแล้ว',
+                            'success'
+                        );
+                    } else if (isUserTriggered) {
+                        this.showNotification(
+                            'Data Updated',
+                            'รีเฟรชข้อมูลการลงเวลาสำเร็จแล้ว',
+                            'success'
+                        );
+                    }
                 } else {
                     throw new Error(`Failed to fetch data: ${response.status}`);
                 }
             }
-            
+
             // Refresh employee display names if on nickname management page
             if (window.loadEmployeeDisplayNames) {
                 window.loadEmployeeDisplayNames();
             }
-            
+
         } catch (error) {
             console.error('Data refresh failed:', error);
             this.showNotification(

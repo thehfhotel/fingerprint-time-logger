@@ -58,7 +58,11 @@ async def update_employee_nickname(
         
         if not employee:
             # Create new employee if doesn't exist (from ZK device)
-            display_name = nickname_data.get("nickname") or nickname_data.get("display_name") or f"User {badge_number}"
+            display_name = (
+                nickname_data.get("nickname")
+                or nickname_data.get("display_name")
+                or f"พนักงาน {badge_number}"
+            )
             employee = Employee(
                 badge_number=badge_number,
                 display_name=display_name,
@@ -79,7 +83,11 @@ async def update_employee_nickname(
             }
         else:
             # Update existing employee nickname
-            employee.display_name = nickname_data.get("nickname") or nickname_data.get("display_name") or ""
+            employee.display_name = (
+                nickname_data.get("nickname")
+                or nickname_data.get("display_name")
+                or f"พนักงาน {badge_number}"
+            )
             db.commit()
             
             return {

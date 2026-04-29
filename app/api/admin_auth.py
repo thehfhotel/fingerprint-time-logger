@@ -5,14 +5,80 @@ Secure passcode authentication with session management
 from fastapi import APIRouter, HTTPException, Header, Depends, Response, Cookie, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Dict, List
 import logging
+import os
+import threading
+import time
 
 from app.services.admin_auth_service import admin_auth_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# --- Per-IP failed-login throttle ---------------------------------------------
+# 5 failures within 15 minutes triggers a 15-minute lockout.
+_FAILED_ATTEMPT_WINDOW_SECONDS = 15 * 60
+_FAILED_ATTEMPT_THRESHOLD = 5
+_failed_attempts: Dict[str, List[float]] = {}
+_failed_attempts_lock = threading.Lock()
+
+
+def _is_behind_proxy() -> bool:
+    return os.getenv("BEHIND_PROXY", "false").lower() == "true"
+
+
+def _get_client_ip(request: Request) -> str:
+    """Resolve client IP, honoring X-Forwarded-For when behind a trusted proxy."""
+    if _is_behind_proxy():
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            first_ip = forwarded.split(",")[0].strip()
+            if first_ip:
+                return first_ip
+    return request.client.host if request.client else "unknown"
+
+
+def _prune_expired_attempts(now: float) -> None:
+    """Remove timestamps older than the window. Must be called under the lock."""
+    cutoff = now - _FAILED_ATTEMPT_WINDOW_SECONDS
+    for ip in list(_failed_attempts.keys()):
+        recent = [ts for ts in _failed_attempts[ip] if ts >= cutoff]
+        if recent:
+            _failed_attempts[ip] = recent
+        else:
+            del _failed_attempts[ip]
+
+
+def _check_lockout(ip: str) -> None:
+    """Raise HTTP 429 if this IP has hit the lockout threshold."""
+    now = time.time()
+    with _failed_attempts_lock:
+        _prune_expired_attempts(now)
+        attempts = _failed_attempts.get(ip, [])
+        if len(attempts) >= _FAILED_ATTEMPT_THRESHOLD:
+            oldest = min(attempts)
+            seconds_until_reset = int(_FAILED_ATTEMPT_WINDOW_SECONDS - (now - oldest))
+            seconds_until_reset = max(seconds_until_reset, 1)
+            minutes = max(1, (seconds_until_reset + 59) // 60)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many failed attempts. Try again in {minutes} minutes.",
+                headers={"Retry-After": str(seconds_until_reset)}
+            )
+
+
+def _record_failed_attempt(ip: str) -> None:
+    now = time.time()
+    with _failed_attempts_lock:
+        _prune_expired_attempts(now)
+        _failed_attempts.setdefault(ip, []).append(now)
+
+
+def _clear_failed_attempts(ip: str) -> None:
+    with _failed_attempts_lock:
+        _failed_attempts.pop(ip, None)
 
 class LoginRequest(BaseModel):
     passcode: str = Field(..., min_length=1, description="Admin passcode")
@@ -92,20 +158,30 @@ def get_token_from_cookie_or_header(
     )
 
 @router.post("/login")
-async def admin_login(request: LoginRequest):
+async def admin_login(login_payload: LoginRequest, request: Request):
     """
     Authenticate admin user with passcode
 
-    Returns session token valid for 1 hour and sets HttpOnly cookie
+    Returns session token valid for 1 hour and sets HttpOnly cookie.
+    Rate-limited per source IP (5 failures / 15 minutes triggers a 15-minute lockout).
     """
+    client_ip = _get_client_ip(request)
+
+    # Enforce lockout BEFORE attempting verification (avoids timing leakage of valid passcodes)
+    _check_lockout(client_ip)
+
     try:
         # Verify passcode
-        if not admin_auth_service.verify_passcode(request.passcode):
-            logger.warning("Failed login attempt with incorrect passcode")
+        if not admin_auth_service.verify_passcode(login_payload.passcode):
+            _record_failed_attempt(client_ip)
+            logger.warning(f"Failed login attempt from {client_ip}")
             raise HTTPException(
                 status_code=401,
                 detail="รหัสผ่านไม่ถูกต้อง"
             )
+
+        # Successful login: clear failure history for this IP
+        _clear_failed_attempts(client_ip)
 
         # Create session
         token = admin_auth_service.create_session()
@@ -123,14 +199,15 @@ async def admin_login(request: LoginRequest):
         })
 
         # Set HttpOnly cookie for server-side authentication
-        # This prevents JavaScript access and XSS attacks
+        # Secure flag is enabled when running behind HTTPS proxy (Cloudflare/nginx).
+        # SameSite=Strict aligns with PLAN.md §11.
         response.set_cookie(
             key="admin_session_token",
             value=token,
             httponly=True,  # Prevent JavaScript access
             max_age=3600,  # 1 hour in seconds
-            samesite="lax",  # CSRF protection
-            secure=False  # Set to True in production with HTTPS
+            samesite="strict",  # CSRF protection
+            secure=_is_behind_proxy()
         )
 
         return response
@@ -145,7 +222,7 @@ async def admin_login(request: LoginRequest):
         )
 
 @router.get("/validate", response_model=ValidateResponse)
-async def validate_session(token: str = Depends(get_token_from_header)):
+async def validate_session(token: str = Depends(get_token_from_cookie_or_header)):
     """
     Validate admin session token
 
@@ -173,7 +250,7 @@ async def validate_session(token: str = Depends(get_token_from_header)):
         return ValidateResponse(valid=False)
 
 @router.post("/logout")
-async def admin_logout(token: str = Depends(get_token_from_header)):
+async def admin_logout(token: str = Depends(get_token_from_cookie_or_header)):
     """
     Logout admin user and revoke session
     """
@@ -200,7 +277,7 @@ async def admin_logout(token: str = Depends(get_token_from_header)):
         )
 
 @router.get("/session-info")
-async def get_session_info(token: str = Depends(get_token_from_header)):
+async def get_session_info(token: str = Depends(get_token_from_cookie_or_header)):
     """
     Get current session information
     """

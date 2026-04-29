@@ -3,6 +3,17 @@
 (function() {
     'use strict';
 
+    /**
+     * Inline SVG fallback avatar (used when LINE picture URL is missing/broken).
+     */
+    const DEFAULT_AVATAR_SVG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+        '<circle cx="32" cy="32" r="32" fill="#e0e0e0"/>' +
+        '<circle cx="32" cy="26" r="11" fill="#bdbdbd"/>' +
+        '<path d="M10 58c4-12 14-18 22-18s18 6 22 18z" fill="#bdbdbd"/>' +
+        '</svg>'
+    );
+
     // DOM Elements
     const elements = {
         loadingSection: document.getElementById('loadingSection'),
@@ -118,8 +129,12 @@
      * Show profile and linking form
      */
     function showProfileAndForm() {
-        // Display profile
-        elements.profilePicture.src = lineProfile.picture_url || '/static/img/default-avatar.png';
+        // Display profile (with inline SVG fallback for missing/broken pictures)
+        elements.profilePicture.src = lineProfile.picture_url || DEFAULT_AVATAR_SVG;
+        elements.profilePicture.onerror = function() {
+            this.onerror = null;
+            this.src = DEFAULT_AVATAR_SVG;
+        };
         elements.displayName.textContent = lineProfile.display_name;
         elements.lineUserId.textContent = `LINE ID: ${lineProfile.user_id}`;
 
@@ -165,7 +180,7 @@
         const linkingCode = elements.linkingCodeInput.value.trim();
 
         if (linkingCode.length !== 6) {
-            alert('กรุณากรอกรหัส 6 หลัก');
+            showError('รหัสไม่ถูกต้อง', 'กรุณากรอกรหัส 6 หลัก');
             return;
         }
 

@@ -7,6 +7,7 @@ Security provided through short token expiry, GPS validation, and JWT signatures
 
 import os
 import secrets
+import logging
 import jwt
 import qrcode
 import io
@@ -16,12 +17,37 @@ from typing import Dict, Optional
 from fastapi import HTTPException, status
 from PIL import Image
 
+logger = logging.getLogger(__name__)
+
+
+def _resolve_jwt_secret() -> str:
+    """
+    Resolve JWT_SECRET from environment, refusing to start in production
+    when the env var is missing or set to the placeholder.
+    """
+    raw_secret = os.getenv("JWT_SECRET", "").strip()
+    if not raw_secret or raw_secret == "your-secret-key-change-in-production":
+        env_name = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).lower()
+        if env_name not in ("dev", "development", "local", "test"):
+            raise RuntimeError(
+                "JWT_SECRET environment variable is required in production "
+                "(must not be the placeholder)"
+            )
+        logger.warning(
+            "JWT_SECRET not set — using insecure dev default. DO NOT use in production."
+        )
+        return "dev-jwt-secret-CHANGE-ME"
+    return raw_secret
+
+
+JWT_SECRET = _resolve_jwt_secret()
+
 
 class QRCodeService:
     """Service for generating and validating QR codes with JWT tokens"""
 
     def __init__(self):
-        self.jwt_secret = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
+        self.jwt_secret = JWT_SECRET
         self.qr_token_expiry_seconds = 60  # 60-second expiry for QR tokens
         self.qr_grace_period_seconds = 15  # 15-second grace period after expiry
 
@@ -119,11 +145,14 @@ class QRCodeService:
 
                     # Accept token if within grace period
                     if elapsed_seconds <= self.qr_grace_period_seconds:
-                        print(f"[QR Service] Accepting expired token within grace period ({elapsed_seconds:.1f}s elapsed)")
+                        logger.info(
+                            "Accepting expired QR token within grace period (%.1fs elapsed)",
+                            elapsed_seconds,
+                        )
                         return payload
 
             except Exception as grace_error:
-                print(f"[QR Service] Grace period check failed: {grace_error}")
+                logger.warning("QR grace period check failed: %s", grace_error)
 
             # Token expired beyond grace period
             raise HTTPException(

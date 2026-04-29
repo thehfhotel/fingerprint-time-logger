@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="th">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,20 +9,33 @@
     <title>ระบบบันทึกเวลาด้วยลายนิ้วมือ</title>
     <!-- CSS Files with cache busting -->
     <script>
-        const cssTimestamp = Date.now();
-        document.write(`<link rel="stylesheet" href="static/css/base.css?v=${cssTimestamp}">`);
-        document.write(`<link rel="stylesheet" href="static/css/dashboard.css?v=${cssTimestamp}">`);
-        document.write(`<link rel="stylesheet" href="static/css/modal.css?v=${cssTimestamp}">`);
+        // document.write is used during initial parsing (readyState === 'loading') to
+        // synchronously inject cache-busted assets so that later inline scripts can
+        // rely on appConfig/realTimeManager being already loaded. The guard prevents
+        // accidental document overwrite if this block were ever re-run.
+        (function injectCacheBustedCss() {
+            if (document.readyState !== 'loading') return;
+            const cssTimestamp = Date.now();
+            document.write(`<link rel="stylesheet" href="static/css/base.css?v=${cssTimestamp}">`);
+            document.write(`<link rel="stylesheet" href="static/css/dashboard.css?v=${cssTimestamp}">`);
+            document.write(`<link rel="stylesheet" href="static/css/modal.css?v=${cssTimestamp}">`);
+        })();
     </script>
-    
+
     <!-- JavaScript Files -->
     <script>
-        // Cache busting for critical JS files - v2.0 HTTPS fix
-        const timestamp = Date.now();
-        const version = 'v2.0-https-fix';
-        document.write(`<script src="static/js/config.js?v=${timestamp}&version=${version}&bust=2"><\/script>`);
-        document.write(`<script src="static/js/websocket-adapter.js?v=${timestamp}&version=${version}&bust=2"><\/script>`);
-        document.write(`<script src="static/js/real-time-manager.js?v=${timestamp}&version=${version}&bust=2"><\/script>`);
+        // Cache busting for critical JS files - v2.0 HTTPS fix.
+        // Synchronous injection during parse is required: later inline scripts in
+        // <body> reference appConfig at top-level (not inside DOMContentLoaded),
+        // so the dependency must already be present.
+        (function injectCacheBustedJs() {
+            if (document.readyState !== 'loading') return;
+            const timestamp = Date.now();
+            const version = 'v2.0-https-fix';
+            document.write(`<script src="static/js/config.js?v=${timestamp}&version=${version}&bust=2"><\/script>`);
+            document.write(`<script src="static/js/websocket-adapter.js?v=${timestamp}&version=${version}&bust=2"><\/script>`);
+            document.write(`<script src="static/js/real-time-manager.js?v=${timestamp}&version=${version}&bust=2"><\/script>`);
+        })();
     </script>
 </head>
 <body>
