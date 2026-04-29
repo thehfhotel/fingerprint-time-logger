@@ -240,6 +240,31 @@
     </div>
 
     <script>
+        /**
+         * Escape HTML-special characters to prevent stored XSS via innerHTML.
+         * Use anywhere server-supplied strings are interpolated into HTML.
+         */
+        function escapeHtml(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, function(c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+        }
+
+        /**
+         * Escape a value for safe inclusion inside a single-quoted JS string literal
+         * that itself sits inside an HTML attribute (e.g. onclick="foo('${val}')").
+         * Double-encoding is necessary: first JS-escape, then HTML-escape because the
+         * containing attribute is double-quoted.
+         */
+        function escapeJsInAttr(value) {
+            const jsEscaped = String(value == null ? '' : value)
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'")
+                .replace(/\r/g, '\\r')
+                .replace(/\n/g, '\\n');
+            return escapeHtml(jsEscaped);
+        }
+
         let employees = [];
         let showHidden = false;
 
@@ -333,14 +358,15 @@
                 // LINE code column content (only in admin mode)
                 let lineCodeCell = '';
                 if (adminMode) {
+                    const safeBadgeForJs = escapeJsInAttr(employee.badge_number);
                     if (employee.line_user_id) {
                         // Already linked - allow re-linking with new code
                         lineCodeCell = `
                             <td>
                                 <span style="color: #28a745; font-weight: bold;">✅ เชื่อมต่อแล้ว</span><br>
-                                <span style="font-size: 12px; color: #666;">${employee.line_display_name || 'N/A'}</span><br>
+                                <span style="font-size: 12px; color: #666;">${escapeHtml(employee.line_display_name || 'N/A')}</span><br>
                                 <button class="btn btn-primary" style="font-size: 12px; margin-top: 5px;"
-                                        onclick="generateLinkingCode('${employee.badge_number}')">
+                                        onclick="generateLinkingCode('${safeBadgeForJs}')">
                                     🔄 สร้างรหัสเชื่อมต่อใหม่
                                 </button>
                             </td>
@@ -349,10 +375,10 @@
                         // Has code, waiting for link
                         lineCodeCell = `
                             <td>
-                                <span style="color: #007bff; font-weight: bold; font-size: 18px;">${employee.line_linking_code}</span><br>
+                                <span style="color: #007bff; font-weight: bold; font-size: 18px;">${escapeHtml(employee.line_linking_code)}</span><br>
                                 <span style="font-size: 12px; color: #666;">รอพนักงานเชื่อมต่อ</span><br>
                                 <button class="btn btn-secondary" style="font-size: 12px; margin-top: 5px;"
-                                        onclick="regenerateLinkingCode('${employee.badge_number}')">
+                                        onclick="regenerateLinkingCode('${safeBadgeForJs}')">
                                     สร้างรหัสใหม่
                                 </button>
                             </td>
@@ -362,7 +388,7 @@
                         lineCodeCell = `
                             <td>
                                 <button class="btn btn-primary"
-                                        onclick="generateLinkingCode('${employee.badge_number}')">
+                                        onclick="generateLinkingCode('${safeBadgeForJs}')">
                                     สร้างรหัสเชื่อมต่อ
                                 </button>
                             </td>
@@ -370,42 +396,47 @@
                     }
                 }
 
+                const safeBadge = escapeHtml(employee.badge_number);
+                const safeDisplayName = escapeHtml(employee.display_name || '');
+                const safeBadgeForJs = escapeJsInAttr(employee.badge_number);
+                const safeDisplayNameForJs = escapeJsInAttr(employee.display_name || '');
+
                 row.innerHTML = `
-                    <td>${employee.badge_number}${sourceTag}</td>
+                    <td>${safeBadge}${sourceTag}</td>
                     <td>
                         <input type="text"
                                class="nickname-input"
-                               id="nickname-${employee.badge_number}"
-                               value="${employee.display_name || ''}"
-                               data-original="${employee.display_name || ''}"
+                               id="nickname-${safeBadge}"
+                               value="${safeDisplayName}"
+                               data-original="${safeDisplayName}"
                                placeholder="${employee.in_database ? 'ใส่ชื่อเล่น' : 'ใส่ชื่อเล่น (จะสร้างข้อมูลพนักงาน)'}">
                     </td>
                     <td>
                         <button class="btn btn-secondary toggle-btn ${employee.is_active ? '' : 'inactive'}"
-                                onclick="toggleStatus('${employee.badge_number}', ${!employee.is_active})">
+                                onclick="toggleStatus('${safeBadgeForJs}', ${!employee.is_active})">
                             ${employee.is_active ? 'ตั้งเป็นไม่ใช้งาน' : 'ตั้งเป็นใช้งาน'}
                         </button>
                         <span class="status-badge ${statusClass}">${statusText}</span>
                     </td>
                     <td>
                         <button class="btn btn-secondary toggle-btn ${employee.is_hidden ? 'hidden' : ''}"
-                                onclick="toggleHidden('${employee.badge_number}', ${!employee.is_hidden})">
+                                onclick="toggleHidden('${safeBadgeForJs}', ${!employee.is_hidden})">
                             ${employee.is_hidden ? 'แสดง' : 'ซ่อน'}
                         </button>
                         <span class="status-badge ${hiddenClass}">${hiddenText}</span>
                     </td>
                     <td>
                         <button class="btn btn-primary save-btn"
-                                onclick="saveNickname('${employee.badge_number}')"
-                                id="save-${employee.badge_number}"
+                                onclick="saveNickname('${safeBadgeForJs}')"
+                                id="save-${safeBadge}"
                                 disabled>
                             ${employee.in_database ? 'บันทึก' : 'สร้างและบันทึก'}
                         </button>
                         ${employee.from_database_only ?
-                            `<br><button class="btn btn-delete" onclick="deleteEmployee('${employee.badge_number}', '${employee.display_name}')">🗑️ ลบ</button>`
+                            `<br><button class="btn btn-delete" onclick="deleteEmployee('${safeBadgeForJs}', '${safeDisplayNameForJs}')">🗑️ ลบ</button>`
                             : ''}
-                        <span class="success-message" id="success-${employee.badge_number}">บันทึกแล้ว!</span>
-                        <span class="error-message" id="error-${employee.badge_number}">บันทึกไม่สำเร็จ</span>
+                        <span class="success-message" id="success-${safeBadge}">บันทึกแล้ว!</span>
+                        <span class="error-message" id="error-${safeBadge}">บันทึกไม่สำเร็จ</span>
                     </td>
                     ${lineCodeCell}
                 `;

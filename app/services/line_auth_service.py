@@ -35,7 +35,13 @@ def _resolve_jwt_secret() -> str:
     raw_secret = os.getenv("JWT_SECRET", "").strip()
     if not raw_secret or raw_secret == "your-secret-key-change-in-production":
         env_name = os.getenv("ENV", os.getenv("ENVIRONMENT", "production")).lower()
-        if env_name not in ("dev", "development", "local", "test"):
+        # Treat pytest-controlled runs as dev-equivalent so test collection
+        # works even when ENV/JWT_SECRET are unset in CI.
+        _testing = (
+            os.getenv("TESTING", "").lower() in ("1", "true", "yes")
+            or bool(os.getenv("PYTEST_CURRENT_TEST"))
+        )
+        if env_name not in ("dev", "development", "local", "test") and not _testing:
             raise RuntimeError(
                 "JWT_SECRET environment variable is required in production "
                 "(must not be the placeholder)"

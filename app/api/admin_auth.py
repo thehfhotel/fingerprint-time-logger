@@ -30,9 +30,21 @@ def _is_behind_proxy() -> bool:
 
 
 def _get_client_ip(request: Request) -> str:
-    """Resolve client IP, honoring X-Forwarded-For when behind a trusted proxy."""
+    """
+    Resolve client IP when behind a trusted proxy.
+
+    Trust order when ``BEHIND_PROXY=true``:
+      1. ``CF-Connecting-IP`` — Cloudflare overwrites this per-request, so it
+         cannot be spoofed by an attacker upstream of Cloudflare.
+      2. First hop of ``X-Forwarded-For`` — only used when CF header is absent
+         (assumes the proxy contract overwrites or trims XFF).
+      3. ``request.client.host`` — direct-connection fallback.
+    """
     if _is_behind_proxy():
-        forwarded = request.headers.get("X-Forwarded-For", "")
+        cf_ip = request.headers.get("CF-Connecting-IP", "").strip()
+        if cf_ip:
+            return cf_ip
+        forwarded = request.headers.get("X-Forwarded-For", "").strip()
         if forwarded:
             first_ip = forwarded.split(",")[0].strip()
             if first_ip:
@@ -264,8 +276,16 @@ async def admin_logout(token: str = Depends(get_token_from_cookie_or_header)):
             "message": "ออกจากระบบสำเร็จ"
         })
 
-        # Clear the HttpOnly cookie
-        response.delete_cookie(key="admin_session_token")
+        # Clear the HttpOnly cookie. Attributes must match the original
+        # set_cookie call (path/samesite/secure/httponly) so browsers will
+        # actually delete the cookie under SameSite=Strict.
+        response.delete_cookie(
+            key="admin_session_token",
+            path="/",
+            samesite="strict",
+            secure=_is_behind_proxy(),
+            httponly=True,
+        )
 
         return response
 

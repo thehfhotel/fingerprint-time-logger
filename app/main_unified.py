@@ -36,6 +36,29 @@ def _parse_allowed_origins() -> List[str]:
 ALLOWED_ORIGINS = _parse_allowed_origins()
 logger.info(f"CORS allowlist: {ALLOWED_ORIGINS}")
 
+
+def _is_behind_proxy() -> bool:
+    """Whether the app is running behind a TLS-terminating proxy."""
+    return os.getenv("BEHIND_PROXY", "false").lower() == "true"
+
+
+def _clear_admin_session_cookie(response) -> None:
+    """
+    Delete the admin session cookie with attributes matching the original
+    ``set_cookie`` call in :mod:`app.api.admin_auth`.
+
+    Browsers ignore ``delete_cookie`` calls whose attributes (path,
+    SameSite, Secure) do not match the original cookie under SameSite=Strict.
+    """
+    response.delete_cookie(
+        "admin_session_token",
+        path="/",
+        samesite="strict",
+        secure=_is_behind_proxy(),
+        httponly=True,
+    )
+
+
 # ----------------------------------------------------------------------------
 # Security headers middleware (shared by both apps)
 # ----------------------------------------------------------------------------
@@ -353,7 +376,7 @@ async def serve_nickname_management(request: Request):
     if not admin_auth_service.validate_session(admin_token):
         # Session expired - clear cookie and redirect
         response = RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
-        response.delete_cookie('admin_session_token')
+        _clear_admin_session_cookie(response)
         return response
 
     # Session valid - serve page
@@ -382,7 +405,7 @@ async def serve_status(request: Request):
     if not admin_auth_service.validate_session(admin_token):
         # Session expired - clear cookie and redirect
         response = RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
-        response.delete_cookie('admin_session_token')
+        _clear_admin_session_cookie(response)
         return response
 
     # Session valid - serve page
@@ -441,7 +464,7 @@ async def serve_terminal_gps_admin(request: Request):
     if not admin_auth_service.validate_session(admin_token):
         # Session expired - clear cookie and redirect
         response = RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
-        response.delete_cookie('admin_session_token')
+        _clear_admin_session_cookie(response)
         return response
 
     # Session valid - serve page
@@ -476,7 +499,7 @@ async def serve_admin_console(request: Request):
         # Session invalid or expired - clear cookie and redirect
         # Still no assets loaded - just redirect with cookie cleanup
         response = RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
-        response.delete_cookie('admin_session_token')
+        _clear_admin_session_cookie(response)
         return response
 
     # Session valid - NOW we serve admin console HTML

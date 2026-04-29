@@ -4,6 +4,7 @@ Replaces: devices.py, sync.py, unlimited_sync.py, control.py, diagnostics.py
 """
 
 from typing import List, Dict, Any, Optional
+import asyncio
 import os
 import json
 from fastapi import APIRouter, HTTPException, Depends, Query
@@ -303,13 +304,19 @@ async def test_device_connection():
         device = device_service.get_default_device()
         if not device:
             raise HTTPException(status_code=400, detail="No device configured")
-        
-        conn = device_service.connect_to_device(device)
+
+        # Offload blocking ZK TCP calls to a worker thread to avoid stalling
+        # the event loop.
+        conn = await asyncio.to_thread(device_service.connect_to_device, device)
         if conn:
             try:
-                # Get basic device info
-                users_count = len(device_service.get_users(device))
-                records_count = len(device_service.get_attendance_records(device))
+                # Get basic device info (TCP calls — run in worker thread)
+                users = await asyncio.to_thread(device_service.get_users, device)
+                records = await asyncio.to_thread(
+                    device_service.get_attendance_records, device
+                )
+                users_count = len(users)
+                records_count = len(records)
                 
                 return {
                     "success": True,
@@ -346,7 +353,8 @@ async def test_device_connection():
 async def sync_device_time():
     """Sync system time to device"""
     try:
-        result = device_service.sync_time_to_device()
+        # Offload blocking ZK TCP call to a worker thread.
+        result = await asyncio.to_thread(device_service.sync_time_to_device)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Time sync failed: {str(e)}")
@@ -355,7 +363,8 @@ async def sync_device_time():
 async def sync_attendance():
     """Sync attendance data from device"""
     try:
-        result = device_service.sync_attendance_data()
+        # Offload blocking ZK TCP/DB call to a worker thread.
+        result = await asyncio.to_thread(device_service.sync_attendance_data)
 
         # Broadcast update to WebSocket clients
         if result.get("success"):
@@ -364,7 +373,10 @@ async def sync_attendance():
                 from app.services.attendance_service import attendance_service
                 from datetime import datetime
 
-                attendance_data = attendance_service.get_attendance_summary()
+                # Offload DB-heavy summary call to a worker thread.
+                attendance_data = await asyncio.to_thread(
+                    attendance_service.get_attendance_summary
+                )
                 await manager.broadcast({
                     "type": "manual_import_update",
                     "data": attendance_data,
@@ -431,7 +443,8 @@ async def get_device_time(auto_sync: bool = Query(False, description="Automatica
 async def sync_device_time():
     """Sync device time to current server time"""
     try:
-        result = device_service.set_device_time()
+        # Offload blocking ZK TCP call to a worker thread.
+        result = await asyncio.to_thread(device_service.set_device_time)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -514,8 +527,8 @@ async def get_device_diagnostics():
         if not device:
             return {"status": "no_device", "message": "ไม่ได้ตั้งค่าเครื่อง"}
         
-        # Test connection
-        conn = device_service.connect_to_device(device)
+        # Test connection (offload blocking ZK TCP call to a worker thread)
+        conn = await asyncio.to_thread(device_service.connect_to_device, device)
         if not conn:
             return {
                 "status": "connection_failed",
@@ -526,11 +539,13 @@ async def get_device_diagnostics():
                 },
                 "last_sync": device.last_sync.isoformat() if device.last_sync else None
             }
-        
+
         try:
-            # Get basic info
-            users = device_service.get_users(device)
-            records = device_service.get_attendance_records(device)
+            # Get basic info (TCP calls — run in worker thread)
+            users = await asyncio.to_thread(device_service.get_users, device)
+            records = await asyncio.to_thread(
+                device_service.get_attendance_records, device
+            )
             
             return {
                 "status": "healthy",

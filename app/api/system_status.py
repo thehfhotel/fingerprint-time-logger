@@ -12,8 +12,9 @@ import os
 import logging
 
 
-# Bangkok timezone (UTC+7) — "today" filters must use Bangkok-local day boundaries.
-BANGKOK_TZ = timezone(timedelta(hours=7))
+# Bangkok timezone helpers live in app.utils.timezone (single source of truth).
+# "today" filters here use Bangkok-local day boundaries.
+from app.utils.timezone import BANGKOK_TZ
 
 from app.core.database import get_db
 from app.models.models import Employee, AttendanceRecord, Device, ApplicationLog

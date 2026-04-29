@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, status, Query, Request, Depends, Header
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -52,22 +52,72 @@ _LINK_ATTEMPT_LOCKOUT_THRESHOLD = 20
 _LINK_ATTEMPT_LOCKOUT_SECONDS = 300  # 5 minutes
 _LINK_ATTEMPT_RETENTION_SECONDS = 300  # prune older entries
 _LINK_CODE_INVALIDATE_THRESHOLD = 5
+_LINK_CODE_FAILURE_TTL_SECONDS = 3600  # drop inactive code-failure counters after 1h
 
 # (ip, line_user_id) -> list[timestamps of failed attempts]
 _link_attempts: Dict[Tuple[str, str], List[float]] = {}
 # (ip, line_user_id) -> lockout_until timestamp
 _link_lockouts: Dict[Tuple[str, str], float] = {}
-# linking_code -> count of failed attempts
-_link_code_failures: Dict[str, int] = {}
+# linking_code -> {"count": int, "last_updated": float}
+_link_code_failures: Dict[str, Dict[str, float]] = {}
 _link_attempts_lock = threading.Lock()
 
 
+def _prune_link_rate_limit_state(now: float) -> None:
+    """
+    Drop dead entries from all three rate-limit dicts.
+
+    Must be called under ``_link_attempts_lock``. This is a safety pruner to
+    bound memory growth: it only removes entries that are no longer relevant
+    (lockouts past, no recent attempts, code failure counters that haven't been
+    touched in an hour). It does not over-prune active counters.
+    """
+    # Drop expired lockouts.
+    expired_lockouts = [
+        key for key, lockout_until in _link_lockouts.items()
+        if lockout_until <= now
+    ]
+    for key in expired_lockouts:
+        _link_lockouts.pop(key, None)
+
+    # Drop attempt history with no in-window timestamps. We use the retention
+    # window so we don't kill counters during an active sliding-window attack.
+    cutoff = now - _LINK_ATTEMPT_RETENTION_SECONDS
+    empty_attempt_keys = []
+    for key, timestamps in _link_attempts.items():
+        if not timestamps or all(ts <= cutoff for ts in timestamps):
+            empty_attempt_keys.append(key)
+    for key in empty_attempt_keys:
+        _link_attempts.pop(key, None)
+
+    # Drop code-failure entries that have not been touched in an hour.
+    code_cutoff = now - _LINK_CODE_FAILURE_TTL_SECONDS
+    stale_codes = [
+        code for code, info in _link_code_failures.items()
+        if info.get("last_updated", 0) <= code_cutoff
+    ]
+    for code in stale_codes:
+        _link_code_failures.pop(code, None)
+
+
 def _client_ip(request: Request) -> str:
-    """Resolve the client IP, honoring X-Forwarded-For when behind a proxy."""
+    """
+    Resolve the client IP when behind a trusted proxy.
+
+    Trust order when ``BEHIND_PROXY=true``:
+      1. ``CF-Connecting-IP`` — Cloudflare overwrites this per-request, so it
+         cannot be spoofed by an attacker upstream of Cloudflare.
+      2. First hop of ``X-Forwarded-For`` — only used when CF header is absent
+         (assumes the proxy contract overwrites or trims XFF). Documented in
+         CLAUDE.md / PLAN.md §1.
+      3. ``request.client.host`` — direct-connection fallback.
+    """
     if os.getenv("BEHIND_PROXY", "false").lower() == "true":
-        forwarded = request.headers.get("x-forwarded-for")
+        cf_ip = request.headers.get("CF-Connecting-IP", "").strip()
+        if cf_ip:
+            return cf_ip
+        forwarded = request.headers.get("X-Forwarded-For", "").strip()
         if forwarded:
-            # First hop is the original client.
             return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
 
@@ -81,6 +131,10 @@ def _enforce_link_rate_limit(ip: str, line_user_id: str) -> None:
     now = time.time()
 
     with _link_attempts_lock:
+        # Drop dead entries across all three dicts to bound memory growth
+        # from inactive attackers rotating IP/LINE-user/code keys.
+        _prune_link_rate_limit_state(now)
+
         # Lockout check
         lockout_until = _link_lockouts.get(key)
         if lockout_until and now < lockout_until:
@@ -93,11 +147,20 @@ def _enforce_link_rate_limit(ip: str, line_user_id: str) -> None:
         if lockout_until and now >= lockout_until:
             _link_lockouts.pop(key, None)
 
+        # Read existing attempt history without creating an empty entry on
+        # first access (otherwise dict grows unboundedly for one-shot probes).
+        timestamps = _link_attempts.get(key)
+        if timestamps is None:
+            return
+
         # Prune attempt history older than the retention window.
-        timestamps = _link_attempts.get(key, [])
         cutoff = now - _LINK_ATTEMPT_RETENTION_SECONDS
         timestamps = [t for t in timestamps if t > cutoff]
-        _link_attempts[key] = timestamps
+        if timestamps:
+            _link_attempts[key] = timestamps
+        else:
+            _link_attempts.pop(key, None)
+            return
 
         # Attempts within the sliding window
         window_cutoff = now - _LINK_ATTEMPT_WINDOW_SECONDS
@@ -137,9 +200,14 @@ def _clear_link_failures(ip: str, line_user_id: str) -> None:
 
 def _record_code_failure(linking_code: str) -> int:
     """Increment failure count for a specific linking code; return new total."""
+    now = time.time()
     with _link_attempts_lock:
-        new_count = _link_code_failures.get(linking_code, 0) + 1
-        _link_code_failures[linking_code] = new_count
+        info = _link_code_failures.get(linking_code) or {"count": 0}
+        new_count = int(info.get("count", 0)) + 1
+        _link_code_failures[linking_code] = {
+            "count": new_count,
+            "last_updated": now,
+        }
         return new_count
 
 
@@ -154,7 +222,9 @@ def _clear_code_failures(linking_code: str) -> None:
 
 class LinkAccountRequest(BaseModel):
     """Request to link LINE account with employee"""
-    linking_code: str
+    # 6-digit numeric code (per PLAN.md §2.2). Strict length bounds also keep
+    # the per-code failure dict from being grown by oversized payloads.
+    linking_code: str = Field(..., min_length=6, max_length=6)
     jwt_token: str
 
 

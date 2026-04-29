@@ -15,15 +15,9 @@ from app.services.attendance_service import attendance_service
 logger = logging.getLogger(__name__)
 
 
-# Bangkok timezone (UTC+7) — CSV exports must show Bangkok-local date/time.
-BANGKOK_TZ = timezone(timedelta(hours=7))
-
-
-def _to_bangkok(dt: datetime) -> datetime:
-    """Convert a (possibly naive UTC) datetime to Bangkok timezone."""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(BANGKOK_TZ)
+# Bangkok timezone helpers live in app.utils.timezone (single source of truth).
+# CSV exports must show Bangkok-local date/time.
+from app.utils.timezone import BANGKOK_TZ, to_bangkok as _to_bangkok
 
 
 class SimpleExportService:

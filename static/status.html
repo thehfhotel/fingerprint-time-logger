@@ -711,7 +711,7 @@
                     // Show issues for degraded status
                     if (issues.length > 0) {
                         statusDetailsElement.style.display = 'block';
-                        statusIssuesElement.innerHTML = issues.map(issue => `<div style="margin-bottom: 0.25rem;">• ${issue}</div>`).join('');
+                        statusIssuesElement.innerHTML = issues.map(issue => `<div style="margin-bottom: 0.25rem;">• ${this.escapeHtml(issue)}</div>`).join('');
                     } else {
                         statusDetailsElement.style.display = 'none';
                     }
@@ -724,7 +724,7 @@
                         statusDetailsElement.style.display = 'block';
                         statusDetailsElement.style.background = '#fee2e2';
                         statusDetailsElement.style.borderColor = '#dc2626';
-                        statusIssuesElement.innerHTML = issues.map(issue => `<div style="margin-bottom: 0.25rem;">• ${issue}</div>`).join('');
+                        statusIssuesElement.innerHTML = issues.map(issue => `<div style="margin-bottom: 0.25rem;">• ${this.escapeHtml(issue)}</div>`).join('');
                     } else {
                         statusDetailsElement.style.display = 'none';
                     }
@@ -954,7 +954,7 @@
                         <div class="stat-label">คำเตือน</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-value" style="color: ${healthColor};">${summary.health_status || 'ไม่ทราบ'}</div>
+                        <div class="stat-value" style="color: ${healthColor};">${this.escapeHtml(summary.health_status || 'ไม่ทราบ')}</div>
                         <div class="stat-label">สุขภาพระบบ</div>
                     </div>
                     <div class="stat-item">
@@ -1001,7 +1001,7 @@
                 notification.innerHTML = `
                     <div class="notification-content">
                         <span class="notification-icon">⚡</span>
-                        <span class="notification-text">${message}</span>
+                        <span class="notification-text">${this.escapeHtml(message)}</span>
                         <button class="notification-close" onclick="this.parentElement.parentElement.remove()">×</button>
                     </div>
                 `;

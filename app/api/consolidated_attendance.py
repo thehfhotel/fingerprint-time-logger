@@ -3,6 +3,7 @@ Consolidated Attendance API - All attendance operations in one place
 Replaces: attendance.py, attendance_calendar.py, calendar_api.py, simple_calendar.py
 """
 
+import asyncio
 from datetime import datetime, date, timezone, timedelta
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
@@ -13,15 +14,8 @@ import csv
 import io
 
 
-# Bangkok timezone (UTC+7) — user-facing output must be Bangkok-local
-BANGKOK_TZ = timezone(timedelta(hours=7))
-
-
-def _to_bangkok(dt: datetime) -> datetime:
-    """Convert a (possibly naive UTC) datetime to Bangkok timezone."""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(BANGKOK_TZ)
+# Bangkok timezone helpers live in app.utils.timezone (single source of truth).
+from app.utils.timezone import BANGKOK_TZ, to_bangkok as _to_bangkok
 
 from app.core.database import get_db
 from app.models.models import AttendanceRecord, Employee
@@ -307,7 +301,9 @@ async def get_today_attendance():
 async def sync_attendance_from_device():
     """Sync attendance data from ZKTeco device"""
     try:
-        result = device_service.sync_attendance_data()
+        # Offload blocking ZK TCP/DB call to a worker thread to avoid
+        # stalling the event loop.
+        result = await asyncio.to_thread(device_service.sync_attendance_data)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
