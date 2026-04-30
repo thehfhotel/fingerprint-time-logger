@@ -73,3 +73,15 @@ _(skip list is empty)_
 | 7 | low | quality | consolidated_attendance.py:17-24, system_status.py:16, export_service.py:19-26 | iter 1 introduced 3 identical copies of `BANGKOK_TZ = timezone(timedelta(hours=7))` + `_to_bangkok` helper. Drift risk. | Move to shared `app/utils/timezone.py`; import. | fixed |
 | 8 | low | bug | admin_auth.py:268, main_unified.py:356,385,444,479 | `set_cookie` uses `samesite="strict", secure=BEHIND_PROXY`; matching `delete_cookie` calls use Starlette defaults (`samesite="lax", secure=False`). Browsers may silently ignore the deletion under SameSite=Strict — invalidated cookie keeps being re-sent. | Pass matching `samesite="strict", secure=_is_behind_proxy()` to every `delete_cookie` call. | fixed |
 | 9 | low | a11y | static/mobile-checkin.html:49, static/link-line.html:21 | `<img src="">` causes browser to request the page URL as an image until JS reassigns `src`. iter 1's SVG fallback only fires in JS. | Set initial `src` attribute to the same data-URI SVG so placeholder is immediate. | fixed |
+
+---
+
+## Iteration 3
+
+0 findings — loop converged. Reviewer and security auditors returned empty tables after auditing iter 2's 14 modified files (10 .py incl. new app/utils/timezone.py + 4 HTML).
+
+**Reviewer summary**: pruner correctness ✓, asyncio.to_thread return-value handling ✓, CF-Connecting-IP gated on BEHIND_PROXY ✓, timezone util has no circular import ✓, delete_cookie helper covers all sites ✓, TESTING env bypass has logger.warning ✓, escapeJs context-appropriate ✓.
+
+**Security summary**: TESTING bypass warnings present ✓, CF-Connecting-IP precedence applied in both helpers ✓, escapeHtml/escapeJsInAttr on every interpolation in nickname-management.html and status.html ✓, delete_cookie attribute match at all sites ✓, Pydantic min/max_length=6 on linking_code ✓, rate-limit pruner bounded ✓.
+
+One pre-existing concern noted but out of scope: `device_service` has no connection lock, so `asyncio.to_thread` now allows concurrent device dialogs. Iter 2 didn't introduce it (the GIL provided implicit serialization before; now removed). Sync-time DB dedup mitigates record corruption. Flag for future work if needed.
