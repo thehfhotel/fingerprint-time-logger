@@ -1,26 +1,41 @@
 #!/usr/bin/env python3
 """
-Generate bcrypt hash for admin passcode
-This script is meant to be run once to generate the hash for storage in environment variables
+Generate a bcrypt hash for the admin passcode.
+
+Usage:
+  Inside the running container (preferred — uses the same bcrypt version
+  as the app):
+    docker exec fingerprint-time-logger python scripts/generate_admin_hash.py
+
+  From the host (requires `pip install bcrypt`):
+    python3 scripts/generate_admin_hash.py
+
+The script will prompt for the passcode (input is hidden) and print only
+the bcrypt hash. Add the hash to your .env as ADMIN_PASSCODE_HASH and
+restart the container.
+
+Never commit the plaintext passcode anywhere — only the bcrypt hash.
 """
+import getpass
+import sys
+
 import bcrypt
 
-# Admin passcode as provided by user
-passcode = 'H]sN4@Wa3wA9Fg9%<^2^VtJ^mWLDQ9!"j>Eptf,'
 
-# Generate bcrypt hash with cost factor 12 (default)
-hashed = bcrypt.hashpw(passcode.encode('utf-8'), bcrypt.gensalt())
+def main() -> int:
+    passcode = getpass.getpass("Admin passcode: ")
+    confirm = getpass.getpass("Confirm passcode: ")
+    if passcode != confirm:
+        print("Passcodes do not match.", file=sys.stderr)
+        return 1
+    if len(passcode) < 12:
+        print("Passcode must be at least 12 characters.", file=sys.stderr)
+        return 1
 
-print("=" * 80)
-print("Admin Passcode Hash Generated")
-print("=" * 80)
-print("\nAdd this to your .env file:")
-print(f"\nADMIN_PASSCODE_HASH={hashed.decode('utf-8')}")
-print("\nOriginal passcode (for reference only - DO NOT STORE IN CODE):")
-print(f"{passcode}")
-print("\n" + "=" * 80)
-print("SECURITY NOTES:")
-print("- Store the hash in .env file (never commit to version control)")
-print("- Add .env to .gitignore")
-print("- Delete this script after first use for maximum security")
-print("=" * 80)
+    hashed = bcrypt.hashpw(passcode.encode("utf-8"), bcrypt.gensalt(rounds=12))
+    print(hashed.decode("utf-8"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

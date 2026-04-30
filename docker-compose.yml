@@ -4,10 +4,11 @@
 services:
   # FastAPI Application
   app:
-    image: fingerprint-time-logger:latest
-    build:
-      context: .
-      target: fingerprint-logger
+    # Production: pulled from GHCR by CI on push to main.
+    # To deploy: `docker compose pull && docker compose up -d`
+    # For local dev builds, use `docker buildx bake` (see docker-bake.hcl).
+    image: ghcr.io/thehfhotel/fingerprint-time-logger:${IMAGE_TAG:-latest}
+    pull_policy: always
     container_name: fingerprint-time-logger
     ports:
       - "${APP_PORT:-5000}:5000"  # Configurable port, default 5000
@@ -19,7 +20,9 @@ services:
       - ZKTECO_HOST=${ZKTECO_HOST:-192.168.100.209}
       - ZKTECO_PORT=${ZKTECO_PORT:-4370}
       - TZ=Asia/Bangkok
+      - ENV=${ENV:-production}
       - BEHIND_PROXY=${BEHIND_PROXY:-true}  # Default true for nginx integration
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-https://erp.thehfhotel.org,https://emp.thehfhotel.org}
       # LINE OAuth Configuration (Phase 2 - QR Check-in Feature)
       - LINE_CHANNEL_ID=${LINE_CHANNEL_ID}
       - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
