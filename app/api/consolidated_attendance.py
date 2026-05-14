@@ -4,11 +4,13 @@ Replaces: attendance.py, attendance_calendar.py, calendar_api.py, simple_calenda
 """
 
 import asyncio
-from datetime import datetime, date, timezone, timedelta
+import os
+from datetime import datetime, date, time as dtime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 import calendar as _calendar
 import csv
 import io
@@ -24,6 +26,117 @@ from app.services.device_service import device_service
 from app.services.export_service import export_service
 
 router = APIRouter()
+
+
+# ============================================================================
+# BY-DATE SUMMARY HELPERS (v2 by-date page)
+# ============================================================================
+
+# Default expected start time when EXPECTED_START_TIME env var is unset or
+# malformed. Bangkok local clock — see plan section "Page 2: By-date summary".
+_DEFAULT_EXPECTED_START_TIME = "09:00"
+
+# Sort priority for the by-date status enum. Late first (most actionable),
+# then absent (needs follow-up), then on-time. "off" is documented but never
+# emitted today because only active employees are returned (see
+# get_attendance_by_date docstring).
+_BY_DATE_STATUS_SORT_ORDER = {
+    "late": 0,
+    "absent": 1,
+    "on_time": 2,
+    "off": 3,
+}
+
+
+def _resolve_expected_start_time() -> str:
+    """
+    Read EXPECTED_START_TIME env var, validate HH:mm, fall back to default.
+
+    Invalid values (wrong format, out-of-range hour/minute) silently fall back
+    to the default rather than raising — the endpoint should not 500 because
+    of a misconfigured env var.
+    """
+    raw = os.getenv("EXPECTED_START_TIME", _DEFAULT_EXPECTED_START_TIME)
+    try:
+        parsed = datetime.strptime(raw, "%H:%M").time()
+    except (ValueError, TypeError):
+        return _DEFAULT_EXPECTED_START_TIME
+    return parsed.strftime("%H:%M")
+
+
+def _parse_expected_start_time(value: str) -> dtime:
+    """Parse a validated HH:mm string into a time object."""
+    return datetime.strptime(value, "%H:%M").time()
+
+
+def _bangkok_day_to_utc_range(bangkok_day: date) -> tuple[datetime, datetime]:
+    """
+    Convert a Bangkok-local date to the [start, end) UTC-naive range that
+    selects all AttendanceRecord rows whose Bangkok-local day matches.
+
+    Mirrors the pattern at app/api/system_status.py:255-264. DB stores
+    UTC-naive timestamps, so we strip tzinfo after astimezone.
+    """
+    bkk_start = datetime.combine(bangkok_day, dtime.min, tzinfo=BANGKOK_TZ)
+    bkk_end = bkk_start + timedelta(days=1)
+    utc_start = bkk_start.astimezone(timezone.utc).replace(tzinfo=None)
+    utc_end = bkk_end.astimezone(timezone.utc).replace(tzinfo=None)
+    return utc_start, utc_end
+
+
+def _resolve_display_name(employee: Employee) -> str:
+    """
+    Resolve the user-facing display name for an employee.
+
+    Preference order (per plan + how the rest of the codebase treats
+    display_name, e.g. consolidated_employees.py:87-89):
+      1. employee.display_name — already the resolved nickname/thai_name
+      2. employee.english_name — fallback if display_name somehow blank
+      3. f"พนักงาน {badge_number}" — final fallback matching factory default
+    """
+    if employee.display_name:
+        return employee.display_name
+    if employee.english_name:
+        return employee.english_name
+    return f"พนักงาน {employee.badge_number}"
+
+
+def _compute_hours_worked(
+    first_in_utc: Optional[datetime],
+    last_out_utc: Optional[datetime],
+) -> Optional[float]:
+    """
+    Decimal hours between first_in and last_out. Returns None if either is
+    missing or if they're the same instant (single-punch day — no meaningful
+    duration).
+    """
+    if first_in_utc is None or last_out_utc is None:
+        return None
+    if last_out_utc <= first_in_utc:
+        return None
+    delta_seconds = (last_out_utc - first_in_utc).total_seconds()
+    return round(delta_seconds / 3600, 2)
+
+
+def _compute_status(
+    first_in_bangkok: Optional[datetime],
+    expected_start: dtime,
+) -> str:
+    """
+    Compute by-date status enum.
+
+    - "absent": active employee with no punches that day
+    - "late": first_in_bangkok.time() > expected_start
+    - "on_time": first_in_bangkok.time() <= expected_start
+    - "off": NOT emitted by this endpoint (we filter to is_active=True).
+      Documented here so frontend can render the value if a future caller
+      includes inactive employees.
+    """
+    if first_in_bangkok is None:
+        return "absent"
+    if first_in_bangkok.time() > expected_start:
+        return "late"
+    return "on_time"
 
 
 # ============================================================================
@@ -263,6 +376,124 @@ async def get_calendar_data(year: int, month: int):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/by-date")
+async def get_attendance_by_date(
+    date_param: Optional[str] = Query(
+        None,
+        alias="date",
+        description="Bangkok-local day in YYYY-MM-DD. Defaults to today (Bangkok).",
+    ),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Per-date attendance summary for the v2 by-date page.
+
+    One row per ACTIVE employee. first_in/last_out are HH:mm in Bangkok
+    timezone; either may be null if the employee did not punch. hours_worked
+    is decimal hours between first_in and last_out, or null if last_out is
+    absent or identical to first_in.
+
+    Status enum (see _compute_status):
+      - "on_time" | "late" | "absent" | "off"
+
+    Rows are sorted: late first, then absent, then on_time, then by
+    display_name (case-insensitive, deterministic).
+
+    See plan: docs section "Page 2: By-date summary" + "New backend endpoint".
+    """
+    target_day = _parse_date_param(date_param)
+    expected_start_str = _resolve_expected_start_time()
+    expected_start = _parse_expected_start_time(expected_start_str)
+    utc_start, utc_end = _bangkok_day_to_utc_range(target_day)
+
+    punches_by_badge = _fetch_punches_by_badge(db, utc_start, utc_end)
+    active_employees = _fetch_active_employees(db)
+
+    rows = [
+        _build_row(employee, punches_by_badge.get(employee.badge_number), expected_start)
+        for employee in active_employees
+    ]
+    rows.sort(key=lambda row: (
+        _BY_DATE_STATUS_SORT_ORDER.get(row["status"], 99),
+        (row["display_name"] or "").casefold(),
+    ))
+
+    return {
+        "date": target_day.isoformat(),
+        "expected_start_time": expected_start_str,
+        "rows": rows,
+    }
+
+
+def _parse_date_param(raw: Optional[str]) -> date:
+    """Parse YYYY-MM-DD; default to Bangkok-today; 400 on bad format."""
+    if raw is None:
+        return datetime.now(BANGKOK_TZ).date()
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid date format. Expected YYYY-MM-DD.",
+        )
+
+
+def _fetch_punches_by_badge(
+    db: Session,
+    utc_start: datetime,
+    utc_end: datetime,
+) -> Dict[str, Dict[str, datetime]]:
+    """
+    Single aggregation query: MIN/MAX timestamp per badge in the UTC range.
+    Returns {badge: {"first_in": utc_dt, "last_out": utc_dt}}.
+    """
+    rows = (
+        db.query(
+            AttendanceRecord.employee_badge_number.label("badge"),
+            func.min(AttendanceRecord.timestamp).label("first_in"),
+            func.max(AttendanceRecord.timestamp).label("last_out"),
+        )
+        .filter(
+            AttendanceRecord.timestamp >= utc_start,
+            AttendanceRecord.timestamp < utc_end,
+        )
+        .group_by(AttendanceRecord.employee_badge_number)
+        .all()
+    )
+    return {
+        row.badge: {"first_in": row.first_in, "last_out": row.last_out}
+        for row in rows
+    }
+
+
+def _fetch_active_employees(db: Session) -> List[Employee]:
+    """All employees with is_active=True. is_hidden is ignored — the v2 page
+    is for active payroll and shows hidden employees too if they're active."""
+    return db.query(Employee).filter(Employee.is_active == True).all()  # noqa: E712
+
+
+def _build_row(
+    employee: Employee,
+    punches: Optional[Dict[str, datetime]],
+    expected_start: dtime,
+) -> Dict[str, Any]:
+    """Build the JSON row for one employee. punches=None means absent."""
+    first_in_utc = punches["first_in"] if punches else None
+    last_out_utc = punches["last_out"] if punches else None
+
+    first_in_bangkok = _to_bangkok(first_in_utc) if first_in_utc else None
+    last_out_bangkok = _to_bangkok(last_out_utc) if last_out_utc else None
+
+    return {
+        "badge_number": employee.badge_number,
+        "display_name": _resolve_display_name(employee),
+        "first_in": first_in_bangkok.strftime("%H:%M") if first_in_bangkok else None,
+        "last_out": last_out_bangkok.strftime("%H:%M") if last_out_bangkok else None,
+        "hours_worked": _compute_hours_worked(first_in_utc, last_out_utc),
+        "status": _compute_status(first_in_bangkok, expected_start),
+    }
 
 
 @router.get("/today")

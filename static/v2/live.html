@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Live Attendance — v2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/fingerprintlogs/static/v2/theme.js"></script>
+  <script src="/fingerprintlogs/static/v2/ws.js"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: window.V2.THEME },
+      safelist: [
+        "bg-brand-100", "text-brand-700",
+        "bg-good-100",  "text-good-700",
+        "bg-warn-100",  "text-warn-700",
+        "bg-bad-100",   "text-bad-700",
+        "bg-ink-200",   "text-ink-700",
+        "bg-off-100",   "text-off-600",
+        "bg-good-500",  "bg-bad-500", "bg-warn-500", "bg-ink-300",
+        "animate-pulse",
+      ],
+    };
+  </script>
+  <style>
+    html, body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    /* Keyframes declared here so they're available even if Tailwind CDN
+       hasn't emitted them yet (we trigger via inline style.animation). */
+    @keyframes slideInTop {
+      0%   { opacity: 0; transform: translateY(-8px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes pulseHighlight {
+      0%   { background-color: rgba(99, 102, 241, 0.10); }
+      100% { background-color: rgba(255, 255, 255, 0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .v2-row-new { animation: none !important; }
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-ink-50 text-ink-900 antialiased">
+
+  <!-- DESKTOP TOP NAV (md+) -->
+  <nav class="hidden border-b border-ink-200 bg-white md:block">
+    <div class="mx-auto flex max-w-3xl items-center justify-between px-5 py-3">
+      <a href="/fingerprintlogs/v2/" class="flex items-center gap-2 text-sm font-semibold text-ink-700 hover:text-brand-600">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><polyline points="15 18 9 12 15 6"/></svg>
+        Attendance v2
+      </a>
+      <div class="flex items-center gap-1">
+        <a href="/fingerprintlogs/v2/live"
+           class="rounded-md px-3 py-1.5 text-sm font-medium bg-brand-100 text-brand-700">
+          Live
+        </a>
+        <a href="/fingerprintlogs/v2/by-date"
+           class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">
+          By date
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="mx-auto max-w-3xl px-4 pt-5 pb-28 md:px-5 md:pt-8 md:pb-12">
+
+    <!-- HEADER -->
+    <header class="mb-5 md:mb-7">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <p class="text-xs font-medium uppercase tracking-[0.18em] text-brand-600">Live</p>
+          <h1 class="mt-1 text-2xl font-bold tracking-tight text-ink-900 md:text-3xl">Live Attendance</h1>
+        </div>
+        <!-- Status pill -->
+        <div id="statusPill"
+             class="inline-flex shrink-0 items-center gap-2 rounded-full border border-ink-200 bg-white px-2.5 py-1 text-xs shadow-card md:text-sm">
+          <span id="statusDot" class="inline-block h-2 w-2 rounded-full bg-ink-300 animate-pulse"></span>
+          <span id="statusText" class="font-medium text-ink-600">Connecting…</span>
+        </div>
+      </div>
+      <p id="lastPushText" class="mt-2 text-sm text-ink-500">Waiting for the next punch…</p>
+    </header>
+
+    <!-- FEED -->
+    <section class="rounded-2xl border border-ink-200 bg-white shadow-card overflow-hidden">
+      <div class="flex items-center justify-between border-b border-ink-100 px-4 py-3">
+        <h2 class="text-sm font-semibold text-ink-700">Recent punches</h2>
+        <span id="feedCount" class="text-xs text-ink-400">0</span>
+      </div>
+
+      <!-- Empty state -->
+      <div id="emptyState" class="px-6 py-16 text-center">
+        <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-100 text-brand-600">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
+            <circle cx="12" cy="12" r="9"/>
+            <polyline points="12 7 12 12 15 14"/>
+          </svg>
+        </div>
+        <p class="text-sm font-medium text-ink-700">Waiting for the next punch…</p>
+        <p class="mt-1 text-xs text-ink-500">New entries will appear here in real time.</p>
+      </div>
+
+      <!-- Loading state -->
+      <div id="loadingState" class="hidden px-6 py-12 text-center">
+        <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
+        <p class="mt-3 text-sm text-ink-500">Loading recent activity…</p>
+      </div>
+
+      <!-- Error state -->
+      <div id="errorState" class="hidden border-t border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+        <span id="errorText">Could not load recent records.</span>
+        <button id="retryBtn" class="ml-2 underline underline-offset-2 hover:text-bad-700/80">Retry</button>
+      </div>
+
+      <!-- Feed list -->
+      <ul id="feedList" class="hidden divide-y divide-ink-100"></ul>
+    </section>
+
+    <p class="mt-4 text-center text-xs text-ink-400">
+      Showing the latest 200 punches · time in Asia/Bangkok
+    </p>
+  </main>
+
+  <!-- MOBILE BOTTOM NAV (<md) -->
+  <nav class="fixed inset-x-0 bottom-0 z-20 border-t border-ink-200 bg-white/95 backdrop-blur md:hidden"
+       style="padding-bottom: env(safe-area-inset-bottom);">
+    <div class="mx-auto grid max-w-3xl grid-cols-2">
+      <a href="/fingerprintlogs/v2/live"
+         class="flex min-h-[56px] flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium text-brand-700"
+         aria-current="page">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+        </svg>
+        Live
+      </a>
+      <a href="/fingerprintlogs/v2/by-date"
+         class="flex min-h-[56px] flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium text-ink-500 hover:text-ink-700">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+          <line x1="16" y1="2" x2="16" y2="6"/>
+          <line x1="8" y1="2" x2="8" y2="6"/>
+          <line x1="3" y1="10" x2="21" y2="10"/>
+        </svg>
+        By date
+      </a>
+    </div>
+  </nav>
+
+  <!-- Row template -->
+  <template id="rowTemplate">
+    <li class="flex items-center gap-3 px-4 py-3 md:px-5">
+      <span data-role="avatar"
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold"></span>
+      <div class="min-w-0 flex-1">
+        <p data-role="name" class="truncate text-sm font-semibold text-ink-900"></p>
+        <p data-role="badge" class="truncate text-xs text-ink-500"></p>
+      </div>
+      <span data-role="pill"
+            class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"></span>
+      <span data-role="time" class="ml-2 shrink-0 tabular-nums text-sm font-semibold text-ink-700"></span>
+    </li>
+  </template>
+
+  <script>
+    (function () {
+      const V2 = window.V2;
+      const MAX_ROWS = 200;
+      const INITIAL_LIMIT = 20;
+
+      // DOM refs
+      const list = document.getElementById("feedList");
+      const empty = document.getElementById("emptyState");
+      const loading = document.getElementById("loadingState");
+      const error = document.getElementById("errorState");
+      const errorText = document.getElementById("errorText");
+      const retryBtn = document.getElementById("retryBtn");
+      const countEl = document.getElementById("feedCount");
+      const tmpl = document.getElementById("rowTemplate");
+
+      const statusDot = document.getElementById("statusDot");
+      const statusText = document.getElementById("statusText");
+      const lastPushText = document.getElementById("lastPushText");
+
+      // Latest-seen punch (UTC ISO) for the "punched Xs ago" label.
+      let lastPunchIso = null;
+
+      // ---------- Status pill ----------
+      function setStatus(state, label) {
+        statusDot.classList.remove("animate-pulse", "bg-ink-300", "bg-good-500", "bg-bad-500", "bg-warn-500");
+        if (state === "online")       statusDot.classList.add("bg-good-500");
+        else if (state === "offline") statusDot.classList.add("bg-bad-500");
+        else                          statusDot.classList.add("bg-ink-300", "animate-pulse");
+        statusText.textContent = label;
+      }
+
+      // ---------- Row rendering ----------
+      function pillFor(punchType) {
+        // punch_type: 0 = check-in, 1 = check-out (matches existing dashboard convention).
+        const isIn = punchType === 0 || punchType === "0";
+        return {
+          label: isIn ? "Check in" : "Check out",
+          klass: isIn ? "bg-good-100 text-good-700" : "bg-brand-100 text-brand-700",
+        };
+      }
+
+      function buildRow(entry) {
+        const li = tmpl.content.firstElementChild.cloneNode(true);
+        const avatar = li.querySelector('[data-role="avatar"]');
+        const name = li.querySelector('[data-role="name"]');
+        const badge = li.querySelector('[data-role="badge"]');
+        const pill = li.querySelector('[data-role="pill"]');
+        const time = li.querySelector('[data-role="time"]');
+
+        const displayName = entry.display_name || ("Badge " + (entry.badge_number || "?"));
+        avatar.textContent = V2.initials(displayName);
+        avatar.className = avatar.className + " " + V2.avatarColor(entry.badge_number || displayName);
+        name.textContent = displayName;
+        badge.textContent = entry.badge_number ? ("#" + entry.badge_number) : "";
+
+        const p = pillFor(entry.punch_type);
+        pill.textContent = p.label;
+        pill.className = pill.className + " " + p.klass;
+
+        time.textContent = V2.bangkokTime(entry.timestamp);
+        return li;
+      }
+
+      function showFeedShellIfNeeded() {
+        loading.classList.add("hidden");
+        empty.classList.add("hidden");
+        list.classList.remove("hidden");
+      }
+
+      function setEmpty() {
+        list.classList.add("hidden");
+        loading.classList.add("hidden");
+        empty.classList.remove("hidden");
+      }
+
+      function trim() {
+        while (list.children.length > MAX_ROWS) {
+          list.removeChild(list.lastElementChild);
+        }
+        countEl.textContent = String(list.children.length);
+      }
+
+      function prepend(entry, opts) {
+        if (!entry || !entry.timestamp) return;
+        showFeedShellIfNeeded();
+        const row = buildRow(entry);
+        if (opts && opts.highlight && !V2.reducedMotion()) {
+          row.classList.add("v2-row-new");
+          row.style.animation = "slideInTop 240ms ease-out, pulseHighlight 1000ms ease-out";
+        }
+        list.insertBefore(row, list.firstChild);
+        trim();
+
+        // Track latest punch time for the "Xs ago" label.
+        if (!lastPunchIso || new Date(entry.timestamp) > new Date(lastPunchIso)) {
+          lastPunchIso = entry.timestamp;
+        }
+      }
+
+      // ---------- "Last push" ticker ----------
+      function tickLastPush() {
+        if (!lastPunchIso) {
+          lastPushText.textContent = "Waiting for the next punch…";
+        } else {
+          lastPushText.textContent = "Last punch " + V2.relTime(lastPunchIso);
+        }
+      }
+      setInterval(tickLastPush, 1000);
+
+      // ---------- Initial REST load ----------
+      function showError(msg) {
+        loading.classList.add("hidden");
+        error.classList.remove("hidden");
+        errorText.textContent = msg || "Could not load recent records.";
+      }
+      function hideError() {
+        error.classList.add("hidden");
+      }
+
+      async function loadInitial() {
+        loading.classList.remove("hidden");
+        empty.classList.add("hidden");
+        list.classList.add("hidden");
+        hideError();
+        try {
+          const data = await V2.apiFetch("/api/private/attendance/?limit=" + INITIAL_LIMIT);
+          // Response shape (consolidated_attendance.py):
+          // { records: [{ employee_badge_number, timestamp, punch_type, ... }], total }
+          const records = (data && data.records) || [];
+          if (records.length === 0) {
+            setEmpty();
+            countEl.textContent = "0";
+            return;
+          }
+
+          // Need display names — fetch employees in one batch.
+          let nameMap = {};
+          try {
+            const empData = await V2.apiFetch("/api/private/employees/");
+            const arr = (empData && (empData.employees || empData.records || empData)) || [];
+            (Array.isArray(arr) ? arr : []).forEach(function (e) {
+              if (e && e.badge_number) {
+                nameMap[e.badge_number] = e.display_name || e.name || e.thai_name || null;
+              }
+            });
+          } catch (_) { /* names optional */ }
+
+          // Render newest-first. Backend returns ordered desc by default;
+          // re-sort defensively so the feed is reliable.
+          records.sort(function (a, b) {
+            return new Date(b.timestamp) - new Date(a.timestamp);
+          });
+
+          showFeedShellIfNeeded();
+          list.innerHTML = "";
+          records.forEach(function (r) {
+            const entry = {
+              badge_number: r.employee_badge_number,
+              display_name: nameMap[r.employee_badge_number] || null,
+              timestamp: r.timestamp,
+              punch_type: r.punch_type,
+            };
+            const row = buildRow(entry);
+            list.appendChild(row);
+            if (!lastPunchIso || new Date(entry.timestamp) > new Date(lastPunchIso)) {
+              lastPunchIso = entry.timestamp;
+            }
+          });
+          countEl.textContent = String(list.children.length);
+          tickLastPush();
+        } catch (err) {
+          showError("Could not load recent records (" + (err.status || "network") + ").");
+        }
+      }
+      retryBtn.addEventListener("click", loadInitial);
+
+      // ---------- WebSocket ----------
+      function onPunch(p) {
+        // Defensive: ensure required fields.
+        if (!p) return;
+        prepend({
+          badge_number: p.badge_number,
+          display_name: p.display_name,
+          timestamp: p.timestamp,
+          punch_type: p.punch_type,
+        }, { highlight: true });
+        tickLastPush();
+      }
+      function onStatus(s) {
+        if (s.connected) setStatus("online", "Connected");
+        else setStatus("offline", "Reconnecting…");
+      }
+
+      // Boot
+      setStatus("warm", "Connecting…");
+      loadInitial();
+      V2WS.connectWS({ onPunch: onPunch, onStatus: onStatus });
+    })();
+  </script>
+</body>
+</html>

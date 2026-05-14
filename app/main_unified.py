@@ -123,11 +123,17 @@ manager = ConnectionManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio as _asyncio
     logger.info("Starting up unified server...")
     Base.metadata.create_all(bind=engine)
 
-    # All ZKTeco device interactions go through the locked ZkClient inside
-    # background_scheduler — see app/services/zk_client.py for the rationale.
+    # All ZKTeco device I/O is owned by the ZkSession daemon thread —
+    # live_capture streams punches in real time and one-shot ops queue
+    # through it. The 30-min scheduler import is now a backstop.
+    from app.services.zk_session import zk_session
+    zk_session.start(_asyncio.get_running_loop(), manager.broadcast)
+    logger.info("ZkSession started")
+
     from app.services.background_scheduler import background_scheduler
     background_scheduler.start(broadcast_callback=manager.broadcast)
     logger.info("Background scheduler started")
@@ -136,6 +142,8 @@ async def lifespan(app: FastAPI):
 
     from app.services.background_scheduler import background_scheduler
     background_scheduler.shutdown(wait=False)
+    from app.services.zk_session import zk_session
+    zk_session.shutdown(wait=False)
     logger.info("Shutting down unified server...")
 
 # ============================================================================
@@ -263,6 +271,18 @@ def serve_html_with_cache_control(file_path: str):
 @fingerprint_app.get("/")
 async def serve_dashboard():
     return serve_html_with_cache_control("static/dashboard.html")
+
+@fingerprint_app.get("/v2/")
+async def serve_v2_hub():
+    return serve_html_with_cache_control("static/v2/index.html")
+
+@fingerprint_app.get("/v2/live")
+async def serve_v2_live():
+    return serve_html_with_cache_control("static/v2/live.html")
+
+@fingerprint_app.get("/v2/by-date")
+async def serve_v2_by_date():
+    return serve_html_with_cache_control("static/v2/by-date.html")
 
 @fingerprint_app.get("/export")
 async def serve_export():

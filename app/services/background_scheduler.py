@@ -33,7 +33,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 
-from app.services.zk_client import zk_client
+from app.services import zk_session
 from app.services.device_cache_service import device_cache_service
 from app.services.slack_notifier import slack_notifier
 
@@ -184,14 +184,14 @@ class BackgroundSchedulerService:
             logger.warning(f"[scheduler.refresh_attendance_summary] failed: {exc}")
 
     async def _refresh_status(self) -> None:
-        status = await asyncio.to_thread(zk_client.get_status)
+        status = await asyncio.to_thread(zk_session.get_status)
         device_cache_service.set("device_status", status)
         connected = status.get("connected")
         logger.info(f"[scheduler.refresh_status] connected={connected}")
 
     async def _refresh_time_and_sync(self) -> None:
         # First, read the current drift without writing.
-        time_info = await asyncio.to_thread(zk_client.get_time)
+        time_info = await asyncio.to_thread(zk_session.get_time)
         if not time_info.get("success"):
             device_cache_service.set("device_time", time_info)
             slack_notifier.notify_sync_result(
@@ -223,7 +223,7 @@ class BackgroundSchedulerService:
             f"[scheduler.refresh_time_and_sync] drift={drift:.1f}s exceeds "
             f"tolerance {_DRIFT_TOLERANCE_SECONDS}s — resyncing"
         )
-        sync_result = await asyncio.to_thread(zk_client.sync_time)
+        sync_result = await asyncio.to_thread(zk_session.sync_time)
         # Build a cache entry that looks like `get_time()` output so
         # `/api/devices/time` consumers see consistent shape.
         cache_payload = {
@@ -238,88 +238,23 @@ class BackgroundSchedulerService:
         slack_notifier.notify_sync_result(sync_result)
 
     async def _import_attendance(self, initial: bool = False, on_demand: bool = False) -> dict:
+        """Backstop catch-up. live_capture in ZkSession is the primary path;
+        this 30-min sweep is a safety net for outages and bugs.
+        Delegates to `zk_session.catch_up_now()` so the same dedup + watermark
+        + WebSocket-broadcast logic runs through one code path."""
         from app.services.attendance_service import attendance_service
-        from app.core.database import get_db
-        from app.models.models import AttendanceRecord, Device
-        from sqlalchemy import func
-
-        # Look up watermark + default device id in a short DB session.
-        db = next(get_db())
-        try:
-            device = db.query(Device).filter(Device.is_active == True).first()
-            if not device:
-                logger.warning("[scheduler.import_attendance] no active device configured")
-                return {"success": False, "message": "No active device"}
-
-            watermark_utc = db.query(func.max(AttendanceRecord.timestamp)).scalar()
-        finally:
-            db.close()
-
-        # Convert watermark from stored UTC back to Bangkok-naive for comparison
-        # with the device's local timestamps.
-        since_bangkok = None
-        if watermark_utc is not None:
-            since_bangkok = (
-                watermark_utc.replace(tzinfo=timezone.utc)
-                .astimezone(timezone(timedelta(hours=7)))
-                .replace(tzinfo=None)
-            )
 
         try:
-            new_records = await asyncio.to_thread(zk_client.pull_attendance, since_bangkok)
+            synced = await asyncio.to_thread(zk_session.catch_up_now)
         except Exception as exc:
-            logger.error(f"[scheduler.import_attendance] pull failed: {exc}")
+            logger.error(f"[scheduler.import_attendance] catch_up failed: {exc}")
             self._maybe_schedule_startup_retry(reason=str(exc))
             return {"success": False, "message": str(exc)}
 
-        synced = 0
-        if new_records:
-            db = next(get_db())
-            try:
-                for r in new_records:
-                    bangkok_time = r["timestamp"]
-                    utc_time = (
-                        bangkok_time.replace(tzinfo=timezone(timedelta(hours=7)))
-                        .astimezone(timezone.utc)
-                        .replace(tzinfo=None)
-                    )
-                    # Still check for duplicates — the watermark filter is at
-                    # second granularity and a single punch could land exactly
-                    # on the boundary.
-                    exists = (
-                        db.query(AttendanceRecord)
-                        .filter(
-                            AttendanceRecord.employee_badge_number == r["user_id"],
-                            AttendanceRecord.timestamp == utc_time,
-                        )
-                        .first()
-                    )
-                    if exists:
-                        continue
-                    db.add(
-                        AttendanceRecord(
-                            employee_badge_number=r["user_id"],
-                            device_id=device.id,
-                            timestamp=utc_time,
-                            punch_type=r["punch_type"],
-                            status=r["status"],
-                            sync_status="synced",
-                        )
-                    )
-                    synced += 1
-
-                device.last_sync = datetime.now(timezone.utc)
-                db.commit()
-            finally:
-                db.close()
-
         logger.info(
-            f"[scheduler.import_attendance] watermark={since_bangkok} "
-            f"pulled={len(new_records)} synced={synced} on_demand={on_demand}"
+            f"[scheduler.import_attendance] synced={synced} on_demand={on_demand}"
         )
 
-        # Refresh the attendance_summary cache so the dashboard's next query
-        # reflects the new data.
         try:
             summary = attendance_service.get_attendance_summary()
             device_cache_service.set("attendance_summary", summary)
@@ -341,12 +276,11 @@ class BackgroundSchedulerService:
             except Exception as exc:
                 logger.warning(f"[scheduler.import_attendance] broadcast failed: {exc}")
 
-        # First successful import after boot — disarm startup retry.
         if not self._first_import_succeeded:
             self._first_import_succeeded = True
             logger.info("[scheduler.import_attendance] first import OK; startup retry disarmed")
 
-        return {"success": True, "synced": synced, "total_processed": len(new_records)}
+        return {"success": True, "synced": synced, "total_processed": synced}
 
     def _maybe_schedule_startup_retry(self, reason: str) -> None:
         """

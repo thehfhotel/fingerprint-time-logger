@@ -6,6 +6,12 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from unittest.mock import MagicMock
 import random
+import time
+
+try:
+    from zk.attendance import Attendance as _PyzkAttendance
+except Exception:  # pragma: no cover - fallback when pyzk import path differs
+    _PyzkAttendance = None
 
 
 class ZKTecoSimulator:
@@ -252,6 +258,12 @@ class MockZKConnection:
     def __init__(self, simulator: ZKTecoSimulator):
         self.simulator = simulator
         self._connected = False
+        # live_capture support — pyzk sets these on the conn object.
+        self.end_live_capture = False
+        self._pending_punches: List[Any] = []
+        # Optional override: when set, live_capture's idle wait sleeps this
+        # many seconds regardless of `new_timeout`. Lets tests skip sleeps.
+        self._live_capture_idle_override: Optional[float] = None
 
     def connect(self):
         """Mock connection method"""
@@ -287,9 +299,44 @@ class MockZKConnection:
         """Mock get device info method"""
         return self.simulator.get_device_info()
 
+    def get_firmware_version(self):
+        """Mock firmware version (used by zk_session.get_status)."""
+        return self.simulator.device_info.get('firmware', 'Unknown')
+
     def clear_attendance(self):
         """Mock clear attendance method"""
         return self.simulator.clear_attendance()
+
+    def queue_punch(self, badge_number: str, timestamp: datetime,
+                    punch_type: int = 0, status: int = 0) -> None:
+        """Push a punch onto the live_capture queue."""
+        if _PyzkAttendance is not None:
+            att = _PyzkAttendance(badge_number, timestamp, status, punch_type, 0)
+        else:
+            att = MagicMock(user_id=badge_number, timestamp=timestamp,
+                            punch=punch_type, status=status, uid=0)
+        self._pending_punches.append(att)
+
+    def live_capture(self, new_timeout: float = 10):
+        """Mock pyzk live_capture generator.
+
+        Yields each queued Attendance object, then yields None after an idle
+        wait (`new_timeout` seconds, or `_live_capture_idle_override` if
+        callers want to bypass the sleep). Exits when `end_live_capture` is
+        True — checked before AND between yields so the consumer can break
+        the loop by setting the flag during iteration.
+        """
+        self.end_live_capture = False
+        idle = self._live_capture_idle_override if self._live_capture_idle_override is not None else new_timeout
+        while not self.end_live_capture:
+            if self._pending_punches:
+                yield self._pending_punches.pop(0)
+                if self.end_live_capture:
+                    return
+                continue
+            if idle > 0:
+                time.sleep(idle)
+            yield None
 
 
 # Pytest fixtures for common simulator scenarios
