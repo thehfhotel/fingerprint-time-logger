@@ -82,12 +82,18 @@ def _make_live_conn():
     return conn
 
 
+def _stub_catch_up(self, _conn):
+    """Skip DB-dependent catch-up in tests that don't need it."""
+    return 0
+
+
 def test_submit_runs_op_and_returns_result():
     """submit() executes the closure against the live conn and returns its value."""
     session = _new_session()
     mock_conn = _make_live_conn()
 
-    with patch.object(zk_session_module, "ZK") as mock_zk_ctor:
+    with patch.object(zk_session_module, "ZK") as mock_zk_ctor, \
+         patch.object(zk_session_module.ZkSession, "_catch_up", _stub_catch_up):
         zk_instance = MagicMock()
         zk_instance.connect.return_value = mock_conn
         mock_zk_ctor.return_value = zk_instance
@@ -110,7 +116,8 @@ def test_submit_propagates_op_exception():
     session = _new_session()
     mock_conn = _make_live_conn()
 
-    with patch.object(zk_session_module, "ZK") as mock_zk_ctor:
+    with patch.object(zk_session_module, "ZK") as mock_zk_ctor, \
+         patch.object(zk_session_module.ZkSession, "_catch_up", _stub_catch_up):
         zk_instance = MagicMock()
         zk_instance.connect.return_value = mock_conn
         mock_zk_ctor.return_value = zk_instance
@@ -278,7 +285,8 @@ def test_submit_completes_during_streaming():
     mock_conn = _make_live_conn()
     mock_conn._live_capture_idle_override = 0.05
 
-    with patch.object(zk_session_module, "ZK") as mock_zk_ctor:
+    with patch.object(zk_session_module, "ZK") as mock_zk_ctor, \
+         patch.object(zk_session_module.ZkSession, "_catch_up", _stub_catch_up):
         zk_instance = MagicMock()
         zk_instance.connect.return_value = mock_conn
         mock_zk_ctor.return_value = zk_instance
