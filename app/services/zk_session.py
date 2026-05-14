@@ -156,52 +156,66 @@ class ZkSession:
         return conn
 
     def _run(self) -> None:
+        import traceback
         backoff = _BACKOFF_MIN_SECONDS
         while not self._shutdown.is_set():
-            conn = None
             try:
-                logger.info(f"[zk_session] connecting to {self.host}:{self.port}")
-                conn = self._connect()
-                logger.info("[zk_session] connected")
+                # Phase A — streaming session. live_capture owns this conn.
+                stream_conn = self._connect_with_log("stream")
                 backoff = _BACKOFF_MIN_SECONDS
-
-                inserted = self._catch_up(conn)
+                inserted = self._catch_up(stream_conn)
                 logger.info(f"[zk_session] catch_up inserted={inserted}")
+                self._stream(stream_conn)
+                self._disconnect_quiet(stream_conn, "stream")
+                if self._shutdown.is_set():
+                    break
 
-                self._stream_and_drain(conn)
-            except BaseException as exc:
-                logger.error(f"[zk_session] loop error: {exc!r}")
-                self._fail_queued_ops(exc)
-            finally:
-                if conn is not None:
+                # Phase B — ops session on a fresh conn. pyzk's live_capture
+                # cleanup is not bit-clean (leftover event bytes confuse the
+                # next command's ACK read — "broken ACK N /M"), so we never
+                # multiplex commands with streaming on the same socket.
+                if not self._op_queue.empty():
+                    op_conn = self._connect_with_log("ops")
                     try:
-                        conn.disconnect()
-                    except Exception as disc_exc:
-                        logger.warning(f"[zk_session] disconnect error: {disc_exc}")
-            if self._shutdown.is_set():
-                break
-            logger.warning(f"[zk_session] reconnecting in {backoff:.0f}s")
-            if self._shutdown.wait(backoff):
-                break
-            backoff = min(backoff * 2, _BACKOFF_MAX_SECONDS)
+                        drained = self._drain_op_queue(op_conn)
+                        if drained:
+                            logger.info(f"[zk_session] drained {drained} ops")
+                    finally:
+                        self._disconnect_quiet(op_conn, "ops")
+            except BaseException as exc:
+                tb = traceback.format_exc(limit=4)
+                logger.error(f"[zk_session] loop error: {exc!r}\n{tb}")
+                self._fail_queued_ops(exc)
+                if self._shutdown.is_set():
+                    break
+                logger.warning(f"[zk_session] reconnecting in {backoff:.0f}s")
+                if self._shutdown.wait(backoff):
+                    break
+                backoff = min(backoff * 2, _BACKOFF_MAX_SECONDS)
         logger.info("[zk_session] thread exiting")
 
-    def _stream_and_drain(self, conn: Any) -> None:
-        while not self._shutdown.is_set():
-            logger.info("[zk_session] streaming via live_capture")
-            for event in conn.live_capture(new_timeout=_LIVE_CAPTURE_IDLE_SECONDS):
-                if event is not None:
-                    try:
-                        self._handle_punch(event)
-                    except Exception as punch_exc:
-                        logger.error(f"[zk_session] handle_punch error: {punch_exc!r}")
-                if self._should_break(conn):
-                    conn.end_live_capture = True
-            drained = self._drain_op_queue(conn)
-            if drained:
-                logger.info(f"[zk_session] drained {drained} ops")
-            if self._shutdown.is_set():
-                return
+    def _connect_with_log(self, phase: str) -> Any:
+        logger.info(f"[zk_session.{phase}] connecting to {self.host}:{self.port}")
+        conn = self._connect()
+        logger.info(f"[zk_session.{phase}] connected")
+        return conn
+
+    def _disconnect_quiet(self, conn: Any, phase: str) -> None:
+        try:
+            conn.disconnect()
+        except Exception as disc_exc:
+            logger.warning(f"[zk_session.{phase}] disconnect error: {disc_exc}")
+
+    def _stream(self, conn: Any) -> None:
+        logger.info("[zk_session] streaming via live_capture")
+        for event in conn.live_capture(new_timeout=_LIVE_CAPTURE_IDLE_SECONDS):
+            if event is not None:
+                try:
+                    self._handle_punch(event)
+                except Exception as punch_exc:
+                    logger.error(f"[zk_session] handle_punch error: {punch_exc!r}")
+            if self._should_break(conn):
+                conn.end_live_capture = True
 
     def _should_break(self, conn: Any) -> bool:
         return self._shutdown.is_set() or not self._op_queue.empty()

@@ -32,7 +32,10 @@ class SlackSyncNotifier:
     a worker thread.
 
     Throttling rules:
-      * Failure: always notify (so 5-min monitoring still pages on errors).
+      * Failure (first or recovered-then-failed-again): notify.
+      * Failure within `_FAILURE_SUPPRESS_SECONDS` of the last failure notice:
+        skip. Prevents a 5-min poll cadence from posting 12 alerts an hour
+        when the device is persistently unreachable.
       * Success following a failure: notify (recovery signal).
       * Success following a success: notify only if `heartbeat_hour` matches
         the current Bangkok hour and we haven't already heartbeated today.
@@ -45,16 +48,19 @@ class SlackSyncNotifier:
         username: str = "ZK Time Sync Bot",
         mention_on_error: str = "@winut.hf",
         heartbeat_hour: int = 9,
+        failure_suppress_seconds: int = 1800,
     ):
         self.webhook_url = webhook_url or os.getenv("ZK_SYNC_SLACK_WEBHOOK_URL", "")
         self.channel = channel
         self.username = username
         self.mention_on_error = mention_on_error
         self.heartbeat_hour = heartbeat_hour
+        self.failure_suppress_seconds = failure_suppress_seconds
 
         self._lock = threading.Lock()
         self._last_success: Optional[bool] = None
         self._last_heartbeat_date: Optional[str] = None
+        self._last_failure_at: Optional[float] = None
 
     # ------------------------------------------------------------------ public
 
@@ -73,6 +79,8 @@ class SlackSyncNotifier:
                 self._last_success = success
                 if reason == "heartbeat":
                     self._last_heartbeat_date = datetime.now(_BANGKOK).date().isoformat()
+                if not success:
+                    self._last_failure_at = time.monotonic()
         return sent
 
     def notify_error(self, error_message: str) -> bool:
@@ -87,6 +95,14 @@ class SlackSyncNotifier:
             now_hour = datetime.now(_BANGKOK).hour
 
             if not success:
+                # First failure (or first after recovery) — always notify.
+                # Consecutive failures within the suppress window — drop.
+                if (
+                    self._last_success is False
+                    and self._last_failure_at is not None
+                    and time.monotonic() - self._last_failure_at < self.failure_suppress_seconds
+                ):
+                    return False, "failure-suppressed"
                 return True, "failure"
             if self._last_success is False:
                 return True, "recovery"

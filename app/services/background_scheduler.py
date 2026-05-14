@@ -72,6 +72,7 @@ class BackgroundSchedulerService:
         # boots slower than this service. Ported from the host-only commit
         # 238655e6 (which modified the now-deleted zk-time-sync container).
         self._first_import_succeeded = False
+        self._startup_retry_count = 0
         self.scheduler.add_listener(self._on_executed, EVENT_JOB_EXECUTED)
         self.scheduler.add_listener(self._on_error, EVENT_JOB_ERROR)
 
@@ -247,9 +248,9 @@ class BackgroundSchedulerService:
         try:
             synced = await asyncio.to_thread(zk_session.catch_up_now)
         except Exception as exc:
-            logger.error(f"[scheduler.import_attendance] catch_up failed: {exc}")
-            self._maybe_schedule_startup_retry(reason=str(exc))
-            return {"success": False, "message": str(exc)}
+            logger.error(f"[scheduler.import_attendance] catch_up failed: {exc!r}")
+            self._maybe_schedule_startup_retry(reason=repr(exc))
+            return {"success": False, "message": repr(exc)}
 
         logger.info(
             f"[scheduler.import_attendance] synced={synced} on_demand={on_demand}"
@@ -294,6 +295,16 @@ class BackgroundSchedulerService:
         """
         if self._first_import_succeeded or not self._running:
             return
+        # Cap the retry chain. After this many attempts, fall back to the
+        # regular 30-min interval — chained retries against a persistently-
+        # unreachable device only spam the logs and Slack.
+        if self._startup_retry_count >= 3:
+            logger.warning(
+                f"[scheduler.import_attendance] retry budget exhausted "
+                f"({self._startup_retry_count}); falling back to interval schedule"
+            )
+            return
+        self._startup_retry_count += 1
         run_at = datetime.now() + timedelta(minutes=_STARTUP_RETRY_MINUTES)
         job_id = f"startup_retry_{int(run_at.timestamp())}"
         try:
