@@ -59,9 +59,16 @@ jobs:
           pip install pytest pytest-mock pytest-cov pytest-xdist factory-boy
 
       - name: Set up test database
+        # Tests use Base.metadata.create_all() (via tests/conftest.py) against
+        # in-memory SQLite, but importing app.main_unified at collection time
+        # builds the configured engine — that engine needs a database file
+        # that exists. We create the canonical schema directly from the
+        # SQLAlchemy models instead of replaying the Alembic chain, which
+        # was authored against a pre-existing prod DB and depends on
+        # foundation tables that no migration creates from scratch.
         run: |
           mkdir -p database
-          alembic -c database/alembic.ini upgrade head
+          python -c "from app.core.database import Base, engine; Base.metadata.create_all(bind=engine)"
 
       - name: Run unit tests
         run: pytest tests/unit/ -v --cov=app --cov-report=xml --cov-report=term-missing

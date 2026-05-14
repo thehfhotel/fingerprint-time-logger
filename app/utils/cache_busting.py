@@ -31,7 +31,10 @@ class CacheBustingManager:
         try:
             stat = full_path.stat()
             content = f"{stat.st_mtime}:{stat.st_size}"
-            return hashlib.md5(content.encode()).hexdigest()[:8]
+            # Not a security hash — just a short fingerprint of mtime+size
+            # for static-asset cache busting. `usedforsecurity=False` keeps
+            # FIPS-mode and Bandit (B324) happy.
+            return hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:8]
         except Exception:
             return self._startup_time
 
