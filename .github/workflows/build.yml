@@ -80,68 +80,115 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
 
   # ===========================================================================
-  # DEPLOY — runs on the self-hosted `evergreen` runner that lives on the
-  # deploy host itself. Same pattern as loyalty-app/.github/workflows/deploy.yml.
-  # No SSH keys to manage; the runner already has docker + filesystem access
-  # to /home/nut/fingerprint-time-logger, and GITHUB_TOKEN authenticates
-  # the GHCR pull for the duration of the job.
+  # DEPLOY — runs on a GitHub-hosted runner. Mirrors the new-hotel deploy
+  # pattern (.github/workflows/docker-build.yml `deploy` job): install
+  # cloudflared, SSH to deploy@evergreen.thehfhotel.org via the asgard
+  # tunnel using a forced-command key (authorized_keys pins
+  # /srv/run-deploy-fingerprint.sh), pipe a JSON payload over stdin with
+  # env vars + secrets + the short-lived GHCR token.
+  #
+  # GitHub-hosted (not self-hosted) so CI doesn't share a host with prod,
+  # and the deploy script — not the workflow — is the only thing that runs
+  # on the deploy host. Documented evergreen-side: the SSH key only triggers
+  # the pinned script, so a compromised workflow can't run arbitrary
+  # commands on the host.
   # ===========================================================================
   deploy:
     name: Deploy to production
-    runs-on: [self-hosted, deploy]
+    runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
       contents: read
       packages: read
     environment:
       name: production
+    concurrency:
+      group: deploy-prod-evergreen-fingerprint
+      cancel-in-progress: false
     steps:
-      - name: Login to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Cache cloudflared binary
+        id: cf-cache
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/cloudflared
+          # Pin to a specific release so the cache key is stable. Bump in
+          # lockstep with the install URL below.
+          key: cloudflared-2026.3.0-linux-amd64
 
-      - name: Pull new image
-        working-directory: /home/nut/fingerprint-time-logger
-        run: docker compose pull app
-
-      - name: Restart container (down + up to pick up new image)
-        working-directory: /home/nut/fingerprint-time-logger
-        # `docker compose restart` would keep the old image. We deliberately
-        # `down` then `up -d` — same gotcha called out in CLAUDE.md.
+      - name: Install cloudflared
+        if: steps.cf-cache.outputs.cache-hit != 'true'
         run: |
-          docker compose down
-          docker compose up -d --remove-orphans
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/download/2026.3.0/cloudflared-linux-amd64 \
+            -o /tmp/cloudflared
+          sudo install -m 755 /tmp/cloudflared /usr/local/bin/cloudflared
 
-      - name: Wait for healthy startup
+      - name: Install SSH key + known_hosts
+        env:
+          SSH_KEY:  ${{ secrets.EVERGREEN_DEPLOY_SSH_KEY }}
+          HOST_KEY: ${{ secrets.EVERGREEN_HOST_KEY }}
         run: |
-          for i in {1..60}; do
-            if curl -sf http://localhost:5000/api/private/devices/health -o /dev/null -w "%{http_code}" | grep -qE "^(200|401|403)$"; then
-              echo "App responded after ${i} polls"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Health check failed after 120s — dumping recent logs:"
-          cd /home/nut/fingerprint-time-logger
-          docker compose logs --tail=80 app
-          exit 1
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY"  > ~/.ssh/deploy_key  && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$HOST_KEY" > ~/.ssh/known_hosts && chmod 600 ~/.ssh/known_hosts
 
-      - name: Verify ZK scheduler started
-        working-directory: /home/nut/fingerprint-time-logger
-        # The redesign expects to see `Background scheduler started` and at
-        # least one `[scheduler.refresh_status]` line within ~30s of boot.
-        # Tolerant grep: the message must show up, but a missing line just
-        # means the scheduler is slow on this restart — log a warning,
-        # don't fail the deploy.
+      - name: Deploy via SSH to evergreen
+        env:
+          GHCR_USER:                    ${{ github.actor }}
+          GHCR_TOKEN:                   ${{ secrets.GITHUB_TOKEN }}
+          # Non-secret app config (env)
+          CORS_ALLOWED_ORIGINS:         ${{ secrets.CORS_ALLOWED_ORIGINS }}
+          AUTO_IMPORT_INTERVAL_MINUTES: ${{ vars.AUTO_IMPORT_INTERVAL_MINUTES || '30' }}
+          ZK_DRIFT_TOLERANCE_SECONDS:   ${{ vars.ZK_DRIFT_TOLERANCE_SECONDS || '5' }}
+          ZK_STARTUP_RETRY_MINUTES:     ${{ vars.ZK_STARTUP_RETRY_MINUTES || '3' }}
+          # Secrets (delivered via the .secrets block — written to the same
+          # .env file but grouped for documentation. Switch to file-mounted
+          # secrets later if needed.)
+          JWT_SECRET:                   ${{ secrets.JWT_SECRET }}
+          ADMIN_PASSCODE_HASH:          ${{ secrets.ADMIN_PASSCODE_HASH }}
+          LINE_CHANNEL_ID:              ${{ secrets.LINE_CHANNEL_ID }}
+          LINE_CHANNEL_SECRET:          ${{ secrets.LINE_CHANNEL_SECRET }}
+          LINE_CALLBACK_URL:            ${{ secrets.LINE_CALLBACK_URL }}
+          ZK_SYNC_SLACK_WEBHOOK_URL:    ${{ secrets.ZK_SYNC_SLACK_WEBHOOK_URL }}
+        # Payload shape consumed by /srv/run-deploy-fingerprint.sh on
+        # evergreen. The script unpacks, writes .env, docker compose pull
+        # + down + up -d, health-checks, and verifies the scheduler logs.
         run: |
-          sleep 30
-          if docker compose logs --tail=200 app | grep -q "Background scheduler started"; then
-            echo "scheduler-start confirmed"
-          else
-            echo "::warning::Background scheduler start message not seen in last 200 log lines"
-          fi
-          if docker compose logs --tail=200 app | grep -q "TCP packet invalid"; then
-            echo "::error::TCP packet invalid in fresh logs — the redesign should have eliminated this"
-            exit 1
-          fi
-          echo "no TCP packet invalid in fresh logs"
+          set -euo pipefail
+          jq -n \
+            --arg commit_sha             "$GITHUB_SHA" \
+            --arg ghcr_user              "$GHCR_USER" \
+            --arg ghcr_token             "$GHCR_TOKEN" \
+            --arg CORS_ALLOWED_ORIGINS   "$CORS_ALLOWED_ORIGINS" \
+            --arg AUTO_IMPORT_INTERVAL_MINUTES "$AUTO_IMPORT_INTERVAL_MINUTES" \
+            --arg ZK_DRIFT_TOLERANCE_SECONDS   "$ZK_DRIFT_TOLERANCE_SECONDS" \
+            --arg ZK_STARTUP_RETRY_MINUTES     "$ZK_STARTUP_RETRY_MINUTES" \
+            --arg JWT_SECRET             "$JWT_SECRET" \
+            --arg ADMIN_PASSCODE_HASH    "$ADMIN_PASSCODE_HASH" \
+            --arg LINE_CHANNEL_ID        "$LINE_CHANNEL_ID" \
+            --arg LINE_CHANNEL_SECRET    "$LINE_CHANNEL_SECRET" \
+            --arg LINE_CALLBACK_URL      "$LINE_CALLBACK_URL" \
+            --arg ZK_SYNC_SLACK_WEBHOOK_URL "$ZK_SYNC_SLACK_WEBHOOK_URL" \
+            '{
+              commit_sha: $commit_sha,
+              ghcr: { user: $ghcr_user, token: $ghcr_token },
+              env: {
+                CORS_ALLOWED_ORIGINS:         $CORS_ALLOWED_ORIGINS,
+                AUTO_IMPORT_INTERVAL_MINUTES: $AUTO_IMPORT_INTERVAL_MINUTES,
+                ZK_DRIFT_TOLERANCE_SECONDS:   $ZK_DRIFT_TOLERANCE_SECONDS,
+                ZK_STARTUP_RETRY_MINUTES:     $ZK_STARTUP_RETRY_MINUTES,
+              },
+              secrets: {
+                JWT_SECRET:                $JWT_SECRET,
+                ADMIN_PASSCODE_HASH:       $ADMIN_PASSCODE_HASH,
+                LINE_CHANNEL_ID:           $LINE_CHANNEL_ID,
+                LINE_CHANNEL_SECRET:       $LINE_CHANNEL_SECRET,
+                LINE_CALLBACK_URL:         $LINE_CALLBACK_URL,
+                ZK_SYNC_SLACK_WEBHOOK_URL: $ZK_SYNC_SLACK_WEBHOOK_URL,
+              }
+            }' \
+          | ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              -o ProxyCommand="cloudflared --edge-ip-version 4 access ssh --hostname %h" \
+              deploy@evergreen.thehfhotel.org
