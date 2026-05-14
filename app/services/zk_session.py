@@ -158,13 +158,21 @@ class ZkSession:
     def _run(self) -> None:
         import traceback
         backoff = _BACKOFF_MIN_SECONDS
+        # catch_up does a full `get_attendance()` (~30s on a device with
+        # thousands of records). Running it every cycle starves the op
+        # queue and times out periodic jobs ("ZK Sync 0/1 OK ... unknown
+        # error" alerts). Only catch up after disruptions; the 30-min
+        # import_attendance backstop covers steady-state gap recovery.
+        needs_catch_up = True
         while not self._shutdown.is_set():
             try:
                 # Phase A — streaming session. live_capture owns this conn.
                 stream_conn = self._connect_with_log("stream")
                 backoff = _BACKOFF_MIN_SECONDS
-                inserted = self._catch_up(stream_conn)
-                logger.info(f"[zk_session] catch_up inserted={inserted}")
+                if needs_catch_up:
+                    inserted = self._catch_up(stream_conn)
+                    logger.info(f"[zk_session] catch_up inserted={inserted}")
+                    needs_catch_up = False
                 self._stream(stream_conn)
                 self._disconnect_quiet(stream_conn, "stream")
                 if self._shutdown.is_set():
@@ -186,6 +194,7 @@ class ZkSession:
                 tb = traceback.format_exc(limit=4)
                 logger.error(f"[zk_session] loop error: {exc!r}\n{tb}")
                 self._fail_queued_ops(exc)
+                needs_catch_up = True
                 if self._shutdown.is_set():
                     break
                 logger.warning(f"[zk_session] reconnecting in {backoff:.0f}s")
@@ -551,5 +560,7 @@ def get_users() -> List[dict]:
 
 
 def catch_up_now() -> int:
-    """Run the watermark-based catch-up against the live session."""
-    return zk_session.submit(lambda conn: zk_session._catch_up(conn))
+    """Run the watermark-based catch-up against the live session.
+    Generous timeout — a full `get_attendance()` over thousands of records
+    can take 60s+; submit's default 30s would TimeoutError mid-fetch."""
+    return zk_session.submit(lambda conn: zk_session._catch_up(conn), timeout=180.0)
