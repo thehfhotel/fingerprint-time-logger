@@ -299,31 +299,30 @@ async def get_today_attendance():
 
 @router.post("/sync")
 async def sync_attendance_from_device():
-    """Sync attendance data from ZKTeco device"""
+    """Trigger an attendance import through the lock-aware scheduler."""
     try:
-        # Offload blocking ZK TCP/DB call to a worker thread to avoid
-        # stalling the event loop.
-        result = await asyncio.to_thread(device_service.sync_attendance_data)
-        return result
+        from app.services.background_scheduler import background_scheduler
+        return await background_scheduler.run_attendance_import_now()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/sync/status")
 async def get_sync_status():
-    """Get sync status and device information (uses 10-minute cache to reduce device connections)"""
+    """Get sync status from the device-status cache (no live device call)."""
     try:
-        from app.services.device_service_cached import cached_device_service
-        device_status = cached_device_service.get_device_status()
+        from app.services.device_cache_service import device_cache_service
+        device_status = device_cache_service.get_raw("device_status") or {}
         device = device_service.get_default_device()
-        
+        connected = bool(device_status.get("connected", False))
+
         return {
-            "status": "healthy" if device_status.get("connected", False) else "unhealthy",
+            "status": "healthy" if connected else "unhealthy",
             "device_status": device_status,
             "last_sync": device.last_sync.isoformat() if device and device.last_sync else None,
-            "sync_available": device_status.get("connected", False),
-            "last": device.last_sync.isoformat() if device and device.last_sync else None,  # Alternative field name
-            "sync": device_status.get("connected", False)  # Alternative field name
+            "sync_available": connected,
+            "last": device.last_sync.isoformat() if device and device.last_sync else None,
+            "sync": connected,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -389,15 +388,15 @@ async def export_attendance_csv(
 
 @router.get("/health")
 async def attendance_health_check():
-    """Health check for attendance system"""
+    """Health check for attendance system (cache-only — no live device call)."""
     try:
-        from app.services.device_service_cached import cached_device_service
-        device_status = cached_device_service.get_device_status()
+        from app.services.device_cache_service import device_cache_service
+        device_status = device_cache_service.get_raw("device_status") or {}
         recent_records = attendance_service.get_attendance_records(limit=1)
-        
+
         return {
             "status": "healthy",
-            "device_connected": device_status.get("connected", False),
+            "device_connected": bool(device_status.get("connected", False)),
             "has_recent_data": len(recent_records) > 0,
             "last_record": recent_records[0].timestamp.isoformat() if recent_records else None
         }

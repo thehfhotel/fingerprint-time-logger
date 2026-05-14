@@ -34,9 +34,9 @@ async def get_system_health(db: Session = Depends(get_db)):
     Get comprehensive system health status
     """
     try:
-        # Device Health with caching
-        from app.services.device_service_cached import cached_device_service
-        device_health = cached_device_service.get_device_status()
+        # Device health from the single cache (refreshed by background scheduler)
+        from app.services.device_cache_service import device_cache_service
+        device_health = device_cache_service.get_raw("device_status") or {"connected": False}
         
         # Database Health
         db_health = await get_database_health(db)

@@ -3,6 +3,7 @@ Consolidated Employees API - All employee management in one place
 Replaces: employees_unified.py, employees.py, thai_names.py, roles.py
 """
 
+import asyncio
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, File, UploadFile, Depends, Query, Response
 from sqlalchemy.orm import Session
@@ -232,12 +233,16 @@ async def get_employees(
 async def get_employees_from_device(include_hidden: bool, include_inactive: bool, db: Session) -> Dict[str, Any]:
     """Get employees from ZK device and merge with database records"""
     try:
-        # Get users from ZK device
+        # Get users from ZK device via the locked ZkClient
         device = device_service.get_default_device()
         if not device:
             raise HTTPException(status_code=400, detail="No device configured")
-        
-        zk_users = device_service.get_users(device)
+
+        from app.services.zk_client import zk_client
+        try:
+            zk_users = await asyncio.to_thread(zk_client.get_users)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to read device users: {e}")
         
         # Get all employees from database for merging
         # Load ALL employees first, apply filtering after merging to preserve hidden state

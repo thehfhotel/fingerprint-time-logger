@@ -13,6 +13,10 @@ alembic==1.12.1
 # ZKTeco Device Integration
 pyzk==0.9
 
+# Background scheduling (replaces the asyncio.sleep() loop and the
+# standalone zk-time-sync container — see app/services/background_scheduler.py)
+APScheduler==3.10.4
+
 # Data Validation & HTTP
 pydantic==2.5.0
 pydantic-settings==2.1.0

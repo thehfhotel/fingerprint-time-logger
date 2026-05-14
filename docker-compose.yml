@@ -30,6 +30,11 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       # Admin Console Security
       - ADMIN_PASSCODE_HASH=${ADMIN_PASSCODE_HASH}
+      # Slack webhook for ZK time-sync notifications (the main app now owns
+      # this — the standalone zk-time-sync container has been retired).
+      - ZK_SYNC_SLACK_WEBHOOK_URL=${ZK_SYNC_SLACK_WEBHOOK_URL}
+      - AUTO_IMPORT_INTERVAL_MINUTES=${AUTO_IMPORT_INTERVAL_MINUTES:-30}
+      - ZK_DRIFT_TOLERANCE_SECONDS=${ZK_DRIFT_TOLERANCE_SECONDS:-5}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/fingerprintlogs/health"]

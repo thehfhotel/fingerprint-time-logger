@@ -120,112 +120,22 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Background task control
-background_task = None
-auto_import_start_time = None
-last_auto_import_time = None
-
-async def auto_import_fingerprint_logs():
-    """Background task to automatically import fingerprint logs every 30 minutes"""
-    global auto_import_start_time, last_auto_import_time
-    
-    auto_import_interval = int(os.getenv('AUTO_IMPORT_INTERVAL_MINUTES', '30')) * 60  # Convert to seconds
-    auto_import_start_time = datetime.now()
-    
-    logger.info(f"Starting auto-import background task (interval: {auto_import_interval/60} minutes)")
-    
-    # Do immediate import on startup
-    try:
-        logger.info("Performing initial auto-import on startup...")
-        
-        # Import device service here to avoid circular imports
-        from app.services.device_service import device_service
-
-        # Perform sync (offload blocking ZK I/O to a thread)
-        result = await asyncio.to_thread(device_service.sync_attendance_data)
-        last_auto_import_time = datetime.now()
-
-        if result["success"]:
-            logger.info(f"Initial auto-import successful: {result.get('synced', 0)} records synced")
-
-            # Broadcast update to WebSocket clients
-            from app.services.attendance_service import attendance_service
-            try:
-                attendance_data = await asyncio.to_thread(attendance_service.get_attendance_summary)
-                await manager.broadcast({
-                    "type": "auto_import_update",
-                    "data": attendance_data,
-                    "synced_records": result.get('synced', 0),
-                    "timestamp": datetime.now().isoformat(),
-                    "message": f"นำเข้าอัตโนมัติ {result.get('synced', 0)} บันทึก (เริ่มระบบ)"
-                })
-            except Exception as broadcast_error:
-                logger.warning(f"Failed to broadcast initial auto-import update: {broadcast_error}")
-        else:
-            logger.warning(f"Initial auto-import failed: {result.get('message', 'Unknown error')}")
-            
-    except Exception as e:
-        logger.error(f"Initial auto-import error: {e}")
-    
-    while True:
-        try:
-            logger.info(f"Auto-import: Sleeping for {auto_import_interval} seconds ({auto_import_interval/60} minutes)...")
-            await asyncio.sleep(auto_import_interval)
-
-            logger.info("Auto-import: Woke up from sleep, starting import...")
-            
-            # Import device service here to avoid circular imports
-            from app.services.device_service import device_service
-
-            # Perform sync (offload blocking ZK I/O to a thread)
-            result = await asyncio.to_thread(device_service.sync_attendance_data)
-            last_auto_import_time = datetime.now()
-
-            if result["success"]:
-                logger.info(f"Auto-import successful: {result.get('synced', 0)} records synced")
-
-                # Broadcast update to WebSocket clients
-                from app.services.attendance_service import attendance_service
-                try:
-                    attendance_data = await asyncio.to_thread(attendance_service.get_attendance_summary)
-                    await manager.broadcast({
-                        "type": "auto_import_update",
-                        "data": attendance_data,
-                        "synced_records": result.get('synced', 0),
-                        "timestamp": datetime.now().isoformat(),
-                        "message": f"นำเข้าอัตโนมัติ {result.get('synced', 0)} บันทึก"
-                    })
-                except Exception as broadcast_error:
-                    logger.warning(f"Failed to broadcast auto-import update: {broadcast_error}")
-            else:
-                logger.warning(f"Auto-import failed: {result.get('message', 'Unknown error')}")
-                
-        except Exception as e:
-            logger.error(f"Auto-import background task error: {e}")
-            # Continue running despite errors
-            await asyncio.sleep(60)  # Wait 1 minute before retrying on error
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global background_task
-    
     logger.info("Starting up unified server...")
     Base.metadata.create_all(bind=engine)
-    
-    # Start the background auto-import task
-    background_task = asyncio.create_task(auto_import_fingerprint_logs())
-    logger.info("Auto-import background task started")
-    
+
+    # All ZKTeco device interactions go through the locked ZkClient inside
+    # background_scheduler — see app/services/zk_client.py for the rationale.
+    from app.services.background_scheduler import background_scheduler
+    background_scheduler.start(broadcast_callback=manager.broadcast)
+    logger.info("Background scheduler started")
+
     yield
-    
-    # Clean up background task
-    if background_task:
-        background_task.cancel()
-        try:
-            await background_task
-        except asyncio.CancelledError:
-            logger.info("Auto-import background task cancelled")
-    
+
+    from app.services.background_scheduler import background_scheduler
+    background_scheduler.shutdown(wait=False)
     logger.info("Shutting down unified server...")
 
 # ============================================================================
@@ -321,11 +231,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
                 last_refresh_at = now_ts
 
-                # Trigger manual refresh using simplified services
-                from app.services.device_service import device_service
+                # Trigger manual refresh through the scheduler so the
+                # device lock is honoured.
+                from app.services.background_scheduler import background_scheduler
                 from app.services.attendance_service import attendance_service
 
-                sync_result = await asyncio.to_thread(device_service.sync_attendance_data)
+                sync_result = await background_scheduler.run_attendance_import_now()
                 if sync_result["success"]:
                     attendance_data = await asyncio.to_thread(attendance_service.get_attendance_summary)
                     await websocket.send_json({
@@ -599,87 +510,66 @@ app.include_router(
 # Protected endpoint: Auto-import status
 @app.get("/api/private/auto-import/status")
 async def get_auto_import_status():
-    """Get auto-import background task status"""
-    global background_task, auto_import_start_time, last_auto_import_time
-    
-    auto_import_interval = int(os.getenv('AUTO_IMPORT_INTERVAL_MINUTES', '30'))
-    
-    # Calculate exact next import time
+    """Get background scheduler status, including the next attendance import."""
+    from app.services.background_scheduler import background_scheduler
+
+    status = background_scheduler.get_job_status()
+    import_job = next((j for j in status["jobs"] if j["id"] == "import_attendance"), None)
+
+    auto_import_interval = int(os.getenv("AUTO_IMPORT_INTERVAL_MINUTES", "30"))
+    next_run = import_job["next_run"] if import_job else None
+
     next_import_estimate = "Unknown"
-    if auto_import_start_time and last_auto_import_time:
-        # Next import is 30 minutes after last import
-        next_import_time = last_auto_import_time + timedelta(minutes=auto_import_interval)
-        minutes_until_next = (next_import_time - datetime.now()).total_seconds() / 60
-        
-        if minutes_until_next > 0:
-            if minutes_until_next < 1:
-                next_import_estimate = f"In {int(minutes_until_next * 60)} seconds"
+    if next_run:
+        try:
+            next_dt = datetime.fromisoformat(next_run)
+            minutes_until = (next_dt - datetime.now(next_dt.tzinfo)).total_seconds() / 60
+            if minutes_until <= 0:
+                next_import_estimate = "Overdue (running now)"
+            elif minutes_until < 1:
+                next_import_estimate = f"In {int(minutes_until * 60)} seconds"
             else:
-                next_import_estimate = f"In {int(minutes_until_next)} minutes"
-        else:
-            next_import_estimate = "Overdue (running now)"
-    elif auto_import_start_time:
-        # First import hasn't happened yet, calculate from start time
-        next_import_time = auto_import_start_time + timedelta(minutes=auto_import_interval)
-        minutes_until_next = (next_import_time - datetime.now()).total_seconds() / 60
-        
-        if minutes_until_next > 0:
-            next_import_estimate = f"In {int(minutes_until_next)} minutes (first import)"
-        else:
-            next_import_estimate = "Running first import now"
-    
+                next_import_estimate = f"In {int(minutes_until)} minutes"
+        except Exception:
+            next_import_estimate = next_run
+
     return {
-        "enabled": background_task is not None and not background_task.done(),
+        "enabled": status["running"],
         "interval_minutes": auto_import_interval,
-        "task_status": "running" if background_task and not background_task.done() else "stopped",
+        "task_status": "running" if status["running"] else "stopped",
         "next_import_estimate": next_import_estimate,
-        "last_auto_import": last_auto_import_time.strftime('%Y-%m-%d %H:%M:%S') if last_auto_import_time else None,
-        "service_started": auto_import_start_time.strftime('%Y-%m-%d %H:%M:%S') if auto_import_start_time else None
+        "jobs": status["jobs"],
     }
+
 
 @app.post("/api/private/auto-import/trigger/")
 async def trigger_manual_import():
-    """Manually trigger fingerprint log import"""
+    """Manually trigger an attendance import via the scheduler."""
     try:
-        from app.services.device_service import device_service
+        from app.services.background_scheduler import background_scheduler
 
         logger.info("Manual import triggered via API")
-        result = await asyncio.to_thread(device_service.sync_attendance_data)
+        result = await background_scheduler.run_attendance_import_now()
 
-        if result["success"]:
-            # Broadcast update to WebSocket clients
-            try:
-                from app.services.attendance_service import attendance_service
-                attendance_data = await asyncio.to_thread(attendance_service.get_attendance_summary)
-                await manager.broadcast({
-                    "type": "manual_import_update",
-                    "data": attendance_data,
-                    "synced_records": result.get('synced', 0),
-                    "timestamp": datetime.now().isoformat(),
-                    "message": f"นำเข้าด้วยตนเอง: ซิงค์แล้ว {result.get('synced', 0)} บันทึก"
-                })
-            except Exception as broadcast_error:
-                logger.warning(f"Failed to broadcast manual import update: {broadcast_error}")
-
-        # Return sanitized response (don't expose raw device data)
         synced_count = result.get("synced", 0)
-        # Ensure synced count is a safe integer
         if not isinstance(synced_count, int):
             try:
-                synced_count = int(synced_count) if str(synced_count).isdigit() else 0
+                synced_count = int(synced_count)
             except (ValueError, TypeError):
                 synced_count = 0
 
         return {
-            "success": result.get("success", False),
+            "success": bool(result.get("success", False)),
             "synced": synced_count,
             "message": f"นำเข้าเสร็จสมบูรณ์: ประมวลผลแล้ว {synced_count} บันทึก"
+            if result.get("success")
+            else result.get("message", "Import failed"),
         }
     except Exception as e:
         logger.error(f"Manual import failed: {e}")
         return {
             "success": False,
-            "message": f"การนำเข้าด้วยตนเองล้มเหลว: {str(e)}"
+            "message": f"การนำเข้าด้วยตนเองล้มเหลว: {str(e)}",
         }
 
 # Redirect old routes to new simplified interface
@@ -704,29 +594,15 @@ async def favicon():
 # Manual refresh endpoint for dashboard (protected)
 @app.post("/api/private/refresh")
 async def manual_refresh():
-    """Manual refresh endpoint for protected dashboard access"""
+    """Manual refresh: trigger an attendance import through the scheduler."""
     try:
-        # Use simplified device service for sync
-        from app.services.device_service import device_service
-        result = await asyncio.to_thread(device_service.sync_attendance_data)
-
-        if result["success"]:
-            # Broadcast update to WebSocket clients
-            from app.services.attendance_service import attendance_service
-            attendance_data = await asyncio.to_thread(attendance_service.get_attendance_summary)
-
-            await manager.broadcast({
-                "type": "attendance_update",
-                "data": attendance_data,
-                "timestamp": datetime.now().isoformat()
-            })
-        
-        return result
+        from app.services.background_scheduler import background_scheduler
+        return await background_scheduler.run_attendance_import_now()
     except Exception as e:
         logger.error(f"Manual refresh failed: {e}")
         return {
             "success": False,
-            "message": f"การรีเฟรชล้มเหลว: {str(e)}"
+            "message": f"การรีเฟรชล้มเหลว: {str(e)}",
         }
 
 # Mount the fingerprint app for tunnel support
@@ -862,11 +738,12 @@ async def root_websocket_endpoint(websocket: WebSocket):
                     continue
                 last_refresh_at = now_ts
 
-                # Trigger manual refresh using simplified services
-                from app.services.device_service import device_service
+                # Trigger manual refresh through the scheduler so the
+                # device lock is honoured.
+                from app.services.background_scheduler import background_scheduler
                 from app.services.attendance_service import attendance_service
 
-                sync_result = await asyncio.to_thread(device_service.sync_attendance_data)
+                sync_result = await background_scheduler.run_attendance_import_now()
                 if sync_result["success"]:
                     attendance_data = await asyncio.to_thread(attendance_service.get_attendance_summary)
                     await websocket.send_json({

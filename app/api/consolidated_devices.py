@@ -12,8 +12,11 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, field_validator
 
 from app.core.database import get_db
-from app.models.models import Device
+from app.models.models import Device, Employee, AttendanceRecord
 from app.services.device_service import device_service
+from app.services.zk_client import zk_client
+from app.services.device_cache_service import device_cache_service
+from app.services.background_scheduler import background_scheduler
 
 router = APIRouter()
 
@@ -198,66 +201,45 @@ async def create_device(
 
 @router.get("/health")
 async def devices_health_check():
-    """Lightweight health check with caching to reduce device load"""
-    try:
-        # Use cached device service to reduce frequent connections
-        from app.services.device_service_cached import cached_device_service
+    """Lightweight health check served entirely from the cache.
 
-        # Get cached device status (10-minute cache)
-        device_status = cached_device_service.get_device_status()
-
-        if not device_status:
-            return {
-                "status": "warning",
-                "device_connected": False,
-                "message": "ไม่ได้ตั้งค่าเครื่อง"
-            }
-
-        connected = device_status.get("connected", False)
-
-        response = {
-            "status": "healthy" if connected else "unhealthy",
-            "device_connected": connected,
-            "device_name": device_status.get("device_name", "Unknown"),
-            "ip": device_status.get("ip_address", "Unknown"),
-            "cache_age_seconds": device_status.get("cache_age_seconds", 0)
-        }
-
-        # Add lightweight device info using cached data only
-        if connected:
-            # Get device time with caching (no auto-sync to avoid connections)
-            try:
-                time_info = cached_device_service.get_device_time(auto_sync=False)
-                device_time = time_info.get("device_time", "Unknown")
-                response["device_time"] = device_time
-                response["time_cache_age"] = time_info.get("cache_age_seconds", 0)
-            except Exception:
-                response["device_time"] = "Unavailable"
-
-            # Get counts from database only (no device queries)
-            db = next(get_db())
-            try:
-                from app.models.models import Employee, AttendanceRecord
-                users_count = db.query(Employee).count()
-                records_count = db.query(AttendanceRecord).count()
-            except Exception:
-                users_count = "Unknown"
-                records_count = "Unknown"
-            finally:
-                db.close()
-
-            response.update({
-                "users_count": users_count,
-                "records_count": records_count,
-                "info_note": "Counts from database - sync for latest device data"
-            })
-
-        return response
-    except Exception as e:
+    The background scheduler refreshes `device_status` every 5 min through
+    the locked ZkClient. This endpoint never touches the device directly —
+    that's what eliminates the cache-miss → live-connect path that used to
+    add concurrent load.
+    """
+    status_entry = device_cache_service.get_raw("device_status")
+    if not status_entry:
         return {
-            "status": "unhealthy",
-            "error": str(e)
+            "status": "warning",
+            "device_connected": False,
+            "message": "Cache warming up — first scheduler run pending",
         }
+
+    connected = status_entry.get("connected", False)
+    response = {
+        "status": "healthy" if connected else "unhealthy",
+        "device_connected": connected,
+        "device_name": "ZKTeco Device",
+        "ip": status_entry.get("host", "Unknown"),
+    }
+
+    if connected:
+        time_entry = device_cache_service.get_raw("device_time")
+        response["device_time"] = time_entry.get("device_time") if time_entry else "Unavailable"
+
+        db = next(get_db())
+        try:
+            response["users_count"] = db.query(Employee).count()
+            response["records_count"] = db.query(AttendanceRecord).count()
+        except Exception:
+            response["users_count"] = "Unknown"
+            response["records_count"] = "Unknown"
+        finally:
+            db.close()
+        response["info_note"] = "Counts from database — sync for latest device data"
+
+    return response
 
 
 # ============================================================================
@@ -298,47 +280,30 @@ async def get_device_status():
 
 
 @router.post("/test-connection")
-async def test_device_connection():
-    """Test connection to the default device"""
+async def test_device_connection(db: Session = Depends(get_db)):
+    """Test connection to the default device via the locked ZkClient."""
     try:
         device = device_service.get_default_device()
         if not device:
             raise HTTPException(status_code=400, detail="No device configured")
 
-        # Offload blocking ZK TCP calls to a worker thread to avoid stalling
-        # the event loop.
-        conn = await asyncio.to_thread(device_service.connect_to_device, device)
-        if conn:
-            try:
-                # Get basic device info (TCP calls — run in worker thread)
-                users = await asyncio.to_thread(device_service.get_users, device)
-                records = await asyncio.to_thread(
-                    device_service.get_attendance_records, device
-                )
-                users_count = len(users)
-                records_count = len(records)
-                
-                return {
-                    "success": True,
-                    "message": "เชื่อมต่อสำเร็จ",
-                    "device_info": {
-                        "name": device.name,
-                        "ip_address": device.ip_address,
-                        "users_count": users_count,
-                        "records_count": records_count
-                    }
-                }
-            except Exception as e:
-                return {
-                    "success": True,
-                    "message": "เชื่อมต่อแล้วแต่ไม่สามารถดึงข้อมูลเครื่องได้",
-                    "warning": str(e)
-                }
-        else:
+        status = await asyncio.to_thread(zk_client.get_status)
+        if not status.get("connected"):
             return {
                 "success": False,
-                "message": "ไม่สามารถเชื่อมต่อเครื่องได้"
+                "message": status.get("error") or "ไม่สามารถเชื่อมต่อเครื่องได้",
             }
+        return {
+            "success": True,
+            "message": "เชื่อมต่อสำเร็จ",
+            "device_info": {
+                "name": device.name,
+                "ip_address": device.ip_address,
+                "firmware": status.get("firmware"),
+                "users_count": db.query(Employee).count(),
+                "records_count": db.query(AttendanceRecord).count(),
+            },
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -350,46 +315,23 @@ async def test_device_connection():
 # ============================================================================
 
 @router.post("/sync-time")
-async def sync_device_time():
-    """Sync system time to device"""
+async def sync_device_time_legacy():
+    """Sync device time to Bangkok timezone via the locked ZkClient.
+
+    Kept under both `/sync-time` and `/time/sync` for backwards compatibility
+    with older frontends.
+    """
     try:
-        # Offload blocking ZK TCP call to a worker thread.
-        result = await asyncio.to_thread(device_service.sync_time_to_device)
-        return result
+        return await asyncio.to_thread(zk_client.sync_time)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Time sync failed: {str(e)}")
 
+
 @router.post("/sync/attendance")
 async def sync_attendance():
-    """Sync attendance data from device"""
+    """Trigger an attendance import through the scheduler (lock-aware)."""
     try:
-        # Offload blocking ZK TCP/DB call to a worker thread.
-        result = await asyncio.to_thread(device_service.sync_attendance_data)
-
-        # Broadcast update to WebSocket clients
-        if result.get("success"):
-            try:
-                from app.main_unified import manager
-                from app.services.attendance_service import attendance_service
-                from datetime import datetime
-
-                # Offload DB-heavy summary call to a worker thread.
-                attendance_data = await asyncio.to_thread(
-                    attendance_service.get_attendance_summary
-                )
-                await manager.broadcast({
-                    "type": "manual_import_update",
-                    "data": attendance_data,
-                    "synced_records": result.get('synced', 0),
-                    "timestamp": datetime.now().isoformat(),
-                    "message": f"นำเข้าด้วยตนเอง: ซิงค์แล้ว {result.get('synced', 0)} บันทึก"
-                })
-            except Exception as broadcast_error:
-                # Log but don't fail the request if broadcast fails
-                import logging
-                logging.warning(f"Failed to broadcast manual import update: {broadcast_error}")
-
-        return result
+        return await background_scheduler.run_attendance_import_now()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -441,11 +383,9 @@ async def get_device_time(auto_sync: bool = Query(False, description="Automatica
 
 @router.post("/time/sync")
 async def sync_device_time():
-    """Sync device time to current server time"""
+    """Sync device time to current Bangkok time via the locked ZkClient."""
     try:
-        # Offload blocking ZK TCP call to a worker thread.
-        result = await asyncio.to_thread(device_service.set_device_time)
-        return result
+        return await asyncio.to_thread(zk_client.sync_time)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -470,8 +410,8 @@ async def get_device_config():
                 "name": device.name,
                 "ip_address": device.ip_address,
                 "port": device.port,
-                "timeout": device_service.timeout,
-                "max_retries": device_service.max_retries
+                "timeout": zk_client.timeout,
+                "max_retries": zk_client.max_retries
             },
             "sync_settings": {
                 "auto_sync": False,  # Simplified - no background sync
@@ -520,66 +460,45 @@ async def get_app_configuration():
 # ============================================================================
 
 @router.get("/diagnostics")
-async def get_device_diagnostics():
-    """Get basic device diagnostics"""
+async def get_device_diagnostics(db: Session = Depends(get_db)):
+    """Get basic device diagnostics via the locked ZkClient."""
     try:
         device = device_service.get_default_device()
         if not device:
             return {"status": "no_device", "message": "ไม่ได้ตั้งค่าเครื่อง"}
-        
-        # Test connection (offload blocking ZK TCP call to a worker thread)
-        conn = await asyncio.to_thread(device_service.connect_to_device, device)
-        if not conn:
+
+        status = await asyncio.to_thread(zk_client.get_status)
+        if not status.get("connected"):
             return {
                 "status": "connection_failed",
                 "device": {
                     "name": device.name,
                     "ip_address": device.ip_address,
-                    "port": device.port
+                    "port": device.port,
                 },
-                "last_sync": device.last_sync.isoformat() if device.last_sync else None
+                "error": status.get("error"),
+                "last_sync": device.last_sync.isoformat() if device.last_sync else None,
             }
 
-        try:
-            # Get basic info (TCP calls — run in worker thread)
-            users = await asyncio.to_thread(device_service.get_users, device)
-            records = await asyncio.to_thread(
-                device_service.get_attendance_records, device
-            )
-            
-            return {
-                "status": "healthy",
-                "device": {
-                    "name": device.name,
-                    "ip_address": device.ip_address,
-                    "port": device.port,
-                    "connected": True
-                },
-                "data": {
-                    "users_count": len(users),
-                    "records_count": len(records),
-                    "last_sync": device.last_sync.isoformat() if device.last_sync else None
-                },
-                "performance": {
-                    "connection_time": f"{device_service.timeout}s timeout",
-                    "max_retries": device_service.max_retries
-                }
-            }
-        except Exception as e:
-            return {
-                "status": "connected_but_error",
-                "device": {
-                    "name": device.name,
-                    "ip_address": device.ip_address,
-                    "connected": True
-                },
-                "error": str(e)
-            }
-        finally:
-            try:
-                conn.disconnect()
-            except:
-                pass
+        return {
+            "status": "healthy",
+            "device": {
+                "name": device.name,
+                "ip_address": device.ip_address,
+                "port": device.port,
+                "firmware": status.get("firmware"),
+                "connected": True,
+            },
+            "data": {
+                "users_count": db.query(Employee).count(),
+                "records_count": db.query(AttendanceRecord).count(),
+                "last_sync": device.last_sync.isoformat() if device.last_sync else None,
+            },
+            "performance": {
+                "connection_time": f"{zk_client.timeout}s timeout",
+                "max_retries": zk_client.max_retries,
+            },
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

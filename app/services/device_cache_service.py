@@ -91,41 +91,36 @@ class DeviceCacheService:
 
     async def warm_cache(self) -> None:
         """
-        Warm up cache on startup by loading all data
-        This ensures immediate availability for frontend requests
+        Optional cache pre-warm: the background scheduler also runs each job
+        once on startup (next_run_time=now), so warm_cache is usually
+        unnecessary. Kept for callers that want a synchronous warm before
+        serving the first request.
         """
         logger.info("Starting cache warm-up...")
-
         try:
-            from app.services.device_service import device_service
+            from app.services.zk_client import zk_client
+            from app.services.attendance_service import attendance_service
 
-            # Warm up device status
             try:
-                status = device_service.get_device_status()
-                self.set('device_status', status)
+                self.set("device_status", zk_client.get_status())
                 logger.info("✓ Warmed device_status cache")
             except Exception as e:
                 logger.warning(f"Failed to warm device_status: {e}")
 
-            # Warm up device time
             try:
-                time_data = device_service.get_device_time()
-                self.set('device_time', time_data)
+                self.set("device_time", zk_client.get_time())
                 logger.info("✓ Warmed device_time cache")
             except Exception as e:
                 logger.warning(f"Failed to warm device_time: {e}")
 
-            # Warm up attendance summary
             try:
-                from app.services.attendance_service import attendance_service
                 summary = attendance_service.get_attendance_summary()
-                self.set('attendance_summary', summary)
+                self.set("attendance_summary", summary)
                 logger.info("✓ Warmed attendance_summary cache")
             except Exception as e:
                 logger.warning(f"Failed to warm attendance_summary: {e}")
 
             logger.info("Cache warm-up complete")
-
         except Exception as e:
             logger.error(f"Cache warm-up failed: {e}")
 

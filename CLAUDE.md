@@ -81,8 +81,16 @@ ls -lt test-reports/                                         # List all test rep
 - **Unified FastAPI Server (5000)**: All functionality in single process
 - **Static Dashboard**: HTML/CSS/JS served by FastAPI with WebSocket updates
 - **SQLite Database**: Local storage with Alembic migrations (volume mounted)
-- **ZKTeco Integration**: pyzk library for device communication
-- **Background Tasks**: Auto-import fingerprint logs every 30 minutes
+- **ZKTeco Integration**: pyzk library, accessed exclusively through the
+  process-wide `ZkClient` (`app/services/zk_client.py`) whose
+  `threading.Lock` serializes every connect → operate → disconnect cycle.
+  All schedulers and endpoints that touch the device go through this client.
+- **Background Tasks**: APScheduler (`app/services/background_scheduler.py`)
+  runs three serialized jobs — device-status refresh (5 min), device-time
+  refresh + auto-resync when drift > tolerance (5 min, posts to Slack on
+  state change), and incremental attendance import (30 min, watermarked by
+  `MAX(timestamp)` so the device is not re-scanned for already-imported
+  records).
 
 ### FastAPI Application Structure
 
@@ -278,6 +286,26 @@ ZKTECO_PORT=4370
 ```
 
 ## Recent Improvements (October 2025)
+
+### ZK Connector Redesign (May 2026)
+The main app and a separate `zk-time-sync` Docker container used to open
+parallel TCP sessions to the ZKTeco device, colliding every ~30 min and
+producing `TCP packet invalid` errors (~5/day in Slack). The redesign:
+
+- **Single lock-aware client**: `app/services/zk_client.py` is now the only
+  place that imports `from zk import ZK`. A module-level `threading.Lock`
+  holds for the entire connect/op/disconnect cycle.
+- **One scheduler**: `app/services/background_scheduler.py` (APScheduler,
+  AsyncIO) replaces the old `auto_import_fingerprint_logs()` asyncio loop
+  AND the standalone `zk-time-sync` container.
+- **Slack notifier moved in-app**: `app/services/slack_notifier.py` posts on
+  failures, recovery, and a 09:00 Bangkok daily heartbeat (not every cycle).
+- **Single cache**: `device_service_cached.py` deleted; all reads go through
+  `device_cache_service`.
+- **Incremental imports**: scheduler tracks `MAX(AttendanceRecord.timestamp)`
+  as the watermark and passes it to `zk_client.pull_attendance(since=...)`.
+- **Removed**: `zk-time-sync/` directory, container, separate Slack code.
+  Webhook URL now in `.env` as `ZK_SYNC_SLACK_WEBHOOK_URL`.
 
 ### Access Control Migration (October 16, 2025)
 - **Protected API Routes**: Migrated all protected APIs to `/api/private/*` pattern
