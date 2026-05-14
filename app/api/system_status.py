@@ -37,20 +37,34 @@ async def get_system_health(db: Session = Depends(get_db)):
         # Device health from the single cache (refreshed by background scheduler)
         from app.services.device_cache_service import device_cache_service
         device_health = device_cache_service.get_raw("device_status") or {"connected": False}
-        
+
+        # Cache health — the dashboard status page reads this to decide
+        # whether to show "✅ ทำงาน" or "❌ ไม่ทำงาน" for the auto-import
+        # service. `healthy` requires the scheduler to have populated all
+        # critical keys recently; `total_entries > 0` is the weaker check
+        # used by the frontend to confirm the cache is alive at all.
+        cache_stats = device_cache_service.get_stats()
+        cache_health = {
+            "healthy": device_cache_service.is_healthy(),
+            "total_entries": cache_stats["total_entries"],
+            "fresh_count": cache_stats["fresh_count"],
+            "stale_count": cache_stats["stale_count"],
+        }
+
         # Database Health
         db_health = await get_database_health(db)
-        
+
         # System Resources
         system_resources = get_system_resources()
-        
+
         # Application Statistics
         app_stats = await get_application_statistics(db)
-        
+
         return {
             "timestamp": datetime.now().isoformat(),
             "overall_status": "healthy" if device_health.get("connected") and db_health["accessible"] else "degraded",
             "device_health": device_health,
+            "cache_health": cache_health,
             "database_health": db_health,
             "system_resources": system_resources,
             "application_stats": app_stats

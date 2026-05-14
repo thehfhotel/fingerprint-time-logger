@@ -149,6 +149,19 @@ class BackgroundSchedulerService:
             replace_existing=True,
             next_run_time=datetime.now() + timedelta(seconds=10),
         )
+        # DB-only refresh of the attendance_summary cache. Without this
+        # the summary entry's 5-min TTL expires long before the 30-min
+        # import job touches it again, so `is_healthy()` reports stale
+        # and the dashboard's "auto-import working" indicator flips to
+        # ❌. No device contact — just a DB aggregation.
+        self.scheduler.add_job(
+            self._refresh_attendance_summary,
+            IntervalTrigger(minutes=5),
+            id="refresh_attendance_summary",
+            name="Refresh attendance summary cache",
+            replace_existing=True,
+            next_run_time=datetime.now() + timedelta(seconds=5),
+        )
         sync_interval = int(os.getenv("AUTO_IMPORT_INTERVAL_MINUTES", "30"))
         self.scheduler.add_job(
             self._import_attendance,
@@ -158,6 +171,17 @@ class BackgroundSchedulerService:
             replace_existing=True,
             next_run_time=datetime.now() + timedelta(seconds=20),
         )
+
+    async def _refresh_attendance_summary(self) -> None:
+        """Recompute the attendance summary from the DB and refresh its cache
+        entry. Pure DB query — no device contact."""
+        try:
+            from app.services.attendance_service import attendance_service
+            summary = await asyncio.to_thread(attendance_service.get_attendance_summary)
+            device_cache_service.set("attendance_summary", summary)
+            logger.info("[scheduler.refresh_attendance_summary] cache refreshed")
+        except Exception as exc:
+            logger.warning(f"[scheduler.refresh_attendance_summary] failed: {exc}")
 
     async def _refresh_status(self) -> None:
         status = await asyncio.to_thread(zk_client.get_status)
