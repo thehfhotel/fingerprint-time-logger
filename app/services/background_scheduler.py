@@ -44,6 +44,12 @@ logger = logging.getLogger(__name__)
 # `zk-time-sync` service (5s).
 _DRIFT_TOLERANCE_SECONDS = float(os.getenv("ZK_DRIFT_TOLERANCE_SECONDS", "5"))
 
+# After a power outage the ZK device may take longer to boot than this
+# service. Until the first attendance import succeeds, a failed import
+# reschedules itself for this many minutes from now (instead of waiting
+# for the regular 30-min interval).
+_STARTUP_RETRY_MINUTES = float(os.getenv("ZK_STARTUP_RETRY_MINUTES", "3"))
+
 
 class BackgroundSchedulerService:
     """Async scheduler that owns all periodic device interactions."""
@@ -59,6 +65,13 @@ class BackgroundSchedulerService:
         )
         self._running = False
         self._broadcast_callback = None  # set by start()
+        # Startup-retry state: until the first attendance import succeeds, a
+        # failed import schedules a one-shot retry in
+        # `_STARTUP_RETRY_MINUTES` instead of waiting for the regular 30-min
+        # interval. Recovers quickly after a power outage when the ZK device
+        # boots slower than this service. Ported from the host-only commit
+        # 238655e6 (which modified the now-deleted zk-time-sync container).
+        self._first_import_succeeded = False
         self.scheduler.add_listener(self._on_executed, EVENT_JOB_EXECUTED)
         self.scheduler.add_listener(self._on_error, EVENT_JOB_ERROR)
 
@@ -232,6 +245,7 @@ class BackgroundSchedulerService:
             new_records = await asyncio.to_thread(zk_client.pull_attendance, since_bangkok)
         except Exception as exc:
             logger.error(f"[scheduler.import_attendance] pull failed: {exc}")
+            self._maybe_schedule_startup_retry(reason=str(exc))
             return {"success": False, "message": str(exc)}
 
         synced = 0
@@ -303,7 +317,43 @@ class BackgroundSchedulerService:
             except Exception as exc:
                 logger.warning(f"[scheduler.import_attendance] broadcast failed: {exc}")
 
+        # First successful import after boot — disarm startup retry.
+        if not self._first_import_succeeded:
+            self._first_import_succeeded = True
+            logger.info("[scheduler.import_attendance] first import OK; startup retry disarmed")
+
         return {"success": True, "synced": synced, "total_processed": len(new_records)}
+
+    def _maybe_schedule_startup_retry(self, reason: str) -> None:
+        """
+        Schedule a one-shot retry of the attendance import.
+
+        Active only until the first successful import after boot — after that
+        the standard 30-min interval is fast enough. Concrete scenario this
+        protects against: power outage where the ZK device boots slower than
+        this service, so the first scheduled import fails. Without this,
+        we'd wait up to 30 min before retrying.
+        """
+        if self._first_import_succeeded or not self._running:
+            return
+        run_at = datetime.now() + timedelta(minutes=_STARTUP_RETRY_MINUTES)
+        job_id = f"startup_retry_{int(run_at.timestamp())}"
+        try:
+            self.scheduler.add_job(
+                self._import_attendance,
+                "date",
+                run_date=run_at,
+                id=job_id,
+                misfire_grace_time=120,
+                replace_existing=False,
+            )
+            logger.warning(
+                f"[scheduler.import_attendance] failed ({reason}); "
+                f"startup retry scheduled at {run_at.isoformat()}"
+            )
+        except Exception as exc:
+            # Already scheduled for the same minute, or scheduler shutting down.
+            logger.debug(f"[scheduler.import_attendance] retry not scheduled: {exc}")
 
     # ------------------------------------------------------------------ listeners
 
