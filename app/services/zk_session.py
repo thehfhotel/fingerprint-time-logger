@@ -160,39 +160,27 @@ class ZkSession:
         backoff = _BACKOFF_MIN_SECONDS
         # catch_up does a full `get_attendance()` (~30s on a device with
         # thousands of records). Running it every cycle starves the op
-        # queue and times out periodic jobs ("ZK Sync 0/1 OK ... unknown
-        # error" alerts). Only catch up after disruptions; the 30-min
-        # import_attendance backstop covers steady-state gap recovery.
+        # queue and times out periodic jobs. Only catch up after a
+        # disruption; the 30-min import_attendance backstop covers
+        # steady-state gap recovery.
         needs_catch_up = True
+        # Startup grace: K40 firmware doesn't immediately release the
+        # previous TCP session on disconnect. A fresh container that
+        # connects within ~1-2s of the prior container's shutdown gets
+        # "timed out" on its first command because the device still
+        # thinks the old session is alive. Wait 2s before the first
+        # connect to give the device time to drop the prior session.
+        self._shutdown.wait(2.0)
         while not self._shutdown.is_set():
+            stream_conn = None
             try:
-                # Phase A — streaming session. live_capture owns this conn.
                 stream_conn = self._connect_with_log("stream")
                 backoff = _BACKOFF_MIN_SECONDS
-                if needs_catch_up:
-                    inserted = self._catch_up(stream_conn)
-                    logger.info(f"[zk_session] catch_up inserted={inserted}")
-                    needs_catch_up = False
-                self._stream(stream_conn)
-                self._disconnect_quiet(stream_conn, "stream")
-                if self._shutdown.is_set():
-                    break
-
-                # Phase B — ops session on a fresh conn. pyzk's live_capture
-                # cleanup is not bit-clean (leftover event bytes confuse the
-                # next command's ACK read — "broken ACK N /M"), so we never
-                # multiplex commands with streaming on the same socket.
-                if not self._op_queue.empty():
-                    op_conn = self._connect_with_log("ops")
-                    try:
-                        drained = self._drain_op_queue(op_conn)
-                        if drained:
-                            logger.info(f"[zk_session] drained {drained} ops")
-                    finally:
-                        self._disconnect_quiet(op_conn, "ops")
             except BaseException as exc:
+                # Couldn't even connect — this is the only failure mode that
+                # poisons queued ops, because we can't run them anywhere.
                 tb = traceback.format_exc(limit=4)
-                logger.error(f"[zk_session] loop error: {exc!r}\n{tb}")
+                logger.error(f"[zk_session] connect failed: {exc!r}\n{tb}")
                 self._fail_queued_ops(exc)
                 needs_catch_up = True
                 if self._shutdown.is_set():
@@ -201,6 +189,48 @@ class ZkSession:
                 if self._shutdown.wait(backoff):
                     break
                 backoff = min(backoff * 2, _BACKOFF_MAX_SECONDS)
+                continue
+
+            # Phase A — streaming session. live_capture owns this conn.
+            # Catch_up and stream errors are isolated to this conn; queued
+            # ops still get a clean shot on phase B's fresh conn.
+            if needs_catch_up:
+                try:
+                    inserted = self._catch_up(stream_conn)
+                    logger.info(f"[zk_session] catch_up inserted={inserted}")
+                    needs_catch_up = False
+                except BaseException as exc:
+                    logger.warning(
+                        f"[zk_session] catch_up failed (will retry next cycle): {exc!r}"
+                    )
+            self._stream(stream_conn)
+            self._disconnect_quiet(stream_conn, "stream")
+            if self._shutdown.is_set():
+                break
+
+            # Phase B — ops session on a fresh conn. pyzk's live_capture
+            # cleanup is not bit-clean (leftover event bytes confuse the
+            # next command's ACK read — "broken ACK N /M"), so we never
+            # multiplex commands with streaming on the same socket. Brief
+            # pause: K40 firmware is slow to release the previous session;
+            # back-to-back connects can have the device drop the first
+            # command on the floor and we'd see a "timed out" socket error.
+            if not self._op_queue.empty():
+                time.sleep(1.0)
+                try:
+                    op_conn = self._connect_with_log("ops")
+                except Exception as exc:
+                    logger.warning(
+                        f"[zk_session] ops connect failed (queue persists): {exc!r}"
+                    )
+                    needs_catch_up = True
+                    continue
+                try:
+                    drained = self._drain_op_queue(op_conn)
+                    if drained:
+                        logger.info(f"[zk_session] drained {drained} ops")
+                finally:
+                    self._disconnect_quiet(op_conn, "ops")
         logger.info("[zk_session] thread exiting")
 
     def _connect_with_log(self, phase: str) -> Any:
@@ -530,7 +560,11 @@ def _op_sync_time(conn: Any) -> dict:
 
 def sync_time() -> dict:
     try:
-        return zk_session.submit(_op_sync_time)
+        # Longer timeout than the default 30s: at startup the daemon thread
+        # may be 30s+ into its initial catch_up; a tight client-side
+        # timeout here would fire a false-failure Slack alert while the
+        # daemon is still healthy.
+        return zk_session.submit(_op_sync_time, timeout=120.0)
     except Exception as exc:
         return {"success": False, "error": _describe_exc(exc)}
 
