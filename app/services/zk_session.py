@@ -217,14 +217,23 @@ class ZkSession:
 
     def _stream(self, conn: Any) -> None:
         logger.info("[zk_session] streaming via live_capture")
-        for event in conn.live_capture(new_timeout=_LIVE_CAPTURE_IDLE_SECONDS):
-            if event is not None:
-                try:
-                    self._handle_punch(event)
-                except Exception as punch_exc:
-                    logger.error(f"[zk_session] handle_punch error: {punch_exc!r}")
-            if self._should_break(conn):
-                conn.end_live_capture = True
+        try:
+            for event in conn.live_capture(new_timeout=_LIVE_CAPTURE_IDLE_SECONDS):
+                if event is not None:
+                    try:
+                        self._handle_punch(event)
+                    except Exception as punch_exc:
+                        logger.error(f"[zk_session] handle_punch error: {punch_exc!r}")
+                if self._should_break(conn):
+                    conn.end_live_capture = True
+        except Exception as exc:
+            # pyzk's live_capture wraps the socket directly; its cleanup
+            # (`reg_event(0)`, `cancel_capture()`) can raise when framing
+            # gets out of sync — e.g. "cant' reg events 0" when the device
+            # returns a malformed ACK. The streaming session is ending
+            # anyway; swallow so the outer loop proceeds to the ops phase
+            # on a fresh conn. Don't poison queued ops with this error.
+            logger.warning(f"[zk_session] live_capture error (continuing): {exc!r}")
 
     def _should_break(self, conn: Any) -> bool:
         return self._shutdown.is_set() or not self._op_queue.empty()
