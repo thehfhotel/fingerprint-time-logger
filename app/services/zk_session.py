@@ -508,7 +508,12 @@ def _describe_exc(exc: BaseException) -> str:
 
 def get_status() -> dict:
     try:
-        return zk_session.submit(_op_get_status)
+        # Longer than default 30s for the same reason as `sync_time`: at
+        # startup the daemon thread can be 30s+ into its initial catch_up
+        # (full `get_attendance` over thousands of records). A tighter
+        # timeout would fire a false-failure status while the daemon is
+        # healthy, then recover the next cycle.
+        return zk_session.submit(_op_get_status, timeout=120.0)
     except Exception as exc:
         return {
             "connected": False,
@@ -533,7 +538,13 @@ def _op_get_time(conn: Any) -> dict:
 
 def get_time() -> dict:
     try:
-        return zk_session.submit(_op_get_time)
+        # Same 120s timeout as sync_time/get_status: get_time is the very
+        # first thing `_refresh_time_and_sync` calls, and the periodic job
+        # fires 5s after container start — long before the daemon's
+        # initial catch_up has freed the op queue. A 30s timeout here
+        # triggered the 14:13 "TimeoutError()" Slack alert on the
+        # 14:12 deploy.
+        return zk_session.submit(_op_get_time, timeout=120.0)
     except Exception as exc:
         return {"success": False, "message": _describe_exc(exc)}
 
