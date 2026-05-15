@@ -106,7 +106,29 @@
     font-weight: 500;
 }
 
-/* Removed attendance status badges - no longer showing check-in/check-out */
+/* Per-entry check-in / check-out badge. Re-added 2026-05 so the
+   consolidated view distinguishes entry direction at a glance. */
+.punch-badge {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1.2;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+.punch-badge.punch-in {
+    background: #e8f5e9;
+    color: #1b5e20;
+    border: 1px solid #a5d6a7;
+}
+.punch-badge.punch-out {
+    background: #fff3e0;
+    color: #b71c1c;
+    border: 1px solid #ffcc80;
+}
 
 
 /* Responsive adjustments */

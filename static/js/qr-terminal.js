@@ -49,6 +49,11 @@
     let refreshTimeout = null;
     let websocket = null;
     let websocketReconnectAttempt = 0;
+    // device_ids whose attendance broadcasts should land in this kiosk's
+    // feed. Initialised to [TERMINAL_ID] so the QR-only fallback works
+    // before /kiosk/{id} resolves. The fetched response may add more
+    // (typically the fingerprint scanner at this branch).
+    let allowedDeviceIds = new Set([Number(TERMINAL_ID)]);
 
     /**
      * Initialize terminal
@@ -192,6 +197,17 @@
             if (response.ok) {
                 terminalData = data;
                 console.log('[QR Terminal] Terminal data loaded:', terminalData);
+
+                // Build the allow-set used by the WebSocket filter: this
+                // kiosk's own QR scans (device_id == TERMINAL_ID) plus any
+                // fingerprint scanners the backend has linked to it.
+                allowedDeviceIds = new Set([Number(TERMINAL_ID)]);
+                if (Array.isArray(data.linked_fingerprint_device_ids)) {
+                    data.linked_fingerprint_device_ids.forEach(id => {
+                        allowedDeviceIds.add(Number(id));
+                    });
+                }
+                console.log('[QR Terminal] Allowed device IDs:', [...allowedDeviceIds]);
 
                 // Update UI with terminal info
                 updateTerminalInfo();
@@ -381,10 +397,12 @@
     function handleAttendanceUpdate(record) {
         console.log('[Attendance] New record:', record);
 
-        // Strict per-terminal filter: each kiosk only shows its own branch's
-        // check-ins. The old fallback on metadata.includes('QR Check-in') was
-        // true for every QR record and leaked HF ↔ HF Ville activity.
-        if (record.device_id != null && record.device_id == TERMINAL_ID) {
+        // Show records from any device in this kiosk's allow-set: the
+        // kiosk's own TERMINAL_ID plus the fingerprint scanners linked to
+        // it (e.g. the at-branch ZK device). The old fallback on
+        // metadata.includes('QR Check-in') leaked HF ↔ HF Ville and is
+        // intentionally gone.
+        if (record.device_id != null && allowedDeviceIds.has(Number(record.device_id))) {
             addFeedItem(record, true);
         }
     }

@@ -23,6 +23,7 @@ class SimpleAttendanceService:
                              end_date: Optional[date] = None,
                              employee_badge: Optional[str] = None,
                              device_id: Optional[int] = None,
+                             device_ids: Optional[List[int]] = None,
                              limit: int = 1000) -> List[AttendanceRecord]:
         """Get attendance records with basic filtering
 
@@ -55,7 +56,12 @@ class SimpleAttendanceService:
             if employee_badge:
                 query = query.filter(AttendanceRecord.employee_badge_number == employee_badge)
 
-            if device_id is not None:
+            # device_ids takes precedence over device_id when both are passed.
+            # Used by the kiosk /recent endpoint to pull QR check-ins + linked
+            # fingerprint scans in a single query.
+            if device_ids:
+                query = query.filter(AttendanceRecord.device_id.in_(device_ids))
+            elif device_id is not None:
                 query = query.filter(AttendanceRecord.device_id == device_id)
 
             # Filter out future dates (year 2065 and beyond)

@@ -252,12 +252,47 @@
         
         socket.on('attendance_update', function(data) {
             console.log('Received attendance update:', data);
-            // Preserve existing data structure and merge with new data
-            if (data.data) {
+            // The broadcast has two shapes:
+            //   1. Refresh-driven: data.data is a {badge: [records]} dict —
+            //      spread merges per-badge keys cleanly.
+            //   2. QR scan single-event: data.data is a flat record
+            //      {device_id, badge_number, timestamp, metadata, ...}.
+            //      Spreading that would write top-level keys like
+            //      `device_id` into attendanceData and updateEmployeeGrid
+            //      would silently drop the scan (it only consumes array
+            //      values). Detect it and append to the right badge.
+            if (data.data && typeof data.data.badge_number === 'string') {
+                appendFlatRecord(data.data);
+            } else if (data.data) {
                 attendanceData = { ...attendanceData, ...data.data };
             }
             updateDashboard(data);
         });
+
+        // Append a single flat-record broadcast to the per-badge structure
+        // the dashboard expects. Re-uses the same field shape produced by
+        // attendance_service.get_attendance_summary() so updateEmployeeGrid
+        // doesn't need to special-case anything.
+        function appendFlatRecord(rec) {
+            const badge = rec.badge_number;
+            if (!badge) return;
+            const ts = new Date(rec.timestamp);
+            const meta = rec.metadata || '';
+            const isCheckOut = meta.includes('QR Check-out');
+            const entry = {
+                id: rec.id || `live-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+                employee_id: badge,
+                time: ts.toLocaleTimeString('th-TH', {hour12: false, timeZone: 'Asia/Bangkok'}),
+                date: ts.toLocaleDateString('en-GB', {day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Bangkok'}),
+                date_display: ts.toLocaleDateString('en-GB', {day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Bangkok'}),
+                timestamp: rec.timestamp,
+                status: isCheckOut ? 'Check-out' : 'Check-in',
+            };
+            if (!Array.isArray(attendanceData[badge])) {
+                attendanceData[badge] = [];
+            }
+            attendanceData[badge].unshift(entry);
+        }
         
         function updateDashboard(data) {
             // Update status
@@ -321,14 +356,21 @@
 
         function updateEmployeeGrid(rawApiData = null) {
             const container = document.getElementById('employeeContainer');
-            
+
             let allRecords = [];
-            
-            // Handle different data sources - socket data vs API data
-            if (rawApiData && rawApiData.data) {
-                // API data format from dashboard - extract from consolidated structure
-                const consolidatedData = rawApiData.data;
-                Object.entries(consolidatedData).forEach(([employeeName, records]) => {
+
+            // Handle different data sources - socket data vs API data.
+            // For a QR single-event broadcast, rawApiData.data is a flat
+            // record (no array values) and would leave allRecords empty,
+            // wiping the visible feed. Detect that and fall through to
+            // the merged-attendanceData branch instead — appendFlatRecord
+            // (in the WS handler) has already inserted the new entry there.
+            const consolidated = rawApiData && rawApiData.data;
+            const consolidatedHasArrays = consolidated &&
+                Object.values(consolidated).some(v => Array.isArray(v));
+
+            if (consolidated && consolidatedHasArrays) {
+                Object.entries(consolidated).forEach(([employeeName, records]) => {
                     if (Array.isArray(records)) {
                         allRecords = allRecords.concat(records);
                     }
@@ -384,15 +426,25 @@
                 return timeB - timeA;
             });
             
-            // Create consolidated attendance entries with Thai names
+            // Create consolidated attendance entries with Thai names.
+            // The summary endpoint already maps punch_type → status
+            // ('Check-in' | 'Check-out'); display it so the operator can
+            // tell entries apart at a glance.
             const attendanceEntries = allRecords.map(record => {
                 const displayName = getDisplayName(record.employee_id);
                 const recordId = record.id || record.record_id;
+
+                const status = record.status || (record.punch_type === 1 ? 'Check-out' : 'Check-in');
+                const isCheckOut = status === 'Check-out';
+                const badgeIcon = isCheckOut ? '📤' : '📥';
+                const badgeLabel = isCheckOut ? 'ออก' : 'เข้า';
+                const badgeClass = isCheckOut ? 'punch-badge punch-out' : 'punch-badge punch-in';
 
                 return `
                     <div class="attendance-entry" data-record-id="${recordId}">
                         <div class="employee-info">
                             <span class="employee-name">${displayName}</span>
+                            <span class="${badgeClass}">${badgeIcon} ${badgeLabel}</span>
                         </div>
                         <div class="time-info">
                             <span class="attendance-time">${record.time}</span>

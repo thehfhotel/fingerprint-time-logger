@@ -22,6 +22,32 @@ from app.services.line_auth_service import line_auth_service
 router = APIRouter()
 
 
+def _linked_fingerprint_device_ids(terminal: Device) -> list[int]:
+    """Parse the list of fingerprint device IDs whose records this kiosk
+    should surface, from terminal.device_metadata.linked_fingerprint_device_ids.
+
+    Stored as a JSON array of ints inside the same device_metadata blob that
+    already holds the GPS config — e.g.::
+
+        {"gps": {...}, "linked_fingerprint_device_ids": [1]}
+
+    Missing / malformed metadata returns []. Non-int entries are silently
+    dropped so a manual SQL edit that puts a string ID in won't 500 the
+    endpoint.
+    """
+    import json
+    if not terminal.device_metadata:
+        return []
+    try:
+        meta = json.loads(terminal.device_metadata)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    raw = meta.get("linked_fingerprint_device_ids", [])
+    if not isinstance(raw, list):
+        return []
+    return [int(x) for x in raw if isinstance(x, (int, float)) and not isinstance(x, bool)]
+
+
 # ============================================================================
 # Request/Response Models
 # ============================================================================
@@ -52,6 +78,11 @@ class QRCodeResponse(BaseModel):
     terminal_name: str
     expires_at: str
     expires_in_seconds: int
+    # Device IDs (typically fingerprint scanners) whose attendance records
+    # should also surface on this kiosk's feed. Empty list means QR-only.
+    # The kiosk JS unions these with TERMINAL_ID when filtering WebSocket
+    # broadcasts; the /recent endpoint applies the same union for backfill.
+    linked_fingerprint_device_ids: list[int] = []
 
 
 class TerminalInfo(BaseModel):
@@ -163,6 +194,19 @@ async def scan_qr_code(
         db.add(attendance_record)
         db.commit()
         db.refresh(attendance_record)
+
+        # Invalidate the dashboard's attendance_summary cache (5-min TTL).
+        # Without this, the next /api/private/attendance/summary fetch
+        # returns a stale snapshot that doesn't include this scan, and
+        # the dashboard waits up to 5 min for the scheduler to refresh.
+        try:
+            from app.services.device_cache_service import device_cache_service
+            device_cache_service.invalidate("attendance_summary")
+        except Exception as cache_error:
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Failed to invalidate attendance_summary cache: {cache_error}"
+            )
 
         # Broadcast attendance update to WebSocket clients (QR terminal display)
         try:
@@ -309,7 +353,8 @@ async def get_qr_code_for_kiosk(
             terminal_id=terminal_id,
             terminal_name=terminal_name,
             expires_at=qr_data["expires_at"],
-            expires_in_seconds=qr_data["expires_in_seconds"]
+            expires_in_seconds=qr_data["expires_in_seconds"],
+            linked_fingerprint_device_ids=_linked_fingerprint_device_ids(terminal),
         )
 
     except HTTPException as e:
@@ -406,8 +451,11 @@ async def get_recent_for_terminal(
 ):
     """Recent attendance records for one QR terminal (kiosk feed backfill).
 
-    Scoped strictly to records with device_id == terminal_id so each branch
-    only sees its own activity. Today is interpreted in Bangkok time.
+    Scoped to {terminal_id} ∪ terminal.device_metadata.linked_fingerprint_device_ids
+    so each branch sees its own QR check-ins plus any fingerprint scanners
+    linked to it. The link list is configured per-terminal — empty by
+    default (QR-only), populated to include the at-branch fingerprint
+    device. Today is interpreted in Bangkok time.
     """
     try:
         from datetime import timedelta
@@ -427,10 +475,14 @@ async def get_recent_for_terminal(
         bangkok_tz = timezone(timedelta(hours=7))
         today_bkk = datetime.now(bangkok_tz).date()
 
+        # Union of this kiosk's own QR check-ins (device_id == terminal_id)
+        # and any fingerprint scans on devices we've explicitly linked here.
+        device_ids = [terminal_id] + _linked_fingerprint_device_ids(terminal)
+
         records = attendance_service.get_attendance_records(
             start_date=today_bkk,
             end_date=today_bkk,
-            device_id=terminal_id,
+            device_ids=device_ids,
             limit=max(1, min(limit, 50)),
         )
 
