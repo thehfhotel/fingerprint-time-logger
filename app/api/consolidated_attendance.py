@@ -37,14 +37,14 @@ router = APIRouter()
 _DEFAULT_EXPECTED_START_TIME = "09:00"
 
 # Sort priority for the by-date status enum. Late first (most actionable),
-# then absent (needs follow-up), then on-time. "off" is documented but never
-# emitted today because only active employees are returned (see
-# get_attendance_by_date docstring).
+# then on-time. "absent" was removed 2026-05 — we now only emit a row per
+# employee who actually punched on the target date, because tracking absence
+# requires per-employee work schedules which we don't have yet. "off" is
+# reserved for that future schedule-aware version and isn't emitted today.
 _BY_DATE_STATUS_SORT_ORDER = {
     "late": 0,
-    "absent": 1,
-    "on_time": 2,
-    "off": 3,
+    "on_time": 1,
+    "off": 2,
 }
 
 
@@ -125,15 +125,19 @@ def _compute_status(
     """
     Compute by-date status enum.
 
-    - "absent": active employee with no punches that day
     - "late": first_in_bangkok.time() > expected_start
     - "on_time": first_in_bangkok.time() <= expected_start
-    - "off": NOT emitted by this endpoint (we filter to is_active=True).
-      Documented here so frontend can render the value if a future caller
-      includes inactive employees.
+
+    A caller is required to pass a non-None first_in_bangkok — the endpoint
+    no longer emits rows for employees who didn't punch (absence tracking
+    needs per-employee schedules, which we don't have yet). "off" is
+    reserved for that future schedule-aware version.
     """
     if first_in_bangkok is None:
-        return "absent"
+        # Defensive: callers shouldn't pass None now that the endpoint
+        # filters out no-punch employees upstream. Treat as on_time rather
+        # than the dropped "absent" sentinel.
+        return "on_time"
     if first_in_bangkok.time() > expected_start:
         return "late"
     return "on_time"
@@ -390,18 +394,22 @@ async def get_attendance_by_date(
     """
     Per-date attendance summary for the v2 by-date page.
 
-    One row per ACTIVE employee. first_in/last_out are HH:mm in Bangkok
-    timezone; either may be null if the employee did not punch. hours_worked
-    is decimal hours between first_in and last_out, or null if last_out is
-    absent or identical to first_in.
+    One row per ACTIVE employee who actually punched on that Bangkok day.
+    Employees with no punches are omitted (absence tracking requires
+    per-employee schedules, which we don't have yet — once we do, this
+    endpoint will surface "absent" again and pair it with each employee's
+    expected workday).
+
+    first_in / last_out are HH:mm Bangkok. hours_worked is the decimal-hour
+    delta, or null if there's only one punch (last_out == first_in).
 
     Status enum (see _compute_status):
-      - "on_time" | "late" | "absent" | "off"
+      - "late" | "on_time"
+      - "off" is reserved for the future schedule-aware version and is
+        not emitted today.
 
-    Rows are sorted: late first, then absent, then on_time, then by
-    display_name (case-insensitive, deterministic).
-
-    See plan: docs section "Page 2: By-date summary" + "New backend endpoint".
+    Rows are sorted: late first, then on_time, then by display_name
+    (case-insensitive, deterministic).
     """
     target_day = _parse_date_param(date_param)
     expected_start_str = _resolve_expected_start_time()
@@ -409,11 +417,26 @@ async def get_attendance_by_date(
     utc_start, utc_end = _bangkok_day_to_utc_range(target_day)
 
     punches_by_badge = _fetch_punches_by_badge(db, utc_start, utc_end)
-    active_employees = _fetch_active_employees(db)
+    if not punches_by_badge:
+        return {
+            "date": target_day.isoformat(),
+            "expected_start_time": expected_start_str,
+            "rows": [],
+        }
+
+    # Only employees who punched on the target date make it into the rows.
+    # Inactive employees are filtered out to match the original contract:
+    # we don't want a long-departed staff member resurfacing because a
+    # stray punch slipped through.
+    active_by_badge = {
+        emp.badge_number: emp
+        for emp in _fetch_active_employees(db)
+        if emp.badge_number in punches_by_badge
+    }
 
     rows = [
-        _build_row(employee, punches_by_badge.get(employee.badge_number), expected_start)
-        for employee in active_employees
+        _build_row(active_by_badge[badge], punches_by_badge[badge], expected_start)
+        for badge in active_by_badge
     ]
     rows.sort(key=lambda row: (
         _BY_DATE_STATUS_SORT_ORDER.get(row["status"], 99),
@@ -476,12 +499,14 @@ def _fetch_active_employees(db: Session) -> List[Employee]:
 
 def _build_row(
     employee: Employee,
-    punches: Optional[Dict[str, datetime]],
+    punches: Dict[str, datetime],
     expected_start: dtime,
 ) -> Dict[str, Any]:
-    """Build the JSON row for one employee. punches=None means absent."""
-    first_in_utc = punches["first_in"] if punches else None
-    last_out_utc = punches["last_out"] if punches else None
+    """Build the JSON row for one employee. Caller guarantees ``punches`` is
+    non-empty — the endpoint no longer emits rows for employees with no
+    punches on the target date."""
+    first_in_utc = punches["first_in"]
+    last_out_utc = punches["last_out"]
 
     first_in_bangkok = _to_bangkok(first_in_utc) if first_in_utc else None
     last_out_bangkok = _to_bangkok(last_out_utc) if last_out_utc else None

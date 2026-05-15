@@ -6,7 +6,9 @@ Endpoint contract (see plan section "New backend endpoint"):
   - Query: date=YYYY-MM-DD (Bangkok-local, defaults to today)
   - Response: { date, expected_start_time, rows: [...] }
   - One row per ACTIVE employee
-  - status enum: on_time | late | absent | off (off not emitted)
+  - status enum: on_time | late ("absent"/"off" not emitted today;
+    "absent" was dropped 2026-05 when the endpoint stopped surfacing
+    no-punch employees — see _compute_status docstring)
 
 These tests hit the ROOT app (where /api/private/* is mounted) using a
 fresh TestClient + dependency override pattern. We don't reuse the shared
@@ -179,10 +181,15 @@ def _add_punch(
 class TestByDateEndpoint:
     """Contract tests for /api/private/attendance/by-date."""
 
-    def test_empty_day_returns_absent_for_all_active_employees(
+    def test_empty_day_returns_zero_rows(
         self, by_date_client, by_date_session, seed_device
     ):
-        """No punches that day → every active employee shows status='absent'."""
+        """No punches that day → empty rows list.
+
+        Pre 2026-05 this returned one absent row per active employee.
+        Absence tracking now waits on per-employee schedules; today the
+        endpoint only emits rows for employees who actually punched.
+        """
         _make_employee(by_date_session, "1001", "Somchai")
         _make_employee(by_date_session, "1002", "Niran")
 
@@ -194,12 +201,7 @@ class TestByDateEndpoint:
         body = response.json()
         assert body["date"] == "2026-05-14"
         assert body["expected_start_time"] == "09:00"
-        assert len(body["rows"]) == 2
-        for row in body["rows"]:
-            assert row["status"] == "absent"
-            assert row["first_in"] is None
-            assert row["last_out"] is None
-            assert row["hours_worked"] is None
+        assert body["rows"] == []
 
     def test_two_punches_around_expected_start_yields_on_time(
         self, by_date_client, by_date_session, seed_device
@@ -250,13 +252,25 @@ class TestByDateEndpoint:
     def test_inactive_employees_excluded(
         self, by_date_client, by_date_session, seed_device
     ):
-        """is_active=False employees never appear in rows."""
+        """is_active=False employees never appear, even if they punched.
+
+        We have to give both employees punches now that the endpoint
+        filters to "actually punched today" — otherwise neither would
+        appear and the inactive-filter behaviour wouldn't be exercised.
+        """
         _make_employee(by_date_session, "4001", "ActiveAlice")
         _make_employee(by_date_session, "4002", "InactiveBob", is_active=False)
 
+        target = date_type(2026, 5, 14)
+        for badge in ("4001", "4002"):
+            _add_punch(
+                by_date_session, badge, seed_device.id,
+                datetime(2026, 5, 14, 9, 0, tzinfo=BANGKOK_TZ),
+            )
+
         client, _ = by_date_client
         response = client.get(
-            BY_DATE_PATH, params={"date": "2026-05-14"}
+            BY_DATE_PATH, params={"date": target.isoformat()}
         )
         assert response.status_code == 200
         badges = [row["badge_number"] for row in response.json()["rows"]]
@@ -281,16 +295,18 @@ class TestByDateEndpoint:
         today_bangkok = datetime.now(BANGKOK_TZ).date().isoformat()
         assert response.json()["date"] == today_bangkok
 
-    def test_sort_order_late_then_absent_then_on_time_then_name(
+    def test_sort_order_late_then_on_time_then_name(
         self, by_date_client, by_date_session, seed_device
     ):
-        """Verify the documented sort: late > absent > on_time, then by name."""
+        """Verify the sort: late > on_time, then by display_name.
+
+        Absent rows were dropped 2026-05 — the no-punch employee from
+        the previous version of this test (ZenAbsent) is removed because
+        it would no longer appear in the response at all.
+        """
         target = date_type(2026, 5, 14)
 
-        # absent (no punches) — should come AFTER late
-        _make_employee(by_date_session, "9001", "ZenAbsent")
-
-        # on_time — comes last
+        # on_time — comes after late
         _make_employee(by_date_session, "9002", "Alpha")
         _add_punch(
             by_date_session,
@@ -323,9 +339,31 @@ class TestByDateEndpoint:
         statuses = [row["status"] for row in response.json()["rows"]]
         names = [row["display_name"] for row in response.json()["rows"]]
 
-        assert statuses == ["late", "absent", "on_time", "on_time"]
+        assert statuses == ["late", "on_time", "on_time"]
         # Within on_time, Alpha < Charlie alphabetically
-        assert names[2:] == ["Alpha", "Charlie"]
+        assert names[1:] == ["Alpha", "Charlie"]
+
+    def test_employee_with_no_punches_omitted(
+        self, by_date_client, by_date_session, seed_device
+    ):
+        """A second active employee with no punches today doesn't appear.
+
+        Pins the new contract: only employees who actually punched are
+        emitted. Was "absent" pre 2026-05; now omitted entirely.
+        """
+        target = date_type(2026, 5, 14)
+        _make_employee(by_date_session, "PNCH", "Puncher")
+        _add_punch(
+            by_date_session, "PNCH", seed_device.id,
+            datetime(2026, 5, 14, 8, 0, tzinfo=BANGKOK_TZ),
+        )
+        _make_employee(by_date_session, "NONE", "NoPunchToday")  # active, no punches
+
+        client, _ = by_date_client
+        response = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
+        assert response.status_code == 200
+        badges = [row["badge_number"] for row in response.json()["rows"]]
+        assert badges == ["PNCH"]
 
     def test_single_punch_yields_null_hours_worked(
         self, by_date_client, by_date_session, seed_device

@@ -102,7 +102,6 @@
           <button data-filter="all"      class="chip chip-on h-10 rounded-full border px-3 font-medium">ทั้งหมด</button>
           <button data-filter="on_time"  class="chip h-10 rounded-full border px-3 font-medium">ตรงเวลา</button>
           <button data-filter="late"     class="chip h-10 rounded-full border px-3 font-medium">สาย</button>
-          <button data-filter="absent"   class="chip h-10 rounded-full border px-3 font-medium">ขาด</button>
         </div>
       </div>
 
@@ -128,8 +127,8 @@
           <circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>
         </svg>
       </div>
-      <p id="emptyText" class="text-sm font-medium text-ink-700">ไม่มีพนักงานที่เปิดใช้งานในวันนี้</p>
-      <p class="mt-1 text-xs text-ink-500">ลองเลือกวันอื่น</p>
+      <p id="emptyText" class="text-sm font-medium text-ink-700">ยังไม่มีพนักงานลงเวลาในวันนี้</p>
+      <p class="mt-1 text-xs text-ink-500">ลองเลือกวันอื่น หรือรอการลงเวลาครั้งแรก</p>
     </div>
 
     <!-- DESKTOP TABLE (md+) -->
@@ -250,6 +249,9 @@
         switch (s) {
           case "on_time": return { text: "ตรงเวลา", klass: "bg-good-100 text-good-700" };
           case "late":    return { text: "สาย",     klass: "bg-warn-100 text-warn-700" };
+          // "absent" was removed when by-date stopped emitting no-punch
+          // rows (2026-05). Kept as a defensive fallback for older
+          // cached responses or future reintroduction with schedules.
           case "absent":  return { text: "ขาด",     klass: "bg-bad-100 text-bad-700" };
           case "off":     return { text: "หยุด",    klass: "bg-off-100 text-off-600" };
           default:        return { text: s || "—",  klass: "bg-ink-100 text-ink-600" };
@@ -316,12 +318,12 @@
         const filtered = applyFilter(state.rows);
         metaLine.textContent =
           fmtPretty(state.date) +
-          " · พนักงาน " + state.rows.length + " คน" +
+          " · ลงเวลา " + state.rows.length + " คน" +
           " · เวลาเริ่มงาน " + state.expectedStart +
           (filtered.length !== state.rows.length ? " · แสดง " + filtered.length : "");
 
         if (state.rows.length === 0) {
-          showEmpty("ไม่มีพนักงานที่เปิดใช้งานในวันนี้");
+          showEmpty("ยังไม่มีพนักงานลงเวลาในวันนี้");
           return;
         }
         if (filtered.length === 0) {
