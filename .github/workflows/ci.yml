@@ -39,13 +39,10 @@ jobs:
     name: Tests (unit + integration)
     runs-on: ubuntu-latest
     needs: lint
-    # TODO: many tests still target the pre-Oct-2025 routing scheme
-    # (`/api/attendance/...` instead of `/api/private/attendance/...`) and
-    # the pre-7e6649ac passcode auth. The first commit that runs CI on a
-    # green test DB (this one) surfaces ~80 stale route paths. Marking the
-    # job non-blocking so the redesign deploy isn't held up by pre-existing
-    # test rot. Sweep to update routes is filed separately.
-    continue-on-error: true
+    # Previously `continue-on-error: true` to tolerate pre-Oct-2025
+    # route rot. That sweep landed alongside this commit (all legacy
+    # paths updated, dead-functionality tests skipped with documented
+    # reasons), so the job now blocks PRs the way it should.
     steps:
       - uses: actions/checkout@v4
 
@@ -78,7 +75,6 @@ jobs:
           python -c "from app.core.database import Base, engine; Base.metadata.create_all(bind=engine)"
 
       - name: Run unit tests
-        continue-on-error: true
         run: pytest tests/unit/ -v --cov=app --cov-report=xml --cov-report=term-missing
 
       - name: Run integration tests

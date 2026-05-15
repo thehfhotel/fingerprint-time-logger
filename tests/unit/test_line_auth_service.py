@@ -75,12 +75,17 @@ class TestAuthorizationURL:
         assert "not configured" in exc_info.value.detail.lower()
 
     def test_generate_auth_url_stores_state(self, line_auth_service):
-        """Test that state is stored for later validation"""
+        """State now stores (timestamp, redirect_hint) — see
+        app/services/line_auth_service.py:111 — to support smart
+        OAuth-callback redirects for users mid-flow.
+        """
         result = line_auth_service.generate_authorization_url()
         state = result["state"]
 
         assert state in line_auth_service._state_storage
-        assert isinstance(line_auth_service._state_storage[state], float)
+        entry = line_auth_service._state_storage[state]
+        assert isinstance(entry, tuple)
+        assert isinstance(entry[0], float)  # timestamp
 
 
 # ============================================================================
@@ -90,33 +95,36 @@ class TestAuthorizationURL:
 class TestStateValidation:
     """Test CSRF state token validation"""
 
+    # validate_state now returns (ok: bool, redirect_hint: Optional[str])
+    # rather than a bare bool — see app/services/line_auth_service.py:130.
+    # _state_storage entries are likewise (timestamp, redirect_hint) tuples.
+
     def test_validate_valid_state(self, line_auth_service):
         """Test validation of valid state token"""
         result = line_auth_service.generate_authorization_url()
         state = result["state"]
 
-        # State should be valid immediately after generation
-        assert line_auth_service.validate_state(state) is True
+        ok, _hint = line_auth_service.validate_state(state)
+        assert ok is True
 
         # State should be consumed (one-time use)
         assert state not in line_auth_service._state_storage
 
     def test_validate_invalid_state(self, line_auth_service):
         """Test validation of invalid state token"""
-        invalid_state = "invalid_state_token"
-
-        assert line_auth_service.validate_state(invalid_state) is False
+        ok, _hint = line_auth_service.validate_state("invalid_state_token")
+        assert ok is False
 
     def test_validate_expired_state(self, line_auth_service):
         """Test validation of expired state token"""
-        # Generate state and manually expire it
         result = line_auth_service.generate_authorization_url()
         state = result["state"]
 
-        # Set timestamp to 11 minutes ago (past TTL)
-        line_auth_service._state_storage[state] = time.time() - 660
+        # 11 minutes ago, past the 10-min TTL.
+        line_auth_service._state_storage[state] = (time.time() - 660, None)
 
-        assert line_auth_service.validate_state(state) is False
+        ok, _hint = line_auth_service.validate_state(state)
+        assert ok is False
         assert state not in line_auth_service._state_storage
 
     def test_validate_state_boundary_10_minutes(self, line_auth_service):
@@ -124,22 +132,19 @@ class TestStateValidation:
         result = line_auth_service.generate_authorization_url()
         state = result["state"]
 
-        # Set timestamp to exactly 10 minutes ago (at TTL boundary)
-        line_auth_service._state_storage[state] = time.time() - 600
+        line_auth_service._state_storage[state] = (time.time() - 600, None)
 
-        # Should be expired at exactly 10 minutes (>= TTL)
-        assert line_auth_service.validate_state(state) is False
+        ok, _hint = line_auth_service.validate_state(state)
+        assert ok is False
 
     def test_state_cleanup_removes_expired(self, line_auth_service):
         """Test that cleanup removes expired states"""
-        # Create multiple states with different ages
         fresh_state = "fresh_state"
         expired_state = "expired_state"
 
-        line_auth_service._state_storage[fresh_state] = time.time()
-        line_auth_service._state_storage[expired_state] = time.time() - 700
+        line_auth_service._state_storage[fresh_state] = (time.time(), None)
+        line_auth_service._state_storage[expired_state] = (time.time() - 700, None)
 
-        # Trigger cleanup
         line_auth_service._cleanup_expired_states()
 
         assert fresh_state in line_auth_service._state_storage

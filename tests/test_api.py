@@ -15,15 +15,15 @@ def test_root_endpoint_mounted(mounted_test_client):
 
 
 def test_dashboard_endpoint(test_client):
-    """Test that the dashboard is served correctly"""
-    response = test_client.get("/")
+    """Dashboard HTML now lives on the mounted fingerprint_app under /fingerprintlogs/."""
+    response = test_client.get("/fingerprintlogs/")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
 
 
 def test_health_endpoint(test_client):
-    """Test health endpoint"""
-    response = test_client.get("/health")
+    """Health endpoint lives on fingerprint_app (mounted under /fingerprintlogs)."""
+    response = test_client.get("/fingerprintlogs/health")
     assert response.status_code == 200
     data = response.json()
     assert "status" in data
@@ -32,7 +32,7 @@ def test_health_endpoint(test_client):
 
 def test_device_health_endpoint(test_client):
     """Test device health endpoint"""
-    response = test_client.get("/api/devices/health")
+    response = test_client.get("/api/private/devices/health")
     assert response.status_code == 200
     data = response.json()
     assert "status" in data
@@ -40,7 +40,7 @@ def test_device_health_endpoint(test_client):
 
 def test_attendance_endpoint(test_client, test_company_setup):
     """Test attendance data endpoint"""
-    response = test_client.get("/api/attendance/")
+    response = test_client.get("/api/private/attendance/")
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, dict)
@@ -51,7 +51,7 @@ def test_attendance_endpoint(test_client, test_company_setup):
 
 def test_employees_endpoint(test_client, test_company_setup):
     """Test employees endpoint"""
-    response = test_client.get("/api/employees/")
+    response = test_client.get("/api/private/employees/")
     assert response.status_code == 200
     data = response.json()
     assert "employees" in data

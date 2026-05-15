@@ -33,6 +33,8 @@ class QRScanRequest(BaseModel):
     latitude: float = Field(..., ge=-90, le=90, description="User's GPS latitude")
     longitude: float = Field(..., ge=-180, le=180, description="User's GPS longitude")
     accuracy: Optional[float] = Field(None, ge=0, description="GPS accuracy in meters")
+    # 0 = check-in, 1 = check-out. User chooses on the scan page AFTER scanning.
+    punch_type: int = Field(0, ge=0, le=1, description="0=check-in, 1=check-out")
 
 
 class QRScanResponse(BaseModel):
@@ -143,13 +145,17 @@ async def scan_qr_code(
             )
 
         # Step 5: Create AttendanceRecord
+        # User chose check-in (0) or check-out (1) on the scan page after the
+        # QR scan. The validation_message tag ("QR Check-in" / "QR Check-out")
+        # is what mobile-checkin.js parses to display the action.
+        action_label = "QR Check-out" if request.punch_type == 1 else "QR Check-in"
         attendance_record = AttendanceRecord(
             employee_badge_number=employee.badge_number,
             timestamp=datetime.now(timezone.utc),
             device_id=terminal_id,
-            punch_type=0,  # 0 = check_in (auto-determine based on time)
+            punch_type=request.punch_type,
             sync_status="synced",  # QR check-in is always synced
-            validation_message=f"QR Check-in at {location_validation['terminal_location']['location_name']}, "
+            validation_message=f"{action_label} at {location_validation['terminal_location']['location_name']}, "
                              f"GPS: {request.latitude},{request.longitude}, "
                              f"Distance: {location_validation['distance']}m"
         )
@@ -385,6 +391,84 @@ async def validate_user_location(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"การตรวจสอบตำแหน่งล้มเหลว: {str(e)}"
+        )
+
+
+# ============================================================================
+# TERMINAL RECENT FEED (Unprotected, per-branch)
+# ============================================================================
+
+@router.get("/recent/{terminal_id}")
+async def get_recent_for_terminal(
+    terminal_id: int,
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    """Recent attendance records for one QR terminal (kiosk feed backfill).
+
+    Scoped strictly to records with device_id == terminal_id so each branch
+    only sees its own activity. Today is interpreted in Bangkok time.
+    """
+    try:
+        from datetime import timedelta
+        from app.services.attendance_service import attendance_service
+
+        # Verify the terminal exists and is a QR terminal
+        terminal = db.query(Device).filter(
+            Device.id == terminal_id,
+            Device.device_type == "qr_terminal"
+        ).first()
+        if not terminal:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"ไม่พบเครื่อง QR terminal ID {terminal_id}"
+            )
+
+        bangkok_tz = timezone(timedelta(hours=7))
+        today_bkk = datetime.now(bangkok_tz).date()
+
+        records = attendance_service.get_attendance_records(
+            start_date=today_bkk,
+            end_date=today_bkk,
+            device_id=terminal_id,
+            limit=max(1, min(limit, 50)),
+        )
+
+        badges = {r.employee_badge_number for r in records}
+        employees = {
+            e.badge_number: e
+            for e in db.query(Employee)
+            .filter(Employee.badge_number.in_(badges))
+            .all()
+        } if badges else {}
+
+        return {
+            "terminal_id": terminal_id,
+            "records": [
+                {
+                    "id": r.id,
+                    "badge_number": r.employee_badge_number,
+                    "employee_name": (
+                        employees[r.employee_badge_number].display_name
+                        if r.employee_badge_number in employees
+                        else f"รหัส {r.employee_badge_number}"
+                    ),
+                    "timestamp": r.timestamp.replace(tzinfo=timezone.utc).isoformat()
+                        if r.timestamp else None,
+                    "device_id": r.device_id,
+                    "punch_type": r.punch_type,
+                    "metadata": r.validation_message,
+                }
+                for r in records
+            ],
+            "total": len(records),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"การโหลดประวัติล่าสุดล้มเหลว: {str(e)}"
         )
 
 

@@ -66,11 +66,38 @@
         // Load terminal data
         loadTerminalData();
 
+        // Backfill today's recent activity for THIS branch from DB
+        loadRecentForTerminal();
+
         // Setup event listeners
         setupEventListeners();
 
         // Connect WebSocket
         connectWebSocket();
+    }
+
+    /**
+     * Backfill the recent-activity feed with today's records for THIS terminal.
+     * Strictly scoped server-side by device_id so HF and HF Ville never mix.
+     */
+    async function loadRecentForTerminal() {
+        try {
+            const response = await fetch(`/api/public/qr-checkin/recent/${TERMINAL_ID}?limit=10`);
+            if (!response.ok) {
+                console.warn('[Recent] Backfill request failed:', response.status);
+                return;
+            }
+            const data = await response.json();
+            if (!data.records || data.records.length === 0) {
+                return; // keep the existing empty state
+            }
+            // Render oldest-first so the newest ends up at the top after prepending.
+            const oldestFirst = data.records.slice().reverse();
+            oldestFirst.forEach(rec => addFeedItem(rec, false));
+            console.log('[Recent] Backfilled', data.records.length, 'records for terminal', TERMINAL_ID);
+        } catch (error) {
+            console.error('[Recent] Backfill error:', error);
+        }
     }
 
     /**
@@ -354,8 +381,10 @@
     function handleAttendanceUpdate(record) {
         console.log('[Attendance] New record:', record);
 
-        // Check if this is for our terminal
-        if (record.device_id == TERMINAL_ID || record.metadata?.includes('QR Check-in')) {
+        // Strict per-terminal filter: each kiosk only shows its own branch's
+        // check-ins. The old fallback on metadata.includes('QR Check-in') was
+        // true for every QR record and leaked HF ↔ HF Ville activity.
+        if (record.device_id != null && record.device_id == TERMINAL_ID) {
             addFeedItem(record, true);
         }
     }
@@ -375,9 +404,16 @@
         item.className = `feed-item ${isNew ? 'new' : ''}`;
 
         const metadata = record.metadata || '';
-        const isQR = metadata.includes('QR Check-in');
+        const isQR = metadata.includes('QR Check-in') || metadata.includes('QR Check-out');
+        const isCheckOut = record.punch_type === 1 || metadata.includes('QR Check-out');
+        const actionLabel = isQR
+            ? (isCheckOut ? 'QR Check-out' : 'QR Check-in')
+            : 'ลายนิ้วมือ';
+        const actionIcon = isQR ? (isCheckOut ? '🏃' : '📱') : '👆';
         const locationMatch = metadata.match(/at (.+?),/);
-        const location = locationMatch ? locationMatch[1] : terminalData?.terminal.location_name || '';
+        // API response is flat — terminalData.terminal_name carries the
+        // location name (see QRCodeResponse in app/api/qr_checkin.py).
+        const location = locationMatch ? locationMatch[1] : (terminalData?.terminal_name || '');
 
         const safeBadge = escapeHtml(record.badge_number);
         const safeName = escapeHtml(record.employee_name || `รหัส ${record.badge_number}`);
@@ -394,8 +430,8 @@
                     <span>${safeTime}</span>
                 </div>
                 <div class="feed-detail">
-                    <span>${isQR ? '📱' : '👆'}</span>
-                    <span>${isQR ? 'QR Check-in' : 'ลายนิ้วมือ'}</span>
+                    <span>${actionIcon}</span>
+                    <span>${actionLabel}</span>
                 </div>
                 ${location ? `
                 <div class="feed-detail">

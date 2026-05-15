@@ -22,6 +22,7 @@ class SimpleAttendanceService:
                              start_date: Optional[date] = None,
                              end_date: Optional[date] = None,
                              employee_badge: Optional[str] = None,
+                             device_id: Optional[int] = None,
                              limit: int = 1000) -> List[AttendanceRecord]:
         """Get attendance records with basic filtering
 
@@ -53,6 +54,9 @@ class SimpleAttendanceService:
 
             if employee_badge:
                 query = query.filter(AttendanceRecord.employee_badge_number == employee_badge)
+
+            if device_id is not None:
+                query = query.filter(AttendanceRecord.device_id == device_id)
 
             # Filter out future dates (year 2065 and beyond)
             current_year = datetime.now().year

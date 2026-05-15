@@ -512,9 +512,10 @@
      */
     function displayRecentCheckIns(records) {
         const html = records.map(record => {
-            // QR check-ins have validation_message with "QR Check-in at..."
+            // QR scans tag validation_message with "QR Check-in" or "QR Check-out"
             const validationMsg = record.validation_message || '';
-            const isQR = validationMsg.includes('QR Check-in');
+            const isQR = validationMsg.includes('QR Check-in') || validationMsg.includes('QR Check-out');
+            const isCheckOut = record.punch_type === 1 || validationMsg.includes('QR Check-out');
             const locationMatch = validationMsg.match(/at (.+?),/);
 
             // Determine location with context-appropriate fallback
@@ -522,18 +523,23 @@
             if (locationMatch) {
                 location = locationMatch[1];
             } else if (isQR) {
-                location = 'QR Check-in';
+                location = isCheckOut ? 'QR Check-out' : 'QR Check-in';
             } else {
                 location = 'จากเครื่องสแกนลายนิ้วมือ';
             }
 
+            const badgeLabel = isQR
+                ? (isCheckOut ? '🏃 QR Check-out' : '📱 QR Check-in')
+                : '👆 ลายนิ้วมือ';
+
             const safeTime = escapeHtml(formatDateTime(record.timestamp));
             const safeLocation = escapeHtml(location);
+            const safeBadge = escapeHtml(badgeLabel);
             return `
                 <div class="recent-item">
                     <div class="recent-item-header">
                         <div class="recent-time">${safeTime}</div>
-                        <div class="recent-badge">${isQR ? '📱 QR' : '👆 ลายนิ้วมือ'}</div>
+                        <div class="recent-badge">${safeBadge}</div>
                     </div>
                     <div class="recent-location">📍 ${safeLocation}</div>
                 </div>

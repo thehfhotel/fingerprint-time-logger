@@ -64,10 +64,16 @@ class TestExportServiceDatabaseIntegration:
         ]
         assert headers == expected_headers
 
-        # Verify employee data
+        # Verify employee data. attendance_service.get_employee_list()
+        # filters is_active=True at the source (see
+        # app/services/attendance_service.py:135), so the CSV only ever
+        # contains active employees regardless of export_employees_csv's
+        # own ``active_only`` flag. Compare against the active subset of
+        # the fixture, not the raw count.
         rows = list(csv_reader)
-        if employees:
-            assert len(rows) >= len(employees)
+        active_employees = [emp for emp in employees if emp.is_active]
+        if active_employees:
+            assert len(rows) >= len(active_employees)
 
     def test_export_with_date_filters_integration(self, test_db, test_company_setup):
         """Test export with date filtering using real data"""

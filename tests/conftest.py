@@ -20,7 +20,7 @@ TEST_MEMORY_DATABASE_URL = "sqlite:///:memory:"
 
 
 @pytest.fixture(scope="function")
-def test_engine():
+def test_engine(monkeypatch):
     """Create test database engine optimized for speed"""
     # Use in-memory database with speed optimizations
     engine = create_engine(
@@ -49,6 +49,16 @@ def test_engine():
 
     # Create all tables
     Base.metadata.create_all(bind=engine)
+
+    # Redirect the module-level ``SessionLocal`` so anything that does
+    # ``next(get_db())`` directly (e.g. attendance_service, export_service)
+    # hits this in-memory engine instead of the prod sqlite file. Without
+    # this redirect, services bypass the FastAPI dependency-override and
+    # error out on stale schema in the prod DB (e.g. the line_user_id
+    # migration the test schema includes but the prod file doesn't).
+    import app.core.database as _db_module
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    monkeypatch.setattr(_db_module, "SessionLocal", TestingSessionLocal)
 
     yield engine
 
@@ -85,10 +95,18 @@ def test_db(test_engine):
 
 
 @pytest.fixture(scope="function")
-def test_client(test_engine):
-    """Create FastAPI test client with optimized database dependency"""
+def test_client(test_engine, monkeypatch):
+    """Create FastAPI test client on the root app with DB dependency overrides on both apps.
 
-    # Create a session factory for the test engine
+    Post Oct-2025 routing reorg: all API routers live on the root ``app``;
+    ``fingerprint_app`` only serves legacy admin dashboard HTML/static under
+    ``/fingerprintlogs``. Both apps share the same ``get_db`` dependency.
+
+    Also redirects the module-level ``SessionLocal`` to the test engine so
+    services that call ``next(get_db())`` directly (e.g. ``attendance_service``
+    via ``export_service``) hit the in-memory test DB.
+    """
+
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
     def override_get_db():
@@ -98,22 +116,34 @@ def test_client(test_engine):
         finally:
             db.close()
 
-    # Override database dependency
+    app.dependency_overrides[get_db] = override_get_db
     fingerprint_app.dependency_overrides[get_db] = override_get_db
 
-    # Create test client for direct app access
-    with TestClient(fingerprint_app) as client:
-        yield client
+    # Redirect module-level SessionLocal so direct ``next(get_db())`` callers
+    # use the test DB, not the production sqlite file.
+    import app.core.database as _db_module
+    monkeypatch.setattr(_db_module, "SessionLocal", TestingSessionLocal)
 
-    # Clean up dependency override
+    # Construct without ``with`` to skip the production lifespan (scheduler /
+    # zk_session). Tests don't need those daemons; engaging them per-test
+    # also leaks an asyncio loop into subsequent test cases.
+    client = TestClient(app)
+    yield client
+
+    app.dependency_overrides.clear()
     fingerprint_app.dependency_overrides.clear()
 
 
 @pytest.fixture(scope="function")
-def mounted_test_client(test_engine):
-    """Create FastAPI test client for root app with mounted fingerprint_app (production-like structure)"""
+def mounted_test_client(test_engine, monkeypatch):
+    """Alias for ``test_client`` retained for backward compatibility.
 
-    # Create a session factory for the test engine
+    Pre-reorg, this fixture distinguished the mounted production-like layout
+    (root app with ``fingerprint_app`` mounted at ``/fingerprintlogs``). Now
+    both fixtures resolve to the same root ``app`` because the API routers
+    moved off ``fingerprint_app`` onto the root ``app``.
+    """
+
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
     def override_get_db():
@@ -123,14 +153,16 @@ def mounted_test_client(test_engine):
         finally:
             db.close()
 
-    # Override database dependency on the fingerprint_app (which is mounted)
+    app.dependency_overrides[get_db] = override_get_db
     fingerprint_app.dependency_overrides[get_db] = override_get_db
 
-    # Create test client for root app (which has fingerprint_app mounted at /fingerprintlogs)
-    with TestClient(app) as client:
-        yield client
+    import app.core.database as _db_module
+    monkeypatch.setattr(_db_module, "SessionLocal", TestingSessionLocal)
 
-    # Clean up dependency override
+    client = TestClient(app)
+    yield client
+
+    app.dependency_overrides.clear()
     fingerprint_app.dependency_overrides.clear()
 
 

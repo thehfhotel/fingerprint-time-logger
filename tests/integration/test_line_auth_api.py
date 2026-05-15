@@ -30,7 +30,7 @@ class TestLineOAuthFlow:
     )
     def test_login_initiation(self, test_client):
         """Test LINE OAuth login initiation returns HTML redirect"""
-        response = test_client.get("/api/auth/line/login")
+        response = test_client.get("/api/public/auth/line/login")
 
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
@@ -40,7 +40,7 @@ class TestLineOAuthFlow:
     def test_callback_with_error(self, test_client):
         """Test OAuth callback handles errors gracefully"""
         response = test_client.get(
-            "/api/auth/line/callback?error=access_denied&error_description=User cancelled"
+            "/api/public/auth/line/callback?error=access_denied&error_description=User cancelled"
         )
 
         assert response.status_code == 400
@@ -49,7 +49,7 @@ class TestLineOAuthFlow:
 
     def test_callback_missing_parameters(self, test_client):
         """Test OAuth callback requires code and state"""
-        response = test_client.get("/api/auth/line/callback")
+        response = test_client.get("/api/public/auth/line/callback")
 
         assert response.status_code == 400
 
@@ -68,7 +68,7 @@ class TestAccountLinking:
         token = line_auth_service.create_jwt_token(line_user_id, "temp_badge")
 
         response = test_client.post(
-            "/api/auth/line/link-account",
+            "/api/public/auth/line/link-account",
             json={
                 "linking_code": test_employee_with_code.line_linking_code,
                 "jwt_token": token
@@ -92,7 +92,7 @@ class TestAccountLinking:
         token = line_auth_service.create_jwt_token("U1234567890abcdef", "temp_badge")
 
         response = test_client.post(
-            "/api/auth/line/link-account",
+            "/api/public/auth/line/link-account",
             json={
                 "linking_code": "999999",
                 "jwt_token": token
@@ -106,7 +106,7 @@ class TestAccountLinking:
         token = line_auth_service.create_jwt_token("U_different_user", "temp_badge")
 
         response = test_client.post(
-            "/api/auth/line/link-account",
+            "/api/public/auth/line/link-account",
             json={
                 "linking_code": "123456",  # Any code
                 "jwt_token": token
@@ -133,7 +133,7 @@ class TestAccountLinking:
         token = line_auth_service.create_jwt_token("U1234567890abcdef", "temp_badge")
 
         response = test_client.post(
-            "/api/auth/line/link-account",
+            "/api/public/auth/line/link-account",
             json={
                 "linking_code": "888888",
                 "jwt_token": token
@@ -153,22 +153,29 @@ class TestAccountLinking:
 # ============================================================================
 
 class TestAccountUnlinking:
-    """Test LINE account unlinking (admin only)"""
+    """Test LINE account self-unlinking.
+
+    The endpoint is now self-service: it identifies the caller via a
+    LINE JWT in the Authorization header and unlinks whichever employee
+    is currently linked to that LINE user. Administrative unlink of
+    arbitrary users moved to /api/private/admin/line-codes/unlink behind
+    Cloudflare Access. See app/api/line_auth.py:735 for the contract.
+    The old admin_passcode body field doesn't exist anymore.
+    """
 
     def test_unlink_account_success(self, test_client, test_db, test_employee_with_line):
-        """Test successful account unlinking"""
-        from app.api.admin_line_codes import ADMIN_PASSCODE
-
+        """Caller with a valid LINE JWT can unlink their own account."""
+        token = line_auth_service.create_jwt_token(
+            test_employee_with_line.line_user_id,
+            test_employee_with_line.badge_number,
+        )
         response = test_client.post(
-            "/api/auth/line/unlink-account",
-            json={
-                "badge_number": test_employee_with_line.badge_number,
-                "admin_passcode": ADMIN_PASSCODE,
-                "reason": "Testing unlink"
-            }
+            "/api/public/auth/line/unlink-account",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"reason": "Testing unlink"},
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         data = response.json()
         assert data["success"] is True
 
@@ -176,32 +183,25 @@ class TestAccountUnlinking:
         test_db.refresh(test_employee_with_line)
         assert test_employee_with_line.line_user_id is None
 
-    def test_unlink_account_invalid_passcode(self, test_client, test_employee_with_line):
-        """Test unlinking fails with invalid passcode"""
+    def test_unlink_account_missing_bearer_token(self, test_client, test_employee_with_line):
+        """Unlink without a Bearer token must be rejected as unauthorized."""
         response = test_client.post(
-            "/api/auth/line/unlink-account",
-            json={
-                "badge_number": test_employee_with_line.badge_number,
-                "admin_passcode": "wrong_password",
-                "reason": "Testing"
-            }
+            "/api/public/auth/line/unlink-account",
+            json={"reason": "Testing"},
         )
-
-        assert response.status_code == 403
+        assert response.status_code == 401
 
     def test_unlink_account_not_linked(self, test_client, test_employee):
-        """Test unlinking fails for non-linked employee"""
-        from app.api.admin_line_codes import ADMIN_PASSCODE
-
-        response = test_client.post(
-            "/api/auth/line/unlink-account",
-            json={
-                "badge_number": test_employee.badge_number,
-                "admin_passcode": ADMIN_PASSCODE
-            }
+        """A LINE user who isn't linked to any employee gets a 404."""
+        token = line_auth_service.create_jwt_token(
+            "U_some_unlinked_line_user", test_employee.badge_number
         )
-
-        assert response.status_code == 400
+        response = test_client.post(
+            "/api/public/auth/line/unlink-account",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"reason": "Testing"},
+        )
+        assert response.status_code == 404
 
 
 # ============================================================================
@@ -216,7 +216,7 @@ class TestJWTVerification:
         token = line_auth_service.create_jwt_token("U1234567890abcdef", "EMP001")
 
         response = test_client.post(
-            "/api/auth/line/verify-token",
+            "/api/public/auth/line/verify-token",
             json={"token": token}
         )
 
@@ -229,7 +229,7 @@ class TestJWTVerification:
     def test_verify_invalid_token(self, test_client):
         """Test verification of invalid JWT token"""
         response = test_client.post(
-            "/api/auth/line/verify-token",
+            "/api/public/auth/line/verify-token",
             json={"token": "invalid.jwt.token"}
         )
 

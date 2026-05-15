@@ -1,11 +1,10 @@
 """
-Test the FastAPI application structure fixes
+Test the FastAPI application structure
 
-This validates that both direct and mounted app configurations work correctly.
-Key fixes:
-1. Test client properly accesses both app structures
-2. Database dependency injection works for both configurations
-3. URL paths are correct for mounted vs direct access
+After the Oct-2025 routing reorg, all API routers live on the root ``app``
+and ``fingerprint_app`` is mounted at ``/fingerprintlogs`` to serve legacy
+admin dashboard HTML/static only. ``test_client`` and ``mounted_test_client``
+are therefore both ``TestClient(app)`` under the hood.
 """
 
 import pytest
@@ -13,184 +12,104 @@ from fastapi.testclient import TestClient
 
 
 class TestAppStructureFix:
-    """Test class to validate app structure fixes"""
+    """Validate the post-reorg routing layout."""
 
-    def test_direct_app_basic_endpoints(self, test_client):
-        """Test basic endpoints on direct fingerprint_app"""
-        # Test dashboard
-        response = test_client.get("/")
-        assert response.status_code == 200
-        assert "text/html" in response.headers.get("content-type", "")
-
-        # Test API endpoint
-        response = test_client.get("/api/employees/")
+    def test_root_api_endpoints(self, test_client):
+        """API endpoints live on the root app under /api/private/*."""
+        response = test_client.get("/api/private/employees/")
         assert response.status_code == 200
         data = response.json()
         assert "employees" in data
 
-        # Test health check
-        response = test_client.get("/health")
+    def test_dashboard_under_mount(self, test_client):
+        """Dashboard HTML is served by the mounted fingerprint_app."""
+        response = test_client.get("/fingerprintlogs/")
+        assert response.status_code == 200
+        assert "text/html" in response.headers.get("content-type", "")
+
+    def test_health_under_mount(self, test_client):
+        """Health check is served by the mounted fingerprint_app."""
+        response = test_client.get("/fingerprintlogs/health")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "healthy"
 
-    def test_mounted_app_basic_endpoints(self, mounted_test_client):
-        """Test basic endpoints on mounted app (production structure)"""
-        # Test root redirect
+    def test_root_redirect_metadata(self, mounted_test_client):
+        """Root ``/`` on the root app returns JSON pointing at /fingerprintlogs/."""
         response = mounted_test_client.get("/")
         assert response.status_code == 200
         data = response.json()
         assert "message" in data
         assert data["dashboard"] == "/fingerprintlogs/"
 
-        # Test mounted dashboard
-        response = mounted_test_client.get("/fingerprintlogs/")
-        assert response.status_code == 200
-        assert "text/html" in response.headers.get("content-type", "")
-
-        # Test mounted API endpoint
-        response = mounted_test_client.get("/fingerprintlogs/api/employees/")
+    def test_database_dependency_injection(self, test_client, test_employee):
+        """Verify dependency override flows through to API responses."""
+        response = test_client.get("/api/private/employees/")
         assert response.status_code == 200
         data = response.json()
-        assert "employees" in data
-
-        # Test mounted health check
-        response = mounted_test_client.get("/fingerprintlogs/health")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "healthy"
-
-    def test_database_dependency_injection_direct(self, test_client, test_employee):
-        """Test that database dependency injection works with direct app"""
-        # Create an employee through fixture, then query via API
-        response = test_client.get("/api/employees/")
-        assert response.status_code == 200
-        data = response.json()
-
-        # Should have at least our test employee
         assert len(data["employees"]) >= 1
 
-        # Find our test employee
-        employee_found = False
-        for emp in data["employees"]:
-            if emp["badge_number"] == test_employee.badge_number:
-                employee_found = True
-                assert emp["english_name"] == test_employee.english_name
-                break
+        employee_found = any(
+            emp["badge_number"] == test_employee.badge_number
+            for emp in data["employees"]
+        )
+        assert employee_found, (
+            f"Test employee {test_employee.badge_number} not found in API response"
+        )
 
-        assert employee_found, f"Test employee {test_employee.badge_number} not found in API response"
+    def test_api_paths_only_under_private(self, test_client):
+        """Legacy unprefixed ``/api/...`` paths should 404 after the reorg."""
+        legacy = test_client.get("/api/employees/")
+        assert legacy.status_code == 404
 
-    def test_database_dependency_injection_mounted(self, mounted_test_client, test_employee):
-        """Test that database dependency injection works with mounted app"""
-        # Create an employee through fixture, then query via API on mounted app
-        response = mounted_test_client.get("/fingerprintlogs/api/employees/")
-        assert response.status_code == 200
-        data = response.json()
+        legacy_under_mount = test_client.get("/fingerprintlogs/api/employees/")
+        assert legacy_under_mount.status_code == 404
 
-        # Should have at least our test employee
-        assert len(data["employees"]) >= 1
+    def test_404_handling(self, test_client):
+        """Unknown paths return 404 on both root and mounted prefixes."""
+        assert test_client.get("/api/nonexistent").status_code == 404
+        assert test_client.get("/fingerprintlogs/api/nonexistent").status_code == 404
 
-        # Find our test employee
-        employee_found = False
-        for emp in data["employees"]:
-            if emp["badge_number"] == test_employee.badge_number:
-                employee_found = True
-                assert emp["english_name"] == test_employee.english_name
-                break
+    def test_static_files_root_and_mounted(self, test_client):
+        """Static CSS is served from both the root mount and the fingerprintlogs mount."""
+        root_resp = test_client.get("/static/css/base.css")
+        assert root_resp.status_code == 200
+        assert "text/css" in root_resp.headers.get("content-type", "")
 
-        assert employee_found, f"Test employee {test_employee.badge_number} not found in mounted API response"
+        mounted_resp = test_client.get("/fingerprintlogs/static/css/base.css")
+        assert mounted_resp.status_code == 200
+        assert "text/css" in mounted_resp.headers.get("content-type", "")
 
-    def test_url_path_differences(self, test_client, mounted_test_client):
-        """Test that URL paths are correctly different between direct and mounted"""
-
-        # Direct app - API at /api/*
-        direct_response = test_client.get("/api/attendance/")
-        assert direct_response.status_code == 200
-
-        # Mounted app - API at /fingerprintlogs/api/*
-        mounted_response = mounted_test_client.get("/fingerprintlogs/api/attendance/")
-        assert mounted_response.status_code == 200
-
-        # Verify the responses have the same structure (both should work)
-        direct_data = direct_response.json()
-        mounted_data = mounted_response.json()
-
-        assert "records" in direct_data
-        assert "records" in mounted_data
-        assert "total" in direct_data
-        assert "total" in mounted_data
-
-    def test_404_handling_both_apps(self, test_client, mounted_test_client):
-        """Test 404 handling works correctly on both app structures"""
-
-        # Test 404 on direct app
-        response = test_client.get("/api/nonexistent")
-        assert response.status_code == 404
-
-        # Test 404 on mounted app
-        response = mounted_test_client.get("/fingerprintlogs/api/nonexistent")
-        assert response.status_code == 404
-
-        # Test that direct paths don't work on mounted app root
-        response = mounted_test_client.get("/api/employees/")
-        assert response.status_code == 404  # Should fail because it's not mounted at root
-
-    def test_static_files_both_apps(self, test_client, mounted_test_client):
-        """Test static file serving works on both app structures"""
-
-        # Test static files on direct app
-        response = test_client.get("/static/css/base.css")
-        assert response.status_code == 200
-        assert "text/css" in response.headers.get("content-type", "")
-
-        # Test static files on mounted app
-        response = mounted_test_client.get("/fingerprintlogs/static/css/base.css")
-        assert response.status_code == 200
-        assert "text/css" in response.headers.get("content-type", "")
-
-    def test_websocket_both_apps(self, test_client, mounted_test_client):
-        """Test WebSocket endpoints work on both app structures"""
-
-        # Test WebSocket on direct app
-        with test_client.websocket_connect("/ws") as websocket:
-            websocket.send_json({"type": "ping"})
-            data = websocket.receive_json()
-            assert data["type"] == "pong"
-
-        # Test WebSocket on mounted app
-        with mounted_test_client.websocket_connect("/fingerprintlogs/ws") as websocket:
-            websocket.send_json({"type": "ping"})
-            data = websocket.receive_json()
-            assert data["type"] == "pong"
+    @pytest.mark.skip(
+        reason="Dashboard /ws now requires admin_session_token cookie; "
+        "exercised in security/auth tests, not here."
+    )
+    def test_websocket_dashboard(self, test_client):
+        """Dashboard WebSocket gates on admin session and is covered elsewhere."""
+        pass
 
 
 # Quick validation tests that can run independently
 
-def test_quick_validation_direct_app(test_client):
-    """Quick test to validate direct app works"""
-    response = test_client.get("/api/employees/")
+
+def test_quick_validation_root_api(test_client):
+    """Quick test: root app serves /api/private/* APIs."""
+    response = test_client.get("/api/private/employees/")
     assert response.status_code == 200
 
 
-def test_quick_validation_mounted_app(mounted_test_client):
-    """Quick test to validate mounted app works"""
-    response = mounted_test_client.get("/fingerprintlogs/api/employees/")
+def test_quick_validation_mounted_dashboard(mounted_test_client):
+    """Quick test: mounted fingerprint_app serves /fingerprintlogs/ dashboard HTML."""
+    response = mounted_test_client.get("/fingerprintlogs/")
     assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
 
 
-def test_quick_validation_root_difference(test_client, mounted_test_client):
-    """Quick test to validate the key difference between apps"""
-
-    # Direct app root serves dashboard
-    direct_response = test_client.get("/")
-    assert direct_response.status_code == 200
-    assert "text/html" in direct_response.headers.get("content-type", "")
-
-    # Mounted app root serves JSON redirect info
-    mounted_response = mounted_test_client.get("/")
-    assert mounted_response.status_code == 200
-    assert "application/json" in mounted_response.headers.get("content-type", "")
-
-    mounted_data = mounted_response.json()
-    assert "dashboard" in mounted_data
-    assert mounted_data["dashboard"] == "/fingerprintlogs/"
+def test_quick_validation_root_returns_json(test_client):
+    """Root ``/`` on the root app returns JSON metadata, not HTML."""
+    response = test_client.get("/")
+    assert response.status_code == 200
+    assert "application/json" in response.headers.get("content-type", "")
+    data = response.json()
+    assert "dashboard" in data
+    assert data["dashboard"] == "/fingerprintlogs/"

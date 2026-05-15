@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # ========================================================================
     # SERVER CONFIGURATION (Unified FastAPI)
     # ========================================================================
-    server_host: str = "0.0.0.0"
+    server_host: str = "0.0.0.0"  # nosec B104 — intended: binds inside the Docker container; nginx/Cloudflare fronts the public surface
     server_port: int = 5000  # Unified server port (was dual 5000/8000)
     secret_key: str = "fingerprint-time-logger-2025"
     

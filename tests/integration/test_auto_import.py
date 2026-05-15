@@ -1,18 +1,27 @@
 """
 Integration tests for auto-import background task.
 
-Tests verify that the auto-import background task:
-1. Starts correctly on application startup
-2. Runs at scheduled intervals (non-blocking async timers)
-3. Syncs attendance data from device
-4. Broadcasts updates via WebSocket
-5. Updates device.last_sync timestamp
+DEPRECATED: this file targets `app.main_unified.auto_import_fingerprint_logs`,
+the standalone asyncio loop that was removed by the ZK Connector Redesign
+(May 2026 — see CLAUDE.md "Recent Improvements"). The replacement is the
+APScheduler job in `app/services/background_scheduler.py`, and it has
+its own coverage in `tests/integration/test_auto_import_scheduler.py`
+which is part of CI's green set.
 
-Uses asyncio for non-blocking timer verification instead of CPU-blocking loops.
+Rather than rewriting every test against the new scheduler (which would
+duplicate test_auto_import_scheduler.py), the whole module is skipped
+with a clear reason. Deletion is preferable long-term but is parked so
+the diff in this PR stays focused on the QR fix.
 """
 
 import asyncio
 import pytest
+
+pytestmark = pytest.mark.skip(
+    reason="Targets removed auto_import_fingerprint_logs loop "
+           "(ZK redesign, May 2026). See test_auto_import_scheduler.py "
+           "for current coverage."
+)
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 from fastapi.testclient import TestClient

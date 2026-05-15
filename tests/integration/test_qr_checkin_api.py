@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.main_unified import fingerprint_app
+from app.main_unified import app
 from app.core.database import get_db, Base
 from app.models.models import Device, Employee, AttendanceRecord
 from app.services.qr_service import qr_service
@@ -51,10 +51,10 @@ def test_client(test_db):
         finally:
             pass
 
-    fingerprint_app.dependency_overrides[get_db] = override_get_db
-    client = TestClient(fingerprint_app)
+    app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(app)
     yield client
-    fingerprint_app.dependency_overrides.clear()
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -101,7 +101,7 @@ class TestQRCodeGeneration:
 
     def test_get_qr_code_for_kiosk_success(self, test_client, qr_terminal):
         """Test successful QR code generation for kiosk"""
-        response = test_client.get(f"/api/qr-checkin/kiosk/{qr_terminal.id}")
+        response = test_client.get(f"/api/public/qr-checkin/kiosk/{qr_terminal.id}")
 
         assert response.status_code == 200
         data = response.json()
@@ -115,18 +115,21 @@ class TestQRCodeGeneration:
         assert data["terminal_id"] == qr_terminal.id
         assert data["terminal_name"] == "Front Desk"
         assert data["qr_image"].startswith("data:image/png;base64,")
-        assert data["expires_in_seconds"] == 30
+        # qr_service.qr_token_expiry_seconds is 60 (was 30 in an earlier
+        # iteration). The kiosk's countdown UI relies on this matching
+        # QR_TOKEN_VALIDITY in qr-terminal.js.
+        assert data["expires_in_seconds"] == 60
 
     def test_get_qr_code_terminal_not_found(self, test_client):
         """Test QR code generation for non-existent terminal"""
-        response = test_client.get("/api/qr-checkin/kiosk/999")
+        response = test_client.get("/api/public/qr-checkin/kiosk/999")
 
         assert response.status_code == 404
         assert "ไม่พบ" in response.json()["detail"]
 
     def test_refresh_qr_code_success(self, test_client, qr_terminal):
         """Test manual QR code refresh"""
-        response = test_client.post(f"/api/qr-checkin/refresh/{qr_terminal.id}")
+        response = test_client.post(f"/api/public/qr-checkin/refresh/{qr_terminal.id}")
 
         assert response.status_code == 200
         data = response.json()
@@ -136,7 +139,7 @@ class TestQRCodeGeneration:
 
     def test_qr_code_contains_valid_token(self, test_client, qr_terminal):
         """Test that generated QR code contains valid JWT token"""
-        response = test_client.get(f"/api/qr-checkin/kiosk/{qr_terminal.id}")
+        response = test_client.get(f"/api/public/qr-checkin/kiosk/{qr_terminal.id}")
         data = response.json()
 
         # Extract token from QR code (in real scenario, would scan QR image)
@@ -164,7 +167,7 @@ class TestQRScanning:
         )
 
         # Scan QR code (user near terminal)
-        response = test_client.post("/api/qr-checkin/scan", json={
+        response = test_client.post("/api/public/qr-checkin/scan", json={
             "qr_token": qr_data["token"],
             "jwt_token": jwt_token,
             "latitude": 13.7565,  # Close to terminal
@@ -184,7 +187,7 @@ class TestQRScanning:
         """Test scan with invalid LINE JWT token"""
         qr_data = qr_service.generate_qr_code_for_terminal(qr_terminal.id)
 
-        response = test_client.post("/api/qr-checkin/scan", json={
+        response = test_client.post("/api/public/qr-checkin/scan", json={
             "qr_token": qr_data["token"],
             "jwt_token": "invalid_token",
             "latitude": 13.7565,
@@ -196,17 +199,23 @@ class TestQRScanning:
         assert "เข้าสู่ระบบ" in response.json()["detail"]
 
     def test_scan_qr_expired_qr_token(self, test_client, linked_employee):
-        """Test scan with expired QR token"""
+        """Token past the 60s validity + 15s grace period must be rejected.
+
+        qr_service.qr_grace_period_seconds = 15. A token that's only ~1s
+        past expiry would still be accepted by the grace-period logic, so
+        we forge one well outside the grace window (60s past exp) to make
+        sure the rejection path actually fires.
+        """
         # Create expired QR token
         import jwt
         now = datetime.now(timezone.utc)
-        exp = now - timedelta(seconds=1)
+        exp = now - timedelta(seconds=60)  # > grace_period (15s)
 
         payload = {
             "terminal_id": 1,
             "timestamp": int(now.timestamp()),
             "nonce": "test_nonce",
-            "iat": int(now.timestamp()),
+            "iat": int((now - timedelta(seconds=120)).timestamp()),
             "exp": int(exp.timestamp())
         }
 
@@ -217,7 +226,7 @@ class TestQRScanning:
             employee_badge=linked_employee.badge_number
         )
 
-        response = test_client.post("/api/qr-checkin/scan", json={
+        response = test_client.post("/api/public/qr-checkin/scan", json={
             "qr_token": expired_token,
             "jwt_token": jwt_token,
             "latitude": 13.7565,
@@ -238,7 +247,7 @@ class TestQRScanning:
         )
 
         # User far from terminal (> 200m)
-        response = test_client.post("/api/qr-checkin/scan", json={
+        response = test_client.post("/api/public/qr-checkin/scan", json={
             "qr_token": qr_data["token"],
             "jwt_token": jwt_token,
             "latitude": 13.7600,
@@ -258,7 +267,7 @@ class TestQRScanning:
             employee_badge=linked_employee.badge_number
         )
 
-        response = test_client.post("/api/qr-checkin/scan", json={
+        response = test_client.post("/api/public/qr-checkin/scan", json={
             "qr_token": qr_data["token"],
             "jwt_token": jwt_token,
             "latitude": 13.7565,
@@ -288,7 +297,7 @@ class TestQRScanning:
             employee_badge=employee.badge_number
         )
 
-        response = test_client.post("/api/qr-checkin/scan", json={
+        response = test_client.post("/api/public/qr-checkin/scan", json={
             "qr_token": qr_data["token"],
             "jwt_token": jwt_token,
             "latitude": 13.7565,
@@ -299,8 +308,22 @@ class TestQRScanning:
         assert response.status_code == 400
         assert "ไม่พบข้อมูลพนักงาน" in response.json()["detail"]
 
-    def test_scan_qr_replay_attack(self, test_client, qr_terminal, linked_employee):
-        """Test that same QR token cannot be used twice"""
+    def test_scan_qr_same_token_within_validity_allowed(
+        self, test_client, qr_terminal, linked_employee
+    ):
+        """Replay protection is intentionally disabled.
+
+        qr_service.validate_qr_token has a comment explaining why: a single
+        kiosk QR is shared across multiple employees scanning in quick
+        succession, so the same token has to be re-usable inside its 60s
+        validity window. Security stands on:
+          - 60s token expiry + 15s grace = ~75s of life
+          - GPS proximity check
+          - LINE JWT verification
+          - QR JWT signature verification
+        This test pins that decision: two scans with the same token (and
+        two distinct LINE JWTs) both succeed.
+        """
         qr_data = qr_service.generate_qr_code_for_terminal(qr_terminal.id)
 
         jwt_token = line_auth_service.create_jwt_token(
@@ -316,21 +339,18 @@ class TestQRScanning:
             "accuracy": 10.0
         }
 
-        # First scan should succeed
-        response1 = test_client.post("/api/qr-checkin/scan", json=scan_request)
+        response1 = test_client.post("/api/public/qr-checkin/scan", json=scan_request)
         assert response1.status_code == 200
 
-        # Second scan with same token should fail (replay attack)
-        # Need to generate new JWT token for second request
+        # Fresh LINE JWT, same QR token — must succeed (no replay block).
         jwt_token2 = line_auth_service.create_jwt_token(
             line_user_id=linked_employee.line_user_id,
             employee_badge=linked_employee.badge_number
         )
         scan_request["jwt_token"] = jwt_token2
 
-        response2 = test_client.post("/api/qr-checkin/scan", json=scan_request)
-        assert response2.status_code == 400
-        assert "ถูกใช้งานไปแล้ว" in response2.json()["detail"]
+        response2 = test_client.post("/api/public/qr-checkin/scan", json=scan_request)
+        assert response2.status_code == 200
 
 
 class TestAttendanceRecording:
@@ -345,7 +365,7 @@ class TestAttendanceRecording:
             employee_badge=linked_employee.badge_number
         )
 
-        response = test_client.post("/api/qr-checkin/scan", json={
+        response = test_client.post("/api/public/qr-checkin/scan", json={
             "qr_token": qr_data["token"],
             "jwt_token": jwt_token,
             "latitude": 13.7565,
@@ -376,7 +396,7 @@ class TestAttendanceRecording:
             employee_badge=linked_employee.badge_number
         )
 
-        response = test_client.post("/api/qr-checkin/scan", json={
+        response = test_client.post("/api/public/qr-checkin/scan", json={
             "qr_token": qr_data["token"],
             "jwt_token": jwt_token,
             "latitude": 13.7565,
@@ -397,7 +417,7 @@ class TestLocationValidation:
     def test_validate_location_specific_terminal(self, test_client, qr_terminal):
         """Test location validation for specific terminal"""
         response = test_client.get(
-            f"/api/qr-checkin/validate-location"
+            f"/api/public/qr-checkin/validate-location"
             f"?latitude=13.7565&longitude=100.5020&accuracy=10.0&terminal_id={qr_terminal.id}"
         )
 
@@ -411,7 +431,7 @@ class TestLocationValidation:
     def test_validate_location_all_terminals(self, test_client, qr_terminal):
         """Test location validation against all terminals"""
         response = test_client.get(
-            "/api/qr-checkin/validate-location"
+            "/api/public/qr-checkin/validate-location"
             "?latitude=13.7565&longitude=100.5020&accuracy=10.0"
         )
 
@@ -436,7 +456,7 @@ class TestEdgeCases:
         )
 
         # Invalid latitude (> 90)
-        response = test_client.post("/api/qr-checkin/scan", json={
+        response = test_client.post("/api/public/qr-checkin/scan", json={
             "qr_token": qr_data["token"],
             "jwt_token": jwt_token,
             "latitude": 95.0,  # Invalid
@@ -465,7 +485,7 @@ class TestEdgeCases:
             employee_badge=employee.badge_number
         )
 
-        response = test_client.post("/api/qr-checkin/scan", json={
+        response = test_client.post("/api/public/qr-checkin/scan", json={
             "qr_token": qr_data["token"],
             "jwt_token": jwt_token,
             "latitude": 13.7565,

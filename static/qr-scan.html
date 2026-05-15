@@ -80,14 +80,77 @@
             border: none;
             cursor: pointer;
         }
+        /* Check-in / Check-out chooser */
+        .action-choice {
+            display: none;
+            margin-top: 8px;
+        }
+        .action-choice.visible { display: block; }
+        .action-choice h2 {
+            font-size: 20px;
+            color: #333;
+            margin: 0 0 16px 0;
+        }
+        .action-choice .hint {
+            font-size: 14px;
+            color: #888;
+            margin: 0 0 20px 0;
+        }
+        .action-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .action-btn {
+            padding: 18px 20px;
+            border: 2px solid transparent;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            transition: transform .05s ease, box-shadow .15s ease;
+        }
+        .action-btn:active { transform: scale(0.98); }
+        .action-btn.checkin {
+            background: #06C755;
+            color: white;
+        }
+        .action-btn.checkout {
+            background: white;
+            color: #c0392b;
+            border-color: #c0392b;
+        }
+        .action-btn .icon { font-size: 24px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="spinner"></div>
-        <h1>🔍 กำลังประมวลผล QR Code...</h1>
-        <p id="statusText">กรุณารอสักครู่</p>
-        <div id="statusDetails" class="status"></div>
+        <div id="processingView">
+            <div class="spinner"></div>
+            <h1>🔍 กำลังประมวลผล QR Code...</h1>
+            <p id="statusText">กรุณารอสักครู่</p>
+            <div id="statusDetails" class="status"></div>
+        </div>
+
+        <div id="actionChoice" class="action-choice">
+            <div style="font-size:48px; margin-bottom: 8px;">✅</div>
+            <h2>เลือกการบันทึก</h2>
+            <p class="hint">QR Code ถูกต้อง กรุณาเลือกเข้างานหรือออกงาน</p>
+            <div class="action-buttons">
+                <button id="btnCheckIn" class="action-btn checkin" type="button">
+                    <span class="icon">📥</span>
+                    <span>เข้างาน (Check-in)</span>
+                </button>
+                <button id="btnCheckOut" class="action-btn checkout" type="button">
+                    <span class="icon">📤</span>
+                    <span>ออกงาน (Check-out)</span>
+                </button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -96,6 +159,10 @@
 
             const statusText = document.getElementById('statusText');
             const statusDetails = document.getElementById('statusDetails');
+            const processingView = document.getElementById('processingView');
+            const actionChoice = document.getElementById('actionChoice');
+            const btnCheckIn = document.getElementById('btnCheckIn');
+            const btnCheckOut = document.getElementById('btnCheckOut');
 
             // Get URL parameters
             const urlParams = new URLSearchParams(window.location.search);
@@ -108,11 +175,15 @@
                 return;
             }
 
-            // Main processing flow
+            // Cached JWT once auth is validated, then used by submitCheckIn().
+            let validatedJwt = null;
+
+            // Main processing flow: validate identity, then show the chooser.
             processQRScan();
 
             async function processQRScan() {
                 try {
+                    showProcessing();
                     updateStatus('🔐 ตรวจสอบสถานะการเข้าสู่ระบบ...');
 
                     // Check if user is authenticated (has JWT in localStorage)
@@ -172,41 +243,70 @@
                         return;
                     }
 
-                    // User is authenticated and linked → perform check-in
-                    updateStatus('📍 กำลังตรวจสอบตำแหน่ง GPS...');
+                    // Identity ok → ask user whether this is a check-in or check-out.
+                    validatedJwt = jwtToken;
+                    showActionChoice();
 
-                    // Get GPS location
+                } catch (error) {
+                    console.error('[QR Scan] Error:', error);
+                    showError('เกิดข้อผิดพลาด', error.message || 'กรุณาลองใหม่อีกครั้ง');
+                }
+            }
+
+            // Bind chooser buttons. Disable both while one is in flight to
+            // prevent a double-submit creating two attendance rows.
+            btnCheckIn.addEventListener('click', () => submitScan(0));
+            btnCheckOut.addEventListener('click', () => submitScan(1));
+
+            async function submitScan(punchType) {
+                btnCheckIn.disabled = true;
+                btnCheckOut.disabled = true;
+                showProcessing();
+                try {
+                    updateStatus('📍 กำลังตรวจสอบตำแหน่ง GPS...');
                     const gpsData = await getGPSLocation();
 
-                    updateStatus('✨ กำลังบันทึกเวลา...');
+                    updateStatus(punchType === 1 ? '✨ กำลังบันทึกออกงาน...' : '✨ กำลังบันทึกเข้างาน...');
 
-                    // Perform check-in
                     const checkinResponse = await fetch('/api/public/qr-checkin/scan', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             qr_token: qrToken,
-                            jwt_token: jwtToken,
+                            jwt_token: validatedJwt,
                             latitude: gpsData.latitude,
                             longitude: gpsData.longitude,
-                            accuracy: gpsData.accuracy
+                            accuracy: gpsData.accuracy,
+                            punch_type: punchType
                         })
                     });
 
                     const checkinData = await checkinResponse.json();
 
                     if (checkinResponse.ok && checkinData.success) {
-                        // Success!
-                        showSuccess(checkinData);
+                        showSuccess(checkinData, punchType);
                     } else {
-                        // Check-in failed (GPS, expired QR, etc.)
+                        // Re-enable buttons so user can retry their choice.
+                        btnCheckIn.disabled = false;
+                        btnCheckOut.disabled = false;
                         showError('บันทึกเวลาไม่สำเร็จ', checkinData.detail || checkinData.message);
                     }
-
                 } catch (error) {
-                    console.error('[QR Scan] Error:', error);
+                    btnCheckIn.disabled = false;
+                    btnCheckOut.disabled = false;
+                    console.error('[QR Scan] Submit error:', error);
                     showError('เกิดข้อผิดพลาด', error.message || 'กรุณาลองใหม่อีกครั้ง');
                 }
+            }
+
+            function showProcessing() {
+                processingView.style.display = '';
+                actionChoice.classList.remove('visible');
+            }
+
+            function showActionChoice() {
+                processingView.style.display = 'none';
+                actionChoice.classList.add('visible');
             }
 
             async function getGPSLocation() {
@@ -241,12 +341,15 @@
                 statusDetails.textContent = new Date().toLocaleTimeString('th-TH');
             }
 
-            function showSuccess(data) {
+            function showSuccess(data, punchType) {
                 const container = document.querySelector('.container');
+                const isCheckOut = punchType === 1;
+                const title = isCheckOut ? 'บันทึกออกงานสำเร็จ!' : 'บันทึกเข้างานสำเร็จ!';
+                const actionEmoji = isCheckOut ? '📤' : '📥';
                 // Build static structure once, then assign data via textContent to prevent XSS.
                 container.innerHTML = `
-                    <div style="font-size: 64px; margin-bottom: 20px;">✅</div>
-                    <h1 style="color: #06C755;">บันทึกเวลาสำเร็จ!</h1>
+                    <div style="font-size: 64px; margin-bottom: 20px;">${actionEmoji}</div>
+                    <h1 id="successTitle" style="color: #06C755;"></h1>
                     <p id="successMessage" style="font-size: 18px; margin: 16px 0;"></p>
                     <div style="background: #f5f5f5; padding: 16px; border-radius: 8px; margin: 20px 0; text-align: left;">
                         <p style="margin: 8px 0;"><strong>👤 พนักงาน:</strong> <span id="successEmployee"></span></p>
@@ -257,6 +360,7 @@
                     <a href="/qr-checkin/mobile" class="btn" style="display: inline-block; margin-right: 10px;">📱 ดูผลการแสกน QR</a>
                     <button class="btn" onclick="window.close()">ปิดหน้าต่าง</button>
                 `;
+                document.getElementById('successTitle').textContent = title;
                 document.getElementById('successMessage').textContent = data.message || '';
                 document.getElementById('successEmployee').textContent = data.attendance_record.employee_name || '';
                 document.getElementById('successTime').textContent =

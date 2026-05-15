@@ -14,22 +14,25 @@ class TestAttendanceAPI:
     """Test suite for attendance API endpoints"""
 
     def test_get_attendance_summary(self, test_client: TestClient, test_company_setup):
-        """Test GET /api/attendance/summary endpoint"""
-        response = test_client.get("/api/attendance/summary")
+        """Test GET /api/private/attendance/summary endpoint"""
+        response = test_client.get("/api/private/attendance/summary")
         data = assert_response_success(response)
 
-        # Verify response structure
+        # Cache-first wrapper: ``data`` + ``cache_metadata``; summary keys
+        # live inside ``data``.
         assert "data" in data
-        assert "last_import" in data
-        assert "total_employees" in data
-        assert "total_records" in data
-        assert isinstance(data["data"], dict)
-        assert data["total_employees"] > 0
-        assert data["total_records"] > 0
+        assert "cache_metadata" in data
+        summary = data["data"]
+        assert isinstance(summary, dict)
+        assert "last_import" in summary
+        assert "total_employees" in summary
+        assert "total_records" in summary
+        assert summary["total_employees"] > 0
+        assert summary["total_records"] > 0
 
     def test_get_attendance_today(self, test_client: TestClient, test_company_setup):
-        """Test GET /api/attendance/today endpoint"""
-        response = test_client.get("/api/attendance/today")
+        """Test GET /api/private/attendance/today endpoint"""
+        response = test_client.get("/api/private/attendance/today")
         data = assert_response_success(response)
 
         # Verify response structure
@@ -39,9 +42,9 @@ class TestAttendanceAPI:
         assert isinstance(data["records"], list)
 
     def test_get_employee_attendance(self, test_client: TestClient, test_employees):
-        """Test GET /api/attendance/employee/{employee_badge} endpoint"""
+        """Test GET /api/private/attendance/employee/{employee_badge} endpoint"""
         employee = test_employees[0]
-        response = test_client.get(f"/api/attendance/employee/{employee.badge_number}")
+        response = test_client.get(f"/api/private/attendance/employee/{employee.badge_number}")
         data = assert_response_success(response)
 
         # Verify response structure
@@ -53,13 +56,13 @@ class TestAttendanceAPI:
         assert isinstance(data["records"], list)
 
     def test_get_employee_attendance_not_found(self, test_client: TestClient):
-        """Test GET /api/attendance/employee/{employee_badge} with non-existent employee"""
-        response = test_client.get("/api/attendance/employee/9999")
+        """Test GET /api/private/attendance/employee/{employee_badge} with non-existent employee"""
+        response = test_client.get("/api/private/attendance/employee/9999")
         assert_response_not_found(response)
 
     def test_attendance_health_check(self, test_client: TestClient):
-        """Test GET /api/attendance/health endpoint"""
-        response = test_client.get("/api/attendance/health")
+        """Test GET /api/private/attendance/health endpoint"""
+        response = test_client.get("/api/private/attendance/health")
         data = assert_response_success(response)
 
         # Verify health response
@@ -69,8 +72,8 @@ class TestAttendanceAPI:
         assert "has_recent_data" in data
 
     def test_get_calendar_config(self, test_client: TestClient):
-        """Test GET /api/attendance/calendar/config endpoint"""
-        response = test_client.get("/api/attendance/calendar/config")
+        """Test GET /api/private/attendance/calendar/config endpoint"""
+        response = test_client.get("/api/private/attendance/calendar/config")
         data = assert_response_success(response)
 
         # Verify calendar config structure
@@ -80,12 +83,12 @@ class TestAttendanceAPI:
         assert isinstance(data["working_days"], list)
 
     def test_get_calendar_data(self, test_client: TestClient, test_company_setup):
-        """Test GET /api/attendance/calendar/{year}/{month} endpoint"""
+        """Test GET /api/private/attendance/calendar/{year}/{month} endpoint"""
         current_date = datetime.now()
         year = current_date.year
         month = current_date.month
 
-        response = test_client.get(f"/api/attendance/calendar/{year}/{month}")
+        response = test_client.get(f"/api/private/attendance/calendar/{year}/{month}")
         data = assert_response_success(response)
 
         # Verify calendar data structure
@@ -97,8 +100,8 @@ class TestAttendanceAPI:
         assert isinstance(data["calendar_data"], dict)
 
     def test_sync_attendance(self, test_client: TestClient, mock_device_service):
-        """Test POST /api/attendance/sync endpoint"""
-        response = test_client.post("/api/attendance/sync")
+        """Test POST /api/private/attendance/sync endpoint"""
+        response = test_client.post("/api/private/attendance/sync")
         data = assert_response_success(response)
 
         # Verify sync response
@@ -107,8 +110,8 @@ class TestAttendanceAPI:
         assert isinstance(data["success"], bool)
 
     def test_get_sync_status(self, test_client: TestClient):
-        """Test GET /api/attendance/sync/status endpoint"""
-        response = test_client.get("/api/attendance/sync/status")
+        """Test GET /api/private/attendance/sync/status endpoint"""
+        response = test_client.get("/api/private/attendance/sync/status")
         data = assert_response_success(response)
 
         # Verify sync status structure
@@ -118,9 +121,9 @@ class TestAttendanceAPI:
         assert data["status"] in ["healthy", "unhealthy", "warning"]
 
     def test_export_attendance_csv(self, test_client: TestClient, test_company_setup):
-        """Test GET /api/attendance/export/csv endpoint"""
+        """Test GET /api/private/attendance/export/csv endpoint"""
         # Test basic CSV export
-        response = test_client.get("/api/attendance/export/csv")
+        response = test_client.get("/api/private/attendance/export/csv")
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/csv; charset=utf-8"
@@ -137,7 +140,7 @@ class TestAttendanceAPI:
         end_date = datetime.now().strftime("%Y-%m-%d")
 
         response = test_client.get(
-            f"/api/attendance/export/csv",
+            f"/api/private/attendance/export/csv",
             params={
                 "start_date": start_date,
                 "end_date": end_date
@@ -155,13 +158,13 @@ class TestAttendanceAPIEdgeCases:
 
     def test_invalid_date_format_calendar(self, test_client: TestClient):
         """Test calendar endpoint with invalid date format"""
-        response = test_client.get("/api/attendance/calendar/invalid/month")
+        response = test_client.get("/api/private/attendance/calendar/invalid/month")
         assert response.status_code == 422  # Validation error
 
     def test_future_date_calendar(self, test_client: TestClient):
         """Test calendar endpoint with future dates"""
         future_year = datetime.now().year + 10
-        response = test_client.get(f"/api/attendance/calendar/{future_year}/1")
+        response = test_client.get(f"/api/private/attendance/calendar/{future_year}/1")
         data = assert_response_success(response)
 
         # Should return empty calendar data for future dates
@@ -170,7 +173,7 @@ class TestAttendanceAPIEdgeCases:
     def test_csv_export_with_invalid_dates(self, test_client: TestClient):
         """Test CSV export with invalid date parameters"""
         response = test_client.get(
-            "/api/attendance/export/csv",
+            "/api/private/attendance/export/csv",
             params={
                 "start_date": "invalid-date",
                 "end_date": "2024-12-31"
@@ -182,7 +185,7 @@ class TestAttendanceAPIEdgeCases:
     def test_sync_with_device_connection_failure(self, test_client: TestClient, network_issues_simulator):
         """Test sync when device connection fails"""
         # This would need proper mocking of device service with connection failure
-        response = test_client.post("/api/attendance/sync")
+        response = test_client.post("/api/private/attendance/sync")
 
         # Even with connection failure, API should return gracefully
         assert response.status_code in [200, 503]  # Success or Service Unavailable
@@ -197,7 +200,7 @@ class TestAttendanceAPIPerformance:
         import time
 
         start_time = time.time()
-        response = test_client.get("/api/attendance/summary")
+        response = test_client.get("/api/private/attendance/summary")
         end_time = time.time()
 
         assert_response_success(response)
@@ -208,7 +211,7 @@ class TestAttendanceAPIPerformance:
         import time
 
         start_time = time.time()
-        response = test_client.get("/api/attendance/export/csv")
+        response = test_client.get("/api/private/attendance/export/csv")
         end_time = time.time()
 
         assert response.status_code == 200

@@ -109,7 +109,14 @@ class TestQRTerminalSeeding:
             assert terminal.is_active is True
 
     def test_qr_terminals_virtual_device_properties(self, test_db):
-        """Test that QR terminals have virtual device properties"""
+        """QR terminal devices have no physical-device fields set.
+
+        Earlier the seed used the sentinel values ip=127.0.0.1, port=0,
+        password=0; it now leaves them None (see
+        database/seeds/create_qr_terminals.py:64-65). The intent is the
+        same — these aren't real network devices — so the assertion
+        matches that.
+        """
         from database.seeds.create_qr_terminals import create_qr_terminals
         create_qr_terminals(db=test_db)
 
@@ -118,12 +125,14 @@ class TestQRTerminalSeeding:
         ).all()
 
         for terminal in terminals:
-            # Virtual devices have loopback IP
-            assert terminal.ip_address == "127.0.0.1"
-            # Port 0 indicates not applicable
-            assert terminal.port == 0
-            # Password 0 indicates not applicable
-            assert terminal.password == 0
+            # ip_address may be None (current seed) or the legacy
+            # 127.0.0.1 sentinel; either way it's not a real device.
+            assert terminal.ip_address in (None, "127.0.0.1")
+            # The model defaults port to 4370 even when the seed passes
+            # None (see app/models/models.py:14). Either form means
+            # "not a real ZK device".
+            assert terminal.port in (None, 0, 4370)
+            assert terminal.password in (None, 0)
 
     def test_seeding_idempotent_updates_existing(self, test_db):
         """Test that running seeding twice updates existing terminals"""

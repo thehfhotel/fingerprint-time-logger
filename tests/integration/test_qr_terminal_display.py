@@ -20,9 +20,18 @@ from app.core.database import Base, get_db
 from app.models.models import Device
 
 
-# Test database setup
+# Test database setup. StaticPool is required so the fixture session, the
+# dependency-override session, and the test's session all share a single
+# underlying connection — without it, each new SQLite :memory: connection
+# sees a brand-new empty database and Base.metadata.create_all only
+# initialises whichever connection the fixture happens to use.
+from sqlalchemy.pool import StaticPool
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -35,7 +44,12 @@ def override_get_db():
         db.close()
 
 
-app.dependency_overrides[get_db] = override_get_db
+# IMPORTANT: install the get_db override per-test (in the `client`
+# fixture), not at module level. Module-level installation gets clobbered
+# by sibling test files (e.g. test_qr_terminal_seeding.py) that also
+# patch app.dependency_overrides at import time — pytest collects all
+# modules before running, so whichever was imported last wins, which
+# silently breaks 16 tests in this file when QR files are run together.
 
 
 @pytest.fixture(scope="function")
@@ -49,12 +63,24 @@ def test_db():
 @pytest.fixture(scope="function")
 def client(test_db):
     """Create test client"""
-    return TestClient(app)
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture
 def qr_terminal_device(test_db):
-    """Create QR terminal device for testing"""
+    """Create QR terminal device for testing.
+
+    Metadata uses the {"gps": {"location_name": ...}} shape that the
+    current /kiosk/{id} and /terminals endpoints look up — earlier
+    iterations of the code expected location_name at the top level and
+    "gps_location" instead of "gps", which is why this fixture used to
+    drift out of sync with prod and the tests then asserted against a
+    Terminal-N fallback.
+    """
     device = Device(
         id=2,
         name="Main Office",
@@ -62,10 +88,11 @@ def qr_terminal_device(test_db):
         port=4370,
         device_type="qr_terminal",
         device_metadata=json.dumps({
-            "location_name": "Main Office",
-            "gps_location": {
+            "gps": {
+                "location_name": "Main Office",
                 "latitude": 13.7563,
-                "longitude": 100.5018
+                "longitude": 100.5018,
+                "radius": 200,
             }
         })
     )
@@ -101,19 +128,19 @@ class TestQRTerminalStaticResources:
         assert "text/html" in response.headers["content-type"]
 
     def test_qr_terminal_html_uses_absolute_paths(self, client):
-        """Test HTML uses absolute paths for CSS/JS resources"""
+        """HTML must reference CSS/JS via absolute paths so it loads
+        whether the page is served from the /fingerprintlogs mount or
+        directly from the root app at /qr-checkin/terminal.
+
+        The current paths are /static/... (root-app absolute), not
+        /fingerprintlogs/static/... — the old prefix corresponded to a
+        previous routing scheme that mounted static under fingerprint_app.
+        """
         response = client.get("/fingerprintlogs/qr-checkin/terminal?terminal=2")
         html_content = response.text
 
-        # Check CSS path is absolute
-        assert '/fingerprintlogs/static/css/qr-terminal.css' in html_content
-        assert 'static/css/qr-terminal.css' not in html_content or \
-               '/fingerprintlogs/static/css/qr-terminal.css' in html_content
-
-        # Check JS path is absolute
-        assert '/fingerprintlogs/static/js/qr-terminal.js' in html_content
-        assert 'static/js/qr-terminal.js' not in html_content or \
-               '/fingerprintlogs/static/js/qr-terminal.js' in html_content
+        assert '/static/css/qr-terminal.css' in html_content
+        assert '/static/js/qr-terminal.js' in html_content
 
     def test_qr_terminal_css_loads(self, client):
         """Test QR terminal CSS file loads successfully"""
@@ -129,20 +156,20 @@ class TestQRTerminalStaticResources:
                "application/javascript" in response.headers["content-type"]
 
     def test_mobile_checkin_uses_absolute_paths(self, client):
-        """Test mobile check-in page uses absolute paths"""
+        """Mobile check-in HTML must use absolute /static/... paths."""
         response = client.get("/fingerprintlogs/qr-checkin/mobile")
         html_content = response.text
 
-        assert '/qr-checkin/static/css/mobile-checkin.css' in html_content
-        assert '/qr-checkin/static/js/mobile-checkin.js' in html_content
+        assert '/static/css/mobile-checkin.css' in html_content
+        assert '/static/js/mobile-checkin.js' in html_content
 
     def test_link_line_uses_absolute_paths(self, client):
-        """Test LINE link page uses absolute paths"""
+        """LINE link HTML must use absolute /static/... paths."""
         response = client.get("/fingerprintlogs/qr-checkin/link-account")
         html_content = response.text
 
-        assert '/qr-checkin/static/css/link-line.css' in html_content
-        assert '/qr-checkin/static/js/link-line.js' in html_content
+        assert '/static/css/link-line.css' in html_content
+        assert '/static/js/link-line.js' in html_content
 
 
 class TestQRTerminalDeviceValidation:
@@ -150,7 +177,7 @@ class TestQRTerminalDeviceValidation:
 
     def test_qr_terminal_api_with_valid_qr_terminal(self, client, qr_terminal_device):
         """Test API accepts valid QR terminal device"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        response = client.get("/api/public/qr-checkin/kiosk/2")
         assert response.status_code == 200
 
         data = response.json()
@@ -160,7 +187,7 @@ class TestQRTerminalDeviceValidation:
 
     def test_qr_terminal_api_rejects_fingerprint_device(self, client, fingerprint_device):
         """Test API rejects fingerprint device for QR terminal endpoint"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/1")
+        response = client.get("/api/public/qr-checkin/kiosk/1")
         assert response.status_code == 404
 
         data = response.json()
@@ -169,7 +196,7 @@ class TestQRTerminalDeviceValidation:
 
     def test_qr_terminal_api_rejects_nonexistent_device(self, client):
         """Test API rejects non-existent device ID"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/999")
+        response = client.get("/api/public/qr-checkin/kiosk/999")
         assert response.status_code == 404
 
         data = response.json()
@@ -208,7 +235,7 @@ class TestQRTerminalAPIResponse:
 
     def test_api_response_structure(self, client, qr_terminal_device):
         """Test API returns correct response structure"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        response = client.get("/api/public/qr-checkin/kiosk/2")
         assert response.status_code == 200
 
         data = response.json()
@@ -225,7 +252,7 @@ class TestQRTerminalAPIResponse:
 
     def test_api_response_field_types(self, client, qr_terminal_device):
         """Test API response field types are correct"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        response = client.get("/api/public/qr-checkin/kiosk/2")
         data = response.json()
 
         # qr_image should be base64 data URI
@@ -250,7 +277,7 @@ class TestQRTerminalAPIResponse:
 
     def test_qr_image_is_valid_base64_png(self, client, qr_terminal_device):
         """Test QR image is valid base64-encoded PNG"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        response = client.get("/api/public/qr-checkin/kiosk/2")
         data = response.json()
 
         qr_image = data["qr_image"]
@@ -268,7 +295,7 @@ class TestQRTerminalAPIResponse:
 
     def test_expiry_time_is_future(self, client, qr_terminal_device):
         """Test QR code expiry time is in the future"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        response = client.get("/api/public/qr-checkin/kiosk/2")
         data = response.json()
 
         expires_at = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
@@ -283,7 +310,7 @@ class TestQRTerminalAPIResponse:
 
     def test_api_response_http_ok_status(self, client, qr_terminal_device):
         """Test API returns HTTP 200 OK for valid requests"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        response = client.get("/api/public/qr-checkin/kiosk/2")
 
         # JavaScript checks response.ok (status 200-299)
         assert 200 <= response.status_code < 300
@@ -291,7 +318,7 @@ class TestQRTerminalAPIResponse:
 
     def test_api_flat_response_structure(self, client, qr_terminal_device):
         """Test API returns flat structure (not nested terminal object)"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        response = client.get("/api/public/qr-checkin/kiosk/2")
         data = response.json()
 
         # Response should be flat: {terminal_id, terminal_name, ...}
@@ -321,15 +348,19 @@ class TestQRTerminalJavaScriptValidation:
                js_content.count("data.success") == 0
 
     def test_javascript_uses_flat_api_structure(self, client):
-        """Test JavaScript accesses terminal data from flat API response"""
+        """JS must read the kiosk response as a flat shape (terminal_name
+        at top level), matching QRCodeResponse in app/api/qr_checkin.py.
+
+        The earlier nested form (terminalData.terminal.location_name)
+        silently produced 'undefined' as the feed-item location because
+        the API never returned a nested `terminal` object.
+        """
         response = client.get("/fingerprintlogs/static/js/qr-terminal.js")
         js_content = response.text
 
-        # Should use terminalData.terminal_name (flat)
-        assert "terminalData.terminal_name" in js_content or \
-               "terminal_name" in js_content
-
-        # Should NOT use terminalData.terminal.location_name (nested)
+        assert "terminalData?.terminal_name" in js_content or \
+               "terminalData.terminal_name" in js_content
+        assert "terminalData?.terminal.location_name" not in js_content
         assert "terminalData.terminal.location_name" not in js_content
 
 
@@ -338,7 +369,7 @@ class TestQRCodeImageDisplay:
 
     def test_qr_image_data_uri_format(self, client, qr_terminal_device):
         """Test QR image is complete data URI (not double-prefixed)"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        response = client.get("/api/public/qr-checkin/kiosk/2")
         data = response.json()
 
         qr_image = data["qr_image"]
@@ -355,7 +386,7 @@ class TestQRCodeImageDisplay:
 
     def test_qr_image_can_be_decoded(self, client, qr_terminal_device):
         """Test QR image data URI can be decoded to valid PNG"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        response = client.get("/api/public/qr-checkin/kiosk/2")
         data = response.json()
 
         qr_image = data["qr_image"]
@@ -392,7 +423,7 @@ class TestQRCodeImageDisplay:
 
     def test_qr_image_contains_terminal_data(self, client, qr_terminal_device):
         """Test QR code contains encoded terminal and token data"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        response = client.get("/api/public/qr-checkin/kiosk/2")
         data = response.json()
 
         # QR image should be present and substantial
@@ -428,7 +459,7 @@ class TestQRTerminalIntegrationFlow:
         assert js_response.status_code == 200
 
         # Step 4: API call for QR code
-        api_response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/2")
+        api_response = client.get("/api/public/qr-checkin/kiosk/2")
         assert api_response.status_code == 200
 
         data = api_response.json()
@@ -447,7 +478,7 @@ class TestQRTerminalIntegrationFlow:
         assert html_response.status_code == 200
 
         # But API returns 404
-        api_response = client.get("/fingerprintlogs/api/qr-checkin/kiosk/1")
+        api_response = client.get("/api/public/qr-checkin/kiosk/1")
         assert api_response.status_code == 404
 
         # Error message is in Thai
@@ -460,7 +491,7 @@ class TestLocationSelector:
 
     def test_terminals_api_endpoint(self, client, qr_terminal_device):
         """Test API endpoint lists available QR terminals"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/terminals")
+        response = client.get("/api/public/qr-checkin/terminals")
         assert response.status_code == 200
 
         terminals = response.json()
@@ -476,7 +507,7 @@ class TestLocationSelector:
 
     def test_terminals_api_filters_qr_type(self, client, fingerprint_device, qr_terminal_device):
         """Test API only returns QR terminal devices"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/terminals")
+        response = client.get("/api/public/qr-checkin/terminals")
         terminals = response.json()
 
         # Should only include QR terminals, not fingerprint devices
@@ -486,7 +517,7 @@ class TestLocationSelector:
 
     def test_terminals_api_includes_metadata(self, client, qr_terminal_device):
         """Test API includes location metadata in response"""
-        response = client.get("/fingerprintlogs/api/qr-checkin/terminals")
+        response = client.get("/api/public/qr-checkin/terminals")
         terminals = response.json()
 
         # Find our test terminal
@@ -502,10 +533,13 @@ class TestLocationSelector:
         response = client.get("/fingerprintlogs/qr-checkin/terminal?terminal=2")
         html_content = response.text
 
-        # Check for location selector elements
+        # Check for location selector elements. The label currently reads
+        # "สาขา:" ("Branch:") — historically "เลือกสถานที่:" ("Choose
+        # location:") — both convey the same intent so allow either to
+        # keep the test resilient to small copy tweaks.
         assert 'id="locationSelector"' in html_content
         assert 'id="locationButtons"' in html_content
-        assert 'เลือกสถานที่:' in html_content
+        assert 'สาขา:' in html_content or 'เลือกสถานที่:' in html_content
 
     def test_location_selector_javascript_loaded(self, client):
         """Test JavaScript includes location selector functionality"""
@@ -516,7 +550,7 @@ class TestLocationSelector:
         assert "loadAvailableTerminals" in js_content
         assert "renderLocationButtons" in js_content
         assert "switchTerminal" in js_content
-        assert "/api/qr-checkin/terminals" in js_content
+        assert "/api/public/qr-checkin/terminals" in js_content
 
     def test_location_selector_css_present(self, client):
         """Test CSS includes location selector styles"""
@@ -531,7 +565,7 @@ class TestLocationSelector:
     def test_terminals_api_empty_result_handling(self, client):
         """Test API handles case with no QR terminals"""
         # This test uses empty database (no fixtures)
-        response = client.get("/fingerprintlogs/api/qr-checkin/terminals")
+        response = client.get("/api/public/qr-checkin/terminals")
         assert response.status_code == 200
 
         terminals = response.json()
@@ -557,7 +591,7 @@ class TestLocationSelector:
         test_db.commit()
 
         # Test API returns terminals (at least the one we just created)
-        response = client.get("/fingerprintlogs/api/qr-checkin/terminals")
+        response = client.get("/api/public/qr-checkin/terminals")
         assert response.status_code == 200
 
         terminals = response.json()

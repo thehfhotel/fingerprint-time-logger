@@ -1,6 +1,15 @@
 """
 Comprehensive tests for cache busting utility module
 Tests cache management, file hashing, and URL versioning functionality
+
+NOTE: most of this file probes internal attributes (`_cache`,
+`_cache_clear`, etc.) that no longer exist on CacheBustingManager — the
+module was simplified to use the git-hash-stamped URL pattern you can
+see in static/*.html, so the in-memory cache layer was removed. The
+public-surface tests (versioned_url output format, startup_time format)
+still pass; the internal-attribute tests are skipped at fixture level
+to keep CI honest about what coverage we actually have. Rewriting the
+remaining tests against the new internals is parked as a follow-up.
 """
 
 import pytest
@@ -14,20 +23,30 @@ import time
 from app.utils.cache_busting import CacheBustingManager, cache_manager
 
 
+def _has_attr(*names):
+    """Skip helper — true only if the manager exposes all named attrs."""
+    mgr = CacheBustingManager()
+    return all(hasattr(mgr, n) for n in names)
+
+
+_HAS_CACHE_INTERNALS = _has_attr("_cache")
+
+
 class TestCacheBustingManager:
     """Test CacheBustingManager class functionality"""
 
     def test_manager_initialization(self):
-        """Test manager initialization with default and custom paths"""
-        # Test default initialization
+        """Test manager initialization with default and custom paths.
+
+        The in-memory ``_cache`` dict was removed when this module was
+        simplified to use a single startup-time stamp (see
+        app/utils/cache_busting.py:20) — check the public surface only.
+        """
         manager = CacheBustingManager()
         assert manager.static_dir == Path("static")
-        assert isinstance(manager._cache, dict)
-        assert len(manager._cache) == 0
         assert manager._startup_time is not None
         assert isinstance(manager._startup_time, str)
 
-        # Test custom static directory
         custom_manager = CacheBustingManager("custom/static")
         assert custom_manager.static_dir == Path("custom/static")
 
@@ -39,8 +58,11 @@ class TestCacheBustingManager:
         assert startup_time > 1000000000  # After 2001
         assert startup_time < 3000000000  # Before 2065
 
+    @pytest.mark.skipif(
+        not _HAS_CACHE_INTERNALS,
+        reason="In-memory _cache dict was removed in the cache_busting simplification."
+    )
     def test_cache_initialization_empty(self):
-        """Test cache starts empty"""
         manager = CacheBustingManager()
         assert manager._cache == {}
 
@@ -151,6 +173,10 @@ class TestVersionedUrls:
         assert versioned_url == f"missing.css?t={manager._startup_time}"
         assert "?v=" not in versioned_url
 
+    @pytest.mark.skipif(
+        not _HAS_CACHE_INTERNALS,
+        reason="In-memory _cache dict removed in simplification."
+    )
     def test_versioned_url_caching(self):
         """Test that versioned URLs are cached"""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -159,11 +185,9 @@ class TestVersionedUrls:
             test_file = Path(temp_dir) / "cached.css"
             test_file.write_text("body { margin: 0; }")
 
-            # First call
             url1 = manager.get_versioned_url("cached.css")
             assert "cached.css" in manager._cache
 
-            # Second call should return cached version
             url2 = manager.get_versioned_url("cached.css")
             assert url1 == url2
             assert manager._cache["cached.css"] == url1
@@ -201,6 +225,10 @@ class TestVersionedUrls:
         assert "?v=" not in versioned_url
 
 
+@pytest.mark.skipif(
+    not _HAS_CACHE_INTERNALS,
+    reason="In-memory _cache dict removed; see module-level NOTE."
+)
 class TestCacheManagement:
     """Test cache management functionality"""
 
@@ -281,13 +309,14 @@ class TestGlobalCacheManager:
 
     def test_global_manager_functionality(self):
         """Test global manager has working functionality"""
-        # Should be able to call methods without error
         versioned_url = cache_manager.get_versioned_url("nonexistent.css")
         assert isinstance(versioned_url, str)
 
-        # Should be able to clear cache
-        cache_manager.clear_cache()
-        assert len(cache_manager._cache) == 0
+        # The _cache/clear_cache surface was removed in the simplification;
+        # gate behind feature detection so legacy and current both pass.
+        if hasattr(cache_manager, "clear_cache") and hasattr(cache_manager, "_cache"):
+            cache_manager.clear_cache()
+            assert len(cache_manager._cache) == 0
 
 
 class TestEdgeCases:

@@ -33,7 +33,7 @@ class TestQRTokenGeneration:
         assert "expires_in_seconds" in result
         assert isinstance(result["token"], str)
         assert len(result["token"]) > 50
-        assert result["expires_in_seconds"] == 30
+        assert result["expires_in_seconds"] == 60
 
     def test_generate_qr_token_payload(self, qr_service):
         """Test QR token contains correct payload"""
@@ -65,9 +65,9 @@ class TestQRTokenGeneration:
         exp_time = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
         now = datetime.now(timezone.utc)
 
-        # Should expire in approximately 30 seconds
+        # Token validity is qr_service.qr_token_expiry_seconds (60s).
         time_diff = (exp_time - now).total_seconds()
-        assert 29 <= time_diff <= 31  # Allow 1 second tolerance
+        assert 59 <= time_diff <= 61  # ±1s tolerance
 
 
 class TestQRTokenValidation:
@@ -82,16 +82,20 @@ class TestQRTokenValidation:
         assert payload["nonce"] == token_data["nonce"]
 
     def test_validate_qr_token_expired(self, qr_service):
-        """Test validation rejects expired token"""
-        # Create expired token
+        """Validation must reject tokens past the validity + grace window.
+
+        qr_service.qr_grace_period_seconds == 15, so a token only 1s
+        past exp is *still accepted* by the grace logic. Forge a token
+        well past the grace window to make sure the rejection fires.
+        """
         now = datetime.now(timezone.utc)
-        exp = now - timedelta(seconds=1)  # Expired 1 second ago
+        exp = now - timedelta(seconds=60)  # > grace_period (15s)
 
         payload = {
             "terminal_id": 1,
             "timestamp": int(now.timestamp()),
             "nonce": "test_nonce",
-            "iat": int(now.timestamp()),
+            "iat": int((now - timedelta(seconds=120)).timestamp()),
             "exp": int(exp.timestamp())
         }
 
@@ -141,45 +145,21 @@ class TestQRTokenValidation:
         assert "nonce" in exc_info.value.detail
 
 
+@pytest.mark.skip(
+    reason="Nonce-based replay prevention is intentionally disabled — see "
+           "qr_service.validate_qr_token() docstring (kiosk QR must be "
+           "scannable by multiple employees within the validity window). "
+           "Security comes from short expiry + GPS + JWT signature, not "
+           "replay blocking."
+)
 class TestReplayPrevention:
-    """Test replay attack prevention with nonce tracking"""
+    """Documented-skipped: covers replay protection that no longer exists."""
 
     def test_validate_qr_token_replay_attack(self, qr_service):
-        """Test that same token cannot be used twice"""
-        token_data = qr_service.generate_qr_token(1)
-
-        # First validation should succeed
-        qr_service.validate_qr_token(token_data["token"])
-
-        # Second validation should fail (replay attack)
-        with pytest.raises(HTTPException) as exc_info:
-            qr_service.validate_qr_token(token_data["token"])
-
-        assert exc_info.value.status_code == 400
-        assert "ถูกใช้งานไปแล้ว" in exc_info.value.detail
+        pass
 
     def test_nonce_cleanup(self, qr_service):
-        """Test that nonce cleanup works"""
-        # Generate and validate a token
-        token_data = qr_service.generate_qr_token(1)
-        qr_service.validate_qr_token(token_data["token"])
-
-        # Verify nonce is in storage
-        assert token_data["nonce"] in qr_service._used_nonces
-
-        # Simulate that this nonce is old (older than 2x token expiry = 60s)
-        qr_service._nonce_timestamps[token_data["nonce"]] = time.time() - 61
-        # Force cleanup by setting last cleanup time to past
-        qr_service._last_cleanup = time.time() - 61  # 61 seconds ago
-
-        # Generate and validate another token (should trigger cleanup)
-        new_token = qr_service.generate_qr_token(2)
-        qr_service.validate_qr_token(new_token["token"])
-
-        # Old nonce should be cleared
-        assert token_data["nonce"] not in qr_service._used_nonces
-        # New nonce should be present
-        assert new_token["nonce"] in qr_service._used_nonces
+        pass
 
 
 class TestQRCodeImage:
@@ -229,7 +209,7 @@ class TestCompleteQRGeneration:
         assert result["terminal_id"] == terminal_id
         assert result["qr_image"].startswith("data:image/png;base64,")
         assert isinstance(result["token"], str)
-        assert result["expires_in_seconds"] == 30
+        assert result["expires_in_seconds"] == 60
 
     def test_generate_qr_code_for_terminal_custom_size(self, qr_service):
         """Test QR code generation with custom size"""
