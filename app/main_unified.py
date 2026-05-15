@@ -14,7 +14,8 @@ from app.utils.cache_busting import cache_manager
 
 from app.core.database import engine, Base
 from app.api import (
-    consolidated_attendance, consolidated_devices, consolidated_employees, admin_line_codes, line_auth, qr_checkin
+    consolidated_attendance, consolidated_devices, consolidated_employees,
+    admin_line_codes, line_auth, qr_checkin, shifts,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -284,6 +285,16 @@ async def serve_v2_live():
 async def serve_v2_by_date():
     return serve_html_with_cache_control("static/v2/by-date.html")
 
+@fingerprint_app.get("/v2/shifts-admin")
+async def serve_v2_shifts_admin():
+    """Shift admin page (role + default shift + reception roster).
+
+    Linked from the v2 nav as 'จัดกะ'. Same Cloudflare Access posture
+    as the rest of /fingerprintlogs/* — protected upstream, not at the
+    FastAPI layer.
+    """
+    return serve_html_with_cache_control("static/v2/shifts-admin.html")
+
 @fingerprint_app.get("/export")
 async def serve_export():
     return serve_html_with_cache_control("static/export.html")
@@ -525,6 +536,14 @@ app.include_router(
     admin_line_codes.router,
     prefix="/api/private/admin/line-codes",
     tags=["line-codes-protected"]
+)
+
+# Shift admin (2026-05). Defines work shifts and per-day overrides used
+# by /by-date for late/absent detection.
+app.include_router(
+    shifts.router,
+    prefix="/api/private/shifts",
+    tags=["shifts-protected"],
 )
 
 # Protected endpoint: Auto-import status

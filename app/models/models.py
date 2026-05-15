@@ -32,16 +32,16 @@ class Employee(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     badge_number = Column(String(50), unique=True, nullable=False, index=True)  # Unified identifier
-    
+
     # Names (consolidated from both models)
     english_name = Column(String(100), nullable=True)      # From original Employee.name
     thai_name = Column(String(100), nullable=True)         # From EmployeeThaiName.thai_name
     display_name = Column(String(100), nullable=False)     # Computed: thai_name or f"พนักงาน {badge_number}"
-    
+
     # Organization data
     department = Column(String(100), nullable=True)        # From original Employee
     position = Column(String(100), nullable=True)          # From original Employee
-    
+
     # Status and visibility
     is_active = Column(Boolean, nullable=False, default=True)              # Merged from both models
     is_hidden = Column(Boolean, nullable=False, default=False)             # From EmployeeThaiName (UI control)
@@ -53,12 +53,24 @@ class Employee(Base):
     line_linking_code = Column(String(6), nullable=True, unique=True)     # 6-digit temporary linking code
     line_linking_code_generated_at = Column(DateTime, nullable=True)      # When linking code was generated
 
+    # Role + shift scheduling (Phase: Employee Shifts, 2026-05).
+    # role: 'reception' | 'housekeeping' | 'technician' | 'admin' | NULL
+    #   NULL means "untracked" — the by-date page won't compute late/absent
+    #   for this employee until a role is set.
+    # default_shift_id: shift used on days without an override.
+    #   reception employees typically leave this NULL and assign per-day
+    #   shifts via shift_assignments; the other three roles get a default.
+    role = Column(String(20), nullable=True, index=True)
+    default_shift_id = Column(Integer, ForeignKey("shifts.id"), nullable=True)
+
     # Metadata
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # Relationships
     attendance_records = relationship("AttendanceRecord", back_populates="employee")
+    default_shift = relationship("Shift", foreign_keys=[default_shift_id])
+    shift_assignments = relationship("ShiftAssignment", back_populates="employee", cascade="all, delete-orphan")
 
 
 class AttendanceRecord(Base):
@@ -134,6 +146,78 @@ class AttendanceRecord(Base):
 # Holiday model removed - not used by application
 
 # MonthlyAttendanceStats model removed - not used by application
+
+
+# ============================================================================
+# Employee Shifts (2026-05)
+# ============================================================================
+
+class Shift(Base):
+    """One work-shift definition. Seeded with 5 rows: NORMAL, MORNING, MID,
+    AFTERNOON, NIGHT. start_time / end_time are HH:MM in Bangkok local
+    time. If end_time <= start_time the shift crosses midnight (the only
+    seeded example is NIGHT 22:00-07:00).
+
+    Adding more shifts later is a data operation (INSERT into shifts);
+    no code changes required.
+    """
+    __tablename__ = "shifts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # Stable identifier used by API + admin UI. Examples:
+    # NORMAL, MORNING, MID, AFTERNOON, NIGHT.
+    code = Column(String(20), unique=True, nullable=False, index=True)
+    # Thai display label (e.g. "ปกติ", "เช้า", "สาย", "บ่าย", "ดึก").
+    name_th = Column(String(50), nullable=False)
+    start_time = Column(Time, nullable=False)
+    end_time = Column(Time, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    @property
+    def crosses_midnight(self) -> bool:
+        """True iff end_time <= start_time (overnight shift)."""
+        return self.end_time <= self.start_time
+
+
+class ShiftAssignment(Base):
+    """Per-day override of an employee's effective shift.
+
+    Used primarily for reception employees on a rotating roster, but
+    works for any employee on any date. A row with ``shift_id = NULL``
+    means "scheduled off today" — the by-date page will not flag the
+    employee as absent on that date.
+
+    Resolution order for an employee's effective shift on a given
+    Bangkok date D (see app/services/shift_service.py:effective_shift):
+      1. ShiftAssignment row for (badge, D) — including NULL = off
+      2. Employee.default_shift_id
+      3. None — employee is not tracked for that day
+    """
+    __tablename__ = "shift_assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_badge_number = Column(
+        String(50),
+        ForeignKey("employees.badge_number"),
+        nullable=False,
+        index=True,
+    )
+    # Bangkok-local date. We don't store timezone because the column
+    # represents a calendar day, not a moment.
+    date = Column(Date, nullable=False, index=True)
+    # NULL = scheduled off
+    shift_id = Column(Integer, ForeignKey("shifts.id"), nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("employee_badge_number", "date", name="uq_assignment_badge_date"),
+    )
+
+    employee = relationship("Employee", back_populates="shift_assignments")
+    shift = relationship("Shift")
 
 
 class ApplicationLog(Base):

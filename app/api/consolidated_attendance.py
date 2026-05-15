@@ -4,7 +4,6 @@ Replaces: attendance.py, attendance_calendar.py, calendar_api.py, simple_calenda
 """
 
 import asyncio
-import os
 from datetime import datetime, date, time as dtime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
@@ -20,10 +19,11 @@ import io
 from app.utils.timezone import BANGKOK_TZ, to_bangkok as _to_bangkok
 
 from app.core.database import get_db
-from app.models.models import AttendanceRecord, Employee
+from app.models.models import AttendanceRecord, Employee, Shift
 from app.services.attendance_service import attendance_service
 from app.services.device_service import device_service
 from app.services.export_service import export_service
+from app.services.shift_service import effective_shift, shift_window_for
 
 router = APIRouter()
 
@@ -32,56 +32,20 @@ router = APIRouter()
 # BY-DATE SUMMARY HELPERS (v2 by-date page)
 # ============================================================================
 
-# Default expected start time when EXPECTED_START_TIME env var is unset or
-# malformed. Bangkok local clock — see plan section "Page 2: By-date summary".
-_DEFAULT_EXPECTED_START_TIME = "09:00"
-
 # Sort priority for the by-date status enum. Late first (most actionable),
-# then on-time. "absent" was removed 2026-05 — we now only emit a row per
-# employee who actually punched on the target date, because tracking absence
-# requires per-employee work schedules which we don't have yet. "off" is
-# reserved for that future schedule-aware version and isn't emitted today.
+# then absent, then on-time, then off. The page hides "off" by default;
+# putting them last keeps the order stable when an admin toggles the
+# filter to show them.
 _BY_DATE_STATUS_SORT_ORDER = {
     "late": 0,
-    "on_time": 1,
-    "off": 2,
+    "absent": 1,
+    "on_time": 2,
+    "off": 3,
 }
 
 
-def _resolve_expected_start_time() -> str:
-    """
-    Read EXPECTED_START_TIME env var, validate HH:mm, fall back to default.
-
-    Invalid values (wrong format, out-of-range hour/minute) silently fall back
-    to the default rather than raising — the endpoint should not 500 because
-    of a misconfigured env var.
-    """
-    raw = os.getenv("EXPECTED_START_TIME", _DEFAULT_EXPECTED_START_TIME)
-    try:
-        parsed = datetime.strptime(raw, "%H:%M").time()
-    except (ValueError, TypeError):
-        return _DEFAULT_EXPECTED_START_TIME
-    return parsed.strftime("%H:%M")
-
-
-def _parse_expected_start_time(value: str) -> dtime:
-    """Parse a validated HH:mm string into a time object."""
-    return datetime.strptime(value, "%H:%M").time()
-
-
-def _bangkok_day_to_utc_range(bangkok_day: date) -> tuple[datetime, datetime]:
-    """
-    Convert a Bangkok-local date to the [start, end) UTC-naive range that
-    selects all AttendanceRecord rows whose Bangkok-local day matches.
-
-    Mirrors the pattern at app/api/system_status.py:255-264. DB stores
-    UTC-naive timestamps, so we strip tzinfo after astimezone.
-    """
-    bkk_start = datetime.combine(bangkok_day, dtime.min, tzinfo=BANGKOK_TZ)
-    bkk_end = bkk_start + timedelta(days=1)
-    utc_start = bkk_start.astimezone(timezone.utc).replace(tzinfo=None)
-    utc_end = bkk_end.astimezone(timezone.utc).replace(tzinfo=None)
-    return utc_start, utc_end
+# (_bangkok_day_to_utc_range removed 2026-05: shift-aware /by-date uses
+# shift_window_for() per employee instead of a single Bangkok-day range.)
 
 
 def _resolve_display_name(employee: Employee) -> str:
@@ -118,27 +82,30 @@ def _compute_hours_worked(
     return round(delta_seconds / 3600, 2)
 
 
-def _compute_status(
+def _compute_status_shift_aware(
     first_in_bangkok: Optional[datetime],
-    expected_start: dtime,
+    shift_start_bkk: datetime,
+    is_off: bool,
 ) -> str:
     """
-    Compute by-date status enum.
+    Compute by-date status using the employee's effective shift.
 
-    - "late": first_in_bangkok.time() > expected_start
-    - "on_time": first_in_bangkok.time() <= expected_start
+    - "off": employee is scheduled off (no shift today)
+    - "absent": effective shift exists, no punches in its window
+    - "late": first punch in window is AFTER shift_start_bkk
+    - "on_time": first punch in window is at-or-before shift_start_bkk
 
-    A caller is required to pass a non-None first_in_bangkok — the endpoint
-    no longer emits rows for employees who didn't punch (absence tracking
-    needs per-employee schedules, which we don't have yet). "off" is
-    reserved for that future schedule-aware version.
+    ``first_in_bangkok`` is the first attendance punch inside the shift's
+    window (see ``shift_window_for``), already converted to Bangkok time.
+    For overnight shifts (e.g. NIGHT 22:00-07:00), shift_start_bkk is the
+    same calendar day as the assigned date even though the punch may be
+    on the following day.
     """
+    if is_off:
+        return "off"
     if first_in_bangkok is None:
-        # Defensive: callers shouldn't pass None now that the endpoint
-        # filters out no-punch employees upstream. Treat as on_time rather
-        # than the dropped "absent" sentinel.
-        return "on_time"
-    if first_in_bangkok.time() > expected_start:
+        return "absent"
+    if first_in_bangkok > shift_start_bkk:
         return "late"
     return "on_time"
 
@@ -394,50 +361,41 @@ async def get_attendance_by_date(
     """
     Per-date attendance summary for the v2 by-date page.
 
-    One row per ACTIVE employee who actually punched on that Bangkok day.
-    Employees with no punches are omitted (absence tracking requires
-    per-employee schedules, which we don't have yet — once we do, this
-    endpoint will surface "absent" again and pair it with each employee's
-    expected workday).
+    One row per ACTIVE employee whose effective shift on the target
+    Bangkok date is either a real shift (NORMAL/MORNING/MID/AFTERNOON/
+    NIGHT) or a scheduled off-day. Employees with no role and no
+    default shift are treated as "untracked" and omitted entirely —
+    nothing to compare their punches against.
 
-    first_in / last_out are HH:mm Bangkok. hours_worked is the decimal-hour
-    delta, or null if there's only one punch (last_out == first_in).
+    For each tracked employee:
+      - Look up the effective shift (see shift_service.effective_shift)
+      - Compute the punch window for that shift on that date
+        (shift_service.shift_window_for; overnight shifts cross
+        midnight into the next calendar day)
+      - Take first/last punch inside the window
+      - Status: "on_time" (in by shift_start), "late" (in after
+        shift_start), "absent" (no punches in window), "off"
+        (scheduled rest)
 
-    Status enum (see _compute_status):
-      - "late" | "on_time"
-      - "off" is reserved for the future schedule-aware version and is
-        not emitted today.
+    first_in / last_out are HH:mm Bangkok. hours_worked is the decimal
+    hour delta, or null if there's only one punch.
 
-    Rows are sorted: late first, then on_time, then by display_name
-    (case-insensitive, deterministic).
+    Sort: late > absent > on_time > off, then by display_name.
+
+    Returns ``shift`` per row when one applies (code + name_th +
+    start/end + crosses_midnight) so the page can show what the
+    employee was scheduled for.
     """
     target_day = _parse_date_param(date_param)
-    expected_start_str = _resolve_expected_start_time()
-    expected_start = _parse_expected_start_time(expected_start_str)
-    utc_start, utc_end = _bangkok_day_to_utc_range(target_day)
 
-    punches_by_badge = _fetch_punches_by_badge(db, utc_start, utc_end)
-    if not punches_by_badge:
-        return {
-            "date": target_day.isoformat(),
-            "expected_start_time": expected_start_str,
-            "rows": [],
-        }
+    rows: List[Dict[str, Any]] = []
+    for employee in _fetch_active_employees(db):
+        eff = effective_shift(db, employee, target_day)
+        if eff.shift is None and not eff.is_off:
+            # Untracked — no role, no default. Skip entirely.
+            continue
+        rows.append(_build_shift_row(db, employee, target_day, eff))
 
-    # Only employees who punched on the target date make it into the rows.
-    # Inactive employees are filtered out to match the original contract:
-    # we don't want a long-departed staff member resurfacing because a
-    # stray punch slipped through.
-    active_by_badge = {
-        emp.badge_number: emp
-        for emp in _fetch_active_employees(db)
-        if emp.badge_number in punches_by_badge
-    }
-
-    rows = [
-        _build_row(active_by_badge[badge], punches_by_badge[badge], expected_start)
-        for badge in active_by_badge
-    ]
     rows.sort(key=lambda row: (
         _BY_DATE_STATUS_SORT_ORDER.get(row["status"], 99),
         (row["display_name"] or "").casefold(),
@@ -445,7 +403,6 @@ async def get_attendance_by_date(
 
     return {
         "date": target_day.isoformat(),
-        "expected_start_time": expected_start_str,
         "rows": rows,
     }
 
@@ -463,50 +420,65 @@ def _parse_date_param(raw: Optional[str]) -> date:
         )
 
 
-def _fetch_punches_by_badge(
-    db: Session,
-    utc_start: datetime,
-    utc_end: datetime,
-) -> Dict[str, Dict[str, datetime]]:
-    """
-    Single aggregation query: MIN/MAX timestamp per badge in the UTC range.
-    Returns {badge: {"first_in": utc_dt, "last_out": utc_dt}}.
-    """
-    rows = (
-        db.query(
-            AttendanceRecord.employee_badge_number.label("badge"),
-            func.min(AttendanceRecord.timestamp).label("first_in"),
-            func.max(AttendanceRecord.timestamp).label("last_out"),
-        )
-        .filter(
-            AttendanceRecord.timestamp >= utc_start,
-            AttendanceRecord.timestamp < utc_end,
-        )
-        .group_by(AttendanceRecord.employee_badge_number)
-        .all()
-    )
-    return {
-        row.badge: {"first_in": row.first_in, "last_out": row.last_out}
-        for row in rows
-    }
-
-
 def _fetch_active_employees(db: Session) -> List[Employee]:
     """All employees with is_active=True. is_hidden is ignored — the v2 page
     is for active payroll and shows hidden employees too if they're active."""
     return db.query(Employee).filter(Employee.is_active == True).all()  # noqa: E712
 
 
-def _build_row(
+def _shift_summary(shift: Optional[Shift]) -> Optional[Dict[str, Any]]:
+    """Compact shift snapshot for the row payload, or None if off."""
+    if shift is None:
+        return None
+    return {
+        "code": shift.code,
+        "name_th": shift.name_th,
+        "start_time": shift.start_time.strftime("%H:%M"),
+        "end_time": shift.end_time.strftime("%H:%M"),
+        "crosses_midnight": shift.crosses_midnight,
+    }
+
+
+def _build_shift_row(
+    db: Session,
     employee: Employee,
-    punches: Dict[str, datetime],
-    expected_start: dtime,
+    target_day: date,
+    eff,
 ) -> Dict[str, Any]:
-    """Build the JSON row for one employee. Caller guarantees ``punches`` is
-    non-empty — the endpoint no longer emits rows for employees with no
-    punches on the target date."""
-    first_in_utc = punches["first_in"]
-    last_out_utc = punches["last_out"]
+    """Build one /by-date row using the employee's effective shift.
+
+    Off days produce a row with no times and status="off". Other rows
+    query the AttendanceRecord table within the shift's punch window
+    (which may straddle midnight for NIGHT shifts) and classify by
+    whether the first_in is before or after shift_start.
+    """
+    if eff.is_off:
+        return {
+            "badge_number": employee.badge_number,
+            "display_name": _resolve_display_name(employee),
+            "role": employee.role,
+            "shift": None,
+            "first_in": None,
+            "last_out": None,
+            "hours_worked": None,
+            "status": "off",
+        }
+
+    shift = eff.shift  # guaranteed non-None by caller (untracked were filtered out)
+    window = shift_window_for(shift, target_day)
+
+    first_in_utc, last_out_utc = (
+        db.query(
+            func.min(AttendanceRecord.timestamp),
+            func.max(AttendanceRecord.timestamp),
+        )
+        .filter(
+            AttendanceRecord.employee_badge_number == employee.badge_number,
+            AttendanceRecord.timestamp >= window.start_utc,
+            AttendanceRecord.timestamp < window.end_utc,
+        )
+        .one()
+    )
 
     first_in_bangkok = _to_bangkok(first_in_utc) if first_in_utc else None
     last_out_bangkok = _to_bangkok(last_out_utc) if last_out_utc else None
@@ -514,10 +486,14 @@ def _build_row(
     return {
         "badge_number": employee.badge_number,
         "display_name": _resolve_display_name(employee),
+        "role": employee.role,
+        "shift": _shift_summary(shift),
         "first_in": first_in_bangkok.strftime("%H:%M") if first_in_bangkok else None,
         "last_out": last_out_bangkok.strftime("%H:%M") if last_out_bangkok else None,
         "hours_worked": _compute_hours_worked(first_in_utc, last_out_utc),
-        "status": _compute_status(first_in_bangkok, expected_start),
+        "status": _compute_status_shift_aware(
+            first_in_bangkok, window.shift_start_bkk, eff.is_off,
+        ),
     }
 
 

@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>จัดกะพนักงาน — ระบบบันทึกเวลา</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/fingerprintlogs/static/v2/theme.js"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: window.V2.THEME },
+      safelist: [
+        "bg-brand-100", "text-brand-700",
+        "bg-good-100",  "text-good-700",
+        "bg-warn-100",  "text-warn-700",
+        "bg-bad-100",   "text-bad-700",
+        "bg-ink-200",   "text-ink-700",
+        "bg-off-100",   "text-off-600",
+        "bg-ink-100",   "text-ink-600",
+      ],
+    };
+  </script>
+  <style>
+    html, body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+  </style>
+</head>
+<body class="min-h-screen bg-ink-50 text-ink-900 antialiased">
+
+  <!-- TOP NAV -->
+  <nav class="border-b border-ink-200 bg-white">
+    <div class="mx-auto flex max-w-5xl items-center justify-between px-5 py-3">
+      <a href="/fingerprintlogs/v2/" class="flex items-center gap-2 text-sm font-semibold text-ink-700 hover:text-brand-600">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><polyline points="15 18 9 12 15 6"/></svg>
+        ระบบบันทึกเวลา
+      </a>
+      <div class="flex items-center gap-1">
+        <a href="/fingerprintlogs/v2/live" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">ดูสด</a>
+        <a href="/fingerprintlogs/v2/by-date" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">ตามวันที่</a>
+        <a href="/fingerprintlogs/v2/shifts-admin" class="rounded-md px-3 py-1.5 text-sm font-medium bg-brand-100 text-brand-700" aria-current="page">จัดกะ</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="mx-auto max-w-5xl px-4 pt-5 pb-12 md:px-5 md:pt-8">
+
+    <!-- HEADER -->
+    <header class="mb-5 md:mb-7">
+      <p class="text-xs font-medium uppercase tracking-[0.18em] text-brand-600">จัดกะ</p>
+      <h1 class="mt-1 text-2xl font-bold tracking-tight text-ink-900 md:text-3xl">จัดกะพนักงาน</h1>
+      <p class="mt-1 text-sm text-ink-500">กำหนดบทบาทและกะการทำงานให้พนักงานแต่ละคน รวมถึงตั้งกะรายวันสำหรับ Reception</p>
+    </header>
+
+    <!-- TABS -->
+    <div role="tablist" class="mb-4 flex gap-1 border-b border-ink-200">
+      <button data-tab="roles" class="tab tab-on px-4 py-2 text-sm font-medium">บทบาท + กะหลัก</button>
+      <button data-tab="roster" class="tab px-4 py-2 text-sm font-medium">ตารางกะรายวัน (Reception)</button>
+    </div>
+
+    <!-- TAB: Roles + default shift -->
+    <section id="tabRoles" class="tab-pane">
+      <div id="rolesLoading" class="rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+        <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
+        <p class="mt-3 text-sm text-ink-500">กำลังโหลดรายชื่อพนักงาน…</p>
+      </div>
+      <div id="rolesError" class="hidden rounded-2xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+        <span id="rolesErrorText">โหลดข้อมูลไม่สำเร็จ</span>
+        <button id="rolesRetry" class="ml-2 underline underline-offset-2">ลองใหม่</button>
+      </div>
+      <div id="rolesTableWrap" class="hidden overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-card">
+        <table class="min-w-full divide-y divide-ink-100 text-sm">
+          <thead class="bg-ink-50/60">
+            <tr class="text-left text-xs uppercase tracking-wider text-ink-500">
+              <th scope="col" class="px-5 py-3 font-semibold">พนักงาน</th>
+              <th scope="col" class="px-5 py-3 font-semibold">บทบาท</th>
+              <th scope="col" class="px-5 py-3 font-semibold">กะหลัก</th>
+              <th scope="col" class="px-5 py-3 font-semibold w-0"></th>
+            </tr>
+          </thead>
+          <tbody id="rolesTableBody" class="divide-y divide-ink-100"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB: Roster (per-day reception assignments) -->
+    <section id="tabRoster" class="tab-pane hidden">
+      <div class="mb-4 rounded-2xl border border-ink-200 bg-white p-3 shadow-card md:p-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="rosterPrev" class="h-10 w-10 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">‹</button>
+          <input id="rosterStartDate" type="date"
+                 class="h-10 min-w-[10rem] flex-1 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-800 shadow-card" />
+          <button id="rosterNext" class="h-10 w-10 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">›</button>
+          <button id="rosterThisWeek" class="h-10 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">สัปดาห์นี้</button>
+        </div>
+        <p class="mt-3 text-xs text-ink-500">แสดงตารางกะ 7 วันถัดไปสำหรับพนักงาน Reception แต่ละคน เลือกกะจาก dropdown หรือเลือก "หยุด"</p>
+      </div>
+
+      <div id="rosterLoading" class="rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+        <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
+        <p class="mt-3 text-sm text-ink-500">กำลังโหลดตารางกะ…</p>
+      </div>
+      <div id="rosterError" class="hidden rounded-2xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700"></div>
+      <div id="rosterEmpty" class="hidden rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+        <p class="text-sm font-medium text-ink-700">ยังไม่มีพนักงานบทบาท Reception</p>
+        <p class="mt-1 text-xs text-ink-500">กำหนดบทบาทที่แท็บ "บทบาท + กะหลัก" ก่อน</p>
+      </div>
+      <div id="rosterTableWrap" class="hidden overflow-x-auto rounded-2xl border border-ink-200 bg-white shadow-card">
+        <table class="min-w-full divide-y divide-ink-100 text-sm">
+          <thead id="rosterHead" class="bg-ink-50/60"></thead>
+          <tbody id="rosterBody" class="divide-y divide-ink-100"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <style>
+    .tab {
+      color: rgb(71 85 105);
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+    .tab:hover { background-color: rgb(248 250 252); }
+    .tab.tab-on {
+      color: rgb(67 56 202);
+      border-bottom-color: rgb(99 102 241);
+    }
+  </style>
+
+  <script>
+    (function () {
+      const V2 = window.V2;
+
+      // Role values match shift_service.py / consolidated_employees.py
+      const ROLES = [
+        { value: "",             label: "—" },
+        { value: "reception",    label: "Reception" },
+        { value: "housekeeping", label: "แม่บ้าน" },
+        { value: "technician",   label: "ช่าง" },
+        { value: "admin",        label: "ธุรการ" },
+      ];
+
+      // Loaded from /api/private/shifts/
+      let SHIFTS = [];
+      // Loaded from /api/private/employees/?include_hidden=true
+      let EMPLOYEES = [];
+
+      // ---------- Tab switching ----------
+      const tabs = Array.from(document.querySelectorAll(".tab[data-tab]"));
+      const panes = {
+        roles:  document.getElementById("tabRoles"),
+        roster: document.getElementById("tabRoster"),
+      };
+      tabs.forEach(t => t.addEventListener("click", () => {
+        const target = t.getAttribute("data-tab");
+        tabs.forEach(x => x.classList.toggle("tab-on", x === t));
+        Object.entries(panes).forEach(([k, el]) => el.classList.toggle("hidden", k !== target));
+        if (target === "roster") loadRoster();
+      }));
+
+      // ---------- Boot ----------
+      loadAll();
+
+      async function loadAll() {
+        try {
+          const [shiftsResp, employeesResp] = await Promise.all([
+            V2.apiFetch("/api/private/shifts/"),
+            V2.apiFetch("/api/private/employees/?include_hidden=true"),
+          ]);
+          SHIFTS = shiftsResp || [];
+          EMPLOYEES = (employeesResp && employeesResp.employees) || [];
+          renderRolesTable();
+        } catch (err) {
+          showRolesError("โหลดข้อมูลไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")");
+        }
+      }
+
+      // ---------- Roles tab ----------
+      const rolesLoading = document.getElementById("rolesLoading");
+      const rolesError = document.getElementById("rolesError");
+      const rolesErrorText = document.getElementById("rolesErrorText");
+      const rolesTableWrap = document.getElementById("rolesTableWrap");
+      const rolesTableBody = document.getElementById("rolesTableBody");
+
+      document.getElementById("rolesRetry").addEventListener("click", loadAll);
+
+      function showRolesError(msg) {
+        rolesLoading.classList.add("hidden");
+        rolesTableWrap.classList.add("hidden");
+        rolesErrorText.textContent = msg;
+        rolesError.classList.remove("hidden");
+      }
+
+      function renderRolesTable() {
+        rolesLoading.classList.add("hidden");
+        rolesError.classList.add("hidden");
+        rolesTableWrap.classList.remove("hidden");
+
+        // Sort employees by display_name for predictable scrolling.
+        const sorted = EMPLOYEES.slice().sort((a, b) =>
+          (a.display_name || a.badge_number || "").localeCompare(
+            b.display_name || b.badge_number || "", "th"
+          )
+        );
+
+        rolesTableBody.innerHTML = "";
+        sorted.forEach(emp => {
+          const tr = document.createElement("tr");
+          tr.className = "hover:bg-ink-50/50";
+
+          const name = V2.escapeHtml(emp.display_name || ("บัตร " + emp.badge_number));
+          const badge = "#" + V2.escapeHtml(emp.badge_number);
+          const avatarKlass = V2.avatarColor(emp.badge_number || emp.display_name || "");
+          const initials = V2.escapeHtml(V2.initials(emp.display_name || emp.badge_number));
+
+          tr.innerHTML =
+            '<td class="px-5 py-3">' +
+              '<div class="flex items-center gap-3">' +
+                '<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ' + avatarKlass + '">' + initials + '</span>' +
+                '<div class="min-w-0">' +
+                  '<p class="truncate font-semibold text-ink-900">' + name + '</p>' +
+                  '<p class="truncate text-xs text-ink-500">' + badge + '</p>' +
+                '</div>' +
+              '</div>' +
+            '</td>' +
+            '<td class="px-5 py-3"><select class="role-select h-9 rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800"></select></td>' +
+            '<td class="px-5 py-3"><select class="shift-select h-9 rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800"></select></td>' +
+            '<td class="px-5 py-3 text-right">' +
+              '<span class="save-state text-xs text-ink-400"></span>' +
+            '</td>';
+
+          const roleSel = tr.querySelector(".role-select");
+          ROLES.forEach(r => {
+            const opt = document.createElement("option");
+            opt.value = r.value;
+            opt.textContent = r.label;
+            if ((emp.role || "") === r.value) opt.selected = true;
+            roleSel.appendChild(opt);
+          });
+
+          const shiftSel = tr.querySelector(".shift-select");
+          // First option is empty / "ใช้ค่าเริ่มต้นตามบทบาท"
+          const noneOpt = document.createElement("option");
+          noneOpt.value = "";
+          noneOpt.textContent = "(ตามบทบาท)";
+          shiftSel.appendChild(noneOpt);
+          SHIFTS.forEach(s => {
+            const opt = document.createElement("option");
+            opt.value = s.code;
+            opt.textContent = s.name_th + " (" + s.start_time + "–" + s.end_time + ")";
+            if ((emp.default_shift_code || "") === s.code) opt.selected = true;
+            shiftSel.appendChild(opt);
+          });
+
+          const saveState = tr.querySelector(".save-state");
+          const persist = async () => {
+            saveState.textContent = "กำลังบันทึก…";
+            saveState.className = "save-state text-xs text-ink-400";
+            try {
+              await V2.apiFetch("/api/private/employees/" + encodeURIComponent(emp.badge_number) + "/shift", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  role: roleSel.value || null,
+                  default_shift_code: shiftSel.value || null,
+                }),
+              });
+              emp.role = roleSel.value || null;
+              emp.default_shift_code = shiftSel.value || null;
+              saveState.textContent = "บันทึกแล้ว";
+              saveState.className = "save-state text-xs text-good-700";
+              setTimeout(() => { saveState.textContent = ""; }, 1500);
+            } catch (err) {
+              saveState.textContent = "ไม่สำเร็จ";
+              saveState.className = "save-state text-xs text-bad-700";
+            }
+          };
+          roleSel.addEventListener("change", persist);
+          shiftSel.addEventListener("change", persist);
+
+          rolesTableBody.appendChild(tr);
+        });
+      }
+
+      // ---------- Roster tab ----------
+      const rosterLoading = document.getElementById("rosterLoading");
+      const rosterError = document.getElementById("rosterError");
+      const rosterEmpty = document.getElementById("rosterEmpty");
+      const rosterTableWrap = document.getElementById("rosterTableWrap");
+      const rosterHead = document.getElementById("rosterHead");
+      const rosterBody = document.getElementById("rosterBody");
+      const rosterStartDate = document.getElementById("rosterStartDate");
+      const rosterPrev = document.getElementById("rosterPrev");
+      const rosterNext = document.getElementById("rosterNext");
+      const rosterThisWeek = document.getElementById("rosterThisWeek");
+
+      // Start = today (Bangkok). Show 7 days.
+      let rosterStart = V2.bangkokDate();
+      let rosterAssignments = {};  // { "badge|date": shift_code or "" for off, null when no row }
+
+      function addDays(iso, delta) {
+        const [y, m, d] = iso.split("-").map(Number);
+        const dt = new Date(Date.UTC(y, m - 1, d));
+        dt.setUTCDate(dt.getUTCDate() + delta);
+        return [dt.getUTCFullYear(),
+                String(dt.getUTCMonth() + 1).padStart(2, "0"),
+                String(dt.getUTCDate()).padStart(2, "0")].join("-");
+      }
+
+      function setRosterStart(iso) {
+        rosterStart = iso;
+        rosterStartDate.value = iso;
+        loadRoster();
+      }
+
+      rosterStartDate.addEventListener("change", () => {
+        if (rosterStartDate.value) setRosterStart(rosterStartDate.value);
+      });
+      rosterPrev.addEventListener("click", () => setRosterStart(addDays(rosterStart, -7)));
+      rosterNext.addEventListener("click", () => setRosterStart(addDays(rosterStart, 7)));
+      rosterThisWeek.addEventListener("click", () => setRosterStart(V2.bangkokDate()));
+
+      function showRosterError(msg) {
+        rosterLoading.classList.add("hidden");
+        rosterTableWrap.classList.add("hidden");
+        rosterEmpty.classList.add("hidden");
+        rosterError.textContent = msg;
+        rosterError.classList.remove("hidden");
+      }
+
+      async function loadRoster() {
+        // Make sure employees + shifts are loaded.
+        if (SHIFTS.length === 0 || EMPLOYEES.length === 0) {
+          await loadAll();
+        }
+
+        rosterLoading.classList.remove("hidden");
+        rosterError.classList.add("hidden");
+        rosterEmpty.classList.add("hidden");
+        rosterTableWrap.classList.add("hidden");
+        rosterStartDate.value = rosterStart;
+
+        const fromDate = rosterStart;
+        const toDate = addDays(rosterStart, 6);
+
+        try {
+          const resp = await V2.apiFetch(
+            "/api/private/shifts/assignments?from=" + encodeURIComponent(fromDate) +
+            "&to=" + encodeURIComponent(toDate)
+          );
+          rosterAssignments = {};
+          (resp || []).forEach(a => {
+            // shift_code === null means "scheduled off" — we keep the
+            // string "" for off in the UI so we can distinguish from
+            // "no row" (no assignment).
+            rosterAssignments[a.employee_badge_number + "|" + a.date] = a.shift_code || "";
+          });
+          renderRoster(fromDate);
+        } catch (err) {
+          showRosterError("โหลดตารางกะไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")");
+        }
+      }
+
+      function renderRoster(fromDate) {
+        const receptionStaff = EMPLOYEES
+          .filter(e => e.role === "reception")
+          .sort((a, b) => (a.display_name || "").localeCompare(b.display_name || "", "th"));
+
+        rosterLoading.classList.add("hidden");
+        if (receptionStaff.length === 0) {
+          rosterEmpty.classList.remove("hidden");
+          return;
+        }
+
+        rosterTableWrap.classList.remove("hidden");
+
+        // Header: dates
+        const days = [];
+        for (let i = 0; i < 7; i++) days.push(addDays(fromDate, i));
+        const headRow = '<tr class="text-left text-xs uppercase tracking-wider text-ink-500">' +
+          '<th scope="col" class="px-5 py-3 font-semibold sticky left-0 bg-ink-50/60">พนักงาน</th>' +
+          days.map(d => {
+            const dt = new Date(d + "T12:00:00Z");
+            const lbl = new Intl.DateTimeFormat("th-TH", {
+              weekday: "short", day: "2-digit", month: "short", timeZone: "UTC",
+            }).format(dt);
+            return '<th scope="col" class="px-3 py-3 font-semibold whitespace-nowrap">' +
+                   V2.escapeHtml(lbl) + '</th>';
+          }).join("") +
+          '</tr>';
+        rosterHead.innerHTML = headRow;
+
+        // Body: one row per reception staff
+        rosterBody.innerHTML = "";
+        receptionStaff.forEach(emp => {
+          const tr = document.createElement("tr");
+          tr.className = "hover:bg-ink-50/50";
+          const name = V2.escapeHtml(emp.display_name || emp.badge_number);
+          tr.innerHTML = '<td class="px-5 py-3 sticky left-0 bg-white">' +
+            '<p class="font-semibold text-ink-900 truncate">' + name + '</p>' +
+            '<p class="text-xs text-ink-500">#' + V2.escapeHtml(emp.badge_number) + '</p>' +
+            '</td>';
+
+          days.forEach(d => {
+            const key = emp.badge_number + "|" + d;
+            const current = rosterAssignments[key];  // undefined | "" (off) | "MORNING" etc.
+
+            const cell = document.createElement("td");
+            cell.className = "px-3 py-3";
+            const sel = document.createElement("select");
+            sel.className = "h-9 w-full rounded-lg border border-ink-200 bg-white px-2 text-xs";
+
+            // Options: (no assignment) | each shift | OFF.
+            const noneOpt = document.createElement("option");
+            noneOpt.value = "__none__";
+            noneOpt.textContent = "(ไม่ตั้ง)";
+            if (current === undefined) noneOpt.selected = true;
+            sel.appendChild(noneOpt);
+            SHIFTS.forEach(s => {
+              const opt = document.createElement("option");
+              opt.value = s.code;
+              opt.textContent = s.name_th;
+              if (current === s.code) opt.selected = true;
+              sel.appendChild(opt);
+            });
+            const offOpt = document.createElement("option");
+            offOpt.value = "__off__";
+            offOpt.textContent = "หยุด";
+            if (current === "") offOpt.selected = true;
+            sel.appendChild(offOpt);
+
+            sel.addEventListener("change", async () => {
+              sel.disabled = true;
+              try {
+                const url = "/api/private/shifts/assignments/" +
+                            encodeURIComponent(emp.badge_number) + "/" + d;
+                if (sel.value === "__none__") {
+                  await V2.apiFetch(url, { method: "DELETE" });
+                  delete rosterAssignments[key];
+                } else {
+                  const code = sel.value === "__off__" ? null : sel.value;
+                  await V2.apiFetch(url, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ shift_code: code }),
+                  });
+                  rosterAssignments[key] = code || "";
+                }
+              } catch (err) {
+                showRosterError("บันทึกไม่สำเร็จ — โหลดใหม่");
+              } finally {
+                sel.disabled = false;
+              }
+            });
+
+            cell.appendChild(sel);
+            tr.appendChild(cell);
+          });
+
+          rosterBody.appendChild(tr);
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

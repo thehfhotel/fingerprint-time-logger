@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.models.models import Employee
+from app.models.models import Employee, Shift
 from app.services.attendance_service import attendance_service
 from app.services.device_service import device_service
 
@@ -38,6 +38,25 @@ class EmployeeUpdate(BaseModel):
     position: Optional[str] = None
     is_active: Optional[bool] = None
     is_hidden: Optional[bool] = None
+
+
+# Allowed values for Employee.role. Documented as a tuple so the
+# validation on /shift PATCH stays in lockstep with shift_service's
+# DEFAULT_SHIFT_CODE_BY_ROLE map. Empty string and None both clear
+# the role; any other value is rejected with 400.
+_ALLOWED_ROLES = ("reception", "housekeeping", "technician", "admin")
+
+
+class ShiftAssignmentInput(BaseModel):
+    """Body for PUT /api/private/employees/{badge}/shift.
+
+    Both fields are optional and can be cleared by sending None /
+    empty string. The endpoint validates that role (if set) is one
+    of the four supported values and that default_shift_code (if set)
+    refers to a real shift.
+    """
+    role: Optional[str] = None
+    default_shift_code: Optional[str] = None
 
 
 # Role schemas removed - simplifying employee management
@@ -186,6 +205,63 @@ async def update_employee_hidden_status(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/{badge_number}/shift")
+async def update_employee_shift_assignment(
+    badge_number: str,
+    body: ShiftAssignmentInput,
+    db: Session = Depends(get_db),
+):
+    """Set the employee's role and/or default shift.
+
+    role: one of 'reception', 'housekeeping', 'technician', 'admin', or
+    null/empty to clear (employee becomes "untracked" again — won't
+    appear on /by-date until a role or default is set).
+
+    default_shift_code: shift code (NORMAL/MORNING/MID/AFTERNOON/NIGHT)
+    or null/empty to use the role default. Reception staff typically
+    leave this null and rely on per-day shift_assignments instead.
+    """
+    employee = db.query(Employee).filter(Employee.badge_number == badge_number).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    # role normalisation: treat empty string as "clear".
+    new_role = body.role
+    if new_role == "":
+        new_role = None
+    if new_role is not None and new_role not in _ALLOWED_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"role must be one of {_ALLOWED_ROLES} or null",
+        )
+
+    new_shift_code = body.default_shift_code
+    if new_shift_code == "":
+        new_shift_code = None
+    new_shift_id = None
+    if new_shift_code is not None:
+        shift = db.query(Shift).filter(Shift.code == new_shift_code).first()
+        if shift is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown default_shift_code: {new_shift_code}",
+            )
+        new_shift_id = shift.id
+
+    employee.role = new_role
+    employee.default_shift_id = new_shift_id
+    db.commit()
+    db.refresh(employee)
+
+    return {
+        "badge_number": employee.badge_number,
+        "role": employee.role,
+        "default_shift_code": (
+            employee.default_shift.code if employee.default_shift else None
+        ),
+    }
+
+
 @router.get("/")
 async def get_employees(
     include_hidden: bool = False,
@@ -221,10 +297,15 @@ async def get_employees(
                 "position": emp.position,
                 "is_active": emp.is_active,
                 "is_hidden": emp.is_hidden,
+                # Shift scheduling fields (2026-05). Exposed on the list
+                # response so the admin UI can render the shift column
+                # without an extra round-trip per employee.
+                "role": emp.role,
+                "default_shift_code": emp.default_shift.code if emp.default_shift else None,
                 "created_at": emp.created_at.isoformat() if emp.created_at else None,
                 "in_database": True
             })
-        
+
         return {"employees": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

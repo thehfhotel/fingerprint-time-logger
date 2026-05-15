@@ -50,6 +50,10 @@
            aria-current="page">
           ตามวันที่
         </a>
+        <a href="/fingerprintlogs/v2/shifts-admin"
+           class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">
+          จัดกะ
+        </a>
       </div>
     </div>
   </nav>
@@ -102,6 +106,8 @@
           <button data-filter="all"      class="chip chip-on h-10 rounded-full border px-3 font-medium">ทั้งหมด</button>
           <button data-filter="on_time"  class="chip h-10 rounded-full border px-3 font-medium">ตรงเวลา</button>
           <button data-filter="late"     class="chip h-10 rounded-full border px-3 font-medium">สาย</button>
+          <button data-filter="absent"   class="chip h-10 rounded-full border px-3 font-medium">ขาด</button>
+          <button data-filter="off"      class="chip h-10 rounded-full border px-3 font-medium">หยุด</button>
         </div>
       </div>
 
@@ -127,8 +133,8 @@
           <circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>
         </svg>
       </div>
-      <p id="emptyText" class="text-sm font-medium text-ink-700">ยังไม่มีพนักงานลงเวลาในวันนี้</p>
-      <p class="mt-1 text-xs text-ink-500">ลองเลือกวันอื่น หรือรอการลงเวลาครั้งแรก</p>
+      <p id="emptyText" class="text-sm font-medium text-ink-700">ยังไม่มีพนักงานที่ตั้งกะในวันนี้</p>
+      <p class="mt-1 text-xs text-ink-500">กำหนดกะการทำงานที่หน้า "จัดกะพนักงาน"</p>
     </div>
 
     <!-- DESKTOP TABLE (md+) -->
@@ -138,6 +144,7 @@
           <thead class="bg-ink-50/60">
             <tr class="text-left text-xs uppercase tracking-wider text-ink-500">
               <th scope="col" class="px-5 py-3 font-semibold">พนักงาน</th>
+              <th scope="col" class="px-5 py-3 font-semibold">กะ</th>
               <th scope="col" class="px-5 py-3 font-semibold">เข้าครั้งแรก</th>
               <th scope="col" class="px-5 py-3 font-semibold">ออกครั้งสุดท้าย</th>
               <th scope="col" class="px-5 py-3 font-semibold">ชั่วโมง</th>
@@ -205,7 +212,6 @@
         rows: [],
         filter: "all",
         search: "",
-        expectedStart: "09:00",
       };
 
       // ---------- DOM refs ----------
@@ -249,13 +255,21 @@
         switch (s) {
           case "on_time": return { text: "ตรงเวลา", klass: "bg-good-100 text-good-700" };
           case "late":    return { text: "สาย",     klass: "bg-warn-100 text-warn-700" };
-          // "absent" was removed when by-date stopped emitting no-punch
-          // rows (2026-05). Kept as a defensive fallback for older
-          // cached responses or future reintroduction with schedules.
           case "absent":  return { text: "ขาด",     klass: "bg-bad-100 text-bad-700" };
           case "off":     return { text: "หยุด",    klass: "bg-off-100 text-off-600" };
           default:        return { text: s || "—",  klass: "bg-ink-100 text-ink-600" };
         }
+      }
+
+      // Compact shift descriptor for the table column / mobile card. The
+      // backend embeds the shift object on each row; null means "off"
+      // and the status pill carries that meaning instead.
+      function shiftLabel(shift) {
+        if (!shift) return { text: "—", sub: "" };
+        return {
+          text: shift.name_th,
+          sub: shift.start_time + "–" + shift.end_time + (shift.crosses_midnight ? "*" : ""),
+        };
       }
 
       function fmtHours(h) {
@@ -316,14 +330,18 @@
 
       function renderRows() {
         const filtered = applyFilter(state.rows);
+        const tracked = state.rows.length;
+        const lateCount = state.rows.filter(r => r.status === "late").length;
+        const absentCount = state.rows.filter(r => r.status === "absent").length;
         metaLine.textContent =
           fmtPretty(state.date) +
-          " · ลงเวลา " + state.rows.length + " คน" +
-          " · เวลาเริ่มงาน " + state.expectedStart +
+          " · พนักงาน " + tracked + " คน" +
+          " · สาย " + lateCount +
+          " · ขาด " + absentCount +
           (filtered.length !== state.rows.length ? " · แสดง " + filtered.length : "");
 
         if (state.rows.length === 0) {
-          showEmpty("ยังไม่มีพนักงานลงเวลาในวันนี้");
+          showEmpty("ยังไม่มีพนักงานที่ตั้งกะในวันนี้");
           return;
         }
         if (filtered.length === 0) {
@@ -338,6 +356,7 @@
 
         filtered.forEach(function (r) {
           const st = statusLabel(r.status);
+          const sh = shiftLabel(r.shift);
           const name = V2.escapeHtml(r.display_name || ("บัตร " + (r.badge_number || "?")));
           const badge = r.badge_number ? "#" + V2.escapeHtml(r.badge_number) : "";
           const avatarKlass = V2.avatarColor(r.badge_number || r.display_name || "");
@@ -345,6 +364,8 @@
           const firstIn = r.first_in ? V2.escapeHtml(r.first_in) : "—";
           const lastOut = r.last_out ? V2.escapeHtml(r.last_out) : "—";
           const hours = fmtHours(r.hours_worked);
+          const shiftText = V2.escapeHtml(sh.text);
+          const shiftSub = V2.escapeHtml(sh.sub);
 
           // Table row
           const tr = document.createElement("tr");
@@ -358,6 +379,10 @@
                   '<p class="truncate text-xs text-ink-500">' + badge + '</p>' +
                 '</div>' +
               '</div>' +
+            '</td>' +
+            '<td class="px-5 py-3">' +
+              '<p class="text-sm font-medium text-ink-800">' + shiftText + '</p>' +
+              (shiftSub ? '<p class="text-xs tabular-nums text-ink-500">' + shiftSub + '</p>' : '') +
             '</td>' +
             '<td class="px-5 py-3 tabular-nums text-ink-700">' + firstIn + '</td>' +
             '<td class="px-5 py-3 tabular-nums text-ink-700">' + lastOut + '</td>' +
@@ -376,7 +401,8 @@
                   '<p class="truncate text-sm font-semibold text-ink-900">' + name + '</p>' +
                   '<span class="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium ' + st.klass + '">' + st.text + '</span>' +
                 '</div>' +
-                '<p class="truncate text-xs text-ink-500">' + badge + '</p>' +
+                '<p class="truncate text-xs text-ink-500">' + badge + ' · กะ ' + shiftText +
+                  (shiftSub ? ' ' + shiftSub : '') + '</p>' +
                 '<dl class="mt-3 grid grid-cols-3 gap-2 text-xs">' +
                   '<div><dt class="text-ink-400">เข้าครั้งแรก</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + firstIn + '</dd></div>' +
                   '<div><dt class="text-ink-400">ออกครั้งสุดท้าย</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + lastOut + '</dd></div>' +
@@ -396,7 +422,6 @@
             "/api/private/attendance/by-date?date=" + encodeURIComponent(state.date)
           );
           state.rows = (data && data.rows) || [];
-          state.expectedStart = (data && data.expected_start_time) || "09:00";
           renderRows();
         } catch (err) {
           if (err.status === 404) {

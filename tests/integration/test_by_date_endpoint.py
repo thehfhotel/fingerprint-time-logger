@@ -1,24 +1,26 @@
 """
 Integration tests for GET /api/private/attendance/by-date.
 
-Endpoint contract (see plan section "New backend endpoint"):
+Endpoint contract (post 2026-05 shift-aware rewrite):
   - Path: /api/private/attendance/by-date
   - Query: date=YYYY-MM-DD (Bangkok-local, defaults to today)
-  - Response: { date, expected_start_time, rows: [...] }
-  - One row per ACTIVE employee
-  - status enum: on_time | late ("absent"/"off" not emitted today;
-    "absent" was dropped 2026-05 when the endpoint stopped surfacing
-    no-punch employees — see _compute_status docstring)
+  - Response: { date, rows: [...] }
+  - One row per ACTIVE, TRACKED employee. "Tracked" = has an effective
+    shift for the requested date (per-day override > employee default >
+    role default). Employees with no role and no default shift are
+    omitted entirely.
+  - status enum:
+      "late"    — first punch inside the shift window is after shift_start
+      "on_time" — first punch at/before shift_start
+      "absent"  — effective shift exists, no punches in the window
+      "off"     — employee is scheduled off today (explicit override
+                  with shift_id=NULL, or reception with no assignment)
 
 These tests hit the ROOT app (where /api/private/* is mounted) using a
-fresh TestClient + dependency override pattern. We don't reuse the shared
-test_client fixture because that one binds to fingerprint_app, which has
-no /api/private routes.
+fresh TestClient + dependency override pattern.
 """
 
-import os
-from datetime import datetime, date as date_type, timedelta, timezone
-from unittest.mock import patch
+from datetime import datetime, date as date_type, time, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -28,7 +30,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
 from app.main_unified import app
-from app.models.models import AttendanceRecord, Device, Employee
+from app.models.models import AttendanceRecord, Device, Employee, Shift, ShiftAssignment
 from app.utils.timezone import BANGKOK_TZ
 
 
@@ -36,8 +38,7 @@ BY_DATE_PATH = "/api/private/attendance/by-date"
 
 
 # ---------------------------------------------------------------------------
-# Fixtures (local to this file — don't share session with the global one
-# because the global test_client binds to fingerprint_app, not the root app)
+# Fixtures
 # ---------------------------------------------------------------------------
 
 
@@ -76,17 +77,10 @@ def by_date_session(by_date_engine):
 
 @pytest.fixture
 def by_date_client(by_date_engine):
-    """
-    TestClient for the ROOT app with a dependency override that uses the
-    by_date_engine. Yields a tuple (client, session_factory) so tests can
-    seed data through the same engine.
+    """TestClient for the ROOT app with a get_db override.
 
-    IMPORTANT: We deliberately do NOT use TestClient as a context manager.
-    Doing so triggers the FastAPI lifespan, which boots the APScheduler
-    background tasks — these reach into the (already-closed) asyncio event
-    loop after the first test and crash subsequent tests. Skipping the
-    lifespan is safe: the /by-date endpoint is purely DB-backed and has no
-    startup dependencies.
+    Skipping the lifespan (no ``with`` block) keeps the APScheduler /
+    zk_session daemons from booting and leaking event loops between tests.
     """
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=by_date_engine)
 
@@ -121,6 +115,24 @@ def seed_device(by_date_session):
     return device
 
 
+@pytest.fixture
+def seeded_shifts(by_date_session):
+    """Insert the 5 standard shifts in the test DB."""
+    rows = [
+        Shift(code="NORMAL",    name_th="ปกติ", start_time=time(8, 0),  end_time=time(17, 0)),
+        Shift(code="MORNING",   name_th="เช้า", start_time=time(7, 0),  end_time=time(16, 0)),
+        Shift(code="MID",       name_th="สาย", start_time=time(11, 0), end_time=time(20, 0)),
+        Shift(code="AFTERNOON", name_th="บ่าย", start_time=time(13, 0), end_time=time(22, 0)),
+        Shift(code="NIGHT",     name_th="ดึก", start_time=time(22, 0), end_time=time(7, 0)),
+    ]
+    for r in rows:
+        by_date_session.add(r)
+    by_date_session.commit()
+    for r in rows:
+        by_date_session.refresh(r)
+    return {r.code: r for r in rows}
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -128,39 +140,37 @@ def seed_device(by_date_session):
 
 def _make_employee(
     session,
-    badge: str,
-    display_name: str,
-    is_active: bool = True,
-    english_name: str | None = None,
-) -> Employee:
-    employee = Employee(
+    badge,
+    display_name,
+    *,
+    is_active=True,
+    role=None,
+    default_shift=None,
+):
+    """Create an Employee with optional role + default_shift assignment."""
+    e = Employee(
         badge_number=badge,
-        english_name=english_name,
+        english_name=None,
         thai_name=None,
         display_name=display_name,
         is_active=is_active,
         is_hidden=False,
+        role=role,
+        default_shift_id=default_shift.id if default_shift else None,
     )
-    session.add(employee)
+    session.add(e)
     session.commit()
-    session.refresh(employee)
-    return employee
+    session.refresh(e)
+    return e
 
 
-def _bangkok_to_utc_naive(bangkok_dt: datetime) -> datetime:
-    """Match the storage convention: convert Bangkok-aware → UTC-naive."""
+def _bangkok_to_utc_naive(bangkok_dt):
     if bangkok_dt.tzinfo is None:
         bangkok_dt = bangkok_dt.replace(tzinfo=BANGKOK_TZ)
     return bangkok_dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def _add_punch(
-    session,
-    badge: str,
-    device_id: int,
-    bangkok_dt: datetime,
-    punch_type: int = 0,
-) -> AttendanceRecord:
+def _add_punch(session, badge, device_id, bangkok_dt, punch_type=0):
     record = AttendanceRecord(
         employee_badge_number=badge,
         device_id=device_id,
@@ -173,263 +183,388 @@ def _add_punch(
     return record
 
 
+def _assign(session, badge, on_date, shift=None):
+    """Create a ShiftAssignment row. shift=None means scheduled off."""
+    a = ShiftAssignment(
+        employee_badge_number=badge,
+        date=on_date,
+        shift_id=shift.id if shift else None,
+    )
+    session.add(a)
+    session.commit()
+    return a
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 
-class TestByDateEndpoint:
-    """Contract tests for /api/private/attendance/by-date."""
+class TestByDateUntrackedEmployees:
+    """Employees with no role and no default shift never surface."""
 
-    def test_empty_day_returns_zero_rows(
-        self, by_date_client, by_date_session, seed_device
+    def test_employee_with_no_role_and_no_default_is_omitted(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
     ):
-        """No punches that day → empty rows list.
-
-        Pre 2026-05 this returned one absent row per active employee.
-        Absence tracking now waits on per-employee schedules; today the
-        endpoint only emits rows for employees who actually punched.
-        """
-        _make_employee(by_date_session, "1001", "Somchai")
-        _make_employee(by_date_session, "1002", "Niran")
+        """role=NULL + default_shift_id=NULL → row not emitted, even if
+        the employee has punches that day. Pins the "untracked" contract
+        so accidentally enabling tracking is a visible diff."""
+        _make_employee(by_date_session, "U001", "Untracked")
+        target = date_type(2026, 5, 14)
+        _add_punch(
+            by_date_session, "U001", seed_device.id,
+            datetime(2026, 5, 14, 8, 0, tzinfo=BANGKOK_TZ),
+        )
 
         client, _ = by_date_client
-        target = date_type(2026, 5, 14)
-        response = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
+        resp = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
+        assert resp.status_code == 200
+        assert resp.json()["rows"] == []
 
-        assert response.status_code == 200
-        body = response.json()
+    def test_empty_db_returns_zero_rows(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        assert resp.status_code == 200
+        body = resp.json()
         assert body["date"] == "2026-05-14"
-        assert body["expected_start_time"] == "09:00"
         assert body["rows"] == []
 
-    def test_two_punches_around_expected_start_yields_on_time(
-        self, by_date_client, by_date_session, seed_device
-    ):
-        """First punch before 09:00 + last punch after → on_time with hours."""
-        _make_employee(by_date_session, "2001", "Somchai")
 
+class TestByDateDayShiftStatuses:
+    """on_time / late / absent for a regular dayshift employee."""
+
+    def test_on_time_when_first_punch_before_shift_start(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        """Technician's role default is NORMAL (08:00). Punch at 08:52
+        is still inside the [06:00, 19:00] window — wait, 08:52 > 08:00
+        so this should be LATE actually. Let me use 07:55 for on_time.
+        """
+        _make_employee(
+            by_date_session, "T001", "TechOnTime", role="technician",
+        )
         target = date_type(2026, 5, 14)
-        first_in = datetime(2026, 5, 14, 8, 52, tzinfo=BANGKOK_TZ)
-        last_out = datetime(2026, 5, 14, 17, 31, tzinfo=BANGKOK_TZ)
-        _add_punch(by_date_session, "2001", seed_device.id, first_in, punch_type=0)
-        _add_punch(by_date_session, "2001", seed_device.id, last_out, punch_type=1)
+        _add_punch(
+            by_date_session, "T001", seed_device.id,
+            datetime(2026, 5, 14, 7, 55, tzinfo=BANGKOK_TZ),  # 5 min early
+        )
+        _add_punch(
+            by_date_session, "T001", seed_device.id,
+            datetime(2026, 5, 14, 17, 10, tzinfo=BANGKOK_TZ),  # 10 min after end
+        )
 
         client, _ = by_date_client
-        response = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
-        assert response.status_code == 200
-        body = response.json()
-        assert len(body["rows"]) == 1
-        row = body["rows"][0]
-        assert row["badge_number"] == "2001"
-        assert row["display_name"] == "Somchai"
-        assert row["first_in"] == "08:52"
-        assert row["last_out"] == "17:31"
+        resp = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
+        assert resp.status_code == 200
+        row = resp.json()["rows"][0]
         assert row["status"] == "on_time"
-        # 17:31 - 08:52 = 8h 39m = 8.65 hours (rounded to 2 decimals)
-        assert row["hours_worked"] == pytest.approx(8.65, abs=0.01)
+        assert row["first_in"] == "07:55"
+        assert row["last_out"] == "17:10"
+        assert row["role"] == "technician"
+        assert row["shift"]["code"] == "NORMAL"
 
-    def test_first_punch_after_expected_start_yields_late(
-        self, by_date_client, by_date_session, seed_device
+    def test_late_when_first_punch_after_shift_start(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
     ):
-        """First punch at 09:15 → status='late'."""
-        _make_employee(by_date_session, "3001", "LateBird")
-
+        _make_employee(by_date_session, "T002", "TechLate", role="technician")
         target = date_type(2026, 5, 14)
-        first_in = datetime(2026, 5, 14, 9, 15, tzinfo=BANGKOK_TZ)
-        last_out = datetime(2026, 5, 14, 18, 0, tzinfo=BANGKOK_TZ)
-        _add_punch(by_date_session, "3001", seed_device.id, first_in, punch_type=0)
-        _add_punch(by_date_session, "3001", seed_device.id, last_out, punch_type=1)
+        _add_punch(
+            by_date_session, "T002", seed_device.id,
+            datetime(2026, 5, 14, 9, 15, tzinfo=BANGKOK_TZ),
+        )
 
         client, _ = by_date_client
-        response = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
-        assert response.status_code == 200
-        row = response.json()["rows"][0]
+        resp = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
+        row = resp.json()["rows"][0]
         assert row["status"] == "late"
         assert row["first_in"] == "09:15"
-        assert row["last_out"] == "18:00"
+
+    def test_absent_when_no_punches_in_window(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        """Tracked employee, no punches → absent (with role assigned).
+
+        Was the dropped pre-2026-05 behavior; restored alongside shifts.
+        """
+        _make_employee(by_date_session, "T003", "TechMissing", role="technician")
+        target = date_type(2026, 5, 14)
+
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
+        rows = resp.json()["rows"]
+        assert len(rows) == 1
+        assert rows[0]["status"] == "absent"
+        assert rows[0]["first_in"] is None
+
+    def test_housekeeping_uses_morning_shift(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        """แม่บ้าน work hours are 07:00–16:00 — 06:55 punch is on_time."""
+        _make_employee(by_date_session, "H001", "Cleaner", role="housekeeping")
+        target = date_type(2026, 5, 14)
+        _add_punch(
+            by_date_session, "H001", seed_device.id,
+            datetime(2026, 5, 14, 6, 55, tzinfo=BANGKOK_TZ),
+        )
+
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
+        row = resp.json()["rows"][0]
+        assert row["shift"]["code"] == "MORNING"
+        assert row["status"] == "on_time"
+
+
+class TestByDateReception:
+    """Reception requires per-day assignment; no override = off, not absent."""
+
+    def test_reception_without_assignment_is_off(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        _make_employee(by_date_session, "R001", "Receptionist", role="reception")
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        rows = resp.json()["rows"]
+        assert len(rows) == 1
+        assert rows[0]["status"] == "off"
+        assert rows[0]["shift"] is None
+        assert rows[0]["first_in"] is None
+
+    def test_reception_with_mid_shift_override(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        _make_employee(by_date_session, "R002", "MidShiftReception", role="reception")
+        target = date_type(2026, 5, 14)
+        _assign(by_date_session, "R002", target, seeded_shifts["MID"])
+        # 11:00 shift, punches at 11:00 sharp
+        _add_punch(
+            by_date_session, "R002", seed_device.id,
+            datetime(2026, 5, 14, 11, 0, tzinfo=BANGKOK_TZ),
+        )
+
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
+        row = resp.json()["rows"][0]
+        assert row["shift"]["code"] == "MID"
+        assert row["status"] == "on_time"
+
+    def test_explicit_off_override_for_non_reception(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        """Even a housekeeper can have a day off via shift_id=NULL override."""
+        _make_employee(by_date_session, "H002", "TodayOff", role="housekeeping")
+        target = date_type(2026, 5, 14)
+        _assign(by_date_session, "H002", target, shift=None)  # explicit off
+
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
+        rows = resp.json()["rows"]
+        assert rows[0]["status"] == "off"
+
+
+class TestByDateOvernightShift:
+    """NIGHT 22:00–07:00 crosses midnight. Pin the window math end-to-end."""
+
+    def test_night_worker_on_time(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        """Reception assigned NIGHT on May 14. Punch in 21:55 on May 14
+        and out 07:30 on May 15 → on_time for May 14, both punches
+        attributed to the same shift."""
+        _make_employee(by_date_session, "N001", "NightOwl", role="reception")
+        _assign(by_date_session, "N001", date_type(2026, 5, 14), seeded_shifts["NIGHT"])
+
+        _add_punch(
+            by_date_session, "N001", seed_device.id,
+            datetime(2026, 5, 14, 21, 55, tzinfo=BANGKOK_TZ),
+        )
+        _add_punch(
+            by_date_session, "N001", seed_device.id,
+            datetime(2026, 5, 15, 7, 30, tzinfo=BANGKOK_TZ),
+        )
+
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        rows = resp.json()["rows"]
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["shift"]["code"] == "NIGHT"
+        assert row["shift"]["crosses_midnight"] is True
+        assert row["status"] == "on_time"
+        assert row["first_in"] == "21:55"
+        assert row["last_out"] == "07:30"
+
+    def test_night_worker_late(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        _make_employee(by_date_session, "N002", "NightLate", role="reception")
+        _assign(by_date_session, "N002", date_type(2026, 5, 14), seeded_shifts["NIGHT"])
+        _add_punch(
+            by_date_session, "N002", seed_device.id,
+            datetime(2026, 5, 14, 22, 30, tzinfo=BANGKOK_TZ),  # 30 min after 22:00
+        )
+
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        row = resp.json()["rows"][0]
+        assert row["status"] == "late"
+
+    def test_night_worker_absent(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        """NIGHT assigned but no punches in [20:00 May14, 09:00 May15] → absent."""
+        _make_employee(by_date_session, "N003", "NightMissing", role="reception")
+        _assign(by_date_session, "N003", date_type(2026, 5, 14), seeded_shifts["NIGHT"])
+
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        rows = resp.json()["rows"]
+        assert len(rows) == 1
+        assert rows[0]["status"] == "absent"
+
+    def test_night_worker_next_day_punch_not_attributed_to_next_day(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        """The 07:00-on-May-15 punch from May-14 NIGHT shift must not
+        surface on the May-15 /by-date page unless the employee is
+        also tracked on May 15. Reception without a May-15 assignment
+        is OFF on May 15, so they shouldn't be flagged absent there."""
+        _make_employee(by_date_session, "N004", "NightNoNext", role="reception")
+        _assign(by_date_session, "N004", date_type(2026, 5, 14), seeded_shifts["NIGHT"])
+        # No May-15 assignment → off on May 15
+        _add_punch(
+            by_date_session, "N004", seed_device.id,
+            datetime(2026, 5, 14, 22, 0, tzinfo=BANGKOK_TZ),
+        )
+        _add_punch(
+            by_date_session, "N004", seed_device.id,
+            datetime(2026, 5, 15, 7, 0, tzinfo=BANGKOK_TZ),
+        )
+
+        client, _ = by_date_client
+        # May 14: on_time with the night shift
+        r14 = client.get(BY_DATE_PATH, params={"date": "2026-05-14"}).json()["rows"]
+        assert r14[0]["status"] == "on_time"
+
+        # May 15: off, not absent (reception with no assignment).
+        # The 07:00 punch belongs to May-14's shift, NOT May-15.
+        r15 = client.get(BY_DATE_PATH, params={"date": "2026-05-15"}).json()["rows"]
+        assert r15[0]["status"] == "off"
+
+
+class TestByDateMisc:
+    """Miscellaneous contract checks."""
 
     def test_inactive_employees_excluded(
-        self, by_date_client, by_date_session, seed_device
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
     ):
-        """is_active=False employees never appear, even if they punched.
-
-        We have to give both employees punches now that the endpoint
-        filters to "actually punched today" — otherwise neither would
-        appear and the inactive-filter behaviour wouldn't be exercised.
-        """
-        _make_employee(by_date_session, "4001", "ActiveAlice")
-        _make_employee(by_date_session, "4002", "InactiveBob", is_active=False)
-
-        target = date_type(2026, 5, 14)
-        for badge in ("4001", "4002"):
+        _make_employee(by_date_session, "A001", "Alice", role="technician")
+        _make_employee(
+            by_date_session, "A002", "Bob",
+            role="technician", is_active=False,
+        )
+        for badge in ("A001", "A002"):
             _add_punch(
                 by_date_session, badge, seed_device.id,
-                datetime(2026, 5, 14, 9, 0, tzinfo=BANGKOK_TZ),
+                datetime(2026, 5, 14, 8, 0, tzinfo=BANGKOK_TZ),
             )
 
         client, _ = by_date_client
-        response = client.get(
-            BY_DATE_PATH, params={"date": target.isoformat()}
-        )
-        assert response.status_code == 200
-        badges = [row["badge_number"] for row in response.json()["rows"]]
-        assert "4001" in badges
-        assert "4002" not in badges
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        badges = [r["badge_number"] for r in resp.json()["rows"]]
+        assert badges == ["A001"]
 
     def test_invalid_date_format_returns_400(self, by_date_client):
-        """Bad date string → 400 with helpful detail."""
         client, _ = by_date_client
-        response = client.get(BY_DATE_PATH, params={"date": "not-a-date"})
-        assert response.status_code == 400
-        assert "YYYY-MM-DD" in response.json()["detail"]
+        resp = client.get(BY_DATE_PATH, params={"date": "not-a-date"})
+        assert resp.status_code == 400
+        assert "YYYY-MM-DD" in resp.json()["detail"]
 
-    def test_date_defaults_to_today_bangkok_when_omitted(
-        self, by_date_client, by_date_session, seed_device
+    def test_date_defaults_to_today_bangkok(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
     ):
-        """No date param → response.date equals today in Bangkok."""
-        _make_employee(by_date_session, "5001", "Today")
+        _make_employee(by_date_session, "D001", "Today", role="technician")
         client, _ = by_date_client
-        response = client.get(BY_DATE_PATH)
-        assert response.status_code == 200
-        today_bangkok = datetime.now(BANGKOK_TZ).date().isoformat()
-        assert response.json()["date"] == today_bangkok
+        resp = client.get(BY_DATE_PATH)
+        today = datetime.now(BANGKOK_TZ).date().isoformat()
+        assert resp.json()["date"] == today
 
-    def test_sort_order_late_then_on_time_then_name(
-        self, by_date_client, by_date_session, seed_device
+    def test_sort_order(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
     ):
-        """Verify the sort: late > on_time, then by display_name.
-
-        Absent rows were dropped 2026-05 — the no-punch employee from
-        the previous version of this test (ZenAbsent) is removed because
-        it would no longer appear in the response at all.
-        """
+        """late > absent > on_time > off, then alphabetic within."""
         target = date_type(2026, 5, 14)
 
-        # on_time — comes after late
-        _make_employee(by_date_session, "9002", "Alpha")
+        # late
+        _make_employee(by_date_session, "S1", "Bravo", role="technician")
         _add_punch(
-            by_date_session,
-            "9002",
-            seed_device.id,
-            datetime(2026, 5, 14, 8, 30, tzinfo=BANGKOK_TZ),
-        )
-
-        # late — comes first
-        _make_employee(by_date_session, "9003", "Bravo")
-        _add_punch(
-            by_date_session,
-            "9003",
-            seed_device.id,
+            by_date_session, "S1", seed_device.id,
             datetime(2026, 5, 14, 10, 0, tzinfo=BANGKOK_TZ),
         )
 
-        # second on_time, for the alphabetical tie-break check
-        _make_employee(by_date_session, "9004", "Charlie")
+        # absent (tracked but no punches)
+        _make_employee(by_date_session, "S2", "Delta", role="technician")
+
+        # on_time
+        _make_employee(by_date_session, "S3", "Alpha", role="technician")
         _add_punch(
-            by_date_session,
-            "9004",
-            seed_device.id,
+            by_date_session, "S3", seed_device.id,
             datetime(2026, 5, 14, 7, 45, tzinfo=BANGKOK_TZ),
         )
 
-        client, _ = by_date_client
-        response = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
-        assert response.status_code == 200
-        statuses = [row["status"] for row in response.json()["rows"]]
-        names = [row["display_name"] for row in response.json()["rows"]]
+        # off (explicit override)
+        _make_employee(by_date_session, "S4", "Charlie", role="technician")
+        _assign(by_date_session, "S4", target, shift=None)
 
-        assert statuses == ["late", "on_time", "on_time"]
-        # Within on_time, Alpha < Charlie alphabetically
-        assert names[1:] == ["Alpha", "Charlie"]
-
-    def test_employee_with_no_punches_omitted(
-        self, by_date_client, by_date_session, seed_device
-    ):
-        """A second active employee with no punches today doesn't appear.
-
-        Pins the new contract: only employees who actually punched are
-        emitted. Was "absent" pre 2026-05; now omitted entirely.
-        """
-        target = date_type(2026, 5, 14)
-        _make_employee(by_date_session, "PNCH", "Puncher")
+        # second on_time for alphabetic tie-break
+        _make_employee(by_date_session, "S5", "Echo", role="technician")
         _add_punch(
-            by_date_session, "PNCH", seed_device.id,
-            datetime(2026, 5, 14, 8, 0, tzinfo=BANGKOK_TZ),
+            by_date_session, "S5", seed_device.id,
+            datetime(2026, 5, 14, 7, 50, tzinfo=BANGKOK_TZ),
         )
-        _make_employee(by_date_session, "NONE", "NoPunchToday")  # active, no punches
 
         client, _ = by_date_client
-        response = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
-        assert response.status_code == 200
-        badges = [row["badge_number"] for row in response.json()["rows"]]
-        assert badges == ["PNCH"]
+        resp = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
+        rows = resp.json()["rows"]
+        statuses = [r["status"] for r in rows]
+        names = [r["display_name"] for r in rows]
+
+        assert statuses == ["late", "absent", "on_time", "on_time", "off"]
+        # Within on_time: Alpha < Echo
+        assert names[2:4] == ["Alpha", "Echo"]
 
     def test_single_punch_yields_null_hours_worked(
-        self, by_date_client, by_date_session, seed_device
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
     ):
-        """One punch → first_in == last_out → hours_worked is null."""
-        _make_employee(by_date_session, "6001", "SinglePunch")
-        target = date_type(2026, 5, 14)
+        _make_employee(by_date_session, "P001", "OnlyOnce", role="technician")
         _add_punch(
-            by_date_session,
-            "6001",
-            seed_device.id,
+            by_date_session, "P001", seed_device.id,
             datetime(2026, 5, 14, 8, 0, tzinfo=BANGKOK_TZ),
         )
-
         client, _ = by_date_client
-        response = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
-        assert response.status_code == 200
-        row = response.json()["rows"][0]
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        row = resp.json()["rows"][0]
         assert row["first_in"] == "08:00"
-        # last_out equals first_in because there's only one timestamp
         assert row["last_out"] == "08:00"
         assert row["hours_worked"] is None
 
-    def test_respects_expected_start_time_env_var(
-        self, by_date_client, by_date_session, seed_device
+    def test_previous_day_punch_excluded(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
     ):
-        """EXPECTED_START_TIME=10:00 → 09:30 punch counts as on_time."""
-        _make_employee(by_date_session, "7001", "FlexHours")
-        target = date_type(2026, 5, 14)
+        """A May 13 23:55 punch belongs to May-13's NORMAL shift window
+        ([06:00, 19:00 May-13]) — it's outside, so it doesn't show anywhere.
+        A May 14 08:45 punch is the first_in for May 14."""
+        _make_employee(by_date_session, "B001", "Boundary", role="technician")
         _add_punch(
-            by_date_session,
-            "7001",
-            seed_device.id,
-            datetime(2026, 5, 14, 9, 30, tzinfo=BANGKOK_TZ),
-        )
-
-        client, _ = by_date_client
-        with patch.dict(os.environ, {"EXPECTED_START_TIME": "10:00"}):
-            response = client.get(BY_DATE_PATH, params={"date": target.isoformat()})
-        assert response.status_code == 200
-        body = response.json()
-        assert body["expected_start_time"] == "10:00"
-        assert body["rows"][0]["status"] == "on_time"
-
-    def test_bangkok_day_boundary_excludes_previous_day_punches(
-        self, by_date_client, by_date_session, seed_device
-    ):
-        """A 23:55 punch on May 13 must NOT appear in the May 14 result."""
-        _make_employee(by_date_session, "8001", "BoundaryCase")
-        _add_punch(
-            by_date_session,
-            "8001",
-            seed_device.id,
+            by_date_session, "B001", seed_device.id,
             datetime(2026, 5, 13, 23, 55, tzinfo=BANGKOK_TZ),
         )
-        # And a real May-14 punch to confirm filtering works both ways
         _add_punch(
-            by_date_session,
-            "8001",
-            seed_device.id,
+            by_date_session, "B001", seed_device.id,
             datetime(2026, 5, 14, 8, 45, tzinfo=BANGKOK_TZ),
         )
-
         client, _ = by_date_client
-        response = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
-        assert response.status_code == 200
-        row = response.json()["rows"][0]
-        # first_in is the May-14 punch, not the May-13 one
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        row = resp.json()["rows"][0]
         assert row["first_in"] == "08:45"
