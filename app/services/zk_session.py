@@ -467,6 +467,15 @@ def _op_get_status(conn: Any) -> dict:
     }
 
 
+def _describe_exc(exc: BaseException) -> str:
+    """str(exc) often returns empty for bare pyzk Exception()s. repr gives
+    `Exception()` which is more useful but ugly; prefer the type name."""
+    s = str(exc).strip()
+    if s:
+        return s
+    return f"{type(exc).__name__}()"
+
+
 def get_status() -> dict:
     try:
         return zk_session.submit(_op_get_status)
@@ -475,7 +484,7 @@ def get_status() -> dict:
             "connected": False,
             "host": zk_session.host,
             "port": zk_session.port,
-            "error": str(exc),
+            "error": _describe_exc(exc),
         }
 
 
@@ -496,7 +505,7 @@ def get_time() -> dict:
     try:
         return zk_session.submit(_op_get_time)
     except Exception as exc:
-        return {"success": False, "message": str(exc)}
+        return {"success": False, "message": _describe_exc(exc)}
 
 
 def _op_sync_time(conn: Any) -> dict:
@@ -523,7 +532,7 @@ def sync_time() -> dict:
     try:
         return zk_session.submit(_op_sync_time)
     except Exception as exc:
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": _describe_exc(exc)}
 
 
 def pull_attendance(since_timestamp: Optional[datetime] = None) -> List[dict]:
