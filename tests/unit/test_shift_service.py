@@ -54,11 +54,11 @@ def db(engine):
 def seeded_shifts(db):
     """Insert the 5 standard shifts and return them keyed by code."""
     rows = [
-        Shift(code="NORMAL",    name_th="ปกติ", start_time=time(8, 0),  end_time=time(17, 0)),
-        Shift(code="MORNING",   name_th="เช้า", start_time=time(7, 0),  end_time=time(16, 0)),
-        Shift(code="MID",       name_th="สาย", start_time=time(11, 0), end_time=time(20, 0)),
-        Shift(code="AFTERNOON", name_th="บ่าย", start_time=time(13, 0), end_time=time(22, 0)),
-        Shift(code="NIGHT",     name_th="ดึก", start_time=time(22, 0), end_time=time(7, 0)),
+        Shift(code="NORMAL",    letter=None, name_th="ปกติ", start_time=time(8, 0),  end_time=time(17, 0)),
+        Shift(code="MORNING",   letter="A", name_th="เช้า", start_time=time(7, 0),  end_time=time(16, 0)),
+        Shift(code="MID",       letter="C", name_th="สาย", start_time=time(11, 0), end_time=time(20, 0)),
+        Shift(code="AFTERNOON", letter="B", name_th="บ่าย", start_time=time(13, 0), end_time=time(22, 0)),
+        Shift(code="NIGHT",     letter="D", name_th="ดึก", start_time=time(22, 0), end_time=time(7, 0)),
     ]
     for r in rows:
         db.add(r)

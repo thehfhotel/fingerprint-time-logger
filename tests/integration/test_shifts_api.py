@@ -79,11 +79,11 @@ def shifts_client(shifts_engine):
 @pytest.fixture
 def seeded_shifts(shifts_session):
     rows = [
-        Shift(code="NORMAL",    name_th="ปกติ", start_time=time(8, 0),  end_time=time(17, 0)),
-        Shift(code="MORNING",   name_th="เช้า", start_time=time(7, 0),  end_time=time(16, 0)),
-        Shift(code="MID",       name_th="สาย", start_time=time(11, 0), end_time=time(20, 0)),
-        Shift(code="AFTERNOON", name_th="บ่าย", start_time=time(13, 0), end_time=time(22, 0)),
-        Shift(code="NIGHT",     name_th="ดึก", start_time=time(22, 0), end_time=time(7, 0)),
+        Shift(code="NORMAL",    letter=None, name_th="ปกติ", start_time=time(8, 0),  end_time=time(17, 0)),
+        Shift(code="MORNING",   letter="A", name_th="เช้า", start_time=time(7, 0),  end_time=time(16, 0)),
+        Shift(code="MID",       letter="C", name_th="สาย", start_time=time(11, 0), end_time=time(20, 0)),
+        Shift(code="AFTERNOON", letter="B", name_th="บ่าย", start_time=time(13, 0), end_time=time(22, 0)),
+        Shift(code="NIGHT",     letter="D", name_th="ดึก", start_time=time(22, 0), end_time=time(7, 0)),
     ]
     for r in rows:
         shifts_session.add(r)
@@ -125,6 +125,23 @@ class TestListShifts:
         assert night["crosses_midnight"] is True
         normal = next(r for r in resp.json() if r["code"] == "NORMAL")
         assert normal["crosses_midnight"] is False
+
+    def test_list_includes_reception_letter(
+        self, shifts_client, seeded_shifts
+    ):
+        """A/B/C/D letters for the 4 reception shifts; NORMAL has no letter.
+
+        The admin UI's reception monthly roster shows the letter (single
+        char) instead of the full code, matching the staff's spreadsheet
+        convention.
+        """
+        resp = shifts_client.get(SHIFTS_ROOT + "/")
+        by_code = {r["code"]: r for r in resp.json()}
+        assert by_code["MORNING"]["letter"] == "A"
+        assert by_code["AFTERNOON"]["letter"] == "B"
+        assert by_code["MID"]["letter"] == "C"
+        assert by_code["NIGHT"]["letter"] == "D"
+        assert by_code["NORMAL"]["letter"] is None
 
 
 class TestEmployeeShiftAssignment:
@@ -177,6 +194,37 @@ class TestEmployeeShiftAssignment:
             json={"role": "admin"},
         )
         assert resp.status_code == 404
+
+    def test_set_location(
+        self, shifts_client, seeded_shifts, seeded_employee, shifts_session
+    ):
+        """The endpoint accepts location alongside role + default_shift."""
+        resp = shifts_client.put(self.URL, json={
+            "role": "reception",
+            "location": "HF",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["location"] == "HF"
+
+        shifts_session.expire_all()
+        emp = shifts_session.query(Employee).filter_by(badge_number="EMP01").first()
+        assert emp.location == "HF"
+
+    def test_clear_location_with_empty_string(
+        self, shifts_client, seeded_shifts, seeded_employee
+    ):
+        shifts_client.put(self.URL, json={"location": "HF_VILLE"})
+        resp = shifts_client.put(self.URL, json={"location": ""})
+        assert resp.status_code == 200
+        assert resp.json()["location"] is None
+
+    def test_invalid_location_rejected(
+        self, shifts_client, seeded_shifts, seeded_employee
+    ):
+        resp = shifts_client.put(self.URL, json={"location": "MARS"})
+        assert resp.status_code == 400
+        assert "location" in resp.json()["detail"]
 
 
 class TestPerDayAssignments:

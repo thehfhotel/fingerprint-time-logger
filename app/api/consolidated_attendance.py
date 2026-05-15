@@ -356,6 +356,15 @@ async def get_attendance_by_date(
         alias="date",
         description="Bangkok-local day in YYYY-MM-DD. Defaults to today (Bangkok).",
     ),
+    location: Optional[str] = Query(
+        None,
+        description=(
+            "Filter to one branch. Values: 'HF' or 'HF_VILLE'. Omit to "
+            "include all employees regardless of location. Employees "
+            "with location=NULL are included only when this filter is "
+            "also NULL (omitted)."
+        ),
+    ),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -388,8 +397,19 @@ async def get_attendance_by_date(
     """
     target_day = _parse_date_param(date_param)
 
+    # Validate location filter early so a typo returns 400 instead of
+    # silently returning an empty row list.
+    _ALLOWED_LOCATIONS = ("HF", "HF_VILLE")
+    if location is not None and location not in _ALLOWED_LOCATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"location must be one of {_ALLOWED_LOCATIONS} or omitted",
+        )
+
     rows: List[Dict[str, Any]] = []
     for employee in _fetch_active_employees(db):
+        if location is not None and employee.location != location:
+            continue
         eff = effective_shift(db, employee, target_day)
         if eff.shift is None and not eff.is_off:
             # Untracked — no role, no default. Skip entirely.
@@ -457,6 +477,7 @@ def _build_shift_row(
             "badge_number": employee.badge_number,
             "display_name": _resolve_display_name(employee),
             "role": employee.role,
+            "location": employee.location,
             "shift": None,
             "first_in": None,
             "last_out": None,
@@ -487,6 +508,7 @@ def _build_shift_row(
         "badge_number": employee.badge_number,
         "display_name": _resolve_display_name(employee),
         "role": employee.role,
+        "location": employee.location,
         "shift": _shift_summary(shift),
         "first_in": first_in_bangkok.strftime("%H:%M") if first_in_bangkok else None,
         "last_out": last_out_bangkok.strftime("%H:%M") if last_out_bangkok else None,

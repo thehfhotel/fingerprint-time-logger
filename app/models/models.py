@@ -60,8 +60,13 @@ class Employee(Base):
     # default_shift_id: shift used on days without an override.
     #   reception employees typically leave this NULL and assign per-day
     #   shifts via shift_assignments; the other three roles get a default.
+    # location: 'HF' | 'HF_VILLE' | NULL — which branch this employee
+    #   works at. Drives per-location reception rosters and the
+    #   /by-date page's location filter. NULL = unassigned, treated as
+    #   "either" for filtering purposes.
     role = Column(String(20), nullable=True, index=True)
     default_shift_id = Column(Integer, ForeignKey("shifts.id"), nullable=True)
+    location = Column(String(20), nullable=True, index=True)
 
     # Metadata
     created_at = Column(DateTime, default=func.now())
@@ -167,6 +172,10 @@ class Shift(Base):
     # Stable identifier used by API + admin UI. Examples:
     # NORMAL, MORNING, MID, AFTERNOON, NIGHT.
     code = Column(String(20), unique=True, nullable=False, index=True)
+    # Single-letter shorthand used on the reception monthly roster
+    # spreadsheet: A=MORNING, B=AFTERNOON, C=MID, D=NIGHT. NORMAL is
+    # NULL here because it's not a reception shift.
+    letter = Column(String(1), nullable=True)
     # Thai display label (e.g. "ปกติ", "เช้า", "สาย", "บ่าย", "ดึก").
     name_th = Column(String(50), nullable=False)
     start_time = Column(Time, nullable=False)

@@ -46,17 +46,22 @@ class EmployeeUpdate(BaseModel):
 # the role; any other value is rejected with 400.
 _ALLOWED_ROLES = ("reception", "housekeeping", "technician", "admin")
 
+# Allowed values for Employee.location. Two physical branches today;
+# extend by adding rows here (no DB change needed since location is
+# a free-text string column). NULL = unassigned.
+_ALLOWED_LOCATIONS = ("HF", "HF_VILLE")
+
 
 class ShiftAssignmentInput(BaseModel):
     """Body for PUT /api/private/employees/{badge}/shift.
 
-    Both fields are optional and can be cleared by sending None /
-    empty string. The endpoint validates that role (if set) is one
-    of the four supported values and that default_shift_code (if set)
-    refers to a real shift.
+    All three fields are optional and can be cleared by sending None
+    or empty string. Validation rejects unknown roles, unknown shift
+    codes, and unknown locations (each independently).
     """
     role: Optional[str] = None
     default_shift_code: Optional[str] = None
+    location: Optional[str] = None
 
 
 # Role schemas removed - simplifying employee management
@@ -211,7 +216,7 @@ async def update_employee_shift_assignment(
     body: ShiftAssignmentInput,
     db: Session = Depends(get_db),
 ):
-    """Set the employee's role and/or default shift.
+    """Set the employee's role, default shift, and/or branch location.
 
     role: one of 'reception', 'housekeeping', 'technician', 'admin', or
     null/empty to clear (employee becomes "untracked" again — won't
@@ -220,6 +225,10 @@ async def update_employee_shift_assignment(
     default_shift_code: shift code (NORMAL/MORNING/MID/AFTERNOON/NIGHT)
     or null/empty to use the role default. Reception staff typically
     leave this null and rely on per-day shift_assignments instead.
+
+    location: 'HF' or 'HF_VILLE' (the two branches), or null/empty
+    to leave unassigned. Drives per-location reception rosters and
+    the /by-date location filter.
     """
     employee = db.query(Employee).filter(Employee.badge_number == badge_number).first()
     if not employee:
@@ -248,8 +257,18 @@ async def update_employee_shift_assignment(
             )
         new_shift_id = shift.id
 
+    new_location = body.location
+    if new_location == "":
+        new_location = None
+    if new_location is not None and new_location not in _ALLOWED_LOCATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"location must be one of {_ALLOWED_LOCATIONS} or null",
+        )
+
     employee.role = new_role
     employee.default_shift_id = new_shift_id
+    employee.location = new_location
     db.commit()
     db.refresh(employee)
 
@@ -259,6 +278,7 @@ async def update_employee_shift_assignment(
         "default_shift_code": (
             employee.default_shift.code if employee.default_shift else None
         ),
+        "location": employee.location,
     }
 
 
@@ -302,6 +322,7 @@ async def get_employees(
                 # without an extra round-trip per employee.
                 "role": emp.role,
                 "default_shift_code": emp.default_shift.code if emp.default_shift else None,
+                "location": emp.location,
                 "created_at": emp.created_at.isoformat() if emp.created_at else None,
                 "in_database": True
             })

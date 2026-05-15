@@ -119,11 +119,11 @@ def seed_device(by_date_session):
 def seeded_shifts(by_date_session):
     """Insert the 5 standard shifts in the test DB."""
     rows = [
-        Shift(code="NORMAL",    name_th="ปกติ", start_time=time(8, 0),  end_time=time(17, 0)),
-        Shift(code="MORNING",   name_th="เช้า", start_time=time(7, 0),  end_time=time(16, 0)),
-        Shift(code="MID",       name_th="สาย", start_time=time(11, 0), end_time=time(20, 0)),
-        Shift(code="AFTERNOON", name_th="บ่าย", start_time=time(13, 0), end_time=time(22, 0)),
-        Shift(code="NIGHT",     name_th="ดึก", start_time=time(22, 0), end_time=time(7, 0)),
+        Shift(code="NORMAL",    letter=None, name_th="ปกติ", start_time=time(8, 0),  end_time=time(17, 0)),
+        Shift(code="MORNING",   letter="A", name_th="เช้า", start_time=time(7, 0),  end_time=time(16, 0)),
+        Shift(code="MID",       letter="C", name_th="สาย", start_time=time(11, 0), end_time=time(20, 0)),
+        Shift(code="AFTERNOON", letter="B", name_th="บ่าย", start_time=time(13, 0), end_time=time(22, 0)),
+        Shift(code="NIGHT",     letter="D", name_th="ดึก", start_time=time(22, 0), end_time=time(7, 0)),
     ]
     for r in rows:
         by_date_session.add(r)
@@ -146,8 +146,9 @@ def _make_employee(
     is_active=True,
     role=None,
     default_shift=None,
+    location=None,
 ):
-    """Create an Employee with optional role + default_shift assignment."""
+    """Create an Employee with optional role + default_shift + location."""
     e = Employee(
         badge_number=badge,
         english_name=None,
@@ -157,6 +158,7 @@ def _make_employee(
         is_hidden=False,
         role=role,
         default_shift_id=default_shift.id if default_shift else None,
+        location=location,
     )
     session.add(e)
     session.commit()
@@ -568,3 +570,73 @@ class TestByDateMisc:
         resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
         row = resp.json()["rows"][0]
         assert row["first_in"] == "08:45"
+
+
+class TestByDateLocationFilter:
+    """?location=HF|HF_VILLE restricts rows to that branch's employees.
+
+    Employees with location=NULL are only included when the caller
+    omits the filter — once HF or HF_VILLE is specified, only matching
+    employees come back. Each row also carries `location` so the UI can
+    show the branch label.
+    """
+
+    def _seed_two_branches(self, session, seed_device):
+        _make_employee(
+            session, "HF1", "HFTech",
+            role="technician", location="HF",
+        )
+        _make_employee(
+            session, "HV1", "HFVilleTech",
+            role="technician", location="HF_VILLE",
+        )
+        _make_employee(
+            session, "NX1", "NoLocation",
+            role="technician",  # location stays NULL
+        )
+        for badge in ("HF1", "HV1", "NX1"):
+            _add_punch(
+                session, badge, seed_device.id,
+                datetime(2026, 5, 14, 8, 0, tzinfo=BANGKOK_TZ),
+            )
+
+    def test_no_filter_returns_all_locations(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        self._seed_two_branches(by_date_session, seed_device)
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        badges = {r["badge_number"] for r in resp.json()["rows"]}
+        assert badges == {"HF1", "HV1", "NX1"}
+
+    def test_filter_hf_returns_only_hf(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        self._seed_two_branches(by_date_session, seed_device)
+        client, _ = by_date_client
+        resp = client.get(
+            BY_DATE_PATH, params={"date": "2026-05-14", "location": "HF"}
+        )
+        rows = resp.json()["rows"]
+        assert [r["badge_number"] for r in rows] == ["HF1"]
+        assert rows[0]["location"] == "HF"
+
+    def test_filter_hf_ville_returns_only_villa(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        self._seed_two_branches(by_date_session, seed_device)
+        client, _ = by_date_client
+        resp = client.get(
+            BY_DATE_PATH, params={"date": "2026-05-14", "location": "HF_VILLE"}
+        )
+        badges = [r["badge_number"] for r in resp.json()["rows"]]
+        assert badges == ["HV1"]
+
+    def test_invalid_location_returns_400(self, by_date_client):
+        client, _ = by_date_client
+        resp = client.get(
+            BY_DATE_PATH,
+            params={"date": "2026-05-14", "location": "MARS"},
+        )
+        assert resp.status_code == 400
+        assert "location" in resp.json()["detail"]

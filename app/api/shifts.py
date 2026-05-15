@@ -40,6 +40,9 @@ class ShiftOut(BaseModel):
     """Compact shift dto, matching the shape /by-date embeds in each row."""
     id: int
     code: str
+    # Single-letter shorthand used on the reception spreadsheet
+    # (A/B/C/D for MORNING/AFTERNOON/MID/NIGHT). null for NORMAL.
+    letter: Optional[str] = None
     name_th: str
     start_time: str  # HH:MM
     end_time: str    # HH:MM
@@ -70,6 +73,7 @@ def _shift_to_dto(s: Shift) -> ShiftOut:
     return ShiftOut(
         id=s.id,
         code=s.code,
+        letter=s.letter,
         name_th=s.name_th,
         start_time=s.start_time.strftime("%H:%M"),
         end_time=s.end_time.strftime("%H:%M"),
