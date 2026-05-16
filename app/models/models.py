@@ -180,6 +180,11 @@ class Shift(Base):
     name_th = Column(String(50), nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
+    # Hex color used by the roster grid to visually distinguish shifts.
+    # Backfilled per code in migration 20260516_010000; admin can change
+    # via PATCH /api/private/shifts/{code}/color. NULL falls back to a
+    # neutral gray on the client.
+    color = Column(String(7), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -227,6 +232,63 @@ class ShiftAssignment(Base):
 
     employee = relationship("Employee", back_populates="shift_assignments")
     shift = relationship("Shift")
+
+
+# ============================================================================
+# Leaves + Public Holidays (2026-05)
+# ============================================================================
+
+class PublicHoliday(Base):
+    """Company-wide non-working day. Applies to every employee at every
+    location for that Bangkok-local calendar date.
+
+    Used by:
+      - /by-date: an employee whose effective shift is a real shift on
+        a public-holiday date is flagged off (leave_type='public_holiday')
+        rather than absent / late.
+      - The reception roster grid: cells on holiday dates render as a
+        read-only badge instead of the A/B/C/D/OFF dropdown.
+    """
+    __tablename__ = "public_holidays"
+
+    date = Column(Date, primary_key=True)
+    name = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=func.now())
+
+
+class EmployeeLeave(Base):
+    """One employee on leave for one specific Bangkok-local date.
+
+    leave_type must be one of:
+      - 'vacation' (พักร้อน)
+      - 'personal' (ลากิจ)
+      - 'sick'     (ลาป่วย)
+
+    Multi-day leaves are stored as one row per date so the
+    UNIQUE (badge, date) index can short-circuit per-day lookups. The
+    leaves admin UI bulk-inserts a date range as N rows.
+
+    Public holidays are stored in PublicHoliday (no badge needed).
+    """
+    __tablename__ = "employee_leaves"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_badge_number = Column(
+        String(50),
+        ForeignKey("employees.badge_number"),
+        nullable=False,
+        index=True,
+    )
+    date = Column(Date, nullable=False, index=True)
+    leave_type = Column(String(20), nullable=False)
+    note = Column(String(200), nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("employee_badge_number", "date", name="uq_leave_badge_date"),
+    )
+
+    employee = relationship("Employee")
 
 
 class ApplicationLog(Base):

@@ -15,7 +15,7 @@ from app.utils.cache_busting import cache_manager
 from app.core.database import engine, Base
 from app.api import (
     consolidated_attendance, consolidated_devices, consolidated_employees,
-    admin_line_codes, line_auth, qr_checkin, shifts,
+    admin_line_codes, line_auth, qr_checkin, shifts, leaves,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -544,6 +544,14 @@ app.include_router(
     shifts.router,
     prefix="/api/private/shifts",
     tags=["shifts-protected"],
+)
+
+# Leaves admin (2026-05). Public holidays + per-employee leaves; both
+# consumed by the roster grid + /by-date.
+app.include_router(
+    leaves.router,
+    prefix="/api/private/leaves",
+    tags=["leaves-protected"],
 )
 
 # Protected endpoint: Auto-import status

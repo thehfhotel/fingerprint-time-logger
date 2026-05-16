@@ -19,7 +19,9 @@ import io
 from app.utils.timezone import BANGKOK_TZ, to_bangkok as _to_bangkok
 
 from app.core.database import get_db
-from app.models.models import AttendanceRecord, Employee, Shift
+from app.models.models import (
+    AttendanceRecord, Employee, EmployeeLeave, PublicHoliday, Shift,
+)
 from app.services.attendance_service import attendance_service
 from app.services.device_service import device_service
 from app.services.export_service import export_service
@@ -406,6 +408,22 @@ async def get_attendance_by_date(
             detail=f"location must be one of {_ALLOWED_LOCATIONS} or omitted",
         )
 
+    # Lookup leaves + holidays once for the target day. Both take
+    # precedence over the shift assignment when computing status: a
+    # vacationing employee should be flagged "ลาพักร้อน", not "absent",
+    # even if they have a shift assigned that day.
+    holiday = (
+        db.query(PublicHoliday)
+        .filter(PublicHoliday.date == target_day)
+        .first()
+    )
+    leaves_by_badge = {
+        l.employee_badge_number: l
+        for l in db.query(EmployeeLeave)
+        .filter(EmployeeLeave.date == target_day)
+        .all()
+    }
+
     rows: List[Dict[str, Any]] = []
     for employee in _fetch_active_employees(db):
         if location is not None and employee.location != location:
@@ -414,7 +432,11 @@ async def get_attendance_by_date(
         if eff.shift is None and not eff.is_off:
             # Untracked — no role, no default. Skip entirely.
             continue
-        rows.append(_build_shift_row(db, employee, target_day, eff))
+        rows.append(_build_shift_row(
+            db, employee, target_day, eff,
+            holiday=holiday,
+            leave=leaves_by_badge.get(employee.badge_number),
+        ))
 
     rows.sort(key=lambda row: (
         _BY_DATE_STATUS_SORT_ORDER.get(row["status"], 99),
@@ -464,6 +486,9 @@ def _build_shift_row(
     employee: Employee,
     target_day: date,
     eff,
+    *,
+    holiday: Optional[PublicHoliday] = None,
+    leave: Optional[EmployeeLeave] = None,
 ) -> Dict[str, Any]:
     """Build one /by-date row using the employee's effective shift.
 
@@ -471,7 +496,44 @@ def _build_shift_row(
     query the AttendanceRecord table within the shift's punch window
     (which may straddle midnight for NIGHT shifts) and classify by
     whether the first_in is before or after shift_start.
+
+    Public holiday + personal leave both short-circuit to status="off"
+    with leave_type set on the row, so the UI can render a more
+    specific label than plain "หยุด".
     """
+    # Public holiday wins over an employee's personal leave for label
+    # purposes — the holiday is more informative (everyone is off for
+    # the same reason). They never co-occur in normal operation.
+    if holiday is not None:
+        return {
+            "badge_number": employee.badge_number,
+            "display_name": _resolve_display_name(employee),
+            "role": employee.role,
+            "location": employee.location,
+            "shift": None,
+            "first_in": None,
+            "last_out": None,
+            "hours_worked": None,
+            "status": "off",
+            "leave_type": "public_holiday",
+            "leave_note": holiday.name,
+        }
+
+    if leave is not None:
+        return {
+            "badge_number": employee.badge_number,
+            "display_name": _resolve_display_name(employee),
+            "role": employee.role,
+            "location": employee.location,
+            "shift": None,
+            "first_in": None,
+            "last_out": None,
+            "hours_worked": None,
+            "status": "off",
+            "leave_type": leave.leave_type,
+            "leave_note": leave.note,
+        }
+
     if eff.is_off:
         return {
             "badge_number": employee.badge_number,
@@ -483,6 +545,8 @@ def _build_shift_row(
             "last_out": None,
             "hours_worked": None,
             "status": "off",
+            "leave_type": None,
+            "leave_note": None,
         }
 
     shift = eff.shift  # guaranteed non-None by caller (untracked were filtered out)
@@ -516,6 +580,8 @@ def _build_shift_row(
         "status": _compute_status_shift_aware(
             first_in_bangkok, window.shift_start_bkk, eff.is_off,
         ),
+        "leave_type": None,
+        "leave_note": None,
     }
 
 

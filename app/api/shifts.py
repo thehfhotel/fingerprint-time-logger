@@ -19,6 +19,7 @@ Access just like the rest of /api/private/*.
 
 from __future__ import annotations
 
+import re
 from datetime import date as date_type, datetime
 from typing import Optional
 
@@ -46,8 +47,14 @@ class ShiftOut(BaseModel):
     name_th: str
     start_time: str  # HH:MM
     end_time: str    # HH:MM
+    color: Optional[str] = None  # hex like "#86efac"; null = use UI default
     crosses_midnight: bool
     is_active: bool
+
+
+class ShiftColorUpdate(BaseModel):
+    """Body for PATCH /api/private/shifts/{code}/color."""
+    color: Optional[str] = None  # hex (#RRGGBB) or null/empty to reset
 
 
 class AssignmentOut(BaseModel):
@@ -77,9 +84,13 @@ def _shift_to_dto(s: Shift) -> ShiftOut:
         name_th=s.name_th,
         start_time=s.start_time.strftime("%H:%M"),
         end_time=s.end_time.strftime("%H:%M"),
+        color=s.color,
         crosses_midnight=s.crosses_midnight,
         is_active=s.is_active,
     )
+
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _assignment_to_dto(a: ShiftAssignment) -> AssignmentOut:
@@ -222,3 +233,36 @@ def delete_assignment(
     ).delete()
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch("/{code}/color", response_model=ShiftOut)
+def update_shift_color(
+    code: str,
+    body: ShiftColorUpdate,
+    db: Session = Depends(get_db),
+) -> ShiftOut:
+    """Set the display color for one shift.
+
+    Accepts a #RRGGBB hex string. Passing null or an empty string
+    resets to NULL (the UI then falls back to a neutral default).
+    """
+    shift = db.query(Shift).filter(Shift.code == code).first()
+    if shift is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unknown shift code: {code}",
+        )
+
+    new_color = body.color
+    if new_color == "":
+        new_color = None
+    if new_color is not None and not _HEX_COLOR_RE.match(new_color):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="color must be a #RRGGBB hex string or null",
+        )
+
+    shift.color = new_color
+    db.commit()
+    db.refresh(shift)
+    return _shift_to_dto(shift)

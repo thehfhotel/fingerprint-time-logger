@@ -30,7 +30,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
 from app.main_unified import app
-from app.models.models import AttendanceRecord, Device, Employee, Shift, ShiftAssignment
+from app.models.models import (
+    AttendanceRecord, Device, Employee, EmployeeLeave, PublicHoliday,
+    Shift, ShiftAssignment,
+)
 from app.utils.timezone import BANGKOK_TZ
 
 
@@ -640,3 +643,98 @@ class TestByDateLocationFilter:
         )
         assert resp.status_code == 400
         assert "location" in resp.json()["detail"]
+
+
+class TestByDateLeavesAndHolidays:
+    """Leaves + public holidays short-circuit shift status to 'off' with
+    a leave_type field, so the UI can render a more specific label than
+    plain "หยุด"."""
+
+    def test_employee_with_vacation_shows_off_and_leave_type(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        """A tracked employee on vacation surfaces as off, not absent."""
+        _make_employee(
+            by_date_session, "L001", "VacationGuy", role="technician",
+        )
+        by_date_session.add(EmployeeLeave(
+            employee_badge_number="L001",
+            date=date_type(2026, 5, 14),
+            leave_type="vacation",
+        ))
+        by_date_session.commit()
+
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        rows = resp.json()["rows"]
+        assert len(rows) == 1
+        assert rows[0]["status"] == "off"
+        assert rows[0]["leave_type"] == "vacation"
+
+    def test_public_holiday_marks_everyone_off(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        """All tracked employees on a public-holiday date are off,
+        regardless of their personal shift assignment."""
+        _make_employee(by_date_session, "P001", "TechOne", role="technician")
+        _make_employee(by_date_session, "P002", "TechTwo", role="technician")
+        by_date_session.add(PublicHoliday(
+            date=date_type(2026, 5, 14),
+            name="วันคล้ายวันเฉลิม",
+        ))
+        by_date_session.commit()
+
+        # Both employees punched (would normally be on_time) — holiday
+        # takes precedence.
+        for badge in ("P001", "P002"):
+            _add_punch(
+                by_date_session, badge, seed_device.id,
+                datetime(2026, 5, 14, 8, 0, tzinfo=BANGKOK_TZ),
+            )
+
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        rows = resp.json()["rows"]
+        statuses = {r["badge_number"]: r["status"] for r in rows}
+        leave_types = {r["badge_number"]: r["leave_type"] for r in rows}
+        assert statuses == {"P001": "off", "P002": "off"}
+        assert leave_types == {"P001": "public_holiday", "P002": "public_holiday"}
+
+    def test_holiday_takes_precedence_over_personal_leave(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        """If both a holiday and a personal leave exist for the same
+        date, the holiday wins for labelling — they don't normally
+        coexist, but be defensive about the ordering."""
+        _make_employee(
+            by_date_session, "L002", "Conflict", role="technician",
+        )
+        by_date_session.add(PublicHoliday(
+            date=date_type(2026, 5, 14), name="Holiday"
+        ))
+        by_date_session.add(EmployeeLeave(
+            employee_badge_number="L002",
+            date=date_type(2026, 5, 14),
+            leave_type="sick",
+        ))
+        by_date_session.commit()
+
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        row = resp.json()["rows"][0]
+        assert row["status"] == "off"
+        assert row["leave_type"] == "public_holiday"
+
+    def test_off_day_has_null_leave_type(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        """Plain 'off' (no leave/holiday) returns leave_type=None — the
+        page distinguishes "scheduled off" from "leave/holiday off"
+        based on this field."""
+        _make_employee(by_date_session, "O001", "RestDay", role="reception")
+        # Reception with no assignment → off
+        client, _ = by_date_client
+        resp = client.get(BY_DATE_PATH, params={"date": "2026-05-14"})
+        row = resp.json()["rows"][0]
+        assert row["status"] == "off"
+        assert row["leave_type"] is None
