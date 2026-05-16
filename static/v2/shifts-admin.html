@@ -186,6 +186,9 @@
               <label class="inline-flex items-center gap-1">
                 <input type="radio" name="leaveType" value="sick"> ลาป่วย
               </label>
+              <label class="inline-flex items-center gap-1">
+                <input type="radio" name="leaveType" value="public_holiday"> วันหยุดนักขัตฤกษ์
+              </label>
             </div>
 
             <div class="flex flex-wrap items-center gap-2 text-xs">
@@ -625,6 +628,16 @@
           const SHIFT_BY_CODE = {};
           SHIFTS.forEach(s => { SHIFT_BY_CODE[s.code] = s; });
 
+          // Single-letter shorthand for leave types in the narrow cell
+          // dropdown. Picked to be distinct from A/B/C/D and short
+          // enough to fit. Title attribute carries the full Thai label.
+          const LEAVE_OPTIONS = [
+            { value: "L_vacation",       letter: "พร",  type: "vacation",       label: "ลาพักร้อน" },
+            { value: "L_personal",       letter: "กจ",  type: "personal",       label: "ลากิจ" },
+            { value: "L_sick",           letter: "ปว",  type: "sick",           label: "ลาป่วย" },
+            { value: "L_public_holiday", letter: "นข",  type: "public_holiday", label: "วันหยุดนักขัตฤกษ์" },
+          ];
+
           days.forEach(d => {
             const key = emp.badge_number + "|" + d;
             const current = rosterAssignments[key];  // undefined | "" (off) | "MORNING" etc.
@@ -634,22 +647,16 @@
             const cell = document.createElement("td");
             cell.className = "px-1 py-1 text-center";
 
-            // Holiday / leave overlay: render a colored badge instead
-            // of the dropdown. Admin removes the leave via the วันลา
-            // tab (or removes the holiday at the same place) to
-            // re-enable shift editing on that cell.
-            if (holiday || leave) {
-              const meta = holiday
-                ? LEAVE_TYPES.public_holiday
-                : (LEAVE_TYPES[leave.leave_type] || { label: leave.leave_type, color: "#e5e7eb" });
+            // Company-wide public holiday: read-only badge. Admin clears
+            // it via the วันลา tab's left pane (it applies to everyone,
+            // so editing per-cell would be wrong).
+            if (holiday) {
+              const meta = LEAVE_TYPES.public_holiday;
               const badge = document.createElement("div");
               badge.className = "h-8 w-12 rounded border border-ink-200 text-xs font-semibold flex items-center justify-center";
               badge.style.backgroundColor = meta.color;
-              // Single-char-ish label that fits in the narrow cell.
-              // "ลา" generic, "หยุด" for holiday — title shows full Thai.
-              badge.textContent = holiday ? "หยุด" : "ลา";
-              badge.title = (holiday ? "วันหยุดนักขัตฤกษ์: " + holiday.name : meta.label) +
-                            (leave && leave.note ? " — " + leave.note : "");
+              badge.textContent = "นข";  // นักขัตฤกษ์
+              badge.title = "วันหยุดนักขัตฤกษ์: " + holiday.name;
               cell.appendChild(badge);
               tr.appendChild(cell);
               return;
@@ -657,48 +664,129 @@
 
             const sel = document.createElement("select");
             // Narrower cells in the monthly grid; show A/B/C/D not full names.
-            sel.className = "h-8 w-12 rounded border border-ink-200 text-xs font-semibold text-center";
-            // Background color reflects the currently-selected shift's
-            // color so the grid is scannable at a glance.
-            const applyCellBg = (code) => {
-              const sh = SHIFT_BY_CODE[code];
+            sel.className = "h-8 w-14 rounded border border-ink-200 text-xs font-semibold text-center";
+
+            // Background color reflects the currently-selected option's
+            // color so the grid is scannable at a glance. Leaves use
+            // the LEAVE_TYPES palette; shifts use Shift.color.
+            const applyCellBg = (val) => {
+              if (val && val.startsWith("L_")) {
+                const opt = LEAVE_OPTIONS.find(o => o.value === val);
+                const meta = opt && LEAVE_TYPES[opt.type];
+                sel.style.backgroundColor = (meta && meta.color) || "#e5e7eb";
+                return;
+              }
+              if (val === "__off__" || val === "" || val == null) {
+                sel.style.backgroundColor = "white";
+                return;
+              }
+              const sh = SHIFT_BY_CODE[val];
               sel.style.backgroundColor = (sh && sh.color) ? sh.color : "white";
             };
-            applyCellBg(current);
+
+            // Compute the initial selected value, then add options.
+            let initial;
+            if (leave) {
+              const lo = LEAVE_OPTIONS.find(o => o.type === leave.leave_type);
+              initial = lo ? lo.value : "__off__";
+            } else if (current && current !== "") {
+              initial = current;
+            } else {
+              initial = "__off__";
+            }
+            applyCellBg(initial);
 
             RECEPTION_SHIFTS.forEach(s => {
               const opt = document.createElement("option");
               opt.value = s.code;
               opt.textContent = s.letter;
-              if (current === s.code) opt.selected = true;
+              if (initial === s.code) opt.selected = true;
               sel.appendChild(opt);
             });
             const offOpt = document.createElement("option");
             offOpt.value = "__off__";
             offOpt.textContent = "OFF";
-            // current === "" → explicit OFF row in DB.
-            // current === undefined → no row in DB (same semantics).
-            if (current === "" || current === undefined) offOpt.selected = true;
+            if (initial === "__off__") offOpt.selected = true;
             sel.appendChild(offOpt);
+
+            // Leave types as a visually separated group (HTML <optgroup>).
+            const lvGroup = document.createElement("optgroup");
+            lvGroup.label = "วันลา";
+            LEAVE_OPTIONS.forEach(lo => {
+              const opt = document.createElement("option");
+              opt.value = lo.value;
+              // Single-char-ish text fits the narrow cell; full label
+              // is hidden on the option but accessible via the LEAVE_TYPES
+              // legend.
+              opt.textContent = lo.letter;
+              opt.title = lo.label;
+              if (initial === lo.value) opt.selected = true;
+              lvGroup.appendChild(opt);
+            });
+            sel.appendChild(lvGroup);
 
             sel.addEventListener("change", async () => {
               sel.disabled = true;
+              const next = sel.value;
+              const wasLeave = !!leave;  // captured at render time
               try {
-                // Reception cells only emit A/B/C/D codes or __off__.
-                // OFF stores a shift_assignments row with shift_id=NULL;
-                // A/B/C/D stores a row with the matching shift_id.
-                const code = sel.value === "__off__" ? null : sel.value;
-                await V2.apiFetch(
-                  "/api/private/shifts/assignments/" +
-                  encodeURIComponent(emp.badge_number) + "/" + d,
-                  {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ shift_code: code }),
+                if (next.startsWith("L_")) {
+                  // → personal-leave path. If a shift assignment exists,
+                  // remove it first so the leave is the sole source of
+                  // truth for that day. (effective_shift treats leave
+                  // as overriding the shift, but clearing keeps state
+                  // tidy.)
+                  if (current !== undefined) {
+                    await V2.apiFetch(
+                      "/api/private/shifts/assignments/" +
+                      encodeURIComponent(emp.badge_number) + "/" + d,
+                      { method: "DELETE" }
+                    );
+                    delete rosterAssignments[key];
                   }
-                );
-                rosterAssignments[key] = code || "";
-                applyCellBg(code);
+                  const opt = LEAVE_OPTIONS.find(o => o.value === next);
+                  const created = await V2.apiFetch(
+                    "/api/private/leaves/employee",
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        employee_badge_number: emp.badge_number,
+                        leave_type: opt.type,
+                        date: d,
+                      }),
+                    }
+                  );
+                  // POST returns a list (it supports range expansion).
+                  // For a single date we get one row back.
+                  const created_row = (created || [])[0];
+                  if (created_row) {
+                    LEAVES_BY_BADGE_DATE[key] = created_row;
+                  }
+                } else {
+                  // → shift-assignment path. Clear any pre-existing
+                  // leave first.
+                  if (wasLeave) {
+                    await V2.apiFetch(
+                      "/api/private/leaves/employee/" +
+                      encodeURIComponent(emp.badge_number) + "/" + d,
+                      { method: "DELETE" }
+                    );
+                    delete LEAVES_BY_BADGE_DATE[key];
+                  }
+                  const code = next === "__off__" ? null : next;
+                  await V2.apiFetch(
+                    "/api/private/shifts/assignments/" +
+                    encodeURIComponent(emp.badge_number) + "/" + d,
+                    {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ shift_code: code }),
+                    }
+                  );
+                  rosterAssignments[key] = code || "";
+                }
+                applyCellBg(next);
               } catch (err) {
                 showRosterError("บันทึกไม่สำเร็จ — โหลดใหม่");
               } finally {

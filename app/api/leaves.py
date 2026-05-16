@@ -34,9 +34,15 @@ from app.models.models import Employee, EmployeeLeave, PublicHoliday
 router = APIRouter()
 
 
-# Allowed personal-leave types. 'public_holiday' lives in its own
-# table (no badge) so it isn't in this set.
-_ALLOWED_LEAVE_TYPES = ("vacation", "personal", "sick")
+# Allowed leave types for the per-employee table. 'public_holiday' is
+# included here in addition to existing in its own (company-wide)
+# PublicHoliday table, because the admin sometimes wants to mark a
+# specific employee as off-for-holiday without applying it to everyone
+# (e.g. ad-hoc holiday for one branch's staff). When both a per-employee
+# public_holiday row and a company-wide PublicHoliday row exist for the
+# same date, the company-wide entry wins in /by-date's status logic —
+# but they render identically, so the difference is invisible to users.
+_ALLOWED_LEAVE_TYPES = ("vacation", "personal", "sick", "public_holiday")
 
 
 # --- Schemas -------------------------------------------------------------

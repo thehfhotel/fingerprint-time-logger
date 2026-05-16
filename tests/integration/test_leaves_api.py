@@ -284,6 +284,24 @@ class TestEmployeeLeaves:
         )
         assert resp.status_code == 400
 
+    def test_create_accepts_public_holiday_as_leave_type(
+        self, leaves_client, seeded_employee, leaves_session
+    ):
+        """As of 2026-05, public_holiday is a valid per-employee leave
+        type too (in addition to the company-wide public_holidays
+        table). Lets admins mark one employee as off-for-holiday
+        without applying it to everyone."""
+        resp = leaves_client.post(
+            f"{LEAVES_ROOT}/employee",
+            json={
+                "employee_badge_number": "EMP01",
+                "leave_type": "public_holiday",
+                "date": "2026-12-31",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()[0]["leave_type"] == "public_holiday"
+
     def test_create_404_unknown_employee(self, leaves_client):
         resp = leaves_client.post(
             f"{LEAVES_ROOT}/employee",
