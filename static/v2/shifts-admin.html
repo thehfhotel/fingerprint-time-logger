@@ -253,6 +253,11 @@
       let SHIFTS = [];
       // Loaded from /api/private/employees/?include_hidden=true
       let EMPLOYEES = [];
+      // Loaded from /api/private/leaves/types — replaces the hardcoded
+      // LEAVE_TYPES palette so admin can recolor leave badges from the
+      // roster legend. Keyed by code (vacation/personal/sick/public_holiday)
+      // → { code, name_th, color }.
+      let LEAVE_TYPES_BY_CODE = {};
 
       // ---------- Tab switching ----------
       const tabs = Array.from(document.querySelectorAll(".tab[data-tab]"));
@@ -278,12 +283,15 @@
 
       async function loadAll() {
         try {
-          const [shiftsResp, employeesResp] = await Promise.all([
+          const [shiftsResp, employeesResp, leaveTypesResp] = await Promise.all([
             V2.apiFetch("/api/private/shifts/"),
             V2.apiFetch("/api/private/employees/?include_hidden=true"),
+            V2.apiFetch("/api/private/leaves/types"),
           ]);
           SHIFTS = shiftsResp || [];
           EMPLOYEES = (employeesResp && employeesResp.employees) || [];
+          LEAVE_TYPES_BY_CODE = {};
+          (leaveTypesResp || []).forEach(lt => { LEAVE_TYPES_BY_CODE[lt.code] = lt; });
           renderRolesTable();
           renderColorLegend();
         } catch (err) {
@@ -370,7 +378,10 @@
           noneOpt.value = "";
           noneOpt.textContent = "(ตามบทบาท)";
           shiftSel.appendChild(noneOpt);
-          SHIFTS.forEach(s => {
+          // OFF is a UI pseudo-shift (color picker only) — exclude
+          // from the "default shift" dropdown since admin can't set
+          // someone's default to OFF (it's the absence of a shift).
+          SHIFTS.filter(s => s.code !== "OFF").forEach(s => {
             const opt = document.createElement("option");
             opt.value = s.code;
             opt.textContent = s.name_th + " (" + s.start_time + "–" + s.end_time + ")";
@@ -607,7 +618,11 @@
           // admin doesn't touch stays as "no row" in the DB, displayed
           // as OFF since the two states are semantically identical
           // for reception (effective_shift returns is_off for both).
-          const RECEPTION_SHIFTS = SHIFTS.filter(s => s.letter);
+          // Reception cell dropdown: A/B/C/D only (excludes OFF
+          // because the dedicated __off__ option below covers that
+          // path, and excludes NORMAL because reception never works
+          // the day-shift fallback).
+          const RECEPTION_SHIFTS = SHIFTS.filter(s => s.letter && s.code !== "OFF");
           const SHIFT_BY_CODE = {};
           SHIFTS.forEach(s => { SHIFT_BY_CODE[s.code] = s; });
 
@@ -651,7 +666,8 @@
 
             // Background color reflects the currently-selected option's
             // color so the grid is scannable at a glance. Leaves use
-            // the LEAVE_TYPES palette; shifts use Shift.color.
+            // the LEAVE_TYPES palette; shifts use Shift.color; OFF uses
+            // the OFF pseudo-shift's color so admins can recolor it.
             const applyCellBg = (val) => {
               if (val && val.startsWith("L_")) {
                 const opt = LEAVE_OPTIONS.find(o => o.value === val);
@@ -660,7 +676,8 @@
                 return;
               }
               if (val === "__off__" || val === "" || val == null) {
-                sel.style.backgroundColor = "white";
+                const offShift = SHIFT_BY_CODE["OFF"];
+                sel.style.backgroundColor = (offShift && offShift.color) || "white";
                 return;
               }
               const sh = SHIFT_BY_CODE[val];
@@ -789,72 +806,122 @@
       // Color legend + leaves tab
       // -------------------------------------------------------------------
 
-      // Per-leave-type display info. The 4th type 'public_holiday' is
-      // stored in a separate table but uses the same visual treatment
-      // on the roster.
-      const LEAVE_TYPES = {
-        vacation:       { label: "พักร้อน",        color: "#bbf7d0" },
-        personal:       { label: "ลากิจ",          color: "#fdba74" },
-        sick:           { label: "ลาป่วย",         color: "#fbcfe8" },
-        public_holiday: { label: "วันหยุด",        color: "#fca5a5" },
+      // Per-leave-type display info. Backed by LEAVE_TYPES_BY_CODE
+      // (loaded from /api/private/leaves/types), with hardcoded label
+      // fallbacks for the short forms used on roster badges. The color
+      // comes from the API and is editable from the legend below.
+      const LEAVE_TYPE_LABELS = {
+        vacation:       "พักร้อน",
+        personal:       "ลากิจ",
+        sick:           "ลาป่วย",
+        public_holiday: "วันหยุด",
       };
+      function leaveTypeMeta(code) {
+        const lt = LEAVE_TYPES_BY_CODE[code];
+        return {
+          label: LEAVE_TYPE_LABELS[code] || code,
+          color: (lt && lt.color) || "#e5e7eb",
+        };
+      }
+      // Convenience proxy with the legacy `LEAVE_TYPES.vacation.color`
+      // access pattern still working — used in the renderLeaveList
+      // dots + the roster cell badge.
+      const LEAVE_TYPES = new Proxy({}, {
+        get(_t, code) {
+          if (typeof code !== "string") return undefined;
+          return leaveTypeMeta(code);
+        },
+      });
 
       // ----- Color legend (top of roster tab) -----
       const shiftColorLegend = document.getElementById("shiftColorLegend");
 
-      function renderColorLegend() {
-        shiftColorLegend.innerHTML = "";
-        // Sort so the reception shifts (with letters) come first, then NORMAL.
-        const ordered = SHIFTS.slice().sort((a, b) => {
-          if (!!a.letter !== !!b.letter) return a.letter ? -1 : 1;
-          return (a.letter || a.code).localeCompare(b.letter || b.code);
-        });
-        ordered.forEach(s => {
-          const wrap = document.createElement("div");
-          wrap.className = "inline-flex items-center gap-2 text-xs";
-          const swatch = document.createElement("input");
-          swatch.type = "color";
-          swatch.value = s.color || "#e5e7eb";
-          swatch.className = "h-7 w-9 cursor-pointer rounded border border-ink-200";
-          swatch.title = "เปลี่ยนสี " + (s.letter || s.code);
+      // Build one swatch row in the legend. Generic helper so we can
+      // mix shift colors (PATCH /shifts/{code}/color) and leave-type
+      // colors (PATCH /leaves/types/{code}/color) without duplicating
+      // the debounce + roster-refresh boilerplate.
+      function makeColorSwatch({ initialColor, label, sublabel, patchUrl, onSaved }) {
+        const wrap = document.createElement("div");
+        wrap.className = "inline-flex items-center gap-2 text-xs";
+        const swatch = document.createElement("input");
+        swatch.type = "color";
+        swatch.value = initialColor || "#e5e7eb";
+        swatch.className = "h-7 w-9 cursor-pointer rounded border border-ink-200";
+        swatch.title = "เปลี่ยนสี " + label;
 
-          // Debounce: <input type="color"> fires on every drag tick.
-          // Wait 350ms after the last change before PATCHing.
-          let timer = null;
-          swatch.addEventListener("input", () => {
-            if (timer) clearTimeout(timer);
-            timer = setTimeout(async () => {
-              try {
-                const updated = await V2.apiFetch(
-                  "/api/private/shifts/" + encodeURIComponent(s.code) + "/color",
-                  {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ color: swatch.value }),
-                  }
-                );
-                s.color = updated.color;
-                // Re-render the roster to pick up the new color.
-                if (!panes.roster.classList.contains("hidden")) {
-                  renderRoster(rosterStart);
-                }
-              } catch (e) {
-                console.warn("color update failed", e);
+        // Debounce: <input type="color"> fires on every drag tick.
+        // Wait 350ms after the last change before PATCHing.
+        let timer = null;
+        swatch.addEventListener("input", () => {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(async () => {
+            try {
+              const updated = await V2.apiFetch(patchUrl, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ color: swatch.value }),
+              });
+              if (onSaved) onSaved(updated);
+              if (!panes.roster.classList.contains("hidden")) {
+                renderRoster(rosterStart);
               }
-            }, 350);
-          });
+              if (!panes.leaves.classList.contains("hidden")) {
+                renderLeaveList();
+              }
+            } catch (e) {
+              console.warn("color update failed", e);
+            }
+          }, 350);
+        });
 
-          const label = document.createElement("span");
-          label.className = "font-semibold text-ink-700";
-          label.textContent = s.letter || s.code;
+        const lbl = document.createElement("span");
+        lbl.className = "font-semibold text-ink-700";
+        lbl.textContent = label;
+        wrap.appendChild(swatch);
+        wrap.appendChild(lbl);
+        if (sublabel) {
           const meta = document.createElement("span");
           meta.className = "text-ink-500";
-          meta.textContent = s.name_th + " (" + s.start_time + "–" + s.end_time + ")";
-
-          wrap.appendChild(swatch);
-          wrap.appendChild(label);
+          meta.textContent = sublabel;
           wrap.appendChild(meta);
-          shiftColorLegend.appendChild(wrap);
+        }
+        return wrap;
+      }
+
+      function renderColorLegend() {
+        shiftColorLegend.innerHTML = "";
+
+        // Shifts: only show ones with a letter (A/B/C/D/OFF). NORMAL
+        // has letter=NULL and isn't selectable on the reception roster,
+        // so its color is irrelevant in this legend.
+        const orderedShifts = SHIFTS
+          .filter(s => s.letter)
+          .sort((a, b) => a.letter.localeCompare(b.letter));
+        orderedShifts.forEach(s => {
+          const sublabel = (s.code === "OFF")
+            ? "หยุด"
+            : s.name_th + " (" + s.start_time + "–" + s.end_time + ")";
+          shiftColorLegend.appendChild(makeColorSwatch({
+            initialColor: s.color,
+            label: s.letter,
+            sublabel,
+            patchUrl: "/api/private/shifts/" + encodeURIComponent(s.code) + "/color",
+            onSaved: (updated) => { s.color = updated.color; },
+          }));
+        });
+
+        // Leave types: vacation / personal / sick / public_holiday.
+        // Order is fixed (matches the form's radio order).
+        ["vacation", "personal", "sick", "public_holiday"].forEach(code => {
+          const lt = LEAVE_TYPES_BY_CODE[code];
+          if (!lt) return;
+          shiftColorLegend.appendChild(makeColorSwatch({
+            initialColor: lt.color,
+            label: LEAVE_TYPE_LABELS[code] || code,
+            sublabel: null,
+            patchUrl: "/api/private/leaves/types/" + encodeURIComponent(code) + "/color",
+            onSaved: (updated) => { lt.color = updated.color; },
+          }));
         });
       }
 

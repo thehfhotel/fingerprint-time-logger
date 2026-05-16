@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
 from app.main_unified import app
-from app.models.models import Employee, EmployeeLeave, PublicHoliday, Shift
+from app.models.models import Employee, EmployeeLeave, LeaveType, PublicHoliday, Shift
 
 
 LEAVES_ROOT = "/api/private/leaves"
@@ -89,6 +89,36 @@ def seeded_shifts(leaves_session):
     for r in rows:
         leaves_session.refresh(r)
     return {r.code: r for r in rows}
+
+
+@pytest.fixture
+def seeded_leave_types(leaves_session):
+    """Seed the 4 leave-type rows the way migration 20260516_020000 does."""
+    rows = [
+        LeaveType(code="vacation",       name_th="ลาพักร้อน",        color="#bbf7d0"),
+        LeaveType(code="personal",       name_th="ลากิจ",            color="#fdba74"),
+        LeaveType(code="sick",           name_th="ลาป่วย",           color="#fbcfe8"),
+        LeaveType(code="public_holiday", name_th="วันหยุดนักขัตฤกษ์", color="#fca5a5"),
+    ]
+    for r in rows:
+        leaves_session.add(r)
+    leaves_session.commit()
+    for r in rows:
+        leaves_session.refresh(r)
+    return {r.code: r for r in rows}
+
+
+@pytest.fixture
+def seeded_off_shift(leaves_session):
+    """OFF pseudo-shift row used by the cell color picker."""
+    from datetime import time as _time
+    off = Shift(code="OFF", letter="OFF", name_th="หยุด",
+                start_time=_time(0, 0), end_time=_time(0, 0),
+                color="#e5e7eb")
+    leaves_session.add(off)
+    leaves_session.commit()
+    leaves_session.refresh(off)
+    return off
 
 
 @pytest.fixture
@@ -371,3 +401,88 @@ class TestEmployeeLeaves:
     def test_delete_is_idempotent(self, leaves_client, seeded_employee):
         resp = leaves_client.delete(f"{LEAVES_ROOT}/employee/EMP01/2099-01-01")
         assert resp.status_code == 204
+
+
+class TestLeaveTypeColors:
+    """The /leaves/types CRUD: list + PATCH color. Mirrors the shape of
+    /shifts color picking so the same debounced UI handler works for
+    both."""
+
+    def test_list_returns_seeded_types_with_colors(
+        self, leaves_client, seeded_leave_types
+    ):
+        resp = leaves_client.get(f"{LEAVES_ROOT}/types")
+        assert resp.status_code == 200
+        body = {r["code"]: r for r in resp.json()}
+        assert set(body.keys()) == {"vacation", "personal", "sick", "public_holiday"}
+        assert body["vacation"]["color"] == "#bbf7d0"
+        assert body["sick"]["name_th"] == "ลาป่วย"
+
+    def test_patch_updates_color(
+        self, leaves_client, seeded_leave_types, leaves_session
+    ):
+        resp = leaves_client.patch(
+            f"{LEAVES_ROOT}/types/vacation/color",
+            json={"color": "#123456"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["color"] == "#123456"
+
+        leaves_session.expire_all()
+        lt = leaves_session.query(LeaveType).filter_by(code="vacation").first()
+        assert lt.color == "#123456"
+
+    def test_patch_can_clear_color(
+        self, leaves_client, seeded_leave_types
+    ):
+        resp = leaves_client.patch(
+            f"{LEAVES_ROOT}/types/sick/color",
+            json={"color": None},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["color"] is None
+
+    def test_patch_rejects_invalid_hex(
+        self, leaves_client, seeded_leave_types
+    ):
+        resp = leaves_client.patch(
+            f"{LEAVES_ROOT}/types/sick/color",
+            json={"color": "blue"},
+        )
+        assert resp.status_code == 400
+
+    def test_patch_404_for_unknown_code(self, leaves_client, seeded_leave_types):
+        resp = leaves_client.patch(
+            f"{LEAVES_ROOT}/types/sabbatical/color",
+            json={"color": "#000000"},
+        )
+        assert resp.status_code == 404
+
+
+class TestOffShiftNotAssignable:
+    """OFF is a UI pseudo-shift used for color display. Admins should
+    use shift_code=null to mark a day off; OFF as a real shift code in
+    /assignments PUT is rejected."""
+
+    def test_assignment_rejects_off_code(
+        self, leaves_client, seeded_shifts, seeded_off_shift, seeded_employee
+    ):
+        resp = leaves_client.put(
+            "/api/private/shifts/assignments/EMP01/2026-06-15",
+            json={"shift_code": "OFF"},
+        )
+        assert resp.status_code == 400
+        assert "OFF" in resp.json()["detail"]
+
+    def test_off_shift_color_can_be_patched(
+        self, leaves_client, seeded_shifts, seeded_off_shift
+    ):
+        """Even though OFF isn't assignable, its color IS editable via
+        the existing /shifts/{code}/color endpoint — that's how the
+        admin recolors OFF cells on the roster."""
+        resp = leaves_client.patch(
+            "/api/private/shifts/OFF/color",
+            json={"color": "#000000"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["color"] == "#000000"

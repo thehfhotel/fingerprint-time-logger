@@ -151,9 +151,21 @@ def list_assignments(
 
 
 def _resolve_shift_code(db: Session, code: Optional[str]) -> Optional[Shift]:
-    """Look up a shift by code, raising 400 for unknown codes."""
+    """Look up a shift by code, raising 400 for unknown codes.
+
+    'OFF' is a UI pseudo-shift (used purely for color display on the
+    roster) and is rejected here — admins indicate "off" by passing
+    shift_code=null instead, which stores a shift_assignments row
+    with shift_id=NULL and is what effective_shift / by-date already
+    treat as off.
+    """
     if code is None:
         return None
+    if code == "OFF":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="shift_code='OFF' is not assignable; pass null instead",
+        )
     s = db.query(Shift).filter(Shift.code == code).first()
     if s is None:
         raise HTTPException(

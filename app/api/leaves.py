@@ -20,6 +20,7 @@ Both are consumed by:
 
 from __future__ import annotations
 
+import re
 from datetime import date as date_type, timedelta
 from typing import Optional
 
@@ -28,7 +29,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.models import Employee, EmployeeLeave, PublicHoliday
+from app.models.models import Employee, EmployeeLeave, LeaveType, PublicHoliday
+
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 router = APIRouter()
@@ -283,3 +287,62 @@ def delete_employee_leave(
     ).delete()
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- Leave-type colors (admin-editable via the roster legend) -----------
+
+
+class LeaveTypeOut(BaseModel):
+    code: str
+    name_th: str
+    color: Optional[str] = None
+
+
+class LeaveTypeColorUpdate(BaseModel):
+    color: Optional[str] = None  # hex (#RRGGBB) or null/empty to reset
+
+
+def _leave_type_to_dto(lt: LeaveType) -> LeaveTypeOut:
+    return LeaveTypeOut(code=lt.code, name_th=lt.name_th, color=lt.color)
+
+
+@router.get("/types", response_model=list[LeaveTypeOut])
+def list_leave_types(db: Session = Depends(get_db)) -> list[LeaveTypeOut]:
+    """List the 4 leave types with their current display colors.
+
+    The shifts-admin "ตั้งค่าสีกะ" legend renders one color picker per
+    type next to the shift-color pickers.
+    """
+    rows = db.query(LeaveType).order_by(LeaveType.code).all()
+    return [_leave_type_to_dto(lt) for lt in rows]
+
+
+@router.patch("/types/{code}/color", response_model=LeaveTypeOut)
+def update_leave_type_color(
+    code: str,
+    body: LeaveTypeColorUpdate,
+    db: Session = Depends(get_db),
+) -> LeaveTypeOut:
+    """Set the display color for one leave type. Mirrors the
+    PATCH /api/private/shifts/{code}/color shape so the frontend can
+    reuse the same debounced color-picker UI."""
+    lt = db.query(LeaveType).filter(LeaveType.code == code).first()
+    if lt is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unknown leave type code: {code}",
+        )
+
+    new_color = body.color
+    if new_color == "":
+        new_color = None
+    if new_color is not None and not _HEX_COLOR_RE.match(new_color):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="color must be a #RRGGBB hex string or null",
+        )
+
+    lt.color = new_color
+    db.commit()
+    db.refresh(lt)
+    return _leave_type_to_dto(lt)

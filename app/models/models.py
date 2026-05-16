@@ -238,6 +238,24 @@ class ShiftAssignment(Base):
 # Leaves + Public Holidays (2026-05)
 # ============================================================================
 
+class LeaveType(Base):
+    """Lookup row for the 4 leave types used by EmployeeLeave + the
+    admin UI: vacation / personal / sick / public_holiday.
+
+    The `color` column is editable from the shifts-admin "ตั้งค่าสีกะ"
+    legend, so admins can recolor leave badges the same way they
+    recolor shift cells. Seeded with sensible defaults in migration
+    20260516_020000.
+    """
+    __tablename__ = "leave_types"
+
+    code = Column(String(20), primary_key=True)
+    name_th = Column(String(50), nullable=False)
+    color = Column(String(7), nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
 class PublicHoliday(Base):
     """Company-wide non-working day. Applies to every employee at every
     location for that Bangkok-local calendar date.
