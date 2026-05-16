@@ -197,9 +197,10 @@
       }));
 
       // ---------- Boot ----------
-      // Initialise the period label before the first paint so the
-      // selector isn't empty during the initial load.
-      rosterPeriodLabel.textContent = thaiPeriodLabel(rosterStart);
+      // (The roster period label is populated lazily by loadRoster()
+      // when the user switches to the roster tab. We previously
+      // pre-seeded it here, but that referenced `rosterPeriodLabel`
+      // before its `const` declaration further down — TDZ error.)
       loadAll();
 
       async function loadAll() {
