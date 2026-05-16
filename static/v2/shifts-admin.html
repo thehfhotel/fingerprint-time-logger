@@ -32,7 +32,7 @@
 
   <!-- TOP NAV -->
   <nav class="border-b border-ink-200 bg-white">
-    <div class="mx-auto flex max-w-5xl items-center justify-between px-5 py-3">
+    <div class="mx-auto flex w-full items-center justify-between px-5 py-3">
       <a href="/fingerprintlogs/v2/" class="flex items-center gap-2 text-sm font-semibold text-ink-700 hover:text-brand-600">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><polyline points="15 18 9 12 15 6"/></svg>
         ระบบบันทึกเวลา
@@ -45,7 +45,7 @@
     </div>
   </nav>
 
-  <main class="mx-auto max-w-5xl px-4 pt-5 pb-12 md:px-5 md:pt-8">
+  <main class="w-full px-4 pt-5 pb-12 md:px-6 md:pt-8">
 
     <!-- HEADER -->
     <header class="mb-5 md:mb-7">
@@ -98,12 +98,18 @@
             <button data-location="HF_VILLE" class="loc-chip h-10 rounded-full border px-3 font-medium">HF Ville</button>
           </div>
           <button id="rosterPrev" class="h-10 w-10 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">‹</button>
-          <input id="rosterStartDate" type="date"
-                 class="h-10 min-w-[10rem] flex-1 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-800 shadow-card" />
+          <!-- Big Thai month-year label (e.g. "พฤษภาคม 2569"). Buddhist
+               year = Gregorian + 543. Browser-native month pickers don't
+               render Thai locale, so we hand-roll the label and navigate
+               purely via prev / next / "เดือนนี้". -->
+          <div id="rosterPeriodLabel"
+               class="h-10 min-w-[12rem] flex-1 rounded-lg border border-ink-200 bg-white px-4 text-base font-semibold text-ink-800 shadow-card flex items-center justify-center tabular-nums">
+            —
+          </div>
           <button id="rosterNext" class="h-10 w-10 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">›</button>
           <button id="rosterThisMonth" class="h-10 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">เดือนนี้</button>
         </div>
-        <p class="mt-3 text-xs text-ink-500">ตารางกะรายเดือนสำหรับพนักงาน Reception แต่ละสาขา เลือกกะ A/B/C/D หรือ "หยุด" ในแต่ละช่อง · A=07:00–16:00, B=13:00–22:00, C=11:00–20:00, D=22:00–07:00 (ข้ามคืน)</p>
+        <p class="mt-3 text-xs text-ink-500">ตารางกะรายเดือนสำหรับพนักงาน Reception แต่ละสาขา เลือกกะ A/B/C/D หรือ OFF ในแต่ละช่อง · A=07:00–16:00, B=13:00–22:00, C=11:00–20:00, D=22:00–07:00 (ข้ามคืน)</p>
       </div>
 
       <div id="rosterLoading" class="rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
@@ -191,6 +197,9 @@
       }));
 
       // ---------- Boot ----------
+      // Initialise the period label before the first paint so the
+      // selector isn't empty during the initial load.
+      rosterPeriodLabel.textContent = thaiPeriodLabel(rosterStart);
       loadAll();
 
       async function loadAll() {
@@ -334,22 +343,47 @@
       const rosterTableWrap = document.getElementById("rosterTableWrap");
       const rosterHead = document.getElementById("rosterHead");
       const rosterBody = document.getElementById("rosterBody");
-      const rosterStartDate = document.getElementById("rosterStartDate");
+      const rosterPeriodLabel = document.getElementById("rosterPeriodLabel");
       const rosterPrev = document.getElementById("rosterPrev");
       const rosterNext = document.getElementById("rosterNext");
       const rosterThisWeek = document.getElementById("rosterThisWeek");
 
-      // Roster renders 30 days starting at rosterStart. Default: start of
-      // the current Bangkok-local month, matching the staff's spreadsheet
-      // ("เดือนมิถุนายน" / June). Date arithmetic uses ISO strings to dodge
-      // local-vs-UTC timezone pitfalls.
+      // The roster always shows one full calendar month. rosterStart is
+      // the 1st of that month (YYYY-MM-01). Navigation is by ±1 month.
+      // The label is rendered in Thai with the Buddhist year (พ.ศ.) —
+      // e.g. May 2026 → "พฤษภาคม 2569".
+      const THAI_MONTHS = [
+        'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน',
+        'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม',
+        'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม',
+      ];
+
       function startOfMonth(iso) {
         return iso.slice(0, 7) + "-01";
       }
+
+      function daysInMonth(year, month1) {
+        // month1 is 1-indexed. JS Date(Y, M, 0) returns last day of
+        // month M (0-indexed M). Reliable for all months including Feb.
+        return new Date(year, month1, 0).getDate();
+      }
+
+      function thaiPeriodLabel(iso) {
+        const [y, m] = iso.split("-").map(Number);
+        return THAI_MONTHS[m - 1] + " " + (y + 543);  // Buddhist year
+      }
+
+      function addMonths(iso, delta) {
+        const [y, m] = iso.split("-").map(Number);
+        const dt = new Date(Date.UTC(y, m - 1 + delta, 1));
+        return [dt.getUTCFullYear(),
+                String(dt.getUTCMonth() + 1).padStart(2, "0"),
+                "01"].join("-");
+      }
+
       let rosterStart = startOfMonth(V2.bangkokDate());
       let rosterLocation = "all";
       let rosterAssignments = {};  // { "badge|date": shift_code or "" for off, null when no row }
-      const ROSTER_DAYS = 30;
 
       function addDays(iso, delta) {
         const [y, m, d] = iso.split("-").map(Number);
@@ -361,8 +395,8 @@
       }
 
       function setRosterStart(iso) {
-        rosterStart = iso;
-        rosterStartDate.value = iso;
+        rosterStart = startOfMonth(iso);  // enforce month boundary
+        rosterPeriodLabel.textContent = thaiPeriodLabel(rosterStart);
         loadRoster();
       }
 
@@ -374,12 +408,10 @@
         renderRoster(rosterStart);  // filtering is client-side; no refetch needed
       }));
 
-      rosterStartDate.addEventListener("change", () => {
-        if (rosterStartDate.value) setRosterStart(rosterStartDate.value);
-      });
-      // Prev/next move by 30 days so the user can scroll through months.
-      rosterPrev.addEventListener("click", () => setRosterStart(addDays(rosterStart, -ROSTER_DAYS)));
-      rosterNext.addEventListener("click", () => setRosterStart(addDays(rosterStart, ROSTER_DAYS)));
+      // Prev/next move by ONE MONTH (not a fixed day count) so navigation
+      // tracks the calendar boundaries the staff schedule by.
+      rosterPrev.addEventListener("click", () => setRosterStart(addMonths(rosterStart, -1)));
+      rosterNext.addEventListener("click", () => setRosterStart(addMonths(rosterStart, 1)));
       // "เดือนนี้" jumps to the start of the current Bangkok-local month.
       document.getElementById("rosterThisMonth")
         .addEventListener("click", () => setRosterStart(startOfMonth(V2.bangkokDate())));
@@ -402,10 +434,15 @@
         rosterError.classList.add("hidden");
         rosterEmpty.classList.add("hidden");
         rosterTableWrap.classList.add("hidden");
-        rosterStartDate.value = rosterStart;
+        rosterPeriodLabel.textContent = thaiPeriodLabel(rosterStart);
+
+        // Dynamic month length so Feb (28/29) and 30/31-day months
+        // render the right number of columns.
+        const [y, m] = rosterStart.split("-").map(Number);
+        const monthDays = daysInMonth(y, m);
 
         const fromDate = rosterStart;
-        const toDate = addDays(rosterStart, ROSTER_DAYS - 1);  // 30-day window, inclusive
+        const toDate = addDays(rosterStart, monthDays - 1);
 
         try {
           const resp = await V2.apiFetch(
@@ -442,18 +479,27 @@
 
         rosterTableWrap.classList.remove("hidden");
 
-        // Header: 30 dates
+        // Header: one column per day in the month, rendered as two
+        // lines per cell (weekday in Thai on top, 2-digit day number
+        // below). Hand-rolled weekday map because Intl's th-TH "long"
+        // form prefixes "วัน" which doesn't match how the staff
+        // labels columns in their spreadsheet (e.g. ศุกร์, not วันศุกร์).
+        const WEEKDAY_TH = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ',
+                            'พฤหัส', 'ศุกร์', 'เสาร์'];
+        const [yy, mm] = fromDate.split("-").map(Number);
+        const totalDays = daysInMonth(yy, mm);
         const days = [];
-        for (let i = 0; i < ROSTER_DAYS; i++) days.push(addDays(fromDate, i));
-        const headRow = '<tr class="text-left text-xs uppercase tracking-wider text-ink-500">' +
+        for (let i = 0; i < totalDays; i++) days.push(addDays(fromDate, i));
+        const headRow = '<tr class="text-left text-xs tracking-wider text-ink-500">' +
           '<th scope="col" class="px-3 py-2 font-semibold sticky left-0 bg-ink-50/60 z-10">พนักงาน</th>' +
           days.map(d => {
             const dt = new Date(d + "T12:00:00Z");
-            const lbl = new Intl.DateTimeFormat("th-TH", {
-              weekday: "short", day: "2-digit", timeZone: "UTC",
-            }).format(dt);
-            return '<th scope="col" class="px-1.5 py-2 font-semibold whitespace-nowrap text-center">' +
-                   V2.escapeHtml(lbl) + '</th>';
+            const weekday = WEEKDAY_TH[dt.getUTCDay()];
+            const dayNum = String(dt.getUTCDate()).padStart(2, "0");
+            return '<th scope="col" class="px-1.5 py-2 font-semibold whitespace-nowrap text-center leading-tight">' +
+                     '<div>' + V2.escapeHtml(weekday) + '</div>' +
+                     '<div class="tabular-nums">' + V2.escapeHtml(dayNum) + '</div>' +
+                   '</th>';
           }).join("") +
           '</tr>';
         rosterHead.innerHTML = headRow;
@@ -473,6 +519,15 @@
             '<p class="text-xs text-ink-500">#' + V2.escapeHtml(emp.badge_number) + '</p>' +
             '</td>';
 
+          // Reception only ever works the lettered shifts (A/B/C/D) or
+          // OFF — never NORMAL (08:00-17:00), which is the
+          // non-reception fallback. Limit the dropdown accordingly.
+          // We also drop the "no row" sentinel option: any cell the
+          // admin doesn't touch stays as "no row" in the DB, displayed
+          // as OFF since the two states are semantically identical
+          // for reception (effective_shift returns is_off for both).
+          const RECEPTION_SHIFTS = SHIFTS.filter(s => s.letter);
+
           days.forEach(d => {
             const key = emp.badge_number + "|" + d;
             const current = rosterAssignments[key];  // undefined | "" (off) | "MORNING" etc.
@@ -483,43 +538,38 @@
             // Narrower cells in the monthly grid; show A/B/C/D not full names.
             sel.className = "h-8 w-12 rounded border border-ink-200 bg-white text-xs font-semibold text-center";
 
-            const noneOpt = document.createElement("option");
-            noneOpt.value = "__none__";
-            noneOpt.textContent = "–";
-            if (current === undefined) noneOpt.selected = true;
-            sel.appendChild(noneOpt);
-            SHIFTS.forEach(s => {
+            RECEPTION_SHIFTS.forEach(s => {
               const opt = document.createElement("option");
               opt.value = s.code;
-              // Use the single-letter code (A/B/C/D); for NORMAL (no
-              // letter) fall back to the code itself.
-              opt.textContent = s.letter || s.code;
+              opt.textContent = s.letter;
               if (current === s.code) opt.selected = true;
               sel.appendChild(opt);
             });
             const offOpt = document.createElement("option");
             offOpt.value = "__off__";
             offOpt.textContent = "OFF";
-            if (current === "") offOpt.selected = true;
+            // current === "" → explicit OFF row in DB.
+            // current === undefined → no row in DB (same semantics).
+            if (current === "" || current === undefined) offOpt.selected = true;
             sel.appendChild(offOpt);
 
             sel.addEventListener("change", async () => {
               sel.disabled = true;
               try {
-                const url = "/api/private/shifts/assignments/" +
-                            encodeURIComponent(emp.badge_number) + "/" + d;
-                if (sel.value === "__none__") {
-                  await V2.apiFetch(url, { method: "DELETE" });
-                  delete rosterAssignments[key];
-                } else {
-                  const code = sel.value === "__off__" ? null : sel.value;
-                  await V2.apiFetch(url, {
+                // Reception cells only emit A/B/C/D codes or __off__.
+                // OFF stores a shift_assignments row with shift_id=NULL;
+                // A/B/C/D stores a row with the matching shift_id.
+                const code = sel.value === "__off__" ? null : sel.value;
+                await V2.apiFetch(
+                  "/api/private/shifts/assignments/" +
+                  encodeURIComponent(emp.badge_number) + "/" + d,
+                  {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ shift_code: code }),
-                  });
-                  rosterAssignments[key] = code || "";
-                }
+                  }
+                );
+                rosterAssignments[key] = code || "";
               } catch (err) {
                 showRosterError("บันทึกไม่สำเร็จ — โหลดใหม่");
               } finally {
