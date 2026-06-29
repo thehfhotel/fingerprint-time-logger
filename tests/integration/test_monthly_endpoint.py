@@ -332,6 +332,60 @@ class TestMonthlyMissingCheckout:
         assert day["hours_worked"] == 8.5      # 22:30 -> 07:00 (+1 day)
         assert day["late_minutes"] == 30
 
+    def test_lone_checkout_explicit_type_assumes_checkin_at_start(
+        self, monthly_client, monthly_session, seed_device, seeded_shifts
+    ):
+        """MORNING 07:00–16:00, one punch at 16:01 explicitly typed as a
+        check-out (punch_type=1): check-in assumed at the shift start, NOT
+        read as a ~9h-late arrival."""
+        _make_employee(monthly_session, "CO1", "CheckoutOnly", role="reception", location="HF")
+        _assign(monthly_session, "CO1", date_type(2026, 5, 1), seeded_shifts["MORNING"])
+        _add_punch(monthly_session, "CO1", seed_device.id,
+                   datetime(2026, 5, 1, 16, 1, tzinfo=BANGKOK_TZ), punch_type=1)
+
+        day = _emp(monthly_client.get(_path(2026, 5)).json(), "CO1")["days"][0]
+        assert day["status"] == "present"
+        assert day["first_in"] == "07:00"      # assumed shift start
+        assert day["last_out"] == "16:01"
+        assert day["hours_worked"] == 9.02     # 07:00 -> 16:01
+        assert day["late_minutes"] == 0
+        assert day["late_tier"] == 0
+
+    def test_lone_checkout_inferred_by_position(
+        self, monthly_client, monthly_session, seed_device, seeded_shifts
+    ):
+        """NIGHT 22:00–07:00, one UNSPECIFIED punch (type 255) at 07:07 the
+        next morning is inferred as a check-out by position (second half of
+        the shift) → check-in assumed at 22:00, not a 547-min-late arrival."""
+        _make_employee(monthly_session, "CO2", "NightCheckout", role="reception", location="HF")
+        _assign(monthly_session, "CO2", date_type(2026, 5, 1), seeded_shifts["NIGHT"])
+        _add_punch(monthly_session, "CO2", seed_device.id,
+                   datetime(2026, 5, 2, 7, 7, tzinfo=BANGKOK_TZ), punch_type=255)
+
+        day = _emp(monthly_client.get(_path(2026, 5)).json(), "CO2")["days"][0]
+        assert day["status"] == "present"
+        assert day["first_in"] == "22:00"      # assumed shift start
+        assert day["last_out"] == "07:07"
+        assert day["hours_worked"] == 9.12     # 22:00 -> 07:07 (+1 day)
+        assert day["late_minutes"] == 0
+
+    def test_multiple_checkout_logs_use_latest(
+        self, monthly_client, monthly_session, seed_device, seeded_shifts
+    ):
+        """Several check-out punches and no check-in: take the latest as the
+        check-out, assume the check-in at the shift start."""
+        _make_employee(monthly_session, "CO3", "ManyOut", role="reception", location="HF")
+        _assign(monthly_session, "CO3", date_type(2026, 5, 1), seeded_shifts["MORNING"])
+        for h, m in [(16, 1), (16, 5)]:
+            _add_punch(monthly_session, "CO3", seed_device.id,
+                       datetime(2026, 5, 1, h, m, tzinfo=BANGKOK_TZ), punch_type=1)
+
+        day = _emp(monthly_client.get(_path(2026, 5)).json(), "CO3")["days"][0]
+        assert day["first_in"] == "07:00"
+        assert day["last_out"] == "16:05"      # latest check-out
+        assert day["hours_worked"] == 9.08     # 07:00 -> 16:05
+        assert day["late_minutes"] == 0
+
 
 class TestMonthlyLeavesAndHolidays:
     def test_vacation_is_leave(self, monthly_client, monthly_session,

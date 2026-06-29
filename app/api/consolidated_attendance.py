@@ -666,12 +666,12 @@ def _fetch_punches_for_month(
     badge: str,
     range_start_utc: datetime,
     range_end_utc: datetime,
-) -> List[datetime]:
-    """All punch timestamps (naive UTC) for one employee across the month's
-    extended window, ascending. One query per employee keeps the big
-    AttendanceRecord table off the per-day hot path."""
+) -> List[tuple]:
+    """All (timestamp, punch_type) punches (naive UTC) for one employee
+    across the month's extended window, ascending. One query per employee
+    keeps the big AttendanceRecord table off the per-day hot path."""
     rows = (
-        db.query(AttendanceRecord.timestamp)
+        db.query(AttendanceRecord.timestamp, AttendanceRecord.punch_type)
         .filter(
             AttendanceRecord.employee_badge_number == badge,
             AttendanceRecord.timestamp >= range_start_utc,
@@ -680,19 +680,14 @@ def _fetch_punches_for_month(
         .order_by(AttendanceRecord.timestamp.asc())
         .all()
     )
-    return [r[0] for r in rows]
+    return [(r[0], r[1]) for r in rows]
 
 
-def _window_first_last(
-    punches: List[datetime],
-    start_utc: datetime,
-    end_utc: datetime,
-) -> tuple[Optional[datetime], Optional[datetime]]:
-    """First/last punch within [start_utc, end_utc) from a pre-sorted list."""
-    in_window = [t for t in punches if start_utc <= t < end_utc]
-    if not in_window:
-        return None, None
-    return in_window[0], in_window[-1]
+# punch_type codes that explicitly mark direction. Everything else — most
+# notably 255 (unspecified), ~83% of device punches — is inferred from the
+# punch's position within the shift.
+_PUNCH_TYPE_IN = 0   # check_in
+_PUNCH_TYPE_OUT = 1  # check_out
 
 
 def _shift_end_bkk(shift, shift_start_bkk: datetime) -> datetime:
@@ -711,7 +706,7 @@ def _build_month_day(
     employee: Employee,
     day: date,
     eff,
-    punches: List[datetime],
+    punches: List[tuple],
     *,
     holiday: Optional[PublicHoliday],
     leave: Optional[EmployeeLeave],
@@ -754,33 +749,55 @@ def _build_month_day(
 
     shift = eff.shift
     window = shift_window_for(shift, day)
-    first_in_utc, last_out_utc = _window_first_last(
-        punches, window.start_utc, window.end_utc,
-    )
-    first_in_bkk = _to_bangkok(first_in_utc) if first_in_utc else None
-    last_out_bkk = _to_bangkok(last_out_utc) if last_out_utc else None
-
+    in_window = [
+        (ts, pt) for (ts, pt) in punches
+        if window.start_utc <= ts < window.end_utc
+    ]
     row["shift"] = _shift_summary(shift)
 
-    if first_in_bkk is None:
+    if not in_window:
         row["status"] = _MONTH_STATUS_ABSENT
         return row
 
-    hours = _compute_hours_worked(first_in_utc, last_out_utc)
-    if hours is None:
-        # Single punch in the window — a check-in with a missing check-out.
-        # Assume the employee worked to the shift's scheduled end time and
-        # compute hours from the punch to that end. If the lone punch lands
-        # at/after the assumed end, there's nothing to assume (leave null).
-        shift_end_bkk = _shift_end_bkk(shift, window.shift_start_bkk)
-        if shift_end_bkk > first_in_bkk:
-            last_out_bkk = shift_end_bkk
-            hours = round((shift_end_bkk - first_in_bkk).total_seconds() / 3600, 2)
+    # Split punches into check-ins and check-outs. Prefer the explicit
+    # punch_type (0=in, 1=out); for the unspecified majority (type 255) fall
+    # back to POSITION within the shift — first half = in, second half = out.
+    # Then check_in = earliest in, check_out = latest out, assuming the
+    # missing side from the schedule:
+    #   • only check-in(s)  → assume check-out at the shift's end
+    #   • only check-out(s) (e.g. a lone 07:07 punch on a 22:00–07:00 night
+    #     shift, or several check-out logs) → assume check-in at the shift's
+    #     start; lateness is then unknown, so the day is on-time, not a huge
+    #     false "late".
+    shift_start_bkk = window.shift_start_bkk
+    shift_end_bkk = _shift_end_bkk(shift, shift_start_bkk)
+    shift_mid_bkk = shift_start_bkk + (shift_end_bkk - shift_start_bkk) / 2
 
-    late_min = _late_minutes(first_in_bkk, window.shift_start_bkk)
+    ins: List[datetime] = []
+    outs: List[datetime] = []
+    for ts, pt in in_window:
+        bkk = _to_bangkok(ts)
+        if pt == _PUNCH_TYPE_IN:
+            ins.append(bkk)
+        elif pt == _PUNCH_TYPE_OUT:
+            outs.append(bkk)
+        elif bkk <= shift_mid_bkk:   # unspecified type → infer by position
+            ins.append(bkk)
+        else:
+            outs.append(bkk)
+
+    check_in = min(ins) if ins else shift_start_bkk
+    check_out = max(outs) if outs else shift_end_bkk
+    late_min = _late_minutes(check_in, shift_start_bkk) if ins else 0
+
+    hours = (
+        round((check_out - check_in).total_seconds() / 3600, 2)
+        if check_out > check_in else None
+    )
+
     row.update({
-        "first_in": first_in_bkk.strftime("%H:%M"),
-        "last_out": last_out_bkk.strftime("%H:%M") if last_out_bkk else None,
+        "first_in": check_in.strftime("%H:%M"),
+        "last_out": check_out.strftime("%H:%M"),
         "hours_worked": hours,
         "status": _MONTH_STATUS_PRESENT,
         "late_minutes": late_min,
