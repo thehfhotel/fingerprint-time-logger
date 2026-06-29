@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0f172a" />
-  <title>รายเดือน — ระบบบันทึกเวลา</title>
+  <title>รายงาน — ระบบบันทึกเวลา</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -45,8 +45,7 @@
       </a>
       <div class="flex items-center gap-1">
         <a href="/fingerprintlogs/v2/live" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">ดูสด</a>
-        <a href="/fingerprintlogs/v2/by-date" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">ตามวันที่</a>
-        <a href="/fingerprintlogs/v2/monthly" class="rounded-md px-3 py-1.5 text-sm font-medium bg-brand-100 text-brand-700" aria-current="page">รายเดือน</a>
+        <a href="/fingerprintlogs/v2/monthly" class="rounded-md px-3 py-1.5 text-sm font-medium bg-brand-100 text-brand-700" aria-current="page">รายงาน</a>
         <a href="/fingerprintlogs/v2/shifts-admin" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">จัดกะ</a>
       </div>
     </div>
@@ -56,25 +55,41 @@
 
     <!-- HEADER -->
     <header class="mb-5 md:mb-7">
-      <p class="text-xs font-medium uppercase tracking-[0.18em] text-brand-600">รายเดือน</p>
-      <h1 class="mt-1 text-2xl font-bold tracking-tight text-ink-900 md:text-3xl">รายงานรายเดือน</h1>
-      <p class="mt-1 text-sm text-ink-500">เวลาทำงาน การมาสาย และการขาด/ลา ของพนักงานรายวันทั้งเดือน สำหรับทำเงินเดือนและบริหารจัดการ</p>
+      <p class="text-xs font-medium uppercase tracking-[0.18em] text-brand-600">รายงาน</p>
+      <h1 class="mt-1 text-2xl font-bold tracking-tight text-ink-900 md:text-3xl">รายงานเวลาทำงาน</h1>
+      <p class="mt-1 text-sm text-ink-500">ดูการเข้า–ออกรายวัน และสรุปการทำงาน มาสาย ขาด/ลา รายเดือน สำหรับทำเงินเดือนและบริหารจัดการ</p>
     </header>
 
     <!-- CONTROLS -->
     <section class="mb-4 rounded-2xl border border-ink-200 bg-white p-3 shadow-card md:p-4">
       <div class="flex flex-wrap items-center gap-2">
-        <button id="prevBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50" aria-label="เดือนก่อนหน้า">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
-        <input id="monthPicker" type="month" class="h-11 min-w-[10rem] rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-800 shadow-card focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" />
-        <button id="nextBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50" aria-label="เดือนถัดไป">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-        <button id="thisMonthBtn" class="h-11 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">เดือนนี้</button>
+        <!-- DAY stepper (shown in "ตามวันที่" mode) -->
+        <div id="dayControls" class="flex items-center gap-2">
+          <button id="prevDayBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50" aria-label="วันก่อนหน้า">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <input id="datePicker" type="date" class="h-11 min-w-[10rem] rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-800 shadow-card focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" />
+          <button id="nextDayBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50" aria-label="วันถัดไป">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+          <button id="todayBtn" class="h-11 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">วันนี้</button>
+        </div>
+
+        <!-- MONTH stepper (shown in "ตาราง" / "รายคน" modes) -->
+        <div id="monthControls" class="flex items-center gap-2 hidden">
+          <button id="prevBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50" aria-label="เดือนก่อนหน้า">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <input id="monthPicker" type="month" class="h-11 min-w-[10rem] rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-800 shadow-card focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" />
+          <button id="nextBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50" aria-label="เดือนถัดไป">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+          <button id="thisMonthBtn" class="h-11 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">เดือนนี้</button>
+        </div>
 
         <!-- View toggle -->
         <div role="tablist" class="ml-auto flex rounded-lg border border-ink-200 bg-ink-50 p-0.5 text-sm">
+          <button id="viewDayBtn" class="rounded-md px-3 py-1.5 font-medium" data-view="day">ตามวันที่</button>
           <button id="viewGridBtn" class="rounded-md px-3 py-1.5 font-medium" data-view="grid">ตาราง</button>
           <button id="viewSheetBtn" class="rounded-md px-3 py-1.5 font-medium" data-view="timesheet">รายคน</button>
         </div>
@@ -172,6 +187,29 @@
         </table>
       </div>
     </section>
+
+    <!-- DAY VIEW (single date) -->
+    <section id="dayWrap" class="hidden">
+      <!-- Desktop table (md+) -->
+      <div class="hidden overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-card md:block">
+        <table class="min-w-full divide-y divide-ink-100 text-sm">
+          <thead class="bg-ink-50/60">
+            <tr class="text-left text-xs uppercase tracking-wider text-ink-500">
+              <th class="px-5 py-3 font-semibold">พนักงาน</th>
+              <th class="px-5 py-3 font-semibold">กะ</th>
+              <th class="px-5 py-3 font-semibold">เข้า</th>
+              <th class="px-5 py-3 font-semibold">ออก</th>
+              <th class="px-5 py-3 font-semibold">ชั่วโมง</th>
+              <th class="px-5 py-3 font-semibold">สาย</th>
+              <th class="px-5 py-3 font-semibold">สถานะ</th>
+            </tr>
+          </thead>
+          <tbody id="dayBody" class="divide-y divide-ink-100"></tbody>
+        </table>
+      </div>
+      <!-- Mobile cards (<md) -->
+      <ul id="dayCards" class="space-y-2 md:hidden"></ul>
+    </section>
   </main>
 
   <style>
@@ -190,26 +228,32 @@
       const DOW_TH = ["จ", "อ", "พ", "พฤ", "ศ", "ส", "อา"]; // Mon..Sun (Python weekday)
 
       const state = {
-        month: V2.bangkokDate().slice(0, 7), // YYYY-MM
+        date: V2.bangkokDate(),               // YYYY-MM-DD (drives the "day" view)
+        month: V2.bangkokDate().slice(0, 7),  // YYYY-MM
         location: "all",
-        view: "grid",
+        view: "day",                          // "day" | "grid" | "timesheet"
         search: "",
         data: null,
         selectedBadge: null,
       };
       const THIS_MONTH = V2.bangkokDate().slice(0, 7);
+      const TODAY_DATE = V2.bangkokDate();
 
       // ---------- DOM ----------
       const el = (id) => document.getElementById(id);
-      const monthPicker = el("monthPicker"), prevBtn = el("prevBtn"), nextBtn = el("nextBtn"),
-        thisMonthBtn = el("thisMonthBtn"), searchInput = el("searchInput"), metaLine = el("metaLine"),
+      const monthControls = el("monthControls"), monthPicker = el("monthPicker"),
+        prevBtn = el("prevBtn"), nextBtn = el("nextBtn"), thisMonthBtn = el("thisMonthBtn"),
+        dayControls = el("dayControls"), datePicker = el("datePicker"),
+        prevDayBtn = el("prevDayBtn"), nextDayBtn = el("nextDayBtn"), todayBtn = el("todayBtn"),
+        searchInput = el("searchInput"), metaLine = el("metaLine"),
         loading = el("loadingState"), error = el("errorState"), errorText = el("errorText"),
         empty = el("emptyState"), emptyText = el("emptyText"), retryBtn = el("retryBtn"),
         gridWrap = el("gridWrap"), gridHeadRow = el("gridHeadRow"), gridBody = el("gridBody"),
         sheetWrap = el("sheetWrap"), employeeSelect = el("employeeSelect"), backToGrid = el("backToGrid"),
         sheetAvatar = el("sheetAvatar"), sheetName = el("sheetName"), sheetMeta = el("sheetMeta"),
         sheetTotals = el("sheetTotals"), sheetBody = el("sheetBody"),
-        viewGridBtn = el("viewGridBtn"), viewSheetBtn = el("viewSheetBtn");
+        dayWrap = el("dayWrap"), dayBody = el("dayBody"), dayCards = el("dayCards"),
+        viewDayBtn = el("viewDayBtn"), viewGridBtn = el("viewGridBtn"), viewSheetBtn = el("viewSheetBtn");
 
       // ---------- Helpers ----------
       function addMonth(ym, delta) {
@@ -221,6 +265,32 @@
         const [y, m] = ym.split("-").map(Number);
         return new Intl.DateTimeFormat("th-TH", { month: "long", year: "numeric", timeZone: "UTC" })
           .format(new Date(Date.UTC(y, m - 1, 1)));
+      }
+      // ISO yyyy-mm-dd math without TZ pitfalls (parse as UTC, shift, reformat).
+      function addDay(iso, delta) {
+        const [y, m, d] = iso.split("-").map(Number);
+        const dt = new Date(Date.UTC(y, m - 1, d));
+        dt.setUTCDate(dt.getUTCDate() + delta);
+        return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+      }
+      // Full Thai date, e.g. "ศ. 14 พ.ค. 2569" — for the day-view meta line.
+      function dateLabelTH(iso) {
+        const [y, m, d] = iso.split("-").map(Number);
+        return new Intl.DateTimeFormat("th-TH", {
+          weekday: "short", day: "2-digit", month: "short", year: "numeric", timeZone: "UTC",
+        }).format(new Date(Date.UTC(y, m - 1, d, 12)));
+      }
+      // Actionable sort priority for the day view: surface the rows an admin
+      // most needs to act on first (most-late present → absent → on-time → off/leave).
+      function dayPriority(d) {
+        if (d.status === "present") {
+          if (d.late_tier === 3) return 0;
+          if (d.late_tier === 2) return 1;
+          if (d.late_tier === 1) return 2;
+          return 4; // on-time present
+        }
+        if (d.status === "absent") return 3;
+        return 5; // off / leave / other
       }
       function fmtHours(h) {
         if (h == null || isNaN(h)) return "—";
@@ -283,7 +353,7 @@
 
       // ---------- View states ----------
       function hideAll() {
-        [loading, error, empty, gridWrap, sheetWrap].forEach(n => n.classList.add("hidden"));
+        [loading, error, empty, gridWrap, sheetWrap, dayWrap].forEach(n => n.classList.add("hidden"));
       }
       function showLoading() { hideAll(); loading.classList.remove("hidden"); }
       function showError(msg) { hideAll(); errorText.textContent = msg; error.classList.remove("hidden"); }
@@ -428,9 +498,124 @@
         hideAll(); sheetWrap.classList.remove("hidden");
       }
 
+      // ---------- Render: day (single date) ----------
+      // Build {emp, day} entries for `list`, dropping days that aren't
+      // actionable (untracked = no schedule that day, future = not yet reached).
+      function dayEntries(list, dayIndex) {
+        const out = [];
+        list.forEach(e => {
+          const day = e.days && e.days[dayIndex];
+          if (!day) return;
+          if (day.status === "untracked" || day.status === "future") return;
+          out.push({ emp: e, day });
+        });
+        return out;
+      }
+      function shiftHtml(d) {
+        if (!d.shift) return '<span class="text-ink-300">—</span>';
+        return V2.escapeHtml(d.shift.name_th) +
+          ' <span class="text-ink-400 tabular-nums">' + d.shift.start_time + "–" + d.shift.end_time +
+          (d.shift.crosses_midnight ? "*" : "") + "</span>";
+      }
+      function shiftPlain(d) {
+        if (!d.shift) return "—";
+        return d.shift.name_th + " " + d.shift.start_time + "–" + d.shift.end_time + (d.shift.crosses_midnight ? "*" : "");
+      }
+
+      function renderDay() {
+        if (!state.data) return;
+        // Guard against rendering a stale month's payload into the day view
+        // (e.g. while a different month is still loading).
+        const ym = state.date.slice(0, 7);
+        const dataYm = state.data.year + "-" + String(state.data.month).padStart(2, "0");
+        if (dataYm !== ym) return;
+
+        const dayIndex = Number(state.date.slice(8, 10)) - 1;
+        const allRows = dayEntries((state.data.employees || []), dayIndex);
+        const shownRows = dayEntries(visibleEmployees(), dayIndex);
+
+        // Meta: Thai date + present / late / absent counts (over everyone tracked).
+        const presentCount = allRows.filter(r => r.day.status === "present").length;
+        const lateCount = allRows.filter(r => r.day.status === "present" && r.day.late_tier >= 1).length;
+        const absentCount = allRows.filter(r => r.day.status === "absent").length;
+        metaLine.textContent =
+          dateLabelTH(state.date) +
+          " · มาทำงาน " + presentCount +
+          " · สาย " + lateCount +
+          " · ขาด " + absentCount +
+          (shownRows.length !== allRows.length ? " · แสดง " + shownRows.length : "");
+
+        if (allRows.length === 0) { showEmpty("ไม่มีพนักงานที่ตั้งกะในวันนี้"); return; }
+        if (shownRows.length === 0) { showEmpty("ไม่พบพนักงานที่ตรงกับการค้นหา"); return; }
+
+        // Actionable priority first, then by name.
+        shownRows.sort((a, b) =>
+          dayPriority(a.day) - dayPriority(b.day) ||
+          (a.emp.display_name || "").localeCompare(b.emp.display_name || "", "th"));
+
+        dayBody.innerHTML = "";
+        dayCards.innerHTML = "";
+        shownRows.forEach(({ emp: e, day: d }) => {
+          const name = V2.escapeHtml(e.display_name || ("บัตร " + (e.badge_number || "?")));
+          const badge = e.badge_number ? "#" + V2.escapeHtml(e.badge_number) : "";
+          const avatar = V2.avatarColor(e.badge_number || e.display_name || "");
+          const initials = V2.escapeHtml(V2.initials(e.display_name || e.badge_number || "?"));
+          const firstIn = d.first_in ? V2.escapeHtml(d.first_in) : '<span class="text-ink-300">—</span>';
+          const lastOut = d.last_out ? V2.escapeHtml(d.last_out) : '<span class="text-ink-300">—</span>';
+          const hours = fmtHours(d.hours_worked);
+          const pill = statusPill(d);
+
+          // Desktop table row.
+          const tr = document.createElement("tr");
+          tr.className = "hover:bg-ink-50/50";
+          tr.innerHTML =
+            '<td class="px-5 py-3">' +
+              '<div class="flex items-center gap-3">' +
+                '<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ' + avatar + '">' + initials + '</span>' +
+                '<div class="min-w-0">' +
+                  '<p class="truncate font-semibold text-ink-900">' + name + '</p>' +
+                  '<p class="truncate text-xs text-ink-500">' + badge + '</p>' +
+                '</div>' +
+              '</div>' +
+            '</td>' +
+            '<td class="px-5 py-3 text-ink-700">' + shiftHtml(d) + '</td>' +
+            '<td class="px-5 py-3 tabular-nums text-ink-700">' + firstIn + '</td>' +
+            '<td class="px-5 py-3 tabular-nums text-ink-700">' + lastOut + '</td>' +
+            '<td class="px-5 py-3 tabular-nums font-semibold text-ink-800">' + hours + '</td>' +
+            '<td class="px-5 py-3">' + lateCell(d) + '</td>' +
+            '<td class="px-5 py-3"><span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' + pill.klass + '">' + pill.text + '</span></td>';
+          dayBody.appendChild(tr);
+
+          // Mobile card.
+          const li = document.createElement("li");
+          li.className = "rounded-2xl border border-ink-200 bg-white p-4 shadow-card";
+          li.innerHTML =
+            '<div class="flex items-start gap-3">' +
+              '<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold ' + avatar + '">' + initials + '</span>' +
+              '<div class="min-w-0 flex-1">' +
+                '<div class="flex items-center justify-between gap-2">' +
+                  '<p class="truncate text-sm font-semibold text-ink-900">' + name + '</p>' +
+                  '<span class="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium ' + pill.klass + '">' + pill.text + '</span>' +
+                '</div>' +
+                '<p class="truncate text-xs text-ink-500">' + badge + ' · กะ ' + V2.escapeHtml(shiftPlain(d)) + '</p>' +
+                '<dl class="mt-3 grid grid-cols-3 gap-2 text-xs">' +
+                  '<div><dt class="text-ink-400">เข้า</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + firstIn + '</dd></div>' +
+                  '<div><dt class="text-ink-400">ออก</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + lastOut + '</dd></div>' +
+                  '<div><dt class="text-ink-400">ชั่วโมง</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + hours + '</dd></div>' +
+                '</dl>' +
+                '<p class="mt-2 text-xs">' + lateCell(d) + '</p>' +
+              '</div>' +
+            '</div>';
+          dayCards.appendChild(li);
+        });
+
+        hideAll(); dayWrap.classList.remove("hidden");
+      }
+
       // ---------- Render dispatch ----------
       function render() {
         if (!state.data) return;
+        if (state.view === "day") { renderDay(); return; }
         renderMeta();
         if (!state.data.employees || state.data.employees.length === 0) { showEmpty(); return; }
         if (state.view === "grid") renderGrid();
@@ -439,8 +624,25 @@
 
       function setView(v) {
         state.view = v;
+        viewDayBtn.classList.toggle("view-on", v === "day");
         viewGridBtn.classList.toggle("view-on", v === "grid");
         viewSheetBtn.classList.toggle("view-on", v === "timesheet");
+        // Show the matching stepper: single-day picker for "day", month
+        // picker for the grid / timesheet views.
+        const dayMode = v === "day";
+        dayControls.classList.toggle("hidden", !dayMode);
+        monthControls.classList.toggle("hidden", dayMode);
+        // Entering the day view: make sure the loaded month matches the
+        // selected date's month before rendering (reload if it doesn't).
+        if (dayMode) {
+          const ym = state.date.slice(0, 7);
+          if (ym !== state.month) {
+            state.month = ym;
+            applyMonthToControls();
+            load();
+            return;
+          }
+        }
         render();
       }
 
@@ -460,20 +662,54 @@
       }
 
       // ---------- Wire up ----------
-      function setMonth(ym) {
-        state.month = ym;
-        monthPicker.value = ym;
-        nextBtn.disabled = ym >= THIS_MONTH;
+      // Reflect state.month onto the month picker + next-month button.
+      function applyMonthToControls() {
+        monthPicker.value = state.month;
+        nextBtn.disabled = state.month >= THIS_MONTH;
         nextBtn.classList.toggle("opacity-40", nextBtn.disabled);
         nextBtn.classList.toggle("cursor-not-allowed", nextBtn.disabled);
+      }
+      // Reflect state.date onto the date picker + next-day button.
+      function applyDayToControls() {
+        datePicker.value = state.date;
+        nextDayBtn.disabled = state.date >= TODAY_DATE;
+        nextDayBtn.classList.toggle("opacity-40", nextDayBtn.disabled);
+        nextDayBtn.classList.toggle("cursor-not-allowed", nextDayBtn.disabled);
+      }
+
+      function setMonth(ym) {
+        state.month = ym;
+        applyMonthToControls();
         load();
       }
+      // Change the single-day selection. When the new date falls in a
+      // different month we refetch that month; otherwise we reuse the
+      // cached payload and just re-render the day view.
+      function setDate(iso) {
+        state.date = iso;
+        applyDayToControls();
+        const ym = iso.slice(0, 7);
+        if (ym !== state.month) {
+          state.month = ym;
+          applyMonthToControls();
+          load();
+        } else {
+          render();
+        }
+      }
+
       monthPicker.addEventListener("change", () => { if (monthPicker.value) setMonth(monthPicker.value); });
       prevBtn.addEventListener("click", () => setMonth(addMonth(state.month, -1)));
       nextBtn.addEventListener("click", () => { if (state.month < THIS_MONTH) setMonth(addMonth(state.month, 1)); });
       thisMonthBtn.addEventListener("click", () => setMonth(THIS_MONTH));
+
+      datePicker.addEventListener("change", () => { if (datePicker.value) setDate(datePicker.value); });
+      prevDayBtn.addEventListener("click", () => setDate(addDay(state.date, -1)));
+      nextDayBtn.addEventListener("click", () => { if (state.date < TODAY_DATE) setDate(addDay(state.date, 1)); });
+      todayBtn.addEventListener("click", () => setDate(TODAY_DATE));
       retryBtn.addEventListener("click", load);
 
+      viewDayBtn.addEventListener("click", () => setView("day"));
       viewGridBtn.addEventListener("click", () => setView("grid"));
       viewSheetBtn.addEventListener("click", () => setView("timesheet"));
       backToGrid.addEventListener("click", () => setView("grid"));
@@ -501,9 +737,12 @@
         load();
       }));
 
-      // Boot
-      setView("grid");
-      setMonth(state.month);
+      // Boot — open on today's single-day view so the report lands on
+      // "ตามวันที่" for the current date.
+      applyMonthToControls();
+      applyDayToControls();
+      setView("day");   // highlights + control visibility (render() is a no-op until data loads)
+      load();           // fetch the current month, then render() → renderDay
     })();
   </script>
 </body>
