@@ -651,6 +651,7 @@ _MONTH_STATUS_UNTRACKED = "untracked"  # no role/shift — excluded from totals
 def _empty_month_totals() -> Dict[str, Any]:
     return {
         "worked_days": 0,
+        "incomplete_days": 0,
         "absent_days": 0,
         "off_days": 0,
         "leave_days": 0,
@@ -718,6 +719,7 @@ def _build_month_day(
         "status": _MONTH_STATUS_OFF,
         "late_minutes": 0,
         "late_tier": 0,
+        "incomplete": False,
         "leave_type": None,
         "leave_note": None,
     }
@@ -754,15 +756,23 @@ def _build_month_day(
         row["status"] = _MONTH_STATUS_ABSENT
         return row
 
-    late_min = _late_minutes(first_in_bkk, window.shift_start_bkk)
+    hours = _compute_hours_worked(first_in_utc, last_out_utc)
+    # hours is None ⟺ a single punch in the window (first_in == last_out).
+    # We can't tell an in from an out, so a lone 22:09 punch must NOT read
+    # as "arrived 9h late" — flag the day incomplete and leave lateness
+    # unattributed. Lateness/hours are only trustworthy with a full pair.
+    incomplete = hours is None
     row.update({
         "first_in": first_in_bkk.strftime("%H:%M"),
         "last_out": last_out_bkk.strftime("%H:%M") if last_out_bkk else None,
-        "hours_worked": _compute_hours_worked(first_in_utc, last_out_utc),
+        "hours_worked": hours,
         "status": _MONTH_STATUS_PRESENT,
-        "late_minutes": late_min,
-        "late_tier": _late_tier(late_min),
+        "incomplete": incomplete,
     })
+    if not incomplete:
+        late_min = _late_minutes(first_in_bkk, window.shift_start_bkk)
+        row["late_minutes"] = late_min
+        row["late_tier"] = _late_tier(late_min)
     return row
 
 
@@ -858,6 +868,10 @@ async def get_attendance_monthly(
             tracked_any = True
             if status == _MONTH_STATUS_PRESENT:
                 totals["worked_days"] += 1
+                if day_row["incomplete"]:
+                    # Single-punch day: no usable hours, lateness unknown.
+                    totals["incomplete_days"] += 1
+                    continue
                 if day_row["hours_worked"] is not None:
                     totals["hours_total"] = round(
                         totals["hours_total"] + day_row["hours_worked"], 2

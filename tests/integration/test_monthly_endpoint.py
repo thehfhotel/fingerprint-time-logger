@@ -247,6 +247,7 @@ class TestMonthlyLatenessTiers:
         assert days[0]["status"] == "present"
         assert days[0]["late_tier"] == 0
         assert days[0]["late_minutes"] == 0
+        assert days[0]["incomplete"] is False
         assert days[0]["hours_worked"] == 9.0
         assert days[0]["first_in"] == "08:00"
         assert days[0]["last_out"] == "17:00"
@@ -273,6 +274,7 @@ class TestMonthlyLatenessTiers:
         t = _emp(body, "RC1")["totals"]
 
         assert t["worked_days"] == 5
+        assert t["incomplete_days"] == 0       # every present day has in + out
         assert t["absent_days"] == 1
         assert t["late_count"] == 3            # tiers 1,2,3 (May 2,3,4)
         assert t["late_minutes_total"] == 8 + 20 + 45
@@ -280,6 +282,38 @@ class TestMonthlyLatenessTiers:
         # All other days of May (31 - 6 assigned) are reception-off.
         assert t["off_days"] == 31 - 6
         assert t["hours_total"] > 0
+
+
+class TestMonthlyIncompletePunch:
+    """A day with a single punch can't yield hours OR a trustworthy lateness
+    (the lone punch might be a forgotten check-out). It must be flagged
+    incomplete and excluded from late/hours stats — not read as 'late'."""
+
+    def test_single_punch_is_incomplete_not_late(
+        self, monthly_client, monthly_session, seed_device, seeded_shifts
+    ):
+        _make_employee(monthly_session, "IC1", "Incomplete", role="reception", location="HF")
+        _assign(monthly_session, "IC1", date_type(2026, 5, 1), seeded_shifts["NORMAL"])
+        # ONE punch at 08:45 — would be 45-min severe-late if it were a
+        # check-in, but with no pair we must not attribute lateness.
+        _add_punch(monthly_session, "IC1", seed_device.id,
+                   datetime(2026, 5, 1, 8, 45, tzinfo=BANGKOK_TZ))
+
+        body = monthly_client.get(_path(2026, 5)).json()
+        emp = _emp(body, "IC1")
+        day = emp["days"][0]
+        assert day["status"] == "present"
+        assert day["incomplete"] is True
+        assert day["hours_worked"] is None
+        assert day["late_tier"] == 0          # NOT flagged late
+        assert day["late_minutes"] == 0
+
+        t = emp["totals"]
+        assert t["worked_days"] == 1
+        assert t["incomplete_days"] == 1
+        assert t["late_count"] == 0           # excluded from late stats
+        assert t["severe_count"] == 0
+        assert t["hours_total"] == 0.0
 
 
 class TestMonthlyLeavesAndHolidays:
