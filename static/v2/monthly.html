@@ -126,9 +126,9 @@
         <span><span class="font-semibold text-ink-700">9.1</span> = ชั่วโมงทำงาน</span>
         <span><span class="rounded bg-warn-100 px-1 font-semibold text-warn-700">·</span> สาย</span>
         <span><span class="rounded bg-bad-100 px-1 font-bold text-bad-700">!</span> สาย ≥ 30 นาที</span>
-        <span><span class="font-semibold text-bad-600">✗</span> ขาด</span>
-        <span><span class="text-off-500">·</span> หยุด</span>
-        <span><span class="rounded bg-brand-50 px-1 text-brand-600">ล</span> ลา</span>
+        <span><span class="rounded bg-bad-100 px-1 font-semibold text-bad-700">ขาด</span> = ขาดงาน</span>
+        <span><span class="rounded bg-off-100 px-1 text-off-600">หยุด</span> = วันหยุด</span>
+        <span><span class="rounded bg-brand-50 px-1 text-brand-600">ลา</span> = ลา/วันหยุดนักขัตฤกษ์</span>
         <span class="text-ink-400">คลิกที่ชื่อหรือช่องเพื่อดูรายคน</span>
       </div>
     </section>
@@ -261,12 +261,12 @@
         if (d.status === "untracked") return { text: "", klass: "text-ink-300 bg-ink-50/40", title: dd + " ไม่ติดตาม" };
         if (d.status === "off") {
           const t = d.leave_type === "public_holiday" ? "วันหยุดนักขัตฤกษ์" : "หยุด";
-          return { text: "·", klass: "text-off-400", title: dd + " " + t };
+          return { text: "หยุด", klass: "bg-off-100 text-off-600 text-[10px]", title: dd + " " + t };
         }
-        if (d.status === "leave") return { text: "ล", klass: "bg-brand-50 text-brand-600", title: dd + " " + leaveLabel(d.leave_type) };
+        if (d.status === "leave") return { text: "ลา", klass: "bg-brand-50 text-brand-600 text-[10px] font-medium", title: dd + " " + leaveLabel(d.leave_type) };
         if (d.status === "absent") {
           const sh = d.shift ? (" · กะ " + d.shift.start_time + "–" + d.shift.end_time) : "";
-          return { text: "✗", klass: "bg-bad-50 text-bad-600 font-semibold", title: dd + " ขาด" + sh };
+          return { text: "ขาด", klass: "bg-bad-100 text-bad-700 text-[10px] font-semibold", title: dd + " ขาด" + sh };
         }
         // present
         const hours = fmtHours(d.hours_worked);
