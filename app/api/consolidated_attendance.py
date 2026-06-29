@@ -646,6 +646,7 @@ _MONTH_STATUS_LEAVE = "leave"        # personal leave (vacation/sick/...)
 _MONTH_STATUS_ABSENT = "absent"      # had a shift, no punches in window
 _MONTH_STATUS_PRESENT = "present"    # had a shift and punched
 _MONTH_STATUS_UNTRACKED = "untracked"  # no role/shift — excluded from totals
+_MONTH_STATUS_FUTURE = "future"      # day not reached yet — blank, excluded
 
 
 def _empty_month_totals() -> Dict[str, Any]:
@@ -708,6 +709,7 @@ def _build_month_day(
     eff,
     punches: List[tuple],
     *,
+    today: date,
     holiday: Optional[PublicHoliday],
     leave: Optional[EmployeeLeave],
 ) -> Dict[str, Any]:
@@ -728,6 +730,11 @@ def _build_month_day(
         "leave_type": None,
         "leave_note": None,
     }
+
+    if day > today:
+        # Upcoming day — no attendance result yet. Blank, excluded from totals.
+        row["status"] = _MONTH_STATUS_FUTURE
+        return row
 
     if holiday is not None:
         row["leave_type"] = "public_holiday"
@@ -844,6 +851,7 @@ async def get_attendance_monthly(
     month_start = date(year, month, 1)
     month_end = date(year, month, days_in_month)
     all_days = [date(year, month, d) for d in range(1, days_in_month + 1)]
+    today_bkk = datetime.now(BANGKOK_TZ).date()
 
     # Extended UTC range covering every shift window in the month: a few
     # hours before the 1st (early arrivals / the −2h window buffer) and two
@@ -891,13 +899,14 @@ async def get_attendance_monthly(
             eff = effective_shift(db, employee, day)
             day_row = _build_month_day(
                 employee, day, eff, punches,
+                today=today_bkk,
                 holiday=holidays_by_date.get(day),
                 leave=leaves_by_key.get((employee.badge_number, day)),
             )
             days_out.append(day_row)
 
             status = day_row["status"]
-            if status == _MONTH_STATUS_UNTRACKED:
+            if status in (_MONTH_STATUS_UNTRACKED, _MONTH_STATUS_FUTURE):
                 continue
             tracked_any = True
             if status == _MONTH_STATUS_PRESENT:

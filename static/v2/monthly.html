@@ -242,6 +242,7 @@
           case "absent": return { text: "ขาด", klass: "bg-bad-100 text-bad-700" };
           case "leave": return { text: leaveLabel(d.leave_type), klass: "bg-brand-100 text-brand-700" };
           case "off": return { text: d.leave_type === "public_holiday" ? leaveLabel(d.leave_type) : "หยุด", klass: "bg-off-100 text-off-600" };
+          case "future": return { text: "—", klass: "bg-ink-50 text-ink-300" };
           default: return { text: "—", klass: "bg-ink-100 text-ink-600" };
         }
       }
@@ -258,6 +259,7 @@
       // One grid cell descriptor.
       function gridCell(d) {
         const dd = d.date.slice(8);
+        if (d.status === "future") return { text: "", klass: "bg-ink-50/30", title: dd + " (ยังไม่ถึง)" };
         if (d.status === "untracked") return { text: "", klass: "text-ink-300 bg-ink-50/40", title: dd + " ไม่ติดตาม" };
         if (d.status === "off") {
           const t = d.leave_type === "public_holiday" ? "วันหยุดนักขัตฤกษ์" : "หยุด";

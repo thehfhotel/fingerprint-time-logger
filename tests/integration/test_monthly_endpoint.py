@@ -436,6 +436,33 @@ class TestMonthlyLeavesAndHolidays:
         assert day["leave_type"] == "public_holiday"
 
 
+class TestMonthlyFutureDays:
+    """Upcoming days (after today) carry no attendance result — status
+    'future', blank, and excluded from totals."""
+
+    def test_future_days_blank_in_current_month(
+        self, monthly_client, monthly_session, seed_device, seeded_shifts
+    ):
+        today = datetime.now(BANGKOK_TZ).date()
+        _make_employee(monthly_session, "FU1", "FutureGuy", role="technician")
+        # Tracked every calendar day (legacy role default), no punches → past
+        # days are 'absent', future days must be 'future' (blank).
+        body = monthly_client.get(_path(today.year, today.month)).json()
+        emp = _emp(body, "FU1")
+        for d in emp["days"]:
+            dd = date_type.fromisoformat(d["date"])
+            if dd > today:
+                assert d["status"] == "future", d
+                assert d["first_in"] is None and d["hours_worked"] is None
+            else:
+                assert d["status"] != "future", d
+        past_count = sum(
+            1 for d in emp["days"] if date_type.fromisoformat(d["date"]) <= today
+        )
+        # totals reflect only up-to-today; future days never count as absent
+        assert emp["totals"]["absent_days"] == past_count
+
+
 class TestMonthlyValidation:
     def test_bad_month(self, monthly_client):
         assert monthly_client.get(_path(2026, 13)).status_code == 400

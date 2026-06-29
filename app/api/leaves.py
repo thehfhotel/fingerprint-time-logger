@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.models import Employee, EmployeeLeave, LeaveType, PublicHoliday
+from app.services.thai_holidays import thai_holidays_for_year
 
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -162,6 +163,20 @@ def delete_holiday(on_date: date_type, db: Session = Depends(get_db)) -> Respons
     db.query(PublicHoliday).filter(PublicHoliday.date == on_date).delete()
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/holidays/thailand/{year}", response_model=list[PublicHolidayOut])
+def list_thai_holiday_presets(year: int) -> list[PublicHolidayOut]:
+    """Preset list of Thai national public holidays for ``year``, for the
+    holiday-config picker. Does NOT touch the DB — the admin selects which to
+    add. 2026 is the official curated calendar; other years return the
+    fixed-date holidays only (lunar Buddhist days vary and aren't computed)."""
+    if year < 2000 or year > 2100:
+        raise HTTPException(status_code=400, detail="year out of range (2000-2100)")
+    return [
+        PublicHolidayOut(date=date_type.fromisoformat(h["date"]), name=h["name"])
+        for h in thai_holidays_for_year(year)
+    ]
 
 
 # --- Employee leaves -----------------------------------------------------
