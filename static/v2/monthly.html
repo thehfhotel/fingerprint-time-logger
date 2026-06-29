@@ -126,7 +126,6 @@
         <span><span class="font-semibold text-ink-700">9.1</span> = ชั่วโมงทำงาน</span>
         <span><span class="rounded bg-warn-100 px-1 font-semibold text-warn-700">·</span> สาย</span>
         <span><span class="rounded bg-bad-100 px-1 font-bold text-bad-700">!</span> สาย ≥ 30 นาที</span>
-        <span><span class="rounded bg-ink-200 px-1 font-semibold text-ink-700">?</span> ตอกบัตรไม่ครบ</span>
         <span><span class="font-semibold text-bad-600">✗</span> ขาด</span>
         <span><span class="text-off-500">·</span> หยุด</span>
         <span><span class="rounded bg-brand-50 px-1 text-brand-600">ล</span> ลา</span>
@@ -249,7 +248,6 @@
       // Late cell (punctuality dimension), tiered.
       function lateCell(d) {
         if (d.status !== "present") return '<span class="text-ink-300">—</span>';
-        if (d.incomplete) return '<span class="inline-flex items-center rounded-full bg-ink-200 px-2 py-0.5 text-xs font-medium text-ink-700">ตอกบัตรไม่ครบ</span>';
         switch (d.late_tier) {
           case 1: return '<span class="inline-flex items-center rounded-full bg-warn-100 px-2 py-0.5 text-xs font-medium text-warn-700">สาย</span>';
           case 2: return '<span class="inline-flex items-center rounded-full bg-warn-100 px-2 py-0.5 text-xs font-semibold text-warn-700">สาย · ' + d.late_minutes + ' นาที</span>';
@@ -271,10 +269,6 @@
           return { text: "✗", klass: "bg-bad-50 text-bad-600 font-semibold", title: dd + " ขาด" + sh };
         }
         // present
-        if (d.incomplete) {
-          return { text: "?", klass: "bg-ink-200 text-ink-700 font-semibold",
-                   title: dd + " ตอกบัตรไม่ครบ — มีปั๊มเดียว (" + (d.first_in || "—") + ")" };
-        }
         const hours = fmtHours(d.hours_worked);
         const inout = (d.first_in || "—") + "–" + (d.last_out || "—");
         let klass = "text-ink-700", marker = "";
@@ -401,7 +395,6 @@
         sheetTotals.innerHTML =
           totalCard("ทำงาน (วัน)", t.worked_days) +
           totalCard("ชั่วโมงรวม", fmtHours(t.hours_total)) +
-          totalCard("ตอกไม่ครบ (วัน)", t.incomplete_days, t.incomplete_days ? "text-warn-700" : "") +
           totalCard("สาย (ครั้ง)", t.late_count, t.late_count ? "text-warn-700" : "") +
           totalCard("สายรวม (นาที)", t.late_minutes_total, t.late_minutes_total ? "text-warn-700" : "") +
           totalCard("สาย ≥30 น.", t.severe_count, t.severe_count ? "text-bad-700" : "") +

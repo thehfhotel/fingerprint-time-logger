@@ -651,7 +651,6 @@ _MONTH_STATUS_UNTRACKED = "untracked"  # no role/shift — excluded from totals
 def _empty_month_totals() -> Dict[str, Any]:
     return {
         "worked_days": 0,
-        "incomplete_days": 0,
         "absent_days": 0,
         "off_days": 0,
         "leave_days": 0,
@@ -696,6 +695,18 @@ def _window_first_last(
     return in_window[0], in_window[-1]
 
 
+def _shift_end_bkk(shift, shift_start_bkk: datetime) -> datetime:
+    """Bangkok-aware datetime of the shift's scheduled end, on the same
+    cycle as shift_start_bkk. Overnight shifts (end <= start) roll to the
+    next day. Used to assume a check-out time when one is missing."""
+    start_min = shift.start_time.hour * 60 + shift.start_time.minute
+    end_min = shift.end_time.hour * 60 + shift.end_time.minute
+    duration = end_min - start_min
+    if duration <= 0:  # overnight
+        duration += 24 * 60
+    return shift_start_bkk + timedelta(minutes=duration)
+
+
 def _build_month_day(
     employee: Employee,
     day: date,
@@ -719,7 +730,6 @@ def _build_month_day(
         "status": _MONTH_STATUS_OFF,
         "late_minutes": 0,
         "late_tier": 0,
-        "incomplete": False,
         "leave_type": None,
         "leave_note": None,
     }
@@ -757,22 +767,25 @@ def _build_month_day(
         return row
 
     hours = _compute_hours_worked(first_in_utc, last_out_utc)
-    # hours is None ⟺ a single punch in the window (first_in == last_out).
-    # We can't tell an in from an out, so a lone 22:09 punch must NOT read
-    # as "arrived 9h late" — flag the day incomplete and leave lateness
-    # unattributed. Lateness/hours are only trustworthy with a full pair.
-    incomplete = hours is None
+    if hours is None:
+        # Single punch in the window — a check-in with a missing check-out.
+        # Assume the employee worked to the shift's scheduled end time and
+        # compute hours from the punch to that end. If the lone punch lands
+        # at/after the assumed end, there's nothing to assume (leave null).
+        shift_end_bkk = _shift_end_bkk(shift, window.shift_start_bkk)
+        if shift_end_bkk > first_in_bkk:
+            last_out_bkk = shift_end_bkk
+            hours = round((shift_end_bkk - first_in_bkk).total_seconds() / 3600, 2)
+
+    late_min = _late_minutes(first_in_bkk, window.shift_start_bkk)
     row.update({
         "first_in": first_in_bkk.strftime("%H:%M"),
         "last_out": last_out_bkk.strftime("%H:%M") if last_out_bkk else None,
         "hours_worked": hours,
         "status": _MONTH_STATUS_PRESENT,
-        "incomplete": incomplete,
+        "late_minutes": late_min,
+        "late_tier": _late_tier(late_min),
     })
-    if not incomplete:
-        late_min = _late_minutes(first_in_bkk, window.shift_start_bkk)
-        row["late_minutes"] = late_min
-        row["late_tier"] = _late_tier(late_min)
     return row
 
 
@@ -868,10 +881,6 @@ async def get_attendance_monthly(
             tracked_any = True
             if status == _MONTH_STATUS_PRESENT:
                 totals["worked_days"] += 1
-                if day_row["incomplete"]:
-                    # Single-punch day: no usable hours, lateness unknown.
-                    totals["incomplete_days"] += 1
-                    continue
                 if day_row["hours_worked"] is not None:
                     totals["hours_total"] = round(
                         totals["hours_total"] + day_row["hours_worked"], 2
