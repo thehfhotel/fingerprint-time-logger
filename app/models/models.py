@@ -76,6 +76,7 @@ class Employee(Base):
     attendance_records = relationship("AttendanceRecord", back_populates="employee")
     default_shift = relationship("Shift", foreign_keys=[default_shift_id])
     shift_assignments = relationship("ShiftAssignment", back_populates="employee", cascade="all, delete-orphan")
+    schedules = relationship("EmployeeSchedule", back_populates="employee", cascade="all, delete-orphan")
 
 
 class AttendanceRecord(Base):
@@ -232,6 +233,58 @@ class ShiftAssignment(Base):
 
     employee = relationship("Employee", back_populates="shift_assignments")
     shift = relationship("Shift")
+
+
+class EmployeeSchedule(Base):
+    """Effective-dated work schedule for one employee (2026-06).
+
+    Each row is the schedule that takes effect on ``effective_from`` and
+    stays in force until a later row supersedes it. For any Bangkok date
+    D, the applicable row is the one with the greatest effective_from <= D
+    (see app/services/shift_service.py:effective_shift). This is what gives
+    role/workday/hours changes proper history — a May report keeps May's
+    schedule even after the employee's role changes in June.
+
+    Fields:
+      - role: 'reception' | 'housekeeping' | 'technician' | 'admin' | NULL
+        Reception is roster-driven (per-day shift_assignments); the other
+        roles use work_days + work_start/work_end below.
+      - work_days: comma-separated Python weekday ints, Mon=0 .. Sun=6
+        (e.g. "0,1,2,3,4,5" = Mon–Sat). Days not listed are scheduled off,
+        NOT absent. NULL/empty for reception (roster) or untracked.
+      - work_start / work_end: Bangkok-local HH:MM defining the day's shift
+        for non-reception roles. end <= start means an overnight shift.
+        NULL for reception/untracked.
+
+    Employee.role is kept as a denormalised cache of the *current* (as-of
+    today) version so existing code that reads employee.role stays valid.
+    """
+    __tablename__ = "employee_schedules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_badge_number = Column(
+        String(50),
+        ForeignKey("employees.badge_number"),
+        nullable=False,
+        index=True,
+    )
+    # Bangkok-local calendar day this schedule takes effect.
+    effective_from = Column(Date, nullable=False, index=True)
+    role = Column(String(20), nullable=True)
+    work_days = Column(String(20), nullable=True)
+    work_start = Column(Time, nullable=True)
+    work_end = Column(Time, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "employee_badge_number", "effective_from",
+            name="uq_employee_schedule_date",
+        ),
+    )
+
+    employee = relationship("Employee", back_populates="schedules")
 
 
 # ============================================================================

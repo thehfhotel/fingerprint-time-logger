@@ -26,7 +26,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.models import Employee, Shift, ShiftAssignment
+from app.models.models import Employee, EmployeeSchedule, Shift, ShiftAssignment
 from app.utils.timezone import BANGKOK_TZ
 
 
@@ -105,8 +105,110 @@ class EffectiveShift:
 
     shift: Optional[Shift]
     is_off: bool
-    source: str  # 'override' | 'override_off' | 'employee_default' |
-                 # 'role_default' | 'untracked'
+    source: str  # 'override' | 'override_off' | 'schedule' |
+                 # 'schedule_off_day' | 'schedule_reception_off' |
+                 # 'employee_default' | 'role_default' | 'untracked'
+
+
+def _schedule_as_of(
+    db: Session,
+    badge: str,
+    on_date: date_type,
+) -> Optional[EmployeeSchedule]:
+    """Return the schedule version in force for ``badge`` on ``on_date``.
+
+    The applicable version is the one with the greatest ``effective_from``
+    that is still <= ``on_date``. None means the employee has no schedule
+    history yet (fall back to the legacy resolution path).
+    """
+    return (
+        db.query(EmployeeSchedule)
+        .filter(
+            EmployeeSchedule.employee_badge_number == badge,
+            EmployeeSchedule.effective_from <= on_date,
+        )
+        .order_by(EmployeeSchedule.effective_from.desc())
+        .first()
+    )
+
+
+def _parse_work_days(raw: Optional[str]) -> set[int]:
+    """Parse a comma-separated weekday string into a set of ints.
+
+    ``"0,1,2,3,4"`` → {0, 1, 2, 3, 4} (Python weekdays, Mon=0..Sun=6).
+    Blanks are ignored; None or empty yields an empty set.
+    """
+    if not raw:
+        return set()
+    return {int(part) for part in raw.split(",") if part.strip()}
+
+
+def _shift_for_hours(
+    db: Session,
+    start_time: time_type,
+    end_time: time_type,
+) -> Shift:
+    """Return a Shift matching the given hours.
+
+    Prefer a seeded, active Shift whose start/end match exactly (so the
+    familiar code/name like NORMAL/"ปกติ" is preserved). When no seeded
+    shift matches, return a TRANSIENT Shift (not added to the session) —
+    downstream only reads scalar attributes and the crosses_midnight
+    property, so a detached instance is sufficient.
+    """
+    seeded = (
+        db.query(Shift)
+        .filter(
+            Shift.start_time == start_time,
+            Shift.end_time == end_time,
+            Shift.is_active.is_(True),
+            Shift.code != "OFF",
+        )
+        .first()
+    )
+    if seeded is not None:
+        return seeded
+    return Shift(
+        code="CUSTOM",
+        letter=None,
+        name_th="กำหนดเอง",
+        start_time=start_time,
+        end_time=end_time,
+        is_active=True,
+    )
+
+
+def _resolve_from_schedule(
+    db: Session,
+    version: EmployeeSchedule,
+    on_date: date_type,
+) -> EffectiveShift:
+    """Resolve the effective shift from a schedule version (tier 2).
+
+    Reception is roster-driven (off without a per-day override). An
+    explicit work_days + work_start/work_end version drives a per-weekday
+    schedule. A role-only version falls back to that role's default; any
+    other version is untracked.
+    """
+    if version.role == "reception":
+        return EffectiveShift(
+            shift=None, is_off=True, source="schedule_reception_off",
+        )
+
+    work_days = _parse_work_days(version.work_days)
+    if version.work_start is not None and version.work_end is not None and work_days:
+        if on_date.weekday() not in work_days:
+            return EffectiveShift(shift=None, is_off=True, source="schedule_off_day")
+        shift = _shift_for_hours(db, version.work_start, version.work_end)
+        return EffectiveShift(shift=shift, is_off=False, source="schedule")
+
+    if version.role in DEFAULT_SHIFT_CODE_BY_ROLE:
+        role_shift = role_default_shift(db, version.role)
+        if role_shift is not None:
+            return EffectiveShift(shift=role_shift, is_off=False, source="role_default")
+        return EffectiveShift(shift=None, is_off=False, source="untracked")
+
+    return EffectiveShift(shift=None, is_off=False, source="untracked")
 
 
 def effective_shift(
@@ -116,11 +218,16 @@ def effective_shift(
 ) -> EffectiveShift:
     """Resolve which shift applies to ``employee`` on ``on_date``.
 
-    Order:
+    Three-tier precedence:
       1. ShiftAssignment for (badge, on_date), including shift_id NULL.
-      2. employee.default_shift_id.
-      3. Role-level default (housekeeping/technician/admin).
-      4. None — untracked.
+      2. The schedule version in force as-of ``on_date`` (the
+         EmployeeSchedule row with the greatest effective_from <= on_date):
+         reception → off; explicit work_days/hours → schedule or off-day;
+         role with a default → role_default; otherwise untracked.
+      3. No schedule version → the legacy fallback (employee default,
+         reception-without-assignment off, role default, else untracked).
+         Required so employees with no EmployeeSchedule history still
+         resolve exactly as they did before schedule versions existed.
     """
     override = (
         db.query(ShiftAssignment)
@@ -134,6 +241,10 @@ def effective_shift(
         if override.shift_id is None:
             return EffectiveShift(shift=None, is_off=True, source="override_off")
         return EffectiveShift(shift=override.shift, is_off=False, source="override")
+
+    version = _schedule_as_of(db, employee.badge_number, on_date)
+    if version is not None:
+        return _resolve_from_schedule(db, version, on_date)
 
     if employee.default_shift_id is not None:
         return EffectiveShift(

@@ -4,15 +4,17 @@ Replaces: employees_unified.py, employees.py, thai_names.py, roles.py
 """
 
 import asyncio
+from datetime import date, datetime, time
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, File, UploadFile, Depends, Query, Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.models.models import Employee, Shift
+from app.models.models import Employee, EmployeeSchedule, Shift
 from app.services.attendance_service import attendance_service
 from app.services.device_service import device_service
+from app.utils.timezone import BANGKOK_TZ
 
 router = APIRouter()
 
@@ -61,6 +63,26 @@ class ShiftAssignmentInput(BaseModel):
     """
     role: Optional[str] = None
     default_shift_code: Optional[str] = None
+    location: Optional[str] = None
+
+
+class ScheduleInput(BaseModel):
+    """Body for PUT /api/private/employees/{badge}/schedule.
+
+    Creates or updates one effective-dated schedule version (upsert on
+    (badge, effective_from)). Reception is roster-driven, so when
+    role == 'reception' the work_days/work_start/work_end fields are
+    forced to NULL regardless of what was sent.
+
+    location is NOT versioned — when provided it is written straight to
+    Employee.location (empty string clears it). Omit it to leave the
+    employee's branch untouched.
+    """
+    effective_from: str
+    role: Optional[str] = None
+    work_days: Optional[List[int]] = None
+    work_start: Optional[str] = None
+    work_end: Optional[str] = None
     location: Optional[str] = None
 
 
@@ -280,6 +302,245 @@ async def update_employee_shift_assignment(
         ),
         "location": employee.location,
     }
+
+
+# ============================================================================
+# SCHEDULE HISTORY - Effective-dated schedule versions (2026-06)
+# ============================================================================
+#
+# Each EmployeeSchedule row is the schedule that takes effect on its
+# effective_from date and stays in force until a later row supersedes it.
+# Employee.role is kept as a denormalised cache of the *current* (as-of
+# today, Bangkok) version so legacy code that reads employee.role stays
+# valid. See app/models/models.py:EmployeeSchedule for the data contract.
+
+
+def _parse_schedule_date(value: str) -> date:
+    """Parse a YYYY-MM-DD string or raise 400 with a clear message."""
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail="effective_from must be a valid date in YYYY-MM-DD format",
+        )
+
+
+def _parse_clock_time(value: str, field_name: str) -> time:
+    """Parse an HH:MM string or raise 400 naming the offending field."""
+    try:
+        return datetime.strptime(value, "%H:%M").time()
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} must be a valid time in HH:MM format",
+        )
+
+
+def _work_days_to_storage(work_days: Optional[List[int]]) -> Optional[str]:
+    """Validate weekday ints (0-6), dedupe + sort, and join to a comma
+    string. Empty list or None stores NULL. Raises 400 on out-of-range."""
+    if not work_days:
+        return None
+    for weekday in work_days:
+        if weekday < 0 or weekday > 6:
+            raise HTTPException(
+                status_code=400,
+                detail="work_days must be weekday ints 0-6 (Mon=0..Sun=6)",
+            )
+    return ",".join(str(weekday) for weekday in sorted(set(work_days)))
+
+
+def _work_days_to_list(stored: Optional[str]) -> List[int]:
+    """Parse a stored comma string back into a list of ints (empty if NULL)."""
+    if not stored:
+        return []
+    return [int(part) for part in stored.split(",") if part != ""]
+
+
+def _format_clock_time(value: Optional[time]) -> Optional[str]:
+    """Render a time as 'HH:MM', or None when unset."""
+    return value.strftime("%H:%M") if value is not None else None
+
+
+def _serialize_schedule(schedule: EmployeeSchedule) -> Dict[str, Any]:
+    """Shape one EmployeeSchedule row for the GET/PUT JSON response."""
+    return {
+        "effective_from": schedule.effective_from.isoformat(),
+        "role": schedule.role,
+        "work_days": _work_days_to_list(schedule.work_days),
+        "work_start": _format_clock_time(schedule.work_start),
+        "work_end": _format_clock_time(schedule.work_end),
+    }
+
+
+def _recompute_current_role(db: Session, employee: Employee) -> None:
+    """Refresh Employee.role from the as-of-today (Bangkok) schedule version.
+
+    Sets role to the version with the greatest effective_from <= today,
+    or None when no such version exists. Caller commits.
+    """
+    today = datetime.now(BANGKOK_TZ).date()
+    current = (
+        db.query(EmployeeSchedule)
+        .filter(
+            EmployeeSchedule.employee_badge_number == employee.badge_number,
+            EmployeeSchedule.effective_from <= today,
+        )
+        .order_by(EmployeeSchedule.effective_from.desc())
+        .first()
+    )
+    employee.role = current.role if current else None
+
+
+def _require_employee(db: Session, badge_number: str) -> Employee:
+    """Fetch an employee by badge or raise 404."""
+    employee = db.query(Employee).filter(Employee.badge_number == badge_number).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return employee
+
+
+@router.get("/{badge_number}/schedule")
+async def get_employee_schedule(badge_number: str, db: Session = Depends(get_db)):
+    """List an employee's schedule versions, newest effective date first."""
+    _require_employee(db, badge_number)
+
+    schedules = (
+        db.query(EmployeeSchedule)
+        .filter(EmployeeSchedule.employee_badge_number == badge_number)
+        .order_by(EmployeeSchedule.effective_from.desc())
+        .all()
+    )
+
+    return {
+        "badge_number": badge_number,
+        "schedules": [_serialize_schedule(s) for s in schedules],
+    }
+
+
+@router.put("/{badge_number}/schedule")
+async def upsert_employee_schedule(
+    badge_number: str,
+    body: ScheduleInput,
+    db: Session = Depends(get_db),
+):
+    """Create or update one effective-dated schedule version.
+
+    Upserts on (badge_number, effective_from): an existing version for the
+    same effective date is updated in place, otherwise a new one is added.
+    After saving, Employee.role is recomputed from the as-of-today version
+    and Employee.location is updated when a location was supplied.
+    """
+    employee = _require_employee(db, badge_number)
+
+    effective_from = _parse_schedule_date(body.effective_from)
+
+    new_role = body.role
+    if new_role == "":
+        new_role = None
+    if new_role is not None and new_role not in _ALLOWED_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"role must be one of {_ALLOWED_ROLES} or null",
+        )
+
+    work_days_storage = _work_days_to_storage(body.work_days)
+
+    work_start_raw = body.work_start or None
+    work_end_raw = body.work_end or None
+    if (work_start_raw is None) != (work_end_raw is None):
+        raise HTTPException(
+            status_code=400,
+            detail="work_start and work_end must be provided together or both omitted",
+        )
+    work_start_time = (
+        _parse_clock_time(work_start_raw, "work_start") if work_start_raw else None
+    )
+    work_end_time = (
+        _parse_clock_time(work_end_raw, "work_end") if work_end_raw else None
+    )
+
+    location_provided = body.location is not None
+    new_location = body.location
+    if new_location == "":
+        new_location = None
+    if new_location is not None and new_location not in _ALLOWED_LOCATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"location must be one of {_ALLOWED_LOCATIONS} or null",
+        )
+
+    # Reception is roster-driven: per-day shift_assignments decide hours,
+    # so the versioned work_days/work_start/work_end are always cleared.
+    if new_role == "reception":
+        work_days_storage = None
+        work_start_time = None
+        work_end_time = None
+
+    existing = (
+        db.query(EmployeeSchedule)
+        .filter(
+            EmployeeSchedule.employee_badge_number == badge_number,
+            EmployeeSchedule.effective_from == effective_from,
+        )
+        .first()
+    )
+    if existing:
+        existing.role = new_role
+        existing.work_days = work_days_storage
+        existing.work_start = work_start_time
+        existing.work_end = work_end_time
+        saved = existing
+    else:
+        saved = EmployeeSchedule(
+            employee_badge_number=badge_number,
+            effective_from=effective_from,
+            role=new_role,
+            work_days=work_days_storage,
+            work_start=work_start_time,
+            work_end=work_end_time,
+        )
+        db.add(saved)
+
+    # Flush so the as-of-today recompute below sees the just-saved version.
+    db.flush()
+    _recompute_current_role(db, employee)
+    if location_provided:
+        employee.location = new_location
+    db.commit()
+    db.refresh(saved)
+
+    return {"badge_number": badge_number, **_serialize_schedule(saved)}
+
+
+@router.delete("/{badge_number}/schedule/{effective_from}", status_code=204)
+async def delete_employee_schedule(
+    badge_number: str,
+    effective_from: str,
+    db: Session = Depends(get_db),
+):
+    """Delete one schedule version and recompute the current-role cache."""
+    employee = _require_employee(db, badge_number)
+    target_date = _parse_schedule_date(effective_from)
+
+    schedule = (
+        db.query(EmployeeSchedule)
+        .filter(
+            EmployeeSchedule.employee_badge_number == badge_number,
+            EmployeeSchedule.effective_from == target_date,
+        )
+        .first()
+    )
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule version not found")
+
+    db.delete(schedule)
+    db.flush()
+    _recompute_current_role(db, employee)
+    db.commit()
+
+    return Response(status_code=204)
 
 
 @router.get("/")

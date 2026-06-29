@@ -79,7 +79,7 @@
               <th scope="col" class="px-5 py-3 font-semibold">พนักงาน</th>
               <th scope="col" class="px-5 py-3 font-semibold">บทบาท</th>
               <th scope="col" class="px-5 py-3 font-semibold">สาขา</th>
-              <th scope="col" class="px-5 py-3 font-semibold">กะหลัก</th>
+              <th scope="col" class="px-5 py-3 font-semibold">วันทำงาน · เวลา</th>
               <th scope="col" class="px-5 py-3 font-semibold w-0"></th>
             </tr>
           </thead>
@@ -227,6 +227,28 @@
       border-color: rgb(199 210 254);
       color: rgb(67 56 202);
     }
+
+    /* Weekday toggle pills in the schedule editor. The checkbox is
+       visually hidden (sr-only) and the adjacent pill reflects state
+       via pure CSS, so we don't rely on Tailwind generating
+       peer-checked variants for dynamically-injected markup. Mirrors
+       the .loc-chip palette for visual consistency. */
+    .wd-pill {
+      border-color: rgb(226 232 240);
+      background-color: white;
+      color: rgb(71 85 105);
+      transition: background-color .12s, border-color .12s, color .12s;
+    }
+    .wd-chip:hover .wd-pill { background-color: rgb(248 250 252); }
+    .wd-chip input:checked + .wd-pill {
+      background-color: rgb(238 242 255);
+      border-color: rgb(199 210 254);
+      color: rgb(67 56 202);
+    }
+    .wd-chip input:focus-visible + .wd-pill {
+      outline: 2px solid rgb(99 102 241);
+      outline-offset: 1px;
+    }
   </style>
 
   <script>
@@ -316,6 +338,78 @@
         rolesError.classList.remove("hidden");
       }
 
+      // The roles tab is a per-employee effective-dated schedule editor.
+      // Each row shows the employee's current role/location plus the
+      // workdays + hours of their *effective* schedule (the newest
+      // version whose effective_from is on or before today). Clicking
+      // "แก้ไข" expands an inline panel that PUTs a new effective-dated
+      // schedule version and lists the version history.
+      //
+      // The /employees list only carries the current role/location, so
+      // the workdays/hours summary needs a per-employee GET /schedule.
+      // We fetch those lazily in the background after the table renders
+      // and cache them (the cache is reused when the editor opens) so we
+      // never round-trip twice for the same employee.
+      const WEEKDAYS = [
+        { idx: 0, label: "จ" },
+        { idx: 1, label: "อ" },
+        { idx: 2, label: "พ" },
+        { idx: 3, label: "พฤ" },
+        { idx: 4, label: "ศ" },
+        { idx: 5, label: "ส" },
+        { idx: 6, label: "อา" },
+      ];
+
+      // Role → Thai label + chip palette (palette classes are safelisted
+      // above so Tailwind keeps them even though they're injected here).
+      const ROLE_BADGE = {
+        reception:    { label: "Reception", cls: "bg-brand-100 text-brand-700" },
+        housekeeping: { label: "แม่บ้าน",   cls: "bg-good-100 text-good-700" },
+        technician:   { label: "ช่าง",      cls: "bg-warn-100 text-warn-700" },
+        admin:        { label: "ธุรการ",    cls: "bg-ink-200 text-ink-700" },
+      };
+
+      const LOCATION_LABEL = { HF: "HF", HF_VILLE: "HF Ville" };
+
+      // badge → schedules array (newest first) | null (load failed) |
+      // undefined (not fetched yet)
+      const SCHEDULE_CACHE = {};
+      // badge → { roleCell, locationCell, scheduleCell, editBtn, editorRow, panel }
+      const rowRefs = {};
+
+      function roleLabel(role) {
+        const meta = ROLE_BADGE[role];
+        return meta ? meta.label : "—";
+      }
+
+      // Compact Thai summary of a workday set. Collapses the two common
+      // ranges (จ–ศ, จ–ส) and "every day"; otherwise lists day letters.
+      function workdaysSummary(days) {
+        if (!Array.isArray(days) || days.length === 0) return null;
+        const sorted = days.slice().sort((a, b) => a - b);
+        const key = sorted.join(",");
+        if (key === "0,1,2,3,4")     return "จ–ศ";
+        if (key === "0,1,2,3,4,5")   return "จ–ส";
+        if (key === "0,1,2,3,4,5,6") return "ทุกวัน";
+        return sorted.map(d => (WEEKDAYS[d] ? WEEKDAYS[d].label : d)).join(" ");
+      }
+
+      // The schedule version in effect today = newest entry whose
+      // effective_from is on/before today (schedules arrive newest-first,
+      // and ISO dates compare correctly as plain strings).
+      function effectiveEntry(schedules) {
+        if (!Array.isArray(schedules) || schedules.length === 0) return null;
+        const today = V2.bangkokDate();
+        return schedules.find(s => s.effective_from <= today) || null;
+      }
+
+      async function refreshSchedule(emp) {
+        const resp = await V2.apiFetch(
+          "/api/private/employees/" + encodeURIComponent(emp.badge_number) + "/schedule"
+        );
+        SCHEDULE_CACHE[emp.badge_number] = (resp && resp.schedules) || [];
+      }
+
       function renderRolesTable() {
         rolesLoading.classList.add("hidden");
         rolesError.classList.add("hidden");
@@ -329,98 +423,408 @@
         );
 
         rolesTableBody.innerHTML = "";
+        Object.keys(rowRefs).forEach(k => delete rowRefs[k]);
+        sorted.forEach(emp => buildEmployeeRow(emp));
+
+        // Lazily fill the workdays/hours summary for each non-reception
+        // employee. Reception is roster-driven so it needs no schedule
+        // summary. Failures degrade the cell to "—" without blocking.
         sorted.forEach(emp => {
-          const tr = document.createElement("tr");
-          tr.className = "hover:bg-ink-50/50";
+          if ((emp.role || "") === "reception") return;
+          if (SCHEDULE_CACHE[emp.badge_number] !== undefined) {
+            renderScheduleCell(emp);
+            return;
+          }
+          refreshSchedule(emp)
+            .catch(() => { SCHEDULE_CACHE[emp.badge_number] = null; })
+            .then(() => renderScheduleCell(emp));
+        });
+      }
 
-          const name = V2.escapeHtml(emp.display_name || ("บัตร " + emp.badge_number));
-          const badge = "#" + V2.escapeHtml(emp.badge_number);
-          const avatarKlass = V2.avatarColor(emp.badge_number || emp.display_name || "");
-          const initials = V2.escapeHtml(V2.initials(emp.display_name || emp.badge_number));
+      function buildEmployeeRow(emp) {
+        const tr = document.createElement("tr");
+        tr.className = "hover:bg-ink-50/50";
 
-          tr.innerHTML =
-            '<td class="px-5 py-3">' +
-              '<div class="flex items-center gap-3">' +
-                '<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ' + avatarKlass + '">' + initials + '</span>' +
-                '<div class="min-w-0">' +
-                  '<p class="truncate font-semibold text-ink-900">' + name + '</p>' +
-                  '<p class="truncate text-xs text-ink-500">' + badge + '</p>' +
-                '</div>' +
+        const name = V2.escapeHtml(emp.display_name || ("บัตร " + emp.badge_number));
+        const badge = "#" + V2.escapeHtml(emp.badge_number);
+        const avatarKlass = V2.avatarColor(emp.badge_number || emp.display_name || "");
+        const initials = V2.escapeHtml(V2.initials(emp.display_name || emp.badge_number));
+
+        tr.innerHTML =
+          '<td class="px-5 py-3">' +
+            '<div class="flex items-center gap-3">' +
+              '<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ' + avatarKlass + '">' + initials + '</span>' +
+              '<div class="min-w-0">' +
+                '<p class="truncate font-semibold text-ink-900">' + name + '</p>' +
+                '<p class="truncate text-xs text-ink-500">' + badge + '</p>' +
               '</div>' +
-            '</td>' +
-            '<td class="px-5 py-3"><select class="role-select h-9 rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800"></select></td>' +
-            '<td class="px-5 py-3"><select class="location-select h-9 rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800"></select></td>' +
-            '<td class="px-5 py-3"><select class="shift-select h-9 rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800"></select></td>' +
-            '<td class="px-5 py-3 text-right">' +
-              '<span class="save-state text-xs text-ink-400"></span>' +
-            '</td>';
+            '</div>' +
+          '</td>' +
+          '<td class="px-5 py-3 role-cell"></td>' +
+          '<td class="px-5 py-3 location-cell"></td>' +
+          '<td class="px-5 py-3 schedule-cell"></td>' +
+          '<td class="px-5 py-3 text-right">' +
+            '<button type="button" class="edit-btn h-9 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-700 hover:bg-ink-50">แก้ไข</button>' +
+          '</td>';
 
-          const roleSel = tr.querySelector(".role-select");
-          ROLES.forEach(r => {
-            const opt = document.createElement("option");
-            opt.value = r.value;
-            opt.textContent = r.label;
-            if ((emp.role || "") === r.value) opt.selected = true;
-            roleSel.appendChild(opt);
+        const editorRow = document.createElement("tr");
+        editorRow.className = "editor-row hidden";
+        editorRow.innerHTML =
+          '<td colspan="5" class="px-5 pb-4 pt-0">' +
+            '<div class="editor-panel rounded-xl border border-ink-200 bg-ink-50/40 p-4"></div>' +
+          '</td>';
+
+        rowRefs[emp.badge_number] = {
+          roleCell: tr.querySelector(".role-cell"),
+          locationCell: tr.querySelector(".location-cell"),
+          scheduleCell: tr.querySelector(".schedule-cell"),
+          editBtn: tr.querySelector(".edit-btn"),
+          editorRow,
+          panel: editorRow.querySelector(".editor-panel"),
+        };
+
+        renderRoleCell(emp);
+        renderLocationCell(emp);
+        renderScheduleCell(emp);
+
+        rowRefs[emp.badge_number].editBtn.addEventListener("click", () => toggleEditor(emp));
+
+        rolesTableBody.appendChild(tr);
+        rolesTableBody.appendChild(editorRow);
+      }
+
+      function renderRoleCell(emp) {
+        const meta = ROLE_BADGE[emp.role];
+        rowRefs[emp.badge_number].roleCell.innerHTML = meta
+          ? '<span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ' + meta.cls + '">' + V2.escapeHtml(meta.label) + '</span>'
+          : '<span class="text-ink-300">—</span>';
+      }
+
+      function renderLocationCell(emp) {
+        const label = LOCATION_LABEL[emp.location];
+        rowRefs[emp.badge_number].locationCell.innerHTML = label
+          ? '<span class="text-ink-700">' + V2.escapeHtml(label) + '</span>'
+          : '<span class="text-ink-300">—</span>';
+      }
+
+      function renderScheduleCell(emp) {
+        const cell = rowRefs[emp.badge_number].scheduleCell;
+        if ((emp.role || "") === "reception") {
+          cell.innerHTML = '<span class="text-xs text-ink-400">ตามตารางกะรายวัน</span>';
+          return;
+        }
+        const schedules = SCHEDULE_CACHE[emp.badge_number];
+        if (schedules === undefined) {
+          cell.innerHTML = '<span class="text-xs text-ink-300">กำลังโหลด…</span>';
+          return;
+        }
+        const eff = effectiveEntry(schedules);
+        const days = eff ? workdaysSummary(eff.work_days) : null;
+        if (!days) {
+          cell.innerHTML = '<span class="text-ink-300">—</span>';
+          return;
+        }
+        const hours = (eff.work_start && eff.work_end)
+          ? (eff.work_start + "–" + eff.work_end) : "—";
+        cell.innerHTML =
+          '<div class="flex flex-col gap-0.5">' +
+            '<span class="w-fit rounded-md bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-700">' + V2.escapeHtml(days) + '</span>' +
+            '<span class="text-xs text-ink-500 tabular-nums">' + V2.escapeHtml(hours) + '</span>' +
+          '</div>';
+      }
+
+      function closeAllEditors() {
+        Object.values(rowRefs).forEach(r => {
+          r.editorRow.classList.add("hidden");
+          r.editBtn.textContent = "แก้ไข";
+        });
+      }
+
+      function toggleEditor(emp) {
+        const refs = rowRefs[emp.badge_number];
+        const willOpen = refs.editorRow.classList.contains("hidden");
+        closeAllEditors();
+        if (willOpen) {
+          refs.editorRow.classList.remove("hidden");
+          refs.editBtn.textContent = "ปิด";
+          buildEditor(emp);
+        }
+      }
+
+      function addSelectOption(select, value, label, selected) {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = label;
+        if (selected) opt.selected = true;
+        select.appendChild(opt);
+      }
+
+      // Static markup for the inline editor panel. Populated/wired in
+      // buildEditor(); no interpolated values so it's safe as a constant.
+      const EDITOR_TEMPLATE =
+        '<div class="grid gap-5 md:grid-cols-2">' +
+          '<div class="space-y-4">' +
+            '<div class="grid grid-cols-2 gap-3">' +
+              '<label class="block">' +
+                '<span class="mb-1 block text-xs font-semibold text-ink-600">บทบาท</span>' +
+                '<select class="ed-role h-10 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800"></select>' +
+              '</label>' +
+              '<label class="block">' +
+                '<span class="mb-1 block text-xs font-semibold text-ink-600">สาขา</span>' +
+                '<select class="ed-location h-10 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800"></select>' +
+              '</label>' +
+            '</div>' +
+            '<div class="ed-shift-fields space-y-3">' +
+              '<div>' +
+                '<div class="mb-1.5 flex items-center justify-between gap-2">' +
+                  '<span class="text-xs font-semibold text-ink-600">วันทำงาน</span>' +
+                  '<span class="flex gap-1">' +
+                    '<button type="button" class="ed-quick-mf rounded-md border border-ink-200 bg-white px-2 py-0.5 text-xs font-medium text-ink-600 hover:bg-ink-50">จ–ศ</button>' +
+                    '<button type="button" class="ed-quick-ms rounded-md border border-ink-200 bg-white px-2 py-0.5 text-xs font-medium text-ink-600 hover:bg-ink-50">จ–ส</button>' +
+                    '<button type="button" class="ed-quick-clear rounded-md border border-ink-200 bg-white px-2 py-0.5 text-xs font-medium text-ink-600 hover:bg-ink-50">ล้าง</button>' +
+                  '</span>' +
+                '</div>' +
+                '<div class="ed-weekdays flex flex-wrap gap-1.5"></div>' +
+              '</div>' +
+              '<div class="grid grid-cols-2 gap-3">' +
+                '<label class="block">' +
+                  '<span class="mb-1 block text-xs font-semibold text-ink-600">เวลาเริ่ม</span>' +
+                  '<input type="time" class="ed-start h-10 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800" />' +
+                '</label>' +
+                '<label class="block">' +
+                  '<span class="mb-1 block text-xs font-semibold text-ink-600">เวลาเลิก</span>' +
+                  '<input type="time" class="ed-end h-10 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800" />' +
+                '</label>' +
+              '</div>' +
+            '</div>' +
+            '<div class="ed-reception-note hidden rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-xs text-brand-700">' +
+              'กะรับช่วงจากตารางกะรายวัน' +
+            '</div>' +
+            '<div class="grid grid-cols-2 items-end gap-3">' +
+              '<label class="block">' +
+                '<span class="mb-1 block text-xs font-semibold text-ink-600">มีผลตั้งแต่</span>' +
+                '<input type="date" class="ed-effective h-10 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800" />' +
+              '</label>' +
+              '<div class="flex items-center gap-2">' +
+                '<button type="button" class="ed-save h-10 rounded-lg border border-brand-200 bg-brand-50 px-4 text-sm font-semibold text-brand-700 hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50">บันทึก</button>' +
+                '<span class="ed-status text-xs text-ink-400"></span>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div>' +
+            '<p class="mb-2 text-xs font-semibold text-ink-600">ประวัติกะ</p>' +
+            '<ul class="ed-history space-y-1.5 text-sm"></ul>' +
+          '</div>' +
+        '</div>';
+
+      async function buildEditor(emp) {
+        const refs = rowRefs[emp.badge_number];
+        const panel = refs.panel;
+        panel.innerHTML =
+          '<div class="flex items-center gap-2 py-3 text-sm text-ink-500">' +
+            '<span class="h-4 w-4 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></span>' +
+            'กำลังโหลดข้อมูลกะ…' +
+          '</div>';
+
+        // Fetch the schedule history once (reuse the prefetch cache when
+        // present; refetch only if it's missing or previously failed).
+        if (SCHEDULE_CACHE[emp.badge_number] == null) {
+          try {
+            await refreshSchedule(emp);
+          } catch (err) {
+            panel.innerHTML =
+              '<div class="rounded-lg border border-bad-100 bg-bad-50 px-3 py-2 text-sm text-bad-700">โหลดประวัติกะไม่สำเร็จ</div>';
+            return;
+          }
+        }
+        renderScheduleCell(emp);
+
+        const schedules = SCHEDULE_CACHE[emp.badge_number] || [];
+        const eff = effectiveEntry(schedules);
+        const effDays = (eff && Array.isArray(eff.work_days)) ? eff.work_days : [];
+
+        panel.innerHTML = EDITOR_TEMPLATE;
+
+        const roleSel = panel.querySelector(".ed-role");
+        const locationSel = panel.querySelector(".ed-location");
+        const shiftFields = panel.querySelector(".ed-shift-fields");
+        const receptionNote = panel.querySelector(".ed-reception-note");
+        const weekdaysWrap = panel.querySelector(".ed-weekdays");
+        const startInput = panel.querySelector(".ed-start");
+        const endInput = panel.querySelector(".ed-end");
+        const effectiveInput = panel.querySelector(".ed-effective");
+        const saveBtn = panel.querySelector(".ed-save");
+        const statusEl = panel.querySelector(".ed-status");
+        const historyList = panel.querySelector(".ed-history");
+
+        ROLES.forEach(r => addSelectOption(roleSel, r.value, r.label, (emp.role || "") === r.value));
+        LOCATIONS.forEach(l => addSelectOption(locationSel, l.value, l.label, (emp.location || "") === l.value));
+
+        // Seven weekday toggle pills (Mon=0 … Sun=6), pre-checked from
+        // the effective schedule.
+        const dayInputs = [];
+        WEEKDAYS.forEach(w => {
+          const label = document.createElement("label");
+          label.className = "wd-chip cursor-pointer select-none";
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.className = "sr-only";
+          input.value = String(w.idx);
+          input.checked = effDays.includes(w.idx);
+          input.addEventListener("change", updateSaveState);
+          const pill = document.createElement("span");
+          pill.className = "wd-pill inline-flex h-9 items-center justify-center rounded-lg border px-3 text-sm font-medium";
+          pill.textContent = w.label;
+          label.appendChild(input);
+          label.appendChild(pill);
+          weekdaysWrap.appendChild(label);
+          dayInputs.push(input);
+        });
+
+        startInput.value = (eff && eff.work_start) || "";
+        endInput.value = (eff && eff.work_end) || "";
+        effectiveInput.value = V2.bangkokDate();
+
+        function setDays(arr) {
+          dayInputs.forEach(i => { i.checked = arr.includes(Number(i.value)); });
+          updateSaveState();
+        }
+        function checkedDays() {
+          return dayInputs.filter(i => i.checked).map(i => Number(i.value)).sort((a, b) => a - b);
+        }
+        panel.querySelector(".ed-quick-mf").addEventListener("click", () => setDays([0, 1, 2, 3, 4]));
+        panel.querySelector(".ed-quick-ms").addEventListener("click", () => setDays([0, 1, 2, 3, 4, 5]));
+        panel.querySelector(".ed-quick-clear").addEventListener("click", () => setDays([]));
+
+        // Reception is roster-driven: hide the workday/time fields and
+        // show the note instead.
+        function applyRoleMode() {
+          const isReception = roleSel.value === "reception";
+          shiftFields.classList.toggle("hidden", isReception);
+          receptionNote.classList.toggle("hidden", !isReception);
+          updateSaveState();
+        }
+        // Save is blocked when any workday is checked but the start/end
+        // time is missing (non-reception only), or no effective date.
+        function updateSaveState() {
+          let ok = !!effectiveInput.value;
+          if (roleSel.value !== "reception") {
+            const days = checkedDays();
+            if (days.length > 0 && (!startInput.value || !endInput.value)) ok = false;
+          }
+          saveBtn.disabled = !ok;
+        }
+        function setStatus(text, kind) {
+          const cls = { good: "text-good-700", bad: "text-bad-700", muted: "text-ink-400" }[kind] || "text-ink-400";
+          statusEl.className = "ed-status text-xs " + cls;
+          statusEl.textContent = text;
+          if (kind === "good") {
+            setTimeout(() => { if (statusEl.textContent === text) statusEl.textContent = ""; }, 1800);
+          }
+        }
+
+        function renderHistory() {
+          const list = SCHEDULE_CACHE[emp.badge_number] || [];
+          historyList.innerHTML = "";
+          if (list.length === 0) {
+            historyList.innerHTML =
+              '<li class="rounded-lg border border-ink-100 bg-ink-50/50 px-2.5 py-2 text-xs text-ink-400">ยังไม่มีประวัติกะ</li>';
+            return;
+          }
+          list.forEach(s => {
+            const isReception = s.role === "reception";
+            const daysTxt = isReception ? "ตามตารางกะรายวัน" : (workdaysSummary(s.work_days) || "—");
+            const hoursTxt = (!isReception && s.work_start && s.work_end) ? (s.work_start + "–" + s.work_end) : "";
+            const li = document.createElement("li");
+            li.className = "flex items-start justify-between gap-2 rounded-lg border border-ink-100 bg-white px-2.5 py-1.5";
+            li.innerHTML =
+              '<div class="min-w-0">' +
+                '<p class="font-semibold text-ink-800 tabular-nums">' + V2.escapeHtml(s.effective_from) + '</p>' +
+                '<p class="truncate text-xs text-ink-500">' +
+                  V2.escapeHtml(roleLabel(s.role)) + ' · ' + V2.escapeHtml(daysTxt) +
+                  (hoursTxt ? ' · <span class="tabular-nums">' + V2.escapeHtml(hoursTxt) + '</span>' : '') +
+                '</p>' +
+              '</div>';
+            const del = document.createElement("button");
+            del.type = "button";
+            del.className = "shrink-0 rounded-md px-1.5 text-ink-400 hover:bg-bad-50 hover:text-bad-600";
+            del.textContent = "✕";
+            del.title = "ลบเวอร์ชันนี้";
+            del.addEventListener("click", async () => {
+              del.disabled = true;
+              setStatus("กำลังลบ…", "muted");
+              try {
+                await V2.apiFetch(
+                  "/api/private/employees/" + encodeURIComponent(emp.badge_number) +
+                  "/schedule/" + encodeURIComponent(s.effective_from),
+                  { method: "DELETE" }
+                );
+                await refreshSchedule(emp);
+                renderScheduleCell(emp);
+                renderHistory();
+                setStatus("ลบแล้ว", "good");
+              } catch (err) {
+                del.disabled = false;
+                setStatus("ลบไม่สำเร็จ", "bad");
+              }
+            });
+            li.appendChild(del);
+            historyList.appendChild(li);
           });
+        }
 
-          const locationSel = tr.querySelector(".location-select");
-          LOCATIONS.forEach(l => {
-            const opt = document.createElement("option");
-            opt.value = l.value;
-            opt.textContent = l.label;
-            if ((emp.location || "") === l.value) opt.selected = true;
-            locationSel.appendChild(opt);
-          });
-
-          const shiftSel = tr.querySelector(".shift-select");
-          // First option is empty / "ใช้ค่าเริ่มต้นตามบทบาท"
-          const noneOpt = document.createElement("option");
-          noneOpt.value = "";
-          noneOpt.textContent = "(ตามบทบาท)";
-          shiftSel.appendChild(noneOpt);
-          // OFF is a UI pseudo-shift (color picker only) — exclude
-          // from the "default shift" dropdown since admin can't set
-          // someone's default to OFF (it's the absence of a shift).
-          SHIFTS.filter(s => s.code !== "OFF").forEach(s => {
-            const opt = document.createElement("option");
-            opt.value = s.code;
-            opt.textContent = s.name_th + " (" + s.start_time + "–" + s.end_time + ")";
-            if ((emp.default_shift_code || "") === s.code) opt.selected = true;
-            shiftSel.appendChild(opt);
-          });
-
-          const saveState = tr.querySelector(".save-state");
-          const persist = async () => {
-            saveState.textContent = "กำลังบันทึก…";
-            saveState.className = "save-state text-xs text-ink-400";
-            try {
-              await V2.apiFetch("/api/private/employees/" + encodeURIComponent(emp.badge_number) + "/shift", {
+        saveBtn.addEventListener("click", async () => {
+          const effective_from = effectiveInput.value;
+          if (!effective_from) { setStatus("เลือกวันที่มีผล", "bad"); return; }
+          const role = roleSel.value || null;
+          const location = locationSel.value || null;
+          // For non-reception, send work_days + hours together. Reception
+          // leaves them null (the server ignores them — roster-driven).
+          let work_days = null, work_start = null, work_end = null;
+          if (role !== "reception") {
+            const days = checkedDays();
+            if (days.length > 0) {
+              if (!startInput.value || !endInput.value) { setStatus("กรอกเวลาเริ่ม–เลิก", "bad"); return; }
+              work_days = days;
+              work_start = startInput.value;
+              work_end = endInput.value;
+            }
+          }
+          saveBtn.disabled = true;
+          setStatus("กำลังบันทึก…", "muted");
+          try {
+            await V2.apiFetch(
+              "/api/private/employees/" + encodeURIComponent(emp.badge_number) + "/schedule",
+              {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  role: roleSel.value || null,
-                  default_shift_code: shiftSel.value || null,
-                  location: locationSel.value || null,
-                }),
-              });
-              emp.role = roleSel.value || null;
-              emp.default_shift_code = shiftSel.value || null;
-              emp.location = locationSel.value || null;
-              saveState.textContent = "บันทึกแล้ว";
-              saveState.className = "save-state text-xs text-good-700";
-              setTimeout(() => { saveState.textContent = ""; }, 1500);
-            } catch (err) {
-              saveState.textContent = "ไม่สำเร็จ";
-              saveState.className = "save-state text-xs text-bad-700";
-            }
-          };
-          roleSel.addEventListener("change", persist);
-          locationSel.addEventListener("change", persist);
-          shiftSel.addEventListener("change", persist);
-
-          rolesTableBody.appendChild(tr);
+                body: JSON.stringify({ effective_from, role, work_days, work_start, work_end, location }),
+              }
+            );
+            // Keep the in-memory employee in sync so the row + other tabs
+            // (e.g. the Reception roster filter) reflect the new role.
+            emp.role = role;
+            emp.location = location;
+            await refreshSchedule(emp);
+            renderRoleCell(emp);
+            renderLocationCell(emp);
+            renderScheduleCell(emp);
+            renderHistory();
+            setStatus("บันทึกแล้ว", "good");
+          } catch (err) {
+            setStatus("บันทึกไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")", "bad");
+          } finally {
+            updateSaveState();
+          }
         });
+
+        roleSel.addEventListener("change", applyRoleMode);
+        startInput.addEventListener("input", updateSaveState);
+        endInput.addEventListener("input", updateSaveState);
+        effectiveInput.addEventListener("input", updateSaveState);
+
+        applyRoleMode();
+        renderHistory();
       }
 
       // ---------- Roster tab ----------
