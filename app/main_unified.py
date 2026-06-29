@@ -295,6 +295,15 @@ async def serve_v2_shifts_admin():
     """
     return serve_html_with_cache_control("static/v2/shifts-admin.html")
 
+@fingerprint_app.get("/v2/monthly")
+async def serve_v2_monthly():
+    """Monthly payroll/management report — per-employee timesheet + grid.
+
+    Linked from the v2 nav as 'รายเดือน'. Same Cloudflare Access posture
+    as the rest of /fingerprintlogs/* — protected upstream.
+    """
+    return serve_html_with_cache_control("static/v2/monthly.html")
+
 @fingerprint_app.get("/export")
 async def serve_export():
     return serve_html_with_cache_control("static/export.html")

@@ -112,6 +112,51 @@ def _compute_status_shift_aware(
     return "on_time"
 
 
+# ---- Lateness tiers (monthly report) ---------------------------------------
+#
+# The monthly report grades punctuality in tiers instead of the binary
+# on_time/late the by-date page uses. Thresholds are minutes the first punch
+# landed after shift start:
+#   < 5   → on-time (grace; clock/biometric jitter, not flagged)
+#   5–14  → late
+#   15–29 → late, with the exact minute count surfaced in the UI
+#   >= 30 → severe (rendered red with "!")
+# Module constants so the UI legend and any future export share one source
+# of truth. by-date's late/on_time logic is intentionally left unchanged.
+LATE_GRACE_MINUTES = 5
+LATE_NOTE_MINUTES = 15
+LATE_SEVERE_MINUTES = 30
+
+
+def _late_minutes(
+    first_in_bangkok: Optional[datetime],
+    shift_start_bkk: datetime,
+) -> int:
+    """Whole minutes the first punch landed after shift start (floored, >= 0).
+
+    Returns 0 when there's no punch or the employee was early/on-time, so
+    callers can treat 0 as "nothing to flag" uniformly.
+    """
+    if first_in_bangkok is None:
+        return 0
+    delta_minutes = (first_in_bangkok - shift_start_bkk).total_seconds() / 60.0
+    if delta_minutes <= 0:
+        return 0
+    return int(delta_minutes)
+
+
+def _late_tier(late_minutes: int) -> int:
+    """Map late minutes to a tier: 0 on-time/grace, 1 late, 2 late+minutes,
+    3 severe. See the threshold constants above."""
+    if late_minutes < LATE_GRACE_MINUTES:
+        return 0
+    if late_minutes < LATE_NOTE_MINUTES:
+        return 1
+    if late_minutes < LATE_SEVERE_MINUTES:
+        return 2
+    return 3
+
+
 # ============================================================================
 # ATTENDANCE RECORDS - Basic CRUD Operations
 # ============================================================================
@@ -582,6 +627,276 @@ def _build_shift_row(
         ),
         "leave_type": None,
         "leave_note": None,
+    }
+
+
+# ============================================================================
+# MONTHLY REPORT (v2 monthly page) — payroll / management timesheet
+# ============================================================================
+#
+# One payload powering two views: an employee×day grid (management
+# month-at-a-glance) and a per-employee daily timesheet (payroll). Per
+# employee we walk every calendar day of the month, reusing the same
+# effective-shift + punch-window engine as /by-date, and attach working
+# hours, tiered lateness, and an attendance status to each day, plus
+# per-employee totals.
+
+_MONTH_STATUS_OFF = "off"            # scheduled rest or public holiday
+_MONTH_STATUS_LEAVE = "leave"        # personal leave (vacation/sick/...)
+_MONTH_STATUS_ABSENT = "absent"      # had a shift, no punches in window
+_MONTH_STATUS_PRESENT = "present"    # had a shift and punched
+_MONTH_STATUS_UNTRACKED = "untracked"  # no role/shift — excluded from totals
+
+
+def _empty_month_totals() -> Dict[str, Any]:
+    return {
+        "worked_days": 0,
+        "absent_days": 0,
+        "off_days": 0,
+        "leave_days": 0,
+        "late_count": 0,
+        "late_minutes_total": 0,
+        "severe_count": 0,
+        "hours_total": 0.0,
+    }
+
+
+def _fetch_punches_for_month(
+    db: Session,
+    badge: str,
+    range_start_utc: datetime,
+    range_end_utc: datetime,
+) -> List[datetime]:
+    """All punch timestamps (naive UTC) for one employee across the month's
+    extended window, ascending. One query per employee keeps the big
+    AttendanceRecord table off the per-day hot path."""
+    rows = (
+        db.query(AttendanceRecord.timestamp)
+        .filter(
+            AttendanceRecord.employee_badge_number == badge,
+            AttendanceRecord.timestamp >= range_start_utc,
+            AttendanceRecord.timestamp < range_end_utc,
+        )
+        .order_by(AttendanceRecord.timestamp.asc())
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
+def _window_first_last(
+    punches: List[datetime],
+    start_utc: datetime,
+    end_utc: datetime,
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """First/last punch within [start_utc, end_utc) from a pre-sorted list."""
+    in_window = [t for t in punches if start_utc <= t < end_utc]
+    if not in_window:
+        return None, None
+    return in_window[0], in_window[-1]
+
+
+def _build_month_day(
+    employee: Employee,
+    day: date,
+    eff,
+    punches: List[datetime],
+    *,
+    holiday: Optional[PublicHoliday],
+    leave: Optional[EmployeeLeave],
+) -> Dict[str, Any]:
+    """One day cell for the monthly report. Mirrors /by-date's precedence:
+    public holiday > personal leave > scheduled off > shift (present/absent).
+    Untracked days (no role/default/override) are flagged so the caller can
+    exclude them from totals and render them blank."""
+    row: Dict[str, Any] = {
+        "date": day.isoformat(),
+        "dow": day.weekday(),  # 0=Mon .. 6=Sun
+        "shift": None,
+        "first_in": None,
+        "last_out": None,
+        "hours_worked": None,
+        "status": _MONTH_STATUS_OFF,
+        "late_minutes": 0,
+        "late_tier": 0,
+        "leave_type": None,
+        "leave_note": None,
+    }
+
+    if holiday is not None:
+        row["leave_type"] = "public_holiday"
+        row["leave_note"] = holiday.name
+        return row
+
+    if leave is not None:
+        row["status"] = _MONTH_STATUS_LEAVE
+        row["leave_type"] = leave.leave_type
+        row["leave_note"] = leave.note
+        return row
+
+    if eff.is_off:
+        return row  # status already OFF
+
+    if eff.shift is None:
+        row["status"] = _MONTH_STATUS_UNTRACKED
+        return row
+
+    shift = eff.shift
+    window = shift_window_for(shift, day)
+    first_in_utc, last_out_utc = _window_first_last(
+        punches, window.start_utc, window.end_utc,
+    )
+    first_in_bkk = _to_bangkok(first_in_utc) if first_in_utc else None
+    last_out_bkk = _to_bangkok(last_out_utc) if last_out_utc else None
+
+    row["shift"] = _shift_summary(shift)
+
+    if first_in_bkk is None:
+        row["status"] = _MONTH_STATUS_ABSENT
+        return row
+
+    late_min = _late_minutes(first_in_bkk, window.shift_start_bkk)
+    row.update({
+        "first_in": first_in_bkk.strftime("%H:%M"),
+        "last_out": last_out_bkk.strftime("%H:%M") if last_out_bkk else None,
+        "hours_worked": _compute_hours_worked(first_in_utc, last_out_utc),
+        "status": _MONTH_STATUS_PRESENT,
+        "late_minutes": late_min,
+        "late_tier": _late_tier(late_min),
+    })
+    return row
+
+
+@router.get("/monthly/{year}/{month}")
+async def get_attendance_monthly(
+    year: int,
+    month: int,
+    location: Optional[str] = Query(
+        None, description="Filter to one branch: 'HF' or 'HF_VILLE'. Omit for all."
+    ),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Per-employee monthly timesheet for the v2 monthly report.
+
+    For each active, trackable employee, returns one entry per calendar day
+    of the month (shift, first_in, last_out, hours_worked, attendance
+    status, tiered lateness) plus payroll totals. ``days`` is always
+    ``days_in_month`` long, indexed day-1. Days where the employee is
+    untracked (no role/shift) are status "untracked" and excluded from
+    totals; employees untracked for the whole month are omitted.
+    """
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=400, detail="month must be 1-12")
+    if year < 2000 or year > 2100:
+        raise HTTPException(status_code=400, detail="year out of range (2000-2100)")
+
+    _ALLOWED_LOCATIONS = ("HF", "HF_VILLE")
+    if location is not None and location not in _ALLOWED_LOCATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"location must be one of {_ALLOWED_LOCATIONS} or omitted",
+        )
+
+    days_in_month = _calendar.monthrange(year, month)[1]
+    month_start = date(year, month, 1)
+    month_end = date(year, month, days_in_month)
+    all_days = [date(year, month, d) for d in range(1, days_in_month + 1)]
+
+    # Extended UTC range covering every shift window in the month: a few
+    # hours before the 1st (early arrivals / the −2h window buffer) and two
+    # days after the last (an overnight shift on the final day ends the next
+    # morning, plus the +2h buffer). Punches are fetched once per employee
+    # over this range, then bucketed per day in memory.
+    range_start_bkk = (
+        datetime.combine(month_start, dtime.min, tzinfo=BANGKOK_TZ)
+        - timedelta(hours=3)
+    )
+    range_end_bkk = (
+        datetime.combine(month_end, dtime.min, tzinfo=BANGKOK_TZ)
+        + timedelta(days=2)
+    )
+    range_start_utc = range_start_bkk.astimezone(timezone.utc).replace(tzinfo=None)
+    range_end_utc = range_end_bkk.astimezone(timezone.utc).replace(tzinfo=None)
+
+    holidays_by_date = {
+        h.date: h
+        for h in db.query(PublicHoliday)
+        .filter(PublicHoliday.date >= month_start, PublicHoliday.date <= month_end)
+        .all()
+    }
+    leaves_by_key = {
+        (l.employee_badge_number, l.date): l
+        for l in db.query(EmployeeLeave)
+        .filter(EmployeeLeave.date >= month_start, EmployeeLeave.date <= month_end)
+        .all()
+    }
+
+    employees_out: List[Dict[str, Any]] = []
+    for employee in _fetch_active_employees(db):
+        if location is not None and employee.location != location:
+            continue
+
+        punches = _fetch_punches_for_month(
+            db, employee.badge_number, range_start_utc, range_end_utc,
+        )
+
+        days_out: List[Dict[str, Any]] = []
+        totals = _empty_month_totals()
+        tracked_any = False
+
+        for day in all_days:
+            eff = effective_shift(db, employee, day)
+            day_row = _build_month_day(
+                employee, day, eff, punches,
+                holiday=holidays_by_date.get(day),
+                leave=leaves_by_key.get((employee.badge_number, day)),
+            )
+            days_out.append(day_row)
+
+            status = day_row["status"]
+            if status == _MONTH_STATUS_UNTRACKED:
+                continue
+            tracked_any = True
+            if status == _MONTH_STATUS_PRESENT:
+                totals["worked_days"] += 1
+                if day_row["hours_worked"] is not None:
+                    totals["hours_total"] = round(
+                        totals["hours_total"] + day_row["hours_worked"], 2
+                    )
+                tier = day_row["late_tier"]
+                if tier >= 1:
+                    totals["late_count"] += 1
+                    totals["late_minutes_total"] += day_row["late_minutes"]
+                if tier >= 3:
+                    totals["severe_count"] += 1
+            elif status == _MONTH_STATUS_ABSENT:
+                totals["absent_days"] += 1
+            elif status == _MONTH_STATUS_OFF:
+                totals["off_days"] += 1
+            elif status == _MONTH_STATUS_LEAVE:
+                totals["leave_days"] += 1
+
+        if not tracked_any:
+            continue  # untracked the whole month — nothing to report
+
+        employees_out.append({
+            "badge_number": employee.badge_number,
+            "display_name": _resolve_display_name(employee),
+            "role": employee.role,
+            "location": employee.location,
+            "totals": totals,
+            "days": days_out,
+        })
+
+    employees_out.sort(key=lambda e: (
+        (e["location"] or "~"),
+        (e["display_name"] or "").casefold(),
+    ))
+
+    return {
+        "year": year,
+        "month": month,
+        "days_in_month": days_in_month,
+        "employees": employees_out,
     }
 
 

@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>รายเดือน — ระบบบันทึกเวลา</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/fingerprintlogs/static/v2/theme.js"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: window.V2.THEME },
+      safelist: [
+        "bg-brand-100", "text-brand-700",
+        "bg-good-100",  "text-good-700",
+        "bg-warn-100",  "text-warn-700",
+        "bg-bad-100",   "text-bad-700",
+        "bg-ink-200",   "text-ink-700",
+        "bg-off-100",   "text-off-600",
+        "bg-ink-100",   "text-ink-600",
+      ],
+    };
+  </script>
+  <style>
+    html, body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    input[type="month"]::-webkit-calendar-picker-indicator { opacity: 0.6; cursor: pointer; }
+    /* Sticky first column in the grid keeps the employee name visible while
+       the day columns scroll horizontally. */
+    .grid-name { position: sticky; left: 0; z-index: 10; }
+    .grid-head { position: sticky; top: 0; z-index: 20; }
+    .grid-corner { position: sticky; left: 0; top: 0; z-index: 30; }
+  </style>
+</head>
+<body class="min-h-screen bg-ink-50 text-ink-900 antialiased">
+
+  <!-- DESKTOP TOP NAV (md+) -->
+  <nav class="hidden border-b border-ink-200 bg-white md:block">
+    <div class="mx-auto flex max-w-7xl items-center justify-between px-5 py-3">
+      <a href="/fingerprintlogs/v2/" class="flex items-center gap-2 text-sm font-semibold text-ink-700 hover:text-brand-600">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><polyline points="15 18 9 12 15 6"/></svg>
+        ระบบบันทึกเวลา
+      </a>
+      <div class="flex items-center gap-1">
+        <a href="/fingerprintlogs/v2/live" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">ดูสด</a>
+        <a href="/fingerprintlogs/v2/by-date" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">ตามวันที่</a>
+        <a href="/fingerprintlogs/v2/monthly" class="rounded-md px-3 py-1.5 text-sm font-medium bg-brand-100 text-brand-700" aria-current="page">รายเดือน</a>
+        <a href="/fingerprintlogs/v2/shifts-admin" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">จัดกะ</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="mx-auto max-w-7xl px-4 pt-5 pb-16 md:px-5 md:pt-8">
+
+    <!-- HEADER -->
+    <header class="mb-5 md:mb-7">
+      <p class="text-xs font-medium uppercase tracking-[0.18em] text-brand-600">รายเดือน</p>
+      <h1 class="mt-1 text-2xl font-bold tracking-tight text-ink-900 md:text-3xl">รายงานรายเดือน</h1>
+      <p class="mt-1 text-sm text-ink-500">เวลาทำงาน การมาสาย และการขาด/ลา ของพนักงานรายวันทั้งเดือน สำหรับทำเงินเดือนและบริหารจัดการ</p>
+    </header>
+
+    <!-- CONTROLS -->
+    <section class="mb-4 rounded-2xl border border-ink-200 bg-white p-3 shadow-card md:p-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <button id="prevBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50" aria-label="เดือนก่อนหน้า">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <input id="monthPicker" type="month" class="h-11 min-w-[10rem] rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-800 shadow-card focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" />
+        <button id="nextBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50" aria-label="เดือนถัดไป">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        <button id="thisMonthBtn" class="h-11 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">เดือนนี้</button>
+
+        <!-- View toggle -->
+        <div role="tablist" class="ml-auto flex rounded-lg border border-ink-200 bg-ink-50 p-0.5 text-sm">
+          <button id="viewGridBtn" class="rounded-md px-3 py-1.5 font-medium" data-view="grid">ตาราง</button>
+          <button id="viewSheetBtn" class="rounded-md px-3 py-1.5 font-medium" data-view="timesheet">รายคน</button>
+        </div>
+      </div>
+
+      <div class="mt-3 flex flex-wrap items-center gap-2">
+        <div class="relative flex-1 min-w-[12rem]">
+          <input id="searchInput" type="search" placeholder="ค้นหาชื่อหรือรหัสบัตร…" class="h-10 w-full rounded-lg border border-ink-200 bg-white pl-9 pr-3 text-sm text-ink-800 placeholder:text-ink-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" />
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </div>
+        <div role="tablist" class="flex flex-wrap items-center gap-1.5 text-xs">
+          <span class="text-ink-400">สาขา:</span>
+          <button data-location="all" class="loc-chip loc-on h-10 rounded-full border px-3 font-medium">ทั้งหมด</button>
+          <button data-location="HF" class="loc-chip h-10 rounded-full border px-3 font-medium">HF</button>
+          <button data-location="HF_VILLE" class="loc-chip h-10 rounded-full border px-3 font-medium">HF Ville</button>
+        </div>
+      </div>
+
+      <p id="metaLine" class="mt-3 text-xs text-ink-500"></p>
+    </section>
+
+    <!-- Loading / Error / Empty -->
+    <div id="loadingState" class="hidden rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+      <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
+      <p class="mt-3 text-sm text-ink-500">กำลังโหลดรายงาน…</p>
+    </div>
+    <div id="errorState" class="hidden rounded-2xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+      <span id="errorText">ไม่สามารถโหลดรายงานได้</span>
+      <button id="retryBtn" class="ml-2 underline underline-offset-2">ลองใหม่</button>
+    </div>
+    <div id="emptyState" class="hidden rounded-2xl border border-ink-200 bg-white px-6 py-16 text-center shadow-card">
+      <p id="emptyText" class="text-sm font-medium text-ink-700">ไม่มีข้อมูลพนักงานในเดือนนี้</p>
+      <p class="mt-1 text-xs text-ink-500">กำหนดบทบาทและกะการทำงานที่หน้า "จัดกะ"</p>
+    </div>
+
+    <!-- GRID VIEW -->
+    <section id="gridWrap" class="hidden">
+      <div class="overflow-auto rounded-2xl border border-ink-200 bg-white shadow-card" style="max-height: 75vh;">
+        <table class="border-collapse text-xs">
+          <thead>
+            <tr id="gridHeadRow" class="bg-ink-50 text-ink-500"></tr>
+          </thead>
+          <tbody id="gridBody"></tbody>
+        </table>
+      </div>
+      <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-500">
+        <span><span class="font-semibold text-ink-700">9.1</span> = ชั่วโมงทำงาน</span>
+        <span><span class="rounded bg-warn-100 px-1 font-semibold text-warn-700">·</span> สาย</span>
+        <span><span class="rounded bg-bad-100 px-1 font-bold text-bad-700">!</span> สาย ≥ 30 นาที</span>
+        <span><span class="font-semibold text-bad-600">✗</span> ขาด</span>
+        <span><span class="text-off-500">·</span> หยุด</span>
+        <span><span class="rounded bg-brand-50 px-1 text-brand-600">ล</span> ลา</span>
+        <span class="text-ink-400">คลิกที่ชื่อหรือช่องเพื่อดูรายคน</span>
+      </div>
+    </section>
+
+    <!-- TIMESHEET VIEW -->
+    <section id="sheetWrap" class="hidden">
+      <div class="mb-3 flex flex-wrap items-center gap-2">
+        <button id="backToGrid" class="inline-flex h-10 items-center gap-1.5 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-700 hover:bg-ink-50">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><polyline points="15 18 9 12 15 6"/></svg>
+          ตาราง
+        </button>
+        <select id="employeeSelect" class="h-10 min-w-[14rem] flex-1 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"></select>
+      </div>
+
+      <!-- Employee header + totals -->
+      <div class="mb-3 rounded-2xl border border-ink-200 bg-white p-4 shadow-card">
+        <div class="flex items-center gap-3">
+          <span id="sheetAvatar" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold"></span>
+          <div class="min-w-0">
+            <p id="sheetName" class="truncate text-base font-semibold text-ink-900"></p>
+            <p id="sheetMeta" class="truncate text-xs text-ink-500"></p>
+          </div>
+        </div>
+        <dl id="sheetTotals" class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"></dl>
+      </div>
+
+      <div class="overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-card">
+        <table class="min-w-full divide-y divide-ink-100 text-sm">
+          <thead class="bg-ink-50/60">
+            <tr class="text-left text-xs uppercase tracking-wider text-ink-500">
+              <th class="px-4 py-3 font-semibold">วันที่</th>
+              <th class="px-4 py-3 font-semibold">กะ</th>
+              <th class="px-4 py-3 font-semibold">เข้า</th>
+              <th class="px-4 py-3 font-semibold">ออก</th>
+              <th class="px-4 py-3 font-semibold">ชั่วโมง</th>
+              <th class="px-4 py-3 font-semibold">สาย</th>
+              <th class="px-4 py-3 font-semibold">สถานะ</th>
+            </tr>
+          </thead>
+          <tbody id="sheetBody" class="divide-y divide-ink-100"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <style>
+    .loc-chip { border-color: rgb(226 232 240); background-color: white; color: rgb(71 85 105); }
+    .loc-chip:hover { background-color: rgb(248 250 252); }
+    .loc-chip.loc-on { background-color: rgb(238 242 255); border-color: rgb(199 210 254); color: rgb(67 56 202); }
+    .view-on { background-color: white; color: rgb(67 56 202); box-shadow: 0 1px 2px rgba(15,23,42,.06); }
+    .grid-cell { width: 2.6rem; min-width: 2.6rem; height: 2.2rem; text-align: center; border-bottom: 1px solid rgb(241 245 249); }
+    td.grid-name, th.grid-corner { background: white; }
+    thead .grid-corner, thead .grid-head { background: rgb(248 250 252); }
+  </style>
+
+  <script>
+    (function () {
+      const V2 = window.V2;
+      const DOW_TH = ["จ", "อ", "พ", "พฤ", "ศ", "ส", "อา"]; // Mon..Sun (Python weekday)
+
+      const state = {
+        month: V2.bangkokDate().slice(0, 7), // YYYY-MM
+        location: "all",
+        view: "grid",
+        search: "",
+        data: null,
+        selectedBadge: null,
+      };
+      const THIS_MONTH = V2.bangkokDate().slice(0, 7);
+
+      // ---------- DOM ----------
+      const el = (id) => document.getElementById(id);
+      const monthPicker = el("monthPicker"), prevBtn = el("prevBtn"), nextBtn = el("nextBtn"),
+        thisMonthBtn = el("thisMonthBtn"), searchInput = el("searchInput"), metaLine = el("metaLine"),
+        loading = el("loadingState"), error = el("errorState"), errorText = el("errorText"),
+        empty = el("emptyState"), emptyText = el("emptyText"), retryBtn = el("retryBtn"),
+        gridWrap = el("gridWrap"), gridHeadRow = el("gridHeadRow"), gridBody = el("gridBody"),
+        sheetWrap = el("sheetWrap"), employeeSelect = el("employeeSelect"), backToGrid = el("backToGrid"),
+        sheetAvatar = el("sheetAvatar"), sheetName = el("sheetName"), sheetMeta = el("sheetMeta"),
+        sheetTotals = el("sheetTotals"), sheetBody = el("sheetBody"),
+        viewGridBtn = el("viewGridBtn"), viewSheetBtn = el("viewSheetBtn");
+
+      // ---------- Helpers ----------
+      function addMonth(ym, delta) {
+        const [y, m] = ym.split("-").map(Number);
+        const dt = new Date(Date.UTC(y, m - 1 + delta, 1));
+        return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
+      }
+      function monthLabel(ym) {
+        const [y, m] = ym.split("-").map(Number);
+        return new Intl.DateTimeFormat("th-TH", { month: "long", year: "numeric", timeZone: "UTC" })
+          .format(new Date(Date.UTC(y, m - 1, 1)));
+      }
+      function fmtHours(h) {
+        if (h == null || isNaN(h)) return "—";
+        return (Math.round(h * 10) / 10).toFixed(1);
+      }
+      function locLabel(loc) { return loc === "HF_VILLE" ? "HF Ville" : (loc || "—"); }
+      function roleLabel(r) {
+        const map = { reception: "Reception", housekeeping: "แม่บ้าน", technician: "ช่าง", admin: "Admin" };
+        return r ? (map[r] || r) : "—";
+      }
+      function leaveLabel(t) {
+        const map = { vacation: "ลาพักร้อน", sick: "ลาป่วย", personal: "ลากิจ", public_holiday: "วันหยุดนักขัตฤกษ์" };
+        return map[t] || "ลา";
+      }
+      // Status pill (attendance dimension) for the timesheet.
+      function statusPill(d) {
+        switch (d.status) {
+          case "present": return { text: "มาทำงาน", klass: "bg-good-100 text-good-700" };
+          case "absent": return { text: "ขาด", klass: "bg-bad-100 text-bad-700" };
+          case "leave": return { text: leaveLabel(d.leave_type), klass: "bg-brand-100 text-brand-700" };
+          case "off": return { text: d.leave_type === "public_holiday" ? leaveLabel(d.leave_type) : "หยุด", klass: "bg-off-100 text-off-600" };
+          default: return { text: "—", klass: "bg-ink-100 text-ink-600" };
+        }
+      }
+      // Late cell (punctuality dimension), tiered.
+      function lateCell(d) {
+        if (d.status !== "present") return '<span class="text-ink-300">—</span>';
+        switch (d.late_tier) {
+          case 1: return '<span class="inline-flex items-center rounded-full bg-warn-100 px-2 py-0.5 text-xs font-medium text-warn-700">สาย</span>';
+          case 2: return '<span class="inline-flex items-center rounded-full bg-warn-100 px-2 py-0.5 text-xs font-semibold text-warn-700">สาย · ' + d.late_minutes + ' นาที</span>';
+          case 3: return '<span class="inline-flex items-center rounded-full bg-bad-100 px-2 py-0.5 text-xs font-bold text-bad-700">! สาย ' + d.late_minutes + ' นาที</span>';
+          default: return '<span class="text-good-600">ตรงเวลา</span>';
+        }
+      }
+      // One grid cell descriptor.
+      function gridCell(d) {
+        const dd = d.date.slice(8);
+        if (d.status === "untracked") return { text: "", klass: "text-ink-300 bg-ink-50/40", title: dd + " ไม่ติดตาม" };
+        if (d.status === "off") {
+          const t = d.leave_type === "public_holiday" ? "วันหยุดนักขัตฤกษ์" : "หยุด";
+          return { text: "·", klass: "text-off-400", title: dd + " " + t };
+        }
+        if (d.status === "leave") return { text: "ล", klass: "bg-brand-50 text-brand-600", title: dd + " " + leaveLabel(d.leave_type) };
+        if (d.status === "absent") {
+          const sh = d.shift ? (" · กะ " + d.shift.start_time + "–" + d.shift.end_time) : "";
+          return { text: "✗", klass: "bg-bad-50 text-bad-600 font-semibold", title: dd + " ขาด" + sh };
+        }
+        // present
+        const hours = d.hours_worked != null ? fmtHours(d.hours_worked) : "✓";
+        const inout = (d.first_in || "—") + "–" + (d.last_out || "—");
+        let klass = "text-ink-700", marker = "";
+        if (d.late_tier === 1) { klass = "bg-warn-50 text-warn-700"; marker = "·"; }
+        else if (d.late_tier === 2) { klass = "bg-warn-100 text-warn-700 font-semibold"; marker = "·"; }
+        else if (d.late_tier === 3) { klass = "bg-bad-100 text-bad-700 font-bold"; marker = "!"; }
+        const lateNote = d.late_tier >= 1 ? (" · สาย " + d.late_minutes + " นาที") : "";
+        return { text: hours + (marker ? '<sup class="ml-0.5">' + marker + "</sup>" : ""), klass, title: dd + " " + inout + lateNote };
+      }
+
+      // ---------- View states ----------
+      function hideAll() {
+        [loading, error, empty, gridWrap, sheetWrap].forEach(n => n.classList.add("hidden"));
+      }
+      function showLoading() { hideAll(); loading.classList.remove("hidden"); }
+      function showError(msg) { hideAll(); errorText.textContent = msg; error.classList.remove("hidden"); }
+      function showEmpty(msg) { hideAll(); if (msg) emptyText.textContent = msg; empty.classList.remove("hidden"); }
+
+      function visibleEmployees() {
+        const term = state.search.trim().toLowerCase();
+        const list = (state.data && state.data.employees) || [];
+        if (!term) return list;
+        return list.filter(e =>
+          (e.display_name || "").toLowerCase().includes(term) ||
+          (e.badge_number || "").toLowerCase().includes(term));
+      }
+
+      // ---------- Render: meta ----------
+      function renderMeta() {
+        const list = (state.data && state.data.employees) || [];
+        const shown = visibleEmployees().length;
+        metaLine.textContent =
+          monthLabel(state.month) + " · พนักงาน " + list.length + " คน" +
+          (shown !== list.length ? " · แสดง " + shown : "");
+      }
+
+      // ---------- Render: grid ----------
+      function renderGrid() {
+        const days = state.data.days_in_month;
+        const emps = visibleEmployees();
+
+        // Header: corner + day numbers + totals columns.
+        let head = '<th class="grid-corner grid-cell !w-44 !min-w-[11rem] px-3 text-left font-semibold">พนักงาน</th>';
+        // Use first employee's day array for weekday labels (all share the month).
+        const sample = (state.data.employees[0] && state.data.employees[0].days) || [];
+        for (let i = 0; i < days; i++) {
+          const dow = sample[i] ? sample[i].dow : 0;
+          const weekend = dow === 5 || dow === 6;
+          head += '<th class="grid-head grid-cell ' + (weekend ? "bg-ink-100 " : "") + 'font-medium">' +
+            '<div class="leading-tight">' + (i + 1) + '</div>' +
+            '<div class="text-[10px] text-ink-400">' + DOW_TH[dow] + '</div></th>';
+        }
+        head += '<th class="grid-head grid-cell !w-12 font-semibold text-ink-600">ชม.</th>';
+        head += '<th class="grid-head grid-cell !w-12 font-semibold text-ink-600">สาย</th>';
+        gridHeadRow.innerHTML = head;
+
+        // Body rows.
+        gridBody.innerHTML = "";
+        emps.forEach(e => {
+          const tr = document.createElement("tr");
+          tr.className = "hover:bg-ink-50/40";
+          const avatar = V2.avatarColor(e.badge_number || e.display_name || "");
+          const initials = V2.escapeHtml(V2.initials(e.display_name || e.badge_number || "?"));
+          const name = V2.escapeHtml(e.display_name || ("บัตร " + (e.badge_number || "?")));
+
+          let cells =
+            '<td class="grid-name grid-cell !w-44 !min-w-[11rem] cursor-pointer px-3 text-left hover:bg-ink-50" data-badge="' + V2.escapeHtml(e.badge_number) + '">' +
+              '<div class="flex items-center gap-2">' +
+                '<span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ' + avatar + '">' + initials + '</span>' +
+                '<span class="truncate font-medium text-ink-800">' + name + '</span>' +
+              '</div>' +
+            '</td>';
+
+          e.days.forEach(d => {
+            const c = gridCell(d);
+            cells += '<td class="grid-cell cursor-pointer tabular-nums ' + c.klass + '" data-badge="' +
+              V2.escapeHtml(e.badge_number) + '" title="' + V2.escapeHtml(c.title) + '">' + c.text + '</td>';
+          });
+
+          const t = e.totals;
+          cells += '<td class="grid-cell tabular-nums font-semibold text-ink-800">' + fmtHours(t.hours_total) + '</td>';
+          cells += '<td class="grid-cell tabular-nums ' + (t.late_count ? "font-semibold text-warn-700" : "text-ink-400") + '">' + (t.late_count || "0") + '</td>';
+
+          tr.innerHTML = cells;
+          gridBody.appendChild(tr);
+        });
+
+        if (emps.length === 0) { showEmpty("ไม่พบพนักงานที่ตรงกับการค้นหา"); return; }
+        hideAll(); gridWrap.classList.remove("hidden");
+      }
+
+      // ---------- Render: timesheet ----------
+      function renderEmployeeSelect() {
+        const emps = (state.data && state.data.employees) || [];
+        employeeSelect.innerHTML = emps.map(e =>
+          '<option value="' + V2.escapeHtml(e.badge_number) + '">' +
+          V2.escapeHtml((e.display_name || ("บัตร " + e.badge_number)) + " · " + locLabel(e.location)) +
+          '</option>').join("");
+        if (state.selectedBadge) employeeSelect.value = state.selectedBadge;
+      }
+
+      function totalCard(label, value, klass) {
+        return '<div class="rounded-lg bg-ink-50 px-3 py-2">' +
+          '<dt class="text-[11px] text-ink-400">' + label + '</dt>' +
+          '<dd class="mt-0.5 text-base font-semibold tabular-nums ' + (klass || "text-ink-800") + '">' + value + '</dd></div>';
+      }
+
+      function renderSheet() {
+        const emps = (state.data && state.data.employees) || [];
+        if (emps.length === 0) { showEmpty(); return; }
+        if (!state.selectedBadge || !emps.some(e => e.badge_number === state.selectedBadge)) {
+          state.selectedBadge = emps[0].badge_number;
+        }
+        renderEmployeeSelect();
+        const e = emps.find(x => x.badge_number === state.selectedBadge);
+
+        sheetAvatar.className = "flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold " +
+          V2.avatarColor(e.badge_number || e.display_name || "");
+        sheetAvatar.textContent = V2.initials(e.display_name || e.badge_number || "?");
+        sheetName.textContent = e.display_name || ("บัตร " + e.badge_number);
+        sheetMeta.textContent = "#" + e.badge_number + " · " + roleLabel(e.role) + " · " + locLabel(e.location) + " · " + monthLabel(state.month);
+
+        const t = e.totals;
+        sheetTotals.innerHTML =
+          totalCard("ทำงาน (วัน)", t.worked_days) +
+          totalCard("ชั่วโมงรวม", fmtHours(t.hours_total)) +
+          totalCard("สาย (ครั้ง)", t.late_count, t.late_count ? "text-warn-700" : "") +
+          totalCard("สายรวม (นาที)", t.late_minutes_total, t.late_minutes_total ? "text-warn-700" : "") +
+          totalCard("สาย ≥30 น.", t.severe_count, t.severe_count ? "text-bad-700" : "") +
+          totalCard("ขาด / ลา / หยุด", t.absent_days + " / " + t.leave_days + " / " + t.off_days, t.absent_days ? "text-bad-700" : "");
+
+        sheetBody.innerHTML = "";
+        e.days.forEach(d => {
+          const dd = d.date.slice(8);
+          const dow = DOW_TH[d.dow];
+          const pill = statusPill(d);
+          const shiftText = d.shift
+            ? V2.escapeHtml(d.shift.name_th) + ' <span class="text-ink-400 tabular-nums">' + d.shift.start_time + "–" + d.shift.end_time + (d.shift.crosses_midnight ? "*" : "") + "</span>"
+            : '<span class="text-ink-300">—</span>';
+          const weekend = d.dow === 5 || d.dow === 6;
+          const tr = document.createElement("tr");
+          tr.className = "hover:bg-ink-50/50" + (weekend ? " bg-ink-50/30" : "");
+          tr.innerHTML =
+            '<td class="px-4 py-2.5 whitespace-nowrap"><span class="font-medium tabular-nums text-ink-800">' + dd + '</span> <span class="text-xs text-ink-400">' + dow + '</span></td>' +
+            '<td class="px-4 py-2.5 text-ink-700">' + shiftText + '</td>' +
+            '<td class="px-4 py-2.5 tabular-nums text-ink-700">' + (d.first_in ? V2.escapeHtml(d.first_in) : '<span class="text-ink-300">—</span>') + '</td>' +
+            '<td class="px-4 py-2.5 tabular-nums text-ink-700">' + (d.last_out ? V2.escapeHtml(d.last_out) : '<span class="text-ink-300">—</span>') + '</td>' +
+            '<td class="px-4 py-2.5 tabular-nums font-semibold text-ink-800">' + fmtHours(d.hours_worked) + '</td>' +
+            '<td class="px-4 py-2.5">' + lateCell(d) + '</td>' +
+            '<td class="px-4 py-2.5"><span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' + pill.klass + '">' + pill.text + '</span></td>';
+          sheetBody.appendChild(tr);
+        });
+
+        hideAll(); sheetWrap.classList.remove("hidden");
+      }
+
+      // ---------- Render dispatch ----------
+      function render() {
+        if (!state.data) return;
+        renderMeta();
+        if (!state.data.employees || state.data.employees.length === 0) { showEmpty(); return; }
+        if (state.view === "grid") renderGrid();
+        else renderSheet();
+      }
+
+      function setView(v) {
+        state.view = v;
+        viewGridBtn.classList.toggle("view-on", v === "grid");
+        viewSheetBtn.classList.toggle("view-on", v === "timesheet");
+        render();
+      }
+
+      // ---------- Data ----------
+      async function load() {
+        showLoading();
+        const [y, m] = state.month.split("-");
+        try {
+          let url = "/api/private/attendance/monthly/" + y + "/" + Number(m);
+          if (state.location && state.location !== "all") url += "?location=" + encodeURIComponent(state.location);
+          state.data = await V2.apiFetch(url);
+          render();
+        } catch (err) {
+          if (err.status === 404) showError("ยังไม่มีหน้ารายงานรายเดือนบนเซิร์ฟเวอร์นี้");
+          else showError("ไม่สามารถโหลดรายงานได้ (" + (err.status || "เครือข่าย") + ")");
+        }
+      }
+
+      // ---------- Wire up ----------
+      function setMonth(ym) {
+        state.month = ym;
+        monthPicker.value = ym;
+        nextBtn.disabled = ym >= THIS_MONTH;
+        nextBtn.classList.toggle("opacity-40", nextBtn.disabled);
+        nextBtn.classList.toggle("cursor-not-allowed", nextBtn.disabled);
+        load();
+      }
+      monthPicker.addEventListener("change", () => { if (monthPicker.value) setMonth(monthPicker.value); });
+      prevBtn.addEventListener("click", () => setMonth(addMonth(state.month, -1)));
+      nextBtn.addEventListener("click", () => { if (state.month < THIS_MONTH) setMonth(addMonth(state.month, 1)); });
+      thisMonthBtn.addEventListener("click", () => setMonth(THIS_MONTH));
+      retryBtn.addEventListener("click", load);
+
+      viewGridBtn.addEventListener("click", () => setView("grid"));
+      viewSheetBtn.addEventListener("click", () => setView("timesheet"));
+      backToGrid.addEventListener("click", () => setView("grid"));
+      employeeSelect.addEventListener("change", () => { state.selectedBadge = employeeSelect.value; renderSheet(); });
+
+      // Click an employee name / cell in the grid -> open their timesheet.
+      gridBody.addEventListener("click", (ev) => {
+        const cell = ev.target.closest("[data-badge]");
+        if (!cell) return;
+        state.selectedBadge = cell.getAttribute("data-badge");
+        setView("timesheet");
+      });
+
+      let searchTimer = null;
+      searchInput.addEventListener("input", () => {
+        if (searchTimer) clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => { state.search = searchInput.value || ""; render(); }, 120);
+      });
+
+      const locChips = Array.from(document.querySelectorAll(".loc-chip[data-location]"));
+      locChips.forEach(btn => btn.addEventListener("click", () => {
+        locChips.forEach(b => b.classList.remove("loc-on"));
+        btn.classList.add("loc-on");
+        state.location = btn.getAttribute("data-location") || "all";
+        load();
+      }));
+
+      // Boot
+      setView("grid");
+      setMonth(state.month);
+    })();
+  </script>
+</body>
+</html>
