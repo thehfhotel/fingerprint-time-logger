@@ -303,6 +303,8 @@ class TestMonthlyMissingCheckout:
         assert day["status"] == "present"
         assert day["first_in"] == "08:45"
         assert day["last_out"] == "17:00"      # assumed shift end
+        assert day["check_in_assumed"] is False   # real punch
+        assert day["check_out_assumed"] is True    # assumed from schedule
         assert day["hours_worked"] == 8.25     # 08:45 -> 17:00
         assert day["late_minutes"] == 45
         assert day["late_tier"] == 3
@@ -347,6 +349,8 @@ class TestMonthlyMissingCheckout:
         assert day["status"] == "present"
         assert day["first_in"] == "07:00"      # assumed shift start
         assert day["last_out"] == "16:01"
+        assert day["check_in_assumed"] is True     # assumed from schedule
+        assert day["check_out_assumed"] is False   # real punch
         assert day["hours_worked"] == 9.02     # 07:00 -> 16:01
         assert day["late_minutes"] == 0
         assert day["late_tier"] == 0
@@ -402,6 +406,8 @@ class TestMonthlyMissingCheckout:
         day = _emp(monthly_client.get(_path(2026, 5)).json(), "MT1")["days"][0]
         assert day["first_in"] == "08:00"
         assert day["last_out"] == "12:15"      # explicit early check-out honored
+        assert day["check_in_assumed"] is False    # both punches are real
+        assert day["check_out_assumed"] is False
         assert day["hours_worked"] == 4.25
         assert day["late_minutes"] == 0
 

@@ -728,6 +728,8 @@ def _build_month_day(
         "status": _MONTH_STATUS_OFF,
         "late_minutes": 0,
         "late_tier": 0,
+        "check_in_assumed": False,
+        "check_out_assumed": False,
         "leave_type": None,
         "leave_note": None,
     }
@@ -817,6 +819,12 @@ def _build_month_day(
         "status": _MONTH_STATUS_PRESENT,
         "late_minutes": late_min,
         "late_tier": _late_tier(late_min),
+        # No real punch on a side → the time is assumed from the schedule
+        # (check-in = shift start, check-out = shift end). Flagged so the UI
+        # can mark it (e.g. with a "*") instead of passing it off as a real
+        # scan.
+        "check_in_assumed": not ins,
+        "check_out_assumed": not outs,
     })
     return row
 
