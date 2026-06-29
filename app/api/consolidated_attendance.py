@@ -759,9 +759,12 @@ def _build_month_day(
         row["status"] = _MONTH_STATUS_ABSENT
         return row
 
-    # Split punches into check-ins and check-outs. Prefer the explicit
-    # punch_type (0=in, 1=out); for the unspecified majority (type 255) fall
-    # back to POSITION within the shift — first half = in, second half = out.
+    # Split punches into check-ins and check-outs. POSITION within the shift
+    # is the primary signal (first half = in, second half = out): the device
+    # punch_type is too noisy to lead — morning night-shift check-outs get
+    # tagged "check_in" and start-of-shift punches "check_out" — so the
+    # explicit type (0=in, 1=out) only breaks ties within ±60 min of the
+    # shift midpoint, where position is genuinely ambiguous.
     # Then check_in = earliest in, check_out = latest out, assuming the
     # missing side from the schedule:
     #   • only check-in(s)  → assume check-out at the shift's end
@@ -777,11 +780,12 @@ def _build_month_day(
     outs: List[datetime] = []
     for ts, pt in in_window:
         bkk = _to_bangkok(ts)
-        if pt == _PUNCH_TYPE_IN:
+        near_mid = abs((bkk - shift_mid_bkk).total_seconds()) <= 3600
+        if near_mid and pt == _PUNCH_TYPE_IN:
             ins.append(bkk)
-        elif pt == _PUNCH_TYPE_OUT:
+        elif near_mid and pt == _PUNCH_TYPE_OUT:
             outs.append(bkk)
-        elif bkk <= shift_mid_bkk:   # unspecified type → infer by position
+        elif bkk <= shift_mid_bkk:   # position is the primary signal
             ins.append(bkk)
         else:
             outs.append(bkk)

@@ -386,6 +386,25 @@ class TestMonthlyMissingCheckout:
         assert day["hours_worked"] == 9.08     # 07:00 -> 16:05
         assert day["late_minutes"] == 0
 
+    def test_punch_type_breaks_tie_near_midshift(
+        self, monthly_client, monthly_session, seed_device, seeded_shifts
+    ):
+        """Near the shift midpoint (ambiguous), an explicit punch_type wins:
+        an 08:00 check-in + a 12:15 punch typed check-out (within ±60 min of
+        the 12:30 midpoint) is an early check-out, not assumed-to-end."""
+        _make_employee(monthly_session, "MT1", "MidTie", role="reception", location="HF")
+        _assign(monthly_session, "MT1", date_type(2026, 5, 1), seeded_shifts["NORMAL"])
+        _add_punch(monthly_session, "MT1", seed_device.id,
+                   datetime(2026, 5, 1, 8, 0, tzinfo=BANGKOK_TZ), punch_type=0)
+        _add_punch(monthly_session, "MT1", seed_device.id,
+                   datetime(2026, 5, 1, 12, 15, tzinfo=BANGKOK_TZ), punch_type=1)
+
+        day = _emp(monthly_client.get(_path(2026, 5)).json(), "MT1")["days"][0]
+        assert day["first_in"] == "08:00"
+        assert day["last_out"] == "12:15"      # explicit early check-out honored
+        assert day["hours_worked"] == 4.25
+        assert day["late_minutes"] == 0
+
 
 class TestMonthlyLeavesAndHolidays:
     def test_vacation_is_leave(self, monthly_client, monthly_session,
