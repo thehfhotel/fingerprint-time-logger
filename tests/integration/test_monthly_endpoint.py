@@ -552,6 +552,46 @@ class TestMonthlyPending:
         assert row["status"] == "pending"
 
 
+class TestMonthlyInProgressCheckout:
+    """Checked in but the shift hasn't ended yet: don't fabricate a check-out
+    at the scheduled end — leave it blank (unknown) until the shift is over.
+    Driven directly on _build_month_day with a controlled `now_bkk`."""
+
+    @staticmethod
+    def _row(shift, day, now, punch_bkk):
+        eff = EffectiveShift(shift=shift, is_off=False, source="role_default", role="reception")
+        punches = [(_bangkok_to_utc_naive(punch_bkk), 0)]
+        return _build_month_day(
+            None, day, eff, punches,
+            today=day, now_bkk=now, holiday=None, leave=None,
+        )
+
+    def test_in_progress_leaves_checkout_blank(self, seeded_shifts):
+        day = date_type(2026, 6, 15)
+        row = self._row(
+            seeded_shifts["MORNING"], day,                      # 07:00–16:00
+            datetime(2026, 6, 15, 14, 0, tzinfo=BANGKOK_TZ),    # now: before 16:00
+            datetime(2026, 6, 15, 6, 50, tzinfo=BANGKOK_TZ),    # checked in early
+        )
+        assert row["status"] == "present"
+        assert row["first_in"] == "06:50"
+        assert row["last_out"] is None              # NOT assumed — still on shift
+        assert row["check_out_assumed"] is False
+        assert row["hours_worked"] is None
+
+    def test_after_shift_end_assumes_checkout(self, seeded_shifts):
+        day = date_type(2026, 6, 15)
+        row = self._row(
+            seeded_shifts["MORNING"], day,
+            datetime(2026, 6, 15, 18, 0, tzinfo=BANGKOK_TZ),    # now: after 16:00
+            datetime(2026, 6, 15, 6, 50, tzinfo=BANGKOK_TZ),
+        )
+        assert row["status"] == "present"
+        assert row["last_out"] == "16:00"           # assumed scheduled end
+        assert row["check_out_assumed"] is True
+        assert row["hours_worked"] is not None
+
+
 class TestMonthlyValidation:
     def test_bad_month(self, monthly_client):
         assert monthly_client.get(_path(2026, 13)).status_code == 400

@@ -789,7 +789,9 @@ def _build_month_day(
     # shift midpoint, where position is genuinely ambiguous.
     # Then check_in = earliest in, check_out = latest out, assuming the
     # missing side from the schedule:
-    #   • only check-in(s)  → assume check-out at the shift's end
+    #   • only check-in(s)  → assume check-out at the shift's end, but only
+    #     once that end has passed; while the shift is still running the
+    #     check-out stays blank (don't fabricate a future punch-out)
     #   • only check-out(s) (e.g. a lone 07:07 punch on a 22:00–07:00 night
     #     shift, or several check-out logs) → assume check-in at the shift's
     #     start; lateness is then unknown, so the day is on-time, not a huge
@@ -813,27 +815,40 @@ def _build_month_day(
             outs.append(bkk)
 
     check_in = min(ins) if ins else shift_start_bkk
-    check_out = max(outs) if outs else shift_end_bkk
     late_min = _late_minutes(check_in, shift_start_bkk) if ins else 0
+
+    # Check-out: a real punch wins. With no punch-out, assume the scheduled end
+    # ONLY once that end has actually passed — don't invent a check-out for a
+    # shift still in progress (now < end), or the hours would balloon. While
+    # it's in progress the check-out is left blank (unknown), not assumed.
+    if outs:
+        check_out = max(outs)
+        check_out_assumed = False
+    elif now_bkk >= shift_end_bkk:
+        check_out = shift_end_bkk
+        check_out_assumed = True
+    else:
+        check_out = None
+        check_out_assumed = False
 
     hours = (
         round((check_out - check_in).total_seconds() / 3600, 2)
-        if check_out > check_in else None
+        if check_out is not None and check_out > check_in else None
     )
 
     row.update({
         "first_in": check_in.strftime("%H:%M"),
-        "last_out": check_out.strftime("%H:%M"),
+        "last_out": check_out.strftime("%H:%M") if check_out is not None else None,
         "hours_worked": hours,
         "status": _MONTH_STATUS_PRESENT,
         "late_minutes": late_min,
         "late_tier": _late_tier(late_min),
-        # No real punch on a side → the time is assumed from the schedule
-        # (check-in = shift start, check-out = shift end). Flagged so the UI
-        # can mark it (e.g. with a "*") instead of passing it off as a real
-        # scan.
+        # A side with no real punch is assumed from the schedule (check-in =
+        # shift start, check-out = shift end) and flagged so the UI marks it
+        # with "*" instead of passing it off as a real scan. The check-out is
+        # only assumed once the shift has ended.
         "check_in_assumed": not ins,
-        "check_out_assumed": not outs,
+        "check_out_assumed": check_out_assumed,
     })
     return row
 
