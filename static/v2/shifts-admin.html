@@ -60,6 +60,7 @@
       <button data-tab="roles" class="tab tab-on px-4 py-2 text-sm font-medium">บทบาท + กะหลัก</button>
       <button data-tab="roster" class="tab px-4 py-2 text-sm font-medium">ตารางกะรายวัน (Reception)</button>
       <button data-tab="leaves" class="tab px-4 py-2 text-sm font-medium">วันลา</button>
+      <button data-tab="holidays" class="tab px-4 py-2 text-sm font-medium">วันหยุด</button>
     </div>
 
     <!-- TAB: Roles + default shift -->
@@ -146,8 +147,9 @@
          public_holiday leave type — admins now mark each employee's
          holiday individually (or pick "นข" directly from the roster
          cell), which gives them per-branch / per-employee control. -->
-    <section id="tabLeaves" class="tab-pane hidden">
-      <div class="grid items-start gap-4 lg:grid-cols-2">
+    <!-- TAB: Public holidays (company-wide) -->
+    <section id="tabHolidays" class="tab-pane hidden">
+      <div class="max-w-2xl">
 
         <!-- ----- Company-wide public holidays -----
              Re-added 2026-06: a company-wide holiday pane backed by the
@@ -211,6 +213,12 @@
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- TAB: Employee leaves -->
+    <section id="tabLeaves" class="tab-pane hidden">
+      <div class="max-w-2xl">
 
         <!-- ----- Employee leaves ----- -->
         <div class="rounded-2xl border border-ink-200 bg-white p-4 shadow-card">
@@ -348,9 +356,10 @@
       // ---------- Tab switching ----------
       const tabs = Array.from(document.querySelectorAll(".tab[data-tab]"));
       const panes = {
-        roles:  document.getElementById("tabRoles"),
-        roster: document.getElementById("tabRoster"),
-        leaves: document.getElementById("tabLeaves"),
+        roles:    document.getElementById("tabRoles"),
+        roster:   document.getElementById("tabRoster"),
+        leaves:   document.getElementById("tabLeaves"),
+        holidays: document.getElementById("tabHolidays"),
       };
       tabs.forEach(t => t.addEventListener("click", () => {
         const target = t.getAttribute("data-tab");
@@ -358,6 +367,7 @@
         Object.entries(panes).forEach(([k, el]) => el.classList.toggle("hidden", k !== target));
         if (target === "roster") loadRoster();
         if (target === "leaves") loadLeavesTab();
+        if (target === "holidays") loadHolidaysForYear();
       }));
 
       // ---------- Boot ----------
@@ -1452,8 +1462,6 @@
         leaveMonthLabel.textContent = thaiPeriodLabel(rosterStart);
         if (!leaveDateFrom.value) leaveDateFrom.value = rosterStart;
         if (!leaveDateTo.value) leaveDateTo.value = rosterStart;
-        // Company-wide public holidays load independently (year-scoped).
-        loadHolidaysForYear();
       }
 
       function populateLeaveEmployeeSelect() {

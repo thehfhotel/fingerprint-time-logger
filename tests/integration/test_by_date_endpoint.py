@@ -738,3 +738,21 @@ class TestByDateLeavesAndHolidays:
         row = resp.json()["rows"][0]
         assert row["status"] == "off"
         assert row["leave_type"] is None
+
+    def test_holiday_does_not_apply_to_reception(
+        self, by_date_client, by_date_session, seed_device, seeded_shifts
+    ):
+        """Reception works on public holidays — assigned + punched reads as
+        on_time, not 'off (public_holiday)'."""
+        _make_employee(by_date_session, "RC9", "RecepHol", role="reception")
+        _assign(by_date_session, "RC9", date_type(2026, 5, 14), seeded_shifts["MID"])
+        by_date_session.add(PublicHoliday(date=date_type(2026, 5, 14), name="Holiday"))
+        by_date_session.commit()
+        _add_punch(
+            by_date_session, "RC9", seed_device.id,
+            datetime(2026, 5, 14, 11, 0, tzinfo=BANGKOK_TZ),  # MID 11:00 start
+        )
+        client, _ = by_date_client
+        row = client.get(BY_DATE_PATH, params={"date": "2026-05-14"}).json()["rows"][0]
+        assert row["status"] == "on_time"
+        assert row["leave_type"] is None

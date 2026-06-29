@@ -435,6 +435,33 @@ class TestMonthlyLeavesAndHolidays:
         assert day["status"] == "off"
         assert day["leave_type"] == "public_holiday"
 
+    def test_holiday_does_not_apply_to_reception(self, monthly_client, monthly_session,
+                                                 seed_device, seeded_shifts):
+        """Hotels run on holidays — a company-wide public holiday marks
+        non-reception staff off, but reception follows its roster."""
+        monthly_session.add(PublicHoliday(date=date_type(2026, 5, 5), name="วันหยุด"))
+        monthly_session.commit()
+        # reception assigned + punched on the holiday → present (works it)
+        _make_employee(monthly_session, "RH1", "RecepWorks", role="reception", location="HF")
+        _assign(monthly_session, "RH1", date_type(2026, 5, 5), seeded_shifts["NORMAL"])
+        _add_punch(monthly_session, "RH1", seed_device.id,
+                   datetime(2026, 5, 5, 8, 0, tzinfo=BANGKOK_TZ))
+        # reception with no roster assignment → off (normal off, not holiday)
+        _make_employee(monthly_session, "RH2", "RecepOff", role="reception", location="HF")
+        # non-reception → off for the public holiday
+        _make_employee(monthly_session, "TH1", "TechHoliday", role="technician")
+
+        body = monthly_client.get(_path(2026, 5)).json()
+        rh1 = _emp(body, "RH1")["days"][4]
+        assert rh1["status"] == "present"
+        assert rh1["leave_type"] is None
+        rh2 = _emp(body, "RH2")["days"][4]
+        assert rh2["status"] == "off"
+        assert rh2["leave_type"] is None          # scheduled off, not a holiday
+        th1 = _emp(body, "TH1")["days"][4]
+        assert th1["status"] == "off"
+        assert th1["leave_type"] == "public_holiday"
+
 
 class TestMonthlyFutureDays:
     """Upcoming days (after today) carry no attendance result — status

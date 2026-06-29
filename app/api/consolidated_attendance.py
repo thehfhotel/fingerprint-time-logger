@@ -548,8 +548,9 @@ def _build_shift_row(
     """
     # Public holiday wins over an employee's personal leave for label
     # purposes — the holiday is more informative (everyone is off for
-    # the same reason). They never co-occur in normal operation.
-    if holiday is not None:
+    # the same reason). They never co-occur in normal operation. Reception
+    # is exempt: hotels run on holidays, so front desk follows its roster.
+    if holiday is not None and eff.role != "reception":
         return {
             "badge_number": employee.badge_number,
             "display_name": _resolve_display_name(employee),
@@ -736,7 +737,10 @@ def _build_month_day(
         row["status"] = _MONTH_STATUS_FUTURE
         return row
 
-    if holiday is not None:
+    # Public holidays don't apply to reception — hotels run on holidays, so
+    # front desk follows its roster. (A specific reception person can still be
+    # given the day off via a per-employee leave.)
+    if holiday is not None and eff.role != "reception":
         row["leave_type"] = "public_holiday"
         row["leave_note"] = holiday.name
         return row

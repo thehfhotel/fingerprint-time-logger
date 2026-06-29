@@ -20,7 +20,7 @@ resolution rules change.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
 from typing import Optional
 
@@ -108,6 +108,10 @@ class EffectiveShift:
     source: str  # 'override' | 'override_off' | 'schedule' |
                  # 'schedule_off_day' | 'schedule_reception_off' |
                  # 'employee_default' | 'role_default' | 'untracked'
+    # Role in force on the resolved date (schedule version's role, else the
+    # employee's current role). Lets callers apply role-specific rules, e.g.
+    # public holidays don't apply to reception. None = untracked/no role.
+    role: Optional[str] = None
 
 
 def _schedule_as_of(
@@ -218,10 +222,26 @@ def effective_shift(
 ) -> EffectiveShift:
     """Resolve which shift applies to ``employee`` on ``on_date``.
 
-    Three-tier precedence:
+    Returns an EffectiveShift carrying the resolved shift/is_off/source plus
+    ``role`` — the role in force on that date (the schedule version's role,
+    else the employee's current role) — so callers can apply role-specific
+    rules (e.g. public holidays don't apply to reception). See _resolve_shift
+    for the three-tier precedence.
+    """
+    version = _schedule_as_of(db, employee.badge_number, on_date)
+    eff_role = version.role if version is not None else employee.role
+    return replace(_resolve_shift(db, employee, on_date, version), role=eff_role)
+
+
+def _resolve_shift(
+    db: Session,
+    employee: Employee,
+    on_date: date_type,
+    version: Optional[EmployeeSchedule],
+) -> EffectiveShift:
+    """Three-tier shift resolution (role is attached by effective_shift):
       1. ShiftAssignment for (badge, on_date), including shift_id NULL.
-      2. The schedule version in force as-of ``on_date`` (the
-         EmployeeSchedule row with the greatest effective_from <= on_date):
+      2. The schedule ``version`` in force as-of ``on_date``:
          reception → off; explicit work_days/hours → schedule or off-day;
          role with a default → role_default; otherwise untracked.
       3. No schedule version → the legacy fallback (employee default,
@@ -242,7 +262,6 @@ def effective_shift(
             return EffectiveShift(shift=None, is_off=True, source="override_off")
         return EffectiveShift(shift=override.shift, is_off=False, source="override")
 
-    version = _schedule_as_of(db, employee.badge_number, on_date)
     if version is not None:
         return _resolve_from_schedule(db, version, on_date)
 
