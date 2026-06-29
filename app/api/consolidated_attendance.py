@@ -648,6 +648,7 @@ _MONTH_STATUS_ABSENT = "absent"      # had a shift, no punches in window
 _MONTH_STATUS_PRESENT = "present"    # had a shift and punched
 _MONTH_STATUS_UNTRACKED = "untracked"  # no role/shift — excluded from totals
 _MONTH_STATUS_FUTURE = "future"      # day not reached yet — blank, excluded
+_MONTH_STATUS_PENDING = "pending"    # today, shift not started yet — waiting
 
 
 def _empty_month_totals() -> Dict[str, Any]:
@@ -711,6 +712,7 @@ def _build_month_day(
     punches: List[tuple],
     *,
     today: date,
+    now_bkk: datetime,
     holiday: Optional[PublicHoliday],
     leave: Optional[EmployeeLeave],
 ) -> Dict[str, Any]:
@@ -769,7 +771,14 @@ def _build_month_day(
     row["shift"] = _shift_summary(shift)
 
     if not in_window:
-        row["status"] = _MONTH_STATUS_ABSENT
+        # On today, a scheduled shift whose start time hasn't arrived yet is
+        # not "absent" — it's pending ("waiting to start"). Excluded from
+        # totals, like future days. A shift already underway (or past) with no
+        # punch stays absent.
+        if day == today and now_bkk < window.shift_start_bkk:
+            row["status"] = _MONTH_STATUS_PENDING
+        else:
+            row["status"] = _MONTH_STATUS_ABSENT
         return row
 
     # Split punches into check-ins and check-outs. POSITION within the shift
@@ -863,7 +872,8 @@ async def get_attendance_monthly(
     month_start = date(year, month, 1)
     month_end = date(year, month, days_in_month)
     all_days = [date(year, month, d) for d in range(1, days_in_month + 1)]
-    today_bkk = datetime.now(BANGKOK_TZ).date()
+    now_bkk = datetime.now(BANGKOK_TZ)
+    today_bkk = now_bkk.date()
 
     # Extended UTC range covering every shift window in the month: a few
     # hours before the 1st (early arrivals / the −2h window buffer) and two
@@ -912,6 +922,7 @@ async def get_attendance_monthly(
             day_row = _build_month_day(
                 employee, day, eff, punches,
                 today=today_bkk,
+                now_bkk=now_bkk,
                 holiday=holidays_by_date.get(day),
                 leave=leaves_by_key.get((employee.badge_number, day)),
             )
@@ -921,6 +932,8 @@ async def get_attendance_monthly(
             if status in (_MONTH_STATUS_UNTRACKED, _MONTH_STATUS_FUTURE):
                 continue
             tracked_any = True
+            if status == _MONTH_STATUS_PENDING:
+                continue  # scheduled today but shift not started — no total yet
             if status == _MONTH_STATUS_PRESENT:
                 totals["worked_days"] += 1
                 if day_row["hours_worked"] is not None:

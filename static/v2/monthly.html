@@ -142,6 +142,7 @@
         <span><span class="rounded bg-warn-100 px-1 font-semibold text-warn-700">·</span> สาย</span>
         <span><span class="rounded bg-bad-100 px-1 font-bold text-bad-700">!</span> สาย ≥ 30 นาที</span>
         <span><span class="rounded bg-bad-100 px-1 font-semibold text-bad-700">ขาด</span> = ขาดงาน</span>
+        <span><span class="rounded bg-ink-100 px-1 text-ink-500">รอ</span> = รอเริ่มงาน (ยังไม่ถึงเวลาเข้ากะ)</span>
         <span><span class="rounded bg-off-100 px-1 text-off-600">หยุด</span> = วันหยุด</span>
         <span><span class="rounded bg-brand-50 px-1 text-brand-600">ลา</span> = ลา/วันหยุดนักขัตฤกษ์</span>
         <span><span class="font-semibold text-ink-700">*</span> เวลาเข้า/ออก = ประมาณจากกะ (ไม่มีตอกบัตร)</span>
@@ -324,6 +325,7 @@
         switch (d.status) {
           case "present": return { text: "มาทำงาน", klass: "bg-good-100 text-good-700" };
           case "absent": return { text: "ขาด", klass: "bg-bad-100 text-bad-700" };
+          case "pending": return { text: "รอเริ่มงาน", klass: "bg-ink-100 text-ink-500" };
           case "leave": return { text: leaveLabel(d.leave_type), klass: "bg-brand-100 text-brand-700" };
           case "off": return { text: d.leave_type === "public_holiday" ? leaveLabel(d.leave_type) : "หยุด", klass: "bg-off-100 text-off-600" };
           case "future": return { text: "—", klass: "bg-ink-50 text-ink-300" };
@@ -353,6 +355,10 @@
         if (d.status === "absent") {
           const sh = d.shift ? (" · กะ " + d.shift.start_time + "–" + d.shift.end_time) : "";
           return { text: "ขาด", klass: "bg-bad-100 text-bad-700 text-[10px] font-semibold", title: dd + " ขาด" + sh };
+        }
+        if (d.status === "pending") {
+          const sh = d.shift ? (" · กะ " + d.shift.start_time + "–" + d.shift.end_time) : "";
+          return { text: "รอ", klass: "bg-ink-100 text-ink-500 text-[10px]", title: dd + " รอเริ่มงาน" + sh };
         }
         // present
         const hours = fmtHours(d.hours_worked);
@@ -554,11 +560,13 @@
         const presentCount = allRows.filter(r => r.day.status === "present").length;
         const lateCount = allRows.filter(r => r.day.status === "present" && r.day.late_tier >= 1).length;
         const absentCount = allRows.filter(r => r.day.status === "absent").length;
+        const pendingCount = allRows.filter(r => r.day.status === "pending").length;
         metaLine.textContent =
           dateLabelTH(state.date) +
           " · มาทำงาน " + presentCount +
           " · สาย " + lateCount +
           " · ขาด " + absentCount +
+          (pendingCount ? " · รอเริ่มงาน " + pendingCount : "") +
           (shownRows.length !== allRows.length ? " · แสดง " + shownRows.length : "");
 
         if (allRows.length === 0) { showEmpty("ไม่มีพนักงานที่ตั้งกะในวันนี้"); return; }

@@ -22,12 +22,14 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.consolidated_attendance import _build_month_day
 from app.core.database import Base, get_db
 from app.main_unified import app
 from app.models.models import (
     AttendanceRecord, Device, Employee, EmployeeLeave, PublicHoliday,
     Shift, ShiftAssignment,
 )
+from app.services.shift_service import EffectiveShift
 from app.utils.timezone import BANGKOK_TZ
 
 
@@ -489,11 +491,65 @@ class TestMonthlyFutureDays:
                 assert d["first_in"] is None and d["hours_worked"] is None
             else:
                 assert d["status"] != "future", d
-        past_count = sum(
-            1 for d in emp["days"] if date_type.fromisoformat(d["date"]) <= today
+        # Past no-punch days are 'absent'; today may be 'pending' (shift not
+        # started yet) rather than 'absent'. Totals match the per-day statuses,
+        # and no future day ever counts as absent.
+        absent_in_days = sum(1 for d in emp["days"] if d["status"] == "absent")
+        assert emp["totals"]["absent_days"] == absent_in_days
+        assert all(
+            d["status"] != "absent"
+            for d in emp["days"]
+            if date_type.fromisoformat(d["date"]) > today
         )
-        # totals reflect only up-to-today; future days never count as absent
-        assert emp["totals"]["absent_days"] == past_count
+        today_row = next(
+            d for d in emp["days"] if date_type.fromisoformat(d["date"]) == today
+        )
+        assert today_row["status"] in ("absent", "pending")
+
+
+class TestMonthlyPending:
+    """A scheduled shift on TODAY whose start time hasn't arrived yet is
+    'pending' (รอเริ่มงาน), not 'absent'. Driven directly on _build_month_day
+    with a controlled `now_bkk` so the assertions don't depend on wall-clock."""
+
+    @staticmethod
+    def _eff(shift):
+        return EffectiveShift(shift=shift, is_off=False, source="role_default", role="reception")
+
+    @staticmethod
+    def _row(shift, day, today, now):
+        return _build_month_day(
+            None, day, TestMonthlyPending._eff(shift), [],
+            today=today, now_bkk=now, holiday=None, leave=None,
+        )
+
+    def test_today_before_shift_start_is_pending(self, seeded_shifts):
+        day = date_type(2026, 6, 15)
+        row = self._row(seeded_shifts["NORMAL"], day, day,  # 08:00–17:00
+                        datetime(2026, 6, 15, 6, 30, tzinfo=BANGKOK_TZ))
+        assert row["status"] == "pending"
+        assert row["first_in"] is None and row["last_out"] is None
+        assert row["hours_worked"] is None
+
+    def test_today_after_shift_start_no_punch_is_absent(self, seeded_shifts):
+        day = date_type(2026, 6, 15)
+        row = self._row(seeded_shifts["NORMAL"], day, day,
+                        datetime(2026, 6, 15, 9, 0, tzinfo=BANGKOK_TZ))
+        assert row["status"] == "absent"
+
+    def test_past_day_is_absent_regardless_of_clock(self, seeded_shifts):
+        # A past day is never pending, even when the wall-clock time-of-day is
+        # earlier than the shift start.
+        row = self._row(seeded_shifts["NORMAL"], date_type(2026, 6, 14),
+                        date_type(2026, 6, 15),
+                        datetime(2026, 6, 15, 6, 30, tzinfo=BANGKOK_TZ))
+        assert row["status"] == "absent"
+
+    def test_overnight_shift_before_start_is_pending(self, seeded_shifts):
+        day = date_type(2026, 6, 15)
+        row = self._row(seeded_shifts["NIGHT"], day, day,  # 22:00–07:00+1
+                        datetime(2026, 6, 15, 14, 0, tzinfo=BANGKOK_TZ))
+        assert row["status"] == "pending"
 
 
 class TestMonthlyValidation:
