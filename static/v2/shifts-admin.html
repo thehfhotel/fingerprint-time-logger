@@ -2092,10 +2092,10 @@
       // ShiftAssignment (or a leave) — exactly like the reception roster.
       const WEEKDAY_TH_SHORT = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์'];
       const HK_LEAVE_OPTIONS = [
-        { value: "L_vacation",       letter: "พร", type: "vacation",       label: "ลาพักร้อน" },
-        { value: "L_personal",       letter: "กจ", type: "personal",       label: "ลากิจ" },
-        { value: "L_sick",           letter: "ปว", type: "sick",           label: "ลาป่วย" },
-        { value: "L_public_holiday", letter: "นข", type: "public_holiday", label: "วันหยุดนักขัตฤกษ์" },
+        { value: "L_vacation",       name: "พักร้อน", type: "vacation" },
+        { value: "L_personal",       name: "ลากิจ",   type: "personal" },
+        { value: "L_sick",           name: "ลาป่วย",  type: "sick" },
+        { value: "L_public_holiday", name: "วันหยุด", type: "public_holiday" },
       ];
       const hkPeriodLabel = document.getElementById("hkPeriodLabel");
       const hkGridHead = document.getElementById("hkGridHead");
@@ -2125,9 +2125,15 @@
         const el = document.getElementById("hkLegend");
         if (!el || el.childElementCount) return;  // build once
         const byCode = hkShiftByCode();
-        const items = SHIFTS.filter(s => s.code !== "OFF")
-          .map(s => ({ label: s.letter || s.name_th, color: s.color }))
-          .concat([{ label: "OFF หยุด", color: (byCode["OFF"] && byCode["OFF"].color) || "#e9d5ff" }]);
+        // Maids only ever work their own shift ("ปกติ") or are off/on leave —
+        // no A/B/C/D, so the legend lists ปกติ + OFF + the leave types.
+        const items = [
+          { label: "ปกติ ทำงาน", color: (byCode["MORNING"] && byCode["MORNING"].color) || "#86efac" },
+          { label: "OFF หยุด",   color: (byCode["OFF"] && byCode["OFF"].color) || "#e9d5ff" },
+        ].concat(HK_LEAVE_OPTIONS.map(lo => ({
+          label: lo.name,
+          color: (LEAVE_TYPES[lo.type] && LEAVE_TYPES[lo.type].color) || "#e5e7eb",
+        })));
         el.innerHTML = items.map(it =>
           '<span class="inline-flex items-center gap-1">' +
           '<span class="inline-block h-3 w-3 rounded border border-ink-200" style="background-color:' +
@@ -2183,11 +2189,11 @@
           }).join("") + '</tr>';
 
         const byCode = hkShiftByCode();
-        const shiftOpts = SHIFTS.filter(s => s.code !== "OFF");
 
         hkGridBody.innerHTML = "";
         maids.forEach(emp => {
           const schedules = SCHEDULE_CACHE[emp.badge_number] || [];
+          const workCode = shiftCodeForEmployee(schedules);  // her normal shift
           const tr = document.createElement("tr");
           tr.className = "hover:bg-ink-50/50";
           tr.innerHTML = '<td class="px-3 py-2 sticky left-0 bg-white z-10 min-w-[8rem]">' +
@@ -2215,7 +2221,7 @@
 
             const baseline = hkBaselineCode(schedules, d);  // "" off | code
             const sel = document.createElement("select");
-            sel.className = "h-8 w-14 rounded border border-ink-200 text-xs font-semibold text-center";
+            sel.className = "h-8 w-20 rounded border border-ink-200 text-xs font-semibold text-center";
             const applyBg = (val) => {
               if (val && val.startsWith("L_")) {
                 const o = HK_LEAVE_OPTIONS.find(x => x.value === val);
@@ -2231,21 +2237,19 @@
             else { initial = baseline === "" ? "__off__" : baseline; }
             applyBg(initial);
 
-            shiftOpts.forEach(s => {
-              const opt = document.createElement("option");
-              opt.value = s.code; opt.textContent = s.letter || s.name_th;
-              if (initial === s.code) opt.selected = true; sel.appendChild(opt);
-            });
+            // Maids choose only: ปกติ (their own shift) / OFF / a leave type.
+            const workOpt = document.createElement("option");
+            workOpt.value = workCode; workOpt.textContent = "ปกติ";
+            if (initial !== "__off__" && !String(initial).startsWith("L_")) workOpt.selected = true;
+            sel.appendChild(workOpt);
             const offOpt = document.createElement("option");
             offOpt.value = "__off__"; offOpt.textContent = "OFF";
             if (initial === "__off__") offOpt.selected = true; sel.appendChild(offOpt);
-            const lg = document.createElement("optgroup"); lg.label = "วันลา";
             HK_LEAVE_OPTIONS.forEach(lo => {
               const opt = document.createElement("option");
-              opt.value = lo.value; opt.textContent = lo.letter; opt.title = lo.label;
-              if (initial === lo.value) opt.selected = true; lg.appendChild(opt);
+              opt.value = lo.value; opt.textContent = lo.name;
+              if (initial === lo.value) opt.selected = true; sel.appendChild(opt);
             });
-            sel.appendChild(lg);
 
             sel.addEventListener("change", async () => {
               sel.disabled = true;
