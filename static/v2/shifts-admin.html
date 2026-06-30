@@ -59,8 +59,7 @@
       <button data-tab="roles" class="tab tab-on px-4 py-2 text-sm font-medium">บทบาท + กะหลัก</button>
       <button data-tab="roster" class="tab px-4 py-2 text-sm font-medium">ตารางกะรายวัน (Reception)</button>
       <button data-tab="hkoff" class="tab px-4 py-2 text-sm font-medium">วันหยุดแม่บ้าน</button>
-      <button data-tab="leaves" class="tab px-4 py-2 text-sm font-medium">วันลา</button>
-      <button data-tab="holidays" class="tab px-4 py-2 text-sm font-medium">วันหยุด</button>
+      <button data-tab="leaveboard" class="tab px-4 py-2 text-sm font-medium">วันลา · วันหยุด</button>
     </div>
 
     <!-- TAB: Roles + default shift -->
@@ -207,135 +206,22 @@
       </div>
     </section>
 
-    <!-- TAB: Per-employee leaves (พักร้อน / ลากิจ / ลาป่วย /
-         วันหยุดนักขัตฤกษ์). The company-wide public_holidays section
-         was removed 2026-05 in favour of the per-employee
-         public_holiday leave type — admins now mark each employee's
-         holiday individually (or pick "นข" directly from the roster
-         cell), which gives them per-branch / per-employee control. -->
-    <!-- TAB: Public holidays (company-wide) -->
-    <section id="tabHolidays" class="tab-pane hidden">
-      <div class="max-w-2xl">
-
-        <!-- ----- Company-wide public holidays -----
-             Re-added 2026-06: a company-wide holiday pane backed by the
-             /api/private/leaves/holidays endpoints, enhanced with a
-             Thailand public-holiday preset picker. Holidays added here
-             apply to everyone and surface on the roster as read-only
-             'นข' badges (HOLIDAYS_BY_DATE). -->
-        <div class="rounded-2xl border border-ink-200 bg-white p-4 shadow-card">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div class="min-w-0">
-              <h2 class="text-base font-semibold text-ink-900">วันหยุดนักขัตฤกษ์ (ทั้งบริษัท)</h2>
-              <p class="mt-1 text-xs text-ink-500">วันหยุดที่มีผลกับพนักงานทุกคน แสดงเป็น “นข” ในตารางกะรายวัน</p>
-            </div>
-            <!-- Year control: prev / number input / next, defaults to the
-                 current Bangkok year (set in JS). -->
-            <div class="flex shrink-0 items-center gap-1">
-              <button id="holidayYearPrev" type="button"
-                      class="h-9 w-9 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">‹</button>
-              <input id="holidayYear" type="number" inputmode="numeric" aria-label="ปี"
-                     class="h-9 w-20 rounded-lg border border-ink-200 bg-white px-2 text-center text-sm font-semibold text-ink-800 tabular-nums" />
-              <button id="holidayYearNext" type="button"
-                      class="h-9 w-9 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">›</button>
-            </div>
-          </div>
-
-          <!-- Inline status line (no alert/confirm — they freeze the host). -->
-          <p id="holidayStatus" class="mt-2 hidden text-xs"></p>
-
-          <!-- List of company holidays for the selected year (sorted). -->
-          <ul id="holidayList" class="mt-3 space-y-1 text-sm"></ul>
-
-          <!-- Manual add row: date + name + เพิ่ม. -->
-          <form id="holidayAddForm" class="mt-3 flex flex-wrap items-center gap-2 border-t border-ink-100 pt-3">
-            <input id="holidayAddDate" type="date" required
-                   class="h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm" />
-            <input id="holidayAddName" type="text" required placeholder="ชื่อวันหยุด"
-                   class="h-10 min-w-[8rem] flex-1 rounded-lg border border-ink-200 bg-white px-3 text-sm" />
-            <button type="submit"
-                    class="h-10 rounded-lg border border-brand-200 bg-brand-50 px-4 text-sm font-semibold text-brand-700 hover:bg-brand-100">
-              เพิ่ม
-            </button>
-          </form>
-
-          <!-- Thailand preset picker: toggles a checklist of official Thai
-               public holidays for the selected year. Ones already present
-               show as a muted "เพิ่มแล้ว"; the rest are pre-checked. -->
-          <div class="mt-3 border-t border-ink-100 pt-3">
-            <button id="holidayPresetToggle" type="button"
-                    class="h-10 rounded-lg border border-ink-200 bg-white px-4 text-sm font-medium text-ink-700 hover:bg-ink-50">
-              เพิ่มจากวันหยุดราชการไทย
-            </button>
-            <div id="holidayPresetPane" class="mt-3 hidden">
-              <div id="holidayPresetList" class="space-y-1 text-sm"></div>
-              <div class="mt-2 flex flex-wrap items-center gap-2">
-                <button id="holidayPresetAdd" type="button"
-                        class="h-10 rounded-lg border border-brand-200 bg-brand-50 px-4 text-sm font-semibold text-brand-700 hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50">
-                  เพิ่มที่เลือก
-                </button>
-                <span id="holidayPresetStatus" class="text-xs text-ink-400"></span>
-              </div>
-            </div>
-          </div>
+    <!-- TAB: Leave / holiday Kanban (per-employee, one column per type) -->
+    <section id="tabLeaveBoard" class="tab-pane hidden">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-ink-200 bg-white p-3 shadow-card">
+        <div class="min-w-0">
+          <h2 class="text-base font-semibold text-ink-900">วันลา · วันหยุด</h2>
+          <p class="mt-0.5 text-xs text-ink-500">การลาและวันหยุดของพนักงานรายบุคคล แยกตามประเภท — เลือกเดือนเพื่อดูและเพิ่มรายการ</p>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <button id="lbPrev" class="h-10 w-10 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">‹</button>
+          <div id="lbPeriodLabel" class="flex h-10 min-w-[10rem] items-center justify-center rounded-lg border border-ink-200 bg-white px-4 text-base font-semibold tabular-nums text-ink-800 shadow-card">—</div>
+          <button id="lbNext" class="h-10 w-10 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">›</button>
+          <button id="lbThisMonth" class="h-10 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">เดือนนี้</button>
         </div>
       </div>
-    </section>
-
-    <!-- TAB: Employee leaves -->
-    <section id="tabLeaves" class="tab-pane hidden">
-      <div class="max-w-2xl">
-
-        <!-- ----- Employee leaves ----- -->
-        <div class="rounded-2xl border border-ink-200 bg-white p-4 shadow-card">
-          <h2 class="text-base font-semibold text-ink-900">ลาพนักงาน</h2>
-          <p class="mt-1 text-xs text-ink-500">บันทึกการลาพักร้อน / ลากิจ / ลาป่วย ของพนักงานรายบุคคล</p>
-
-          <form id="leaveForm" class="mt-3 grid gap-2">
-            <select id="leaveEmployee" required
-                    class="h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm">
-              <option value="">— เลือกพนักงาน —</option>
-            </select>
-
-            <div class="flex flex-wrap items-center gap-2 text-xs">
-              <label class="inline-flex items-center gap-1">
-                <input type="radio" name="leaveType" value="vacation" checked> ลาพักร้อน
-              </label>
-              <label class="inline-flex items-center gap-1">
-                <input type="radio" name="leaveType" value="personal"> ลากิจ
-              </label>
-              <label class="inline-flex items-center gap-1">
-                <input type="radio" name="leaveType" value="sick"> ลาป่วย
-              </label>
-              <label class="inline-flex items-center gap-1">
-                <input type="radio" name="leaveType" value="public_holiday"> วันหยุดนักขัตฤกษ์
-              </label>
-            </div>
-
-            <div class="flex flex-wrap items-center gap-2 text-xs">
-              <span class="text-ink-500">วันที่:</span>
-              <input id="leaveDateFrom" type="date" required
-                     class="h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm" />
-              <span class="text-ink-400">ถึง</span>
-              <input id="leaveDateTo" type="date" required
-                     class="h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm" />
-            </div>
-
-            <input id="leaveNote" type="text" placeholder="หมายเหตุ (ไม่บังคับ)"
-                   class="h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm" />
-
-            <button type="submit"
-                    class="h-10 self-start rounded-lg border border-brand-200 bg-brand-50 px-4 text-sm font-semibold text-brand-700 hover:bg-brand-100">
-              เพิ่ม
-            </button>
-          </form>
-
-          <div class="mt-4">
-            <p class="text-xs font-semibold text-ink-600 mb-2">การลาในเดือน <span id="leaveMonthLabel">—</span></p>
-            <ul id="leaveList" class="space-y-1 text-sm"></ul>
-          </div>
-        </div>
-      </div>
+      <div id="lbError" class="mb-3 hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-2 text-sm text-bad-700"></div>
+      <div id="lbBoard" class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"></div>
     </section>
   </main>
 
@@ -422,11 +308,10 @@
       // ---------- Tab switching ----------
       const tabs = Array.from(document.querySelectorAll(".tab[data-tab]"));
       const panes = {
-        roles:    document.getElementById("tabRoles"),
-        roster:   document.getElementById("tabRoster"),
-        hkoff:    document.getElementById("tabHkoff"),
-        leaves:   document.getElementById("tabLeaves"),
-        holidays: document.getElementById("tabHolidays"),
+        roles:      document.getElementById("tabRoles"),
+        roster:     document.getElementById("tabRoster"),
+        hkoff:      document.getElementById("tabHkoff"),
+        leaveboard: document.getElementById("tabLeaveBoard"),
       };
       tabs.forEach(t => t.addEventListener("click", () => {
         const target = t.getAttribute("data-tab");
@@ -434,8 +319,7 @@
         Object.entries(panes).forEach(([k, el]) => el.classList.toggle("hidden", k !== target));
         if (target === "roster") loadRoster();
         if (target === "hkoff") loadHkoff();
-        if (target === "leaves") loadLeavesTab();
-        if (target === "holidays") loadHolidaysForYear();
+        if (target === "leaveboard") loadLeaveBoard();
       }));
 
       // ---------- Boot ----------
@@ -1370,8 +1254,8 @@
         };
       }
       // Convenience proxy with the legacy `LEAVE_TYPES.vacation.color`
-      // access pattern still working — used in the renderLeaveList
-      // dots + the roster cell badge.
+      // access pattern still working — used by the leave Kanban,
+      // the roster cell badge, and the maid grid.
       const LEAVE_TYPES = new Proxy({}, {
         get(_t, code) {
           if (typeof code !== "string") return undefined;
@@ -1411,8 +1295,8 @@
               if (!panes.roster.classList.contains("hidden")) {
                 renderRoster(rosterStart);
               }
-              if (!panes.leaves.classList.contains("hidden")) {
-                renderLeaveList();
+              if (!panes.leaveboard.classList.contains("hidden")) {
+                renderLeaveBoard();
               }
             } catch (e) {
               console.warn("color update failed", e);
@@ -1503,389 +1387,196 @@
         }
       }
 
-      // ----- Leaves tab UI -----
-      // (The company-wide holiday pane was removed 2026-05. The
-      // PublicHoliday table + /holidays endpoints still exist on the
-      // backend, but the per-employee leave type 'public_holiday' is
-      // the only way to add new holidays via UI now. Legacy
-      // company-wide entries still surface on the roster as read-only
-      // 'นข' badges via HOLIDAYS_BY_DATE.)
-      const leaveForm = document.getElementById("leaveForm");
-      const leaveEmployee = document.getElementById("leaveEmployee");
-      const leaveDateFrom = document.getElementById("leaveDateFrom");
-      const leaveDateTo = document.getElementById("leaveDateTo");
-      const leaveNote = document.getElementById("leaveNote");
-      const leaveList = document.getElementById("leaveList");
-      const leaveMonthLabel = document.getElementById("leaveMonthLabel");
+      // ===================================================================
+      // วันลา · วันหยุด — per-employee leave Kanban (replaces the old
+      // วันลา + วันหยุด tabs). One column per leave type, month-scoped.
+      // Add a leave (employee + single date) or delete a card. Backed by
+      // GET/POST/DELETE /api/private/leaves/employee. POST upserts on
+      // (badge,date), so a person can hold only one leave type per day.
+      // ===================================================================
+      const LB_COLUMNS = [
+        { type: "vacation",       label: "ลาพักร้อน" },
+        { type: "personal",       label: "ลากิจ" },
+        { type: "sick",           label: "ลาป่วย" },
+        { type: "public_holiday", label: "วันหยุดนักขัตฤกษ์" },
+      ];
+      const lbBoard = document.getElementById("lbBoard");
+      const lbPeriodLabel = document.getElementById("lbPeriodLabel");
+      const lbError = document.getElementById("lbError");
+      let lbStart = null;   // "YYYY-MM-01"
+      let lbLeaves = [];    // EmployeeLeave rows in the current month
 
-      async function loadLeavesTab() {
-        // Use the same month window as the roster — admins typically
-        // navigate by month, and showing the leaves they just added
-        // immediately is more useful than a hard-coded "today".
-        await loadLeavesForMonth(rosterStart);
-        renderLeaveList();
-        populateLeaveEmployeeSelect();
-        // Default date inputs to the start of the month so admins don't
-        // have to fight a different default each time.
-        leaveMonthLabel.textContent = thaiPeriodLabel(rosterStart);
-        if (!leaveDateFrom.value) leaveDateFrom.value = rosterStart;
-        if (!leaveDateTo.value) leaveDateTo.value = rosterStart;
+      document.getElementById("lbPrev").addEventListener("click", () => {
+        lbStart = addMonths(lbStart || startOfMonth(V2.bangkokDate()), -1); loadLeaveBoard();
+      });
+      document.getElementById("lbNext").addEventListener("click", () => {
+        lbStart = addMonths(lbStart || startOfMonth(V2.bangkokDate()), 1); loadLeaveBoard();
+      });
+      document.getElementById("lbThisMonth").addEventListener("click", () => {
+        lbStart = startOfMonth(V2.bangkokDate()); loadLeaveBoard();
+      });
+
+      function lbEmployeeOptionsHtml() {
+        return '<option value="">— เลือกพนักงาน —</option>' +
+          EMPLOYEES.slice()
+            .sort((a, b) => (a.display_name || "").localeCompare(b.display_name || "", "th"))
+            .map(e => '<option value="' + V2.escapeHtml(e.badge_number) + '">' +
+              V2.escapeHtml((e.display_name || e.badge_number) + " (#" + e.badge_number + ")") +
+              '</option>').join("");
       }
 
-      function populateLeaveEmployeeSelect() {
-        leaveEmployee.innerHTML = '<option value="">— เลือกพนักงาน —</option>';
-        EMPLOYEES.slice()
-          .sort((a, b) => (a.display_name || "").localeCompare(b.display_name || "", "th"))
-          .forEach(emp => {
-            const opt = document.createElement("option");
-            opt.value = emp.badge_number;
-            opt.textContent = (emp.display_name || emp.badge_number) +
-              " (#" + emp.badge_number + ")";
-            leaveEmployee.appendChild(opt);
-          });
+      function lbDateLabel(iso) {
+        const dt = new Date(iso + "T12:00:00Z");
+        const wd = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'][dt.getUTCDay()];
+        const [, m, d] = iso.split("-").map(Number);
+        return wd + " " + String(d).padStart(2, "0") + "/" + String(m).padStart(2, "0");
       }
 
-      // (renderHolidayList removed alongside the company-wide holiday
-      // pane. Legacy holidays still surface on the roster via the
-      // HOLIDAYS_BY_DATE lookup but can't be added/removed via UI.)
+      function lbFlash(msg) {
+        lbError.textContent = msg;
+        lbError.classList.remove("hidden");
+        setTimeout(() => lbError.classList.add("hidden"), 2500);
+      }
 
-      function renderLeaveList() {
-        leaveList.innerHTML = "";
-        const items = Object.values(LEAVES_BY_BADGE_DATE)
-          .sort((a, b) => a.date.localeCompare(b.date) ||
-            a.employee_badge_number.localeCompare(b.employee_badge_number));
-        if (items.length === 0) {
-          leaveList.innerHTML = '<li class="text-xs text-ink-400">ยังไม่มีการลาในเดือนนี้</li>';
-          return;
+      async function loadLeaveBoard() {
+        lbError.classList.add("hidden");
+        if (SHIFTS.length === 0 || EMPLOYEES.length === 0) await loadAll();
+        if (!lbStart) lbStart = startOfMonth(V2.bangkokDate());
+        lbPeriodLabel.textContent = thaiPeriodLabel(lbStart);
+        const [y, m] = lbStart.split("-").map(Number);
+        const from = lbStart, to = addDays(lbStart, daysInMonth(y, m) - 1);
+        try {
+          lbLeaves = (await V2.apiFetch("/api/private/leaves/employee?from=" + from + "&to=" + to)) || [];
+        } catch (err) {
+          lbLeaves = [];
+          lbError.textContent = "โหลดข้อมูลไม่สำเร็จ";
+          lbError.classList.remove("hidden");
         }
+        renderLeaveBoard();
+      }
+
+      function renderLeaveBoard() {
+        if (!lbStart) return;
         const empByBadge = {};
         EMPLOYEES.forEach(e => { empByBadge[e.badge_number] = e; });
+        const byType = {};
+        LB_COLUMNS.forEach(c => { byType[c.type] = []; });
+        lbLeaves.forEach(l => { (byType[l.leave_type] || (byType[l.leave_type] = [])).push(l); });
 
-        items.forEach(l => {
-          const emp = empByBadge[l.employee_badge_number];
-          const empName = emp ? emp.display_name : ("#" + l.employee_badge_number);
-          const meta = LEAVE_TYPES[l.leave_type] || { label: l.leave_type, color: "#e5e7eb" };
+        const [y, m] = lbStart.split("-").map(Number);
+        const monthEnd = addDays(lbStart, daysInMonth(y, m) - 1);
 
-          const li = document.createElement("li");
-          li.className = "flex items-center justify-between gap-2 rounded border border-ink-100 px-2 py-1";
-          li.innerHTML =
-            '<span class="flex items-center gap-2">' +
-              '<span class="inline-block h-3 w-3 rounded" style="background:' + meta.color + '"></span>' +
-              '<span class="tabular-nums">' + V2.escapeHtml(l.date) + '</span>' +
-              ' · ' + V2.escapeHtml(empName) +
-              ' · ' + V2.escapeHtml(meta.label) +
-              (l.note ? ' · <span class="text-ink-500">' + V2.escapeHtml(l.note) + '</span>' : '') +
-            '</span>';
+        lbBoard.innerHTML = "";
+        LB_COLUMNS.forEach(col => {
+          const color = (LEAVE_TYPES[col.type] && LEAVE_TYPES[col.type].color) || "#e5e7eb";
+          const items = (byType[col.type] || []).slice().sort((a, b) =>
+            a.date.localeCompare(b.date) ||
+            a.employee_badge_number.localeCompare(b.employee_badge_number));
 
-          const del = document.createElement("button");
-          del.className = "text-xs text-bad-600 hover:underline";
-          del.textContent = "ลบ";
-          del.addEventListener("click", async () => {
-            del.disabled = true;
-            try {
-              await V2.apiFetch(
-                "/api/private/leaves/employee/" +
-                encodeURIComponent(l.employee_badge_number) + "/" + l.date,
-                { method: "DELETE" }
-              );
-              delete LEAVES_BY_BADGE_DATE[l.employee_badge_number + "|" + l.date];
-              renderLeaveList();
-              if (!panes.roster.classList.contains("hidden")) {
-                renderRoster(rosterStart);
-              }
-            } catch (e) {
-              del.disabled = false;
-              alert("ลบไม่สำเร็จ");
-            }
-          });
-          li.appendChild(del);
-          leaveList.appendChild(li);
+          const card = document.createElement("div");
+          card.className = "flex flex-col rounded-2xl border border-ink-200 bg-white shadow-card";
+
+          const head = document.createElement("div");
+          head.className = "flex items-center gap-2 border-b border-ink-100 px-3 py-2";
+          head.innerHTML =
+            '<span class="inline-block h-3 w-3 rounded" style="background:' + color + '"></span>' +
+            '<span class="text-sm font-semibold text-ink-800">' + V2.escapeHtml(col.label) + '</span>' +
+            '<span class="ml-auto rounded-full bg-ink-100 px-2 py-0.5 text-xs text-ink-500">' + items.length + '</span>';
+          card.appendChild(head);
+
+          const body = document.createElement("div");
+          body.className = "flex-1 space-y-1.5 p-2 min-h-[3rem]";
+          if (items.length === 0) {
+            body.innerHTML = '<p class="px-1 py-4 text-center text-xs text-ink-300">ยังไม่มีรายการ</p>';
+          } else {
+            items.forEach(l => {
+              const emp = empByBadge[l.employee_badge_number];
+              const name = emp ? (emp.display_name || emp.badge_number) : ("#" + l.employee_badge_number);
+              const row = document.createElement("div");
+              row.className = "flex items-center justify-between gap-2 rounded-lg border border-ink-100 bg-ink-50/40 px-2 py-1.5";
+              row.style.borderLeft = "3px solid " + color;
+              row.innerHTML =
+                '<div class="min-w-0">' +
+                '<div class="truncate text-sm text-ink-800">' + V2.escapeHtml(name) + '</div>' +
+                '<div class="text-[11px] tabular-nums text-ink-400">' + V2.escapeHtml(lbDateLabel(l.date)) +
+                (l.note ? ' · ' + V2.escapeHtml(l.note) : '') + '</div></div>';
+              const del = document.createElement("button");
+              del.className = "shrink-0 rounded px-1.5 text-ink-300 hover:text-bad-600";
+              del.textContent = "✕";
+              del.title = "ลบ";
+              del.addEventListener("click", () => lbDelete(l, del));
+              row.appendChild(del);
+              body.appendChild(row);
+            });
+          }
+          card.appendChild(body);
+
+          const foot = document.createElement("div");
+          foot.className = "space-y-1.5 border-t border-ink-100 p-2";
+          const sel = document.createElement("select");
+          sel.className = "h-9 w-full rounded-lg border border-ink-200 bg-white px-2 text-xs";
+          sel.innerHTML = lbEmployeeOptionsHtml();
+          const dateInput = document.createElement("input");
+          dateInput.type = "date";
+          dateInput.value = lbStart;
+          dateInput.min = lbStart;
+          dateInput.max = monthEnd;
+          dateInput.className = "h-9 w-full rounded-lg border border-ink-200 bg-white px-2 text-xs";
+          const addBtn = document.createElement("button");
+          addBtn.className = "h-9 w-full rounded-lg border border-brand-200 bg-brand-50 text-xs font-semibold text-brand-700 hover:bg-brand-100";
+          addBtn.textContent = "+ เพิ่ม";
+          addBtn.addEventListener("click", () => lbAdd(col.type, sel, dateInput, addBtn));
+          foot.appendChild(sel);
+          foot.appendChild(dateInput);
+          foot.appendChild(addBtn);
+          card.appendChild(foot);
+
+          lbBoard.appendChild(card);
         });
       }
 
-      // (holidayForm submit handler removed alongside the
-      // company-wide holiday pane.)
-
-      leaveForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const type = leaveForm.querySelector('input[name="leaveType"]:checked').value;
-        if (!leaveEmployee.value) { alert("เลือกพนักงาน"); return; }
+      async function lbAdd(type, sel, dateInput, btn) {
+        if (!sel.value) { lbFlash("เลือกพนักงาน"); return; }
+        if (!dateInput.value) { lbFlash("เลือกวันที่"); return; }
+        btn.disabled = true;
         try {
           const created = await V2.apiFetch("/api/private/leaves/employee", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              employee_badge_number: leaveEmployee.value,
+              employee_badge_number: sel.value,
               leave_type: type,
-              date_from: leaveDateFrom.value,
-              date_to: leaveDateTo.value,
-              note: leaveNote.value || null,
+              date: dateInput.value,
             }),
           });
-          (created || []).forEach(l => {
-            LEAVES_BY_BADGE_DATE[l.employee_badge_number + "|" + l.date] = l;
+          // POST upserts on (badge,date): drop any existing row for that
+          // (badge,date) — possibly a different type — and add the new one.
+          (created || []).forEach(n => {
+            lbLeaves = lbLeaves.filter(l =>
+              !(l.employee_badge_number === n.employee_badge_number && l.date === n.date));
+            lbLeaves.push(n);
           });
-          leaveNote.value = "";
-          renderLeaveList();
-          if (!panes.roster.classList.contains("hidden")) {
-            renderRoster(rosterStart);
-          }
+          renderLeaveBoard();
         } catch (err) {
-          alert("เพิ่มการลาไม่สำเร็จ");
-        }
-      });
-
-      // ----- Company-wide public holidays (วันลา tab) -----
-      // Backed by /api/private/leaves/holidays (GET range / POST upsert /
-      // DELETE) plus the Thailand preset list. Year-scoped and kept in its
-      // own state map so it doesn't interfere with the roster's per-month
-      // HOLIDAYS_BY_DATE overlay (which loadRoster refreshes on tab switch).
-      const holidayYearInput = document.getElementById("holidayYear");
-      const holidayYearPrev = document.getElementById("holidayYearPrev");
-      const holidayYearNext = document.getElementById("holidayYearNext");
-      const holidayList = document.getElementById("holidayList");
-      const holidayStatus = document.getElementById("holidayStatus");
-      const holidayAddForm = document.getElementById("holidayAddForm");
-      const holidayAddDate = document.getElementById("holidayAddDate");
-      const holidayAddName = document.getElementById("holidayAddName");
-      const holidayPresetToggle = document.getElementById("holidayPresetToggle");
-      const holidayPresetPane = document.getElementById("holidayPresetPane");
-      const holidayPresetList = document.getElementById("holidayPresetList");
-      const holidayPresetAdd = document.getElementById("holidayPresetAdd");
-      const holidayPresetStatus = document.getElementById("holidayPresetStatus");
-
-      // Company holidays for the selected year, keyed by ISO date.
-      let companyHolidaysByDate = {};
-      // Thailand preset holidays for the selected year, sorted by date.
-      let presetHolidays = [];
-
-      // Default the year control to the current Bangkok year (the elements
-      // already exist — this script runs at the bottom of <body>).
-      holidayYearInput.value = V2.bangkokDate().slice(0, 4);
-
-      const THAI_WEEKDAY_SHORT = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
-      function thaiWeekdayShort(iso) {
-        // Noon-UTC anchor avoids any DST/offset rollover to the prior day.
-        const dt = new Date(iso + "T12:00:00Z");
-        return THAI_WEEKDAY_SHORT[dt.getUTCDay()];
-      }
-
-      function selectedHolidayYear() {
-        const year = parseInt(holidayYearInput.value, 10);
-        return Number.isFinite(year) ? year : Number(V2.bangkokDate().slice(0, 4));
-      }
-
-      function showHolidayStatus(text, kind) {
-        const cls = { good: "text-good-700", bad: "text-bad-700", muted: "text-ink-400" }[kind] || "text-ink-400";
-        holidayStatus.className = "mt-2 text-xs " + cls;
-        holidayStatus.textContent = text;
-        holidayStatus.classList.remove("hidden");
-        if (kind === "good") {
-          setTimeout(() => {
-            if (holidayStatus.textContent === text) holidayStatus.classList.add("hidden");
-          }, 2200);
+          lbFlash("เพิ่มไม่สำเร็จ");
+          btn.disabled = false;
         }
       }
 
-      async function loadHolidaysForYear() {
-        const year = selectedHolidayYear();
-        holidayList.innerHTML = '<li class="text-xs text-ink-400">กำลังโหลด…</li>';
+      async function lbDelete(l, btn) {
+        btn.disabled = true;
         try {
-          const hols = await V2.apiFetch(
-            "/api/private/leaves/holidays?from=" + year + "-01-01&to=" + year + "-12-31"
-          );
-          companyHolidaysByDate = {};
-          (hols || []).forEach(h => { companyHolidaysByDate[h.date] = h; });
-          renderHolidayList();
-          // Keep an open preset checklist in sync with present/absent state.
-          if (!holidayPresetPane.classList.contains("hidden")) renderPresetChecklist();
+          await V2.apiFetch("/api/private/leaves/employee/" +
+            encodeURIComponent(l.employee_badge_number) + "/" + l.date, { method: "DELETE" });
+          lbLeaves = lbLeaves.filter(x =>
+            !(x.employee_badge_number === l.employee_badge_number && x.date === l.date));
+          renderLeaveBoard();
         } catch (err) {
-          holidayList.innerHTML =
-            '<li class="text-xs text-bad-600">โหลดวันหยุดไม่สำเร็จ (' +
-            V2.escapeHtml(String(err.status || "เครือข่าย")) + ')</li>';
+          lbFlash("ลบไม่สำเร็จ");
+          btn.disabled = false;
         }
       }
 
-      function renderHolidayList() {
-        holidayList.innerHTML = "";
-        const items = Object.values(companyHolidaysByDate)
-          .sort((a, b) => a.date.localeCompare(b.date));
-        if (items.length === 0) {
-          holidayList.innerHTML = '<li class="text-xs text-ink-400">ยังไม่มีวันหยุดในปีนี้</li>';
-          return;
-        }
-        items.forEach(h => {
-          const li = document.createElement("li");
-          li.className = "flex items-center justify-between gap-2 rounded border border-ink-100 px-2 py-1";
-          li.innerHTML =
-            '<span class="flex min-w-0 items-center gap-2">' +
-              '<span class="inline-flex h-5 min-w-[1.75rem] items-center justify-center rounded bg-ink-100 px-1 text-xs font-semibold text-ink-600">' +
-                V2.escapeHtml(thaiWeekdayShort(h.date)) +
-              '</span>' +
-              '<span class="tabular-nums text-ink-800">' + V2.escapeHtml(h.date) + '</span>' +
-              ' · <span class="truncate">' + V2.escapeHtml(h.name || "") + '</span>' +
-            '</span>';
-          const del = document.createElement("button");
-          del.type = "button";
-          del.className = "shrink-0 rounded px-1.5 text-ink-400 hover:bg-bad-50 hover:text-bad-600";
-          del.textContent = "✕";
-          del.title = "ลบวันหยุดนี้";
-          del.addEventListener("click", () => deleteHoliday(h.date, del));
-          li.appendChild(del);
-          holidayList.appendChild(li);
-        });
-      }
-
-      async function deleteHoliday(date, btn) {
-        if (btn) btn.disabled = true;
-        try {
-          await V2.apiFetch(
-            "/api/private/leaves/holidays/" + encodeURIComponent(date),
-            { method: "DELETE" }
-          );
-          delete companyHolidaysByDate[date];
-          renderHolidayList();
-          if (!holidayPresetPane.classList.contains("hidden")) renderPresetChecklist();
-          showHolidayStatus("ลบวันหยุด " + date + " แล้ว", "good");
-        } catch (err) {
-          if (btn) btn.disabled = false;
-          showHolidayStatus("ลบไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")", "bad");
-        }
-      }
-
-      function setHolidayYear(year) {
-        holidayYearInput.value = String(year);
-        loadHolidaysForYear();
-      }
-      holidayYearPrev.addEventListener("click", () => setHolidayYear(selectedHolidayYear() - 1));
-      holidayYearNext.addEventListener("click", () => setHolidayYear(selectedHolidayYear() + 1));
-      holidayYearInput.addEventListener("change", () => loadHolidaysForYear());
-
-      holidayAddForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const date = holidayAddDate.value;
-        const name = holidayAddName.value.trim();
-        if (!date) { showHolidayStatus("เลือกวันที่", "bad"); return; }
-        if (!name) { showHolidayStatus("กรอกชื่อวันหยุด", "bad"); return; }
-        const submitBtn = holidayAddForm.querySelector('button[type="submit"]');
-        submitBtn.disabled = true;
-        try {
-          await V2.apiFetch("/api/private/leaves/holidays", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ date, name }),
-          });
-          holidayAddName.value = "";
-          // Jump the view to the added date's year so the result is visible.
-          holidayYearInput.value = date.slice(0, 4);
-          await loadHolidaysForYear();
-          showHolidayStatus("เพิ่มวันหยุด " + date + " แล้ว", "good");
-        } catch (err) {
-          showHolidayStatus("เพิ่มไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")", "bad");
-        } finally {
-          submitBtn.disabled = false;
-        }
-      });
-
-      holidayPresetToggle.addEventListener("click", async () => {
-        const willOpen = holidayPresetPane.classList.contains("hidden");
-        holidayPresetPane.classList.toggle("hidden", !willOpen);
-        if (willOpen) await loadPresetHolidays();
-      });
-
-      async function loadPresetHolidays() {
-        const year = selectedHolidayYear();
-        holidayPresetStatus.textContent = "";
-        holidayPresetList.innerHTML = '<p class="text-xs text-ink-400">กำลังโหลดวันหยุดราชการไทย…</p>';
-        try {
-          const presets = await V2.apiFetch("/api/private/leaves/holidays/thailand/" + year);
-          presetHolidays = (presets || []).slice().sort((a, b) => a.date.localeCompare(b.date));
-          renderPresetChecklist();
-        } catch (err) {
-          presetHolidays = [];
-          holidayPresetList.innerHTML =
-            '<p class="text-xs text-bad-600">โหลดวันหยุดราชการไทยไม่สำเร็จ (' +
-            V2.escapeHtml(String(err.status || "เครือข่าย")) + ')</p>';
-        }
-      }
-
-      function renderPresetChecklist() {
-        holidayPresetList.innerHTML = "";
-        if (presetHolidays.length === 0) {
-          holidayPresetList.innerHTML = '<p class="text-xs text-ink-400">ไม่มีข้อมูลวันหยุดราชการสำหรับปีนี้</p>';
-          return;
-        }
-        presetHolidays.forEach(h => {
-          const alreadyPresent = !!companyHolidaysByDate[h.date];
-          // Present rows are static; absent rows are clickable labels.
-          const row = document.createElement(alreadyPresent ? "div" : "label");
-          row.className = "flex items-center justify-between gap-2 rounded border border-ink-100 px-2 py-1" +
-            (alreadyPresent ? " opacity-60" : " cursor-pointer hover:bg-ink-50");
-
-          const left = document.createElement("span");
-          left.className = "flex min-w-0 items-center gap-2";
-          if (!alreadyPresent) {
-            const checkbox = document.createElement("input");
-            checkbox.type = "checkbox";
-            checkbox.className = "preset-cb h-4 w-4 shrink-0 rounded border-ink-300";
-            checkbox.value = h.date;
-            checkbox.dataset.name = h.name || "";
-            checkbox.checked = true;  // pre-check the ones NOT already present
-            left.appendChild(checkbox);
-          }
-          const text = document.createElement("span");
-          text.className = "min-w-0 truncate";
-          text.innerHTML =
-            '<span class="tabular-nums text-ink-800">' + V2.escapeHtml(h.date) + '</span>' +
-            ' · ' + V2.escapeHtml(h.name || "");
-          left.appendChild(text);
-          row.appendChild(left);
-
-          if (alreadyPresent) {
-            const tag = document.createElement("span");
-            tag.className = "shrink-0 text-xs text-ink-400";
-            tag.textContent = "เพิ่มแล้ว";
-            row.appendChild(tag);
-          }
-          holidayPresetList.appendChild(row);
-        });
-      }
-
-      holidayPresetAdd.addEventListener("click", async () => {
-        const checked = Array.from(holidayPresetList.querySelectorAll(".preset-cb:checked"));
-        if (checked.length === 0) {
-          holidayPresetStatus.className = "text-xs text-bad-600";
-          holidayPresetStatus.textContent = "เลือกวันหยุดอย่างน้อย 1 รายการ";
-          return;
-        }
-        holidayPresetAdd.disabled = true;
-        holidayPresetStatus.className = "text-xs text-ink-400";
-        holidayPresetStatus.textContent = "กำลังเพิ่ม…";
-        let addedCount = 0, failedCount = 0;
-        // Upsert is idempotent, so re-adding an existing date is harmless.
-        for (const checkbox of checked) {
-          try {
-            await V2.apiFetch("/api/private/leaves/holidays", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ date: checkbox.value, name: checkbox.dataset.name }),
-            });
-            addedCount++;
-          } catch (err) {
-            failedCount++;
-          }
-        }
-        holidayPresetAdd.disabled = false;
-        await loadHolidaysForYear();  // refresh list + re-render the checklist
-        if (failedCount === 0) {
-          holidayPresetStatus.className = "text-xs text-good-700";
-          holidayPresetStatus.textContent = "เพิ่มแล้ว " + addedCount + " รายการ";
-        } else {
-          holidayPresetStatus.className = "text-xs text-bad-600";
-          holidayPresetStatus.textContent =
-            "เพิ่มสำเร็จ " + addedCount + " รายการ, ล้มเหลว " + failedCount + " รายการ";
-        }
-      });
       // ===================================================================
       // Housekeeping (แม่บ้าน) day-off tab
       //
