@@ -166,6 +166,12 @@ def _resolve_shift_code(db: Session, code: Optional[str]) -> Optional[Shift]:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="shift_code='OFF' is not assignable; pass null instead",
         )
+    if code == "HK_WORK":
+        # Colour-only pseudo-shift for the housekeeping grid; never assigned.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="shift_code='HK_WORK' is a colour-only pseudo-shift, not assignable",
+        )
     s = db.query(Shift).filter(Shift.code == code).first()
     if s is None:
         raise HTTPException(

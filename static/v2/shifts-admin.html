@@ -2124,19 +2124,19 @@
         }));
 
       // Editable color legend (click a swatch to recolor, persisted server-side
-      // via the same PATCH endpoints the reception roster uses). ปกติ is the
-      // housekeeping default shift MORNING — note this is the same shift as
-      // reception's "A" (เช้า 07:00–16:00), so its color is shared with it.
+      // via the same PATCH endpoints the reception roster uses). ปกติ uses the
+      // dedicated HK_WORK pseudo-shift, so its color is fully independent of
+      // reception's "A" / the real MORNING/NORMAL shifts.
       function hkRenderLegend() {
         const el = document.getElementById("hkLegend");
         if (!el || el.childElementCount) return;  // build once (keeps the inputs)
         const byCode = hkShiftByCode();
-        const morning = byCode["MORNING"], off = byCode["OFF"];
+        const work = byCode["HK_WORK"], off = byCode["OFF"];
         el.appendChild(makeColorSwatch({
-          initialColor: (morning && morning.color) || "#86efac",
+          initialColor: (work && work.color) || "#86efac",
           label: "ปกติ", sublabel: "ทำงาน",
-          patchUrl: "/api/private/shifts/MORNING/color",
-          onSaved: (u) => { if (morning) morning.color = u.color; renderHkGrid(); },
+          patchUrl: "/api/private/shifts/HK_WORK/color",
+          onSaved: (u) => { if (work) work.color = u.color; renderHkGrid(); },
         }));
         el.appendChild(makeColorSwatch({
           initialColor: (off && off.color) || "#e9d5ff",
@@ -2243,9 +2243,10 @@
                 sel.style.backgroundColor = (o && LEAVE_TYPES[o.type] && LEAVE_TYPES[o.type].color) || "#e5e7eb"; return;
               }
               if (val === "__off__") { sel.style.backgroundColor = (byCode["OFF"] && byCode["OFF"].color) || "#e9d5ff"; return; }
-              // ปกติ = ONE configurable "work" color regardless of the maid's
-              // exact hours (her cell still SAVES her own shift code).
-              sel.style.backgroundColor = (byCode["MORNING"] && byCode["MORNING"].color) || "#86efac";
+              // ปกติ = ONE independent "work" color (the HK_WORK pseudo-shift),
+              // regardless of the maid's exact hours; her cell still SAVES her
+              // own shift code.
+              sel.style.backgroundColor = (byCode["HK_WORK"] && byCode["HK_WORK"].color) || "#86efac";
             };
 
             let initial;
