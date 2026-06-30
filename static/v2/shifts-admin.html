@@ -58,6 +58,7 @@
     <div role="tablist" class="mb-4 flex gap-1 border-b border-ink-200">
       <button data-tab="roles" class="tab tab-on px-4 py-2 text-sm font-medium">บทบาท + กะหลัก</button>
       <button data-tab="roster" class="tab px-4 py-2 text-sm font-medium">ตารางกะรายวัน (Reception)</button>
+      <button data-tab="hkoff" class="tab px-4 py-2 text-sm font-medium">วันหยุดแม่บ้าน</button>
       <button data-tab="leaves" class="tab px-4 py-2 text-sm font-medium">วันลา</button>
       <button data-tab="holidays" class="tab px-4 py-2 text-sm font-medium">วันหยุด</button>
     </div>
@@ -137,6 +138,69 @@
           <thead id="rosterHead" class="bg-ink-50/60"></thead>
           <tbody id="rosterBody" class="divide-y divide-ink-100"></tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- TAB: Housekeeping (แม่บ้าน) day off -->
+    <section id="tabHkoff" class="tab-pane hidden">
+      <div id="hkLoading" class="rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+        <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
+        <p class="mt-3 text-sm text-ink-500">กำลังโหลดข้อมูลแม่บ้าน…</p>
+      </div>
+      <div id="hkError" class="hidden rounded-2xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700"></div>
+      <div id="hkEmpty" class="hidden rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+        <p class="text-sm font-medium text-ink-700">ยังไม่มีพนักงานบทบาทแม่บ้าน</p>
+        <p class="mt-1 text-xs text-ink-500">กำหนดบทบาท “แม่บ้าน” ที่แท็บ “บทบาท + กะหลัก” ก่อน</p>
+      </div>
+
+      <div id="hkContent" class="hidden space-y-5">
+        <!-- A. Standing weekly day off (per maid) -->
+        <div class="overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-card">
+          <div class="border-b border-ink-100 px-5 py-3">
+            <h2 class="text-base font-semibold text-ink-900">วันหยุดประจำสัปดาห์</h2>
+            <p class="mt-0.5 text-xs text-ink-500">แม่บ้านแต่ละคนหยุด 1 วันต่อสัปดาห์ตามที่เลือก เปลี่ยนได้ที่นี่ — มีผลตั้งแต่วันนี้เป็นต้นไป</p>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-ink-100 text-sm">
+              <thead class="bg-ink-50/60">
+                <tr class="text-left text-xs uppercase tracking-wider text-ink-500">
+                  <th class="px-5 py-3 font-semibold">พนักงาน</th>
+                  <th class="px-5 py-3 font-semibold">สาขา</th>
+                  <th class="px-5 py-3 font-semibold">วันหยุดประจำ</th>
+                </tr>
+              </thead>
+              <tbody id="hkStandingBody" class="divide-y divide-ink-100"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- B. Move day off for one specific week (reception-style override) -->
+        <div class="overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-card">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-ink-100 px-5 py-3">
+            <div class="min-w-0">
+              <h2 class="text-base font-semibold text-ink-900">ย้ายวันหยุด (เฉพาะสัปดาห์)</h2>
+              <p class="mt-0.5 text-xs text-ink-500">เปลี่ยนวันหยุดของสัปดาห์ที่เลือกชั่วคราว โดยไม่กระทบวันหยุดประจำ</p>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <button id="hkWeekPrev" class="h-9 w-9 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">‹</button>
+              <div id="hkWeekLabel" class="flex h-9 min-w-[10rem] items-center justify-center rounded-lg border border-ink-200 bg-white px-3 text-sm font-semibold tabular-nums text-ink-800">—</div>
+              <button id="hkWeekNext" class="h-9 w-9 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">›</button>
+              <button id="hkWeekThis" class="h-9 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">สัปดาห์นี้</button>
+            </div>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-ink-100 text-sm">
+              <thead class="bg-ink-50/60">
+                <tr class="text-left text-xs uppercase tracking-wider text-ink-500">
+                  <th class="px-5 py-3 font-semibold">พนักงาน</th>
+                  <th class="px-5 py-3 font-semibold">วันหยุดสัปดาห์นี้</th>
+                  <th class="px-5 py-3 font-semibold w-0"></th>
+                </tr>
+              </thead>
+              <tbody id="hkWeekBody" class="divide-y divide-ink-100"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -357,6 +421,7 @@
       const panes = {
         roles:    document.getElementById("tabRoles"),
         roster:   document.getElementById("tabRoster"),
+        hkoff:    document.getElementById("tabHkoff"),
         leaves:   document.getElementById("tabLeaves"),
         holidays: document.getElementById("tabHolidays"),
       };
@@ -365,6 +430,7 @@
         tabs.forEach(x => x.classList.toggle("tab-on", x === t));
         Object.entries(panes).forEach(([k, el]) => el.classList.toggle("hidden", k !== target));
         if (target === "roster") loadRoster();
+        if (target === "hkoff") loadHkoff();
         if (target === "leaves") loadLeavesTab();
         if (target === "holidays") loadHolidaysForYear();
       }));
@@ -1817,6 +1883,367 @@
             "เพิ่มสำเร็จ " + addedCount + " รายการ, ล้มเหลว " + failedCount + " รายการ";
         }
       });
+      // ===================================================================
+      // Housekeeping (แม่บ้าน) day-off tab
+      //
+      // Maids work 6 days/week with one chosen weekday off. Two controls:
+      //   A. "วันหยุดประจำ" — the standing weekly day off, stored as
+      //      EmployeeSchedule.work_days (all days except the chosen one)
+      //      via PUT /employees/{badge}/schedule, effective from today.
+      //   B. "ย้ายวันหยุด" — move the day off for ONE week using the same
+      //      per-day ShiftAssignment overrides reception uses: the new off
+      //      date → shift_code=null (off); the standing-off date that week →
+      //      shift_code=<their shift> (work). effective_shift() resolves
+      //      overrides above the schedule, so the monthly report follows.
+      // ===================================================================
+      const FULL_DAY_TH = ["จันทร์","อังคาร","พุธ","พฤหัสบดี","ศุกร์","เสาร์","อาทิตย์"];
+      const hkLoading  = document.getElementById("hkLoading");
+      const hkError    = document.getElementById("hkError");
+      const hkEmpty    = document.getElementById("hkEmpty");
+      const hkContent  = document.getElementById("hkContent");
+      const hkStandingBody = document.getElementById("hkStandingBody");
+      const hkWeekBody = document.getElementById("hkWeekBody");
+      const hkWeekLabel = document.getElementById("hkWeekLabel");
+
+      // Monday (Bangkok) of the week shown in the move table.
+      let hkWeekMonday = null;
+      // badge → { "YYYY-MM-DD": shift_code|null } overrides for that week.
+      let hkWeekAssignments = {};
+
+      // ---- Bangkok dates as plain YYYY-MM-DD strings (no TZ drift) ----
+      function isoParts(iso) { return iso.split("-").map(Number); }
+      function isoAddDays(iso, n) {
+        const [y, m, d] = isoParts(iso);
+        const dt = new Date(Date.UTC(y, m - 1, d));
+        dt.setUTCDate(dt.getUTCDate() + n);
+        return dt.toISOString().slice(0, 10);
+      }
+      // Python weekday: Mon=0 … Sun=6.
+      function isoWeekday(iso) {
+        const [y, m, d] = isoParts(iso);
+        return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+      }
+      function mondayOf(iso) { return isoAddDays(iso, -isoWeekday(iso)); }
+      function dayMonth(iso) { const [, m, d] = isoParts(iso); return d + "/" + m; }
+
+      function housekeepingEmployees() {
+        return EMPLOYEES
+          .filter(e => (e.role || "") === "housekeeping")
+          .slice()
+          .sort((a, b) => (a.display_name || a.badge_number || "")
+            .localeCompare(b.display_name || b.badge_number || "", "th"));
+      }
+
+      // Standing day off (Mon=0…Sun=6) from a maid's effective schedule:
+      // the single weekday missing from a 6-day work_days set.
+      //   -1   → works every day (no standing day off)
+      //   null → ambiguous (no schedule, or not a clean "one day off")
+      function standingDayOff(schedules) {
+        const entry = effectiveEntry(schedules);
+        if (!entry || !Array.isArray(entry.work_days)) return null;
+        const wd = entry.work_days;
+        if (wd.length === 7) return -1;
+        if (wd.length !== 6) return null;
+        for (let i = 0; i < 7; i++) if (!wd.includes(i)) return i;
+        return null;
+      }
+
+      // Does the standing schedule mark `iso` as off? Mirrors the backend
+      // _resolve_from_schedule: needs hours + a non-empty work_days set.
+      function scheduleOffOnDate(schedules, iso) {
+        const entry = effectiveEntry(schedules);
+        if (!entry || !entry.work_start || !entry.work_end) return false;
+        if (!Array.isArray(entry.work_days) || entry.work_days.length === 0) return false;
+        return !entry.work_days.includes(isoWeekday(iso));
+      }
+
+      // The maid's working shift_code (for the "work this day" override):
+      // match their schedule hours to a seeded shift, else housekeeping
+      // default MORNING.
+      function shiftCodeForEmployee(schedules) {
+        const entry = effectiveEntry(schedules);
+        if (entry && entry.work_start && entry.work_end) {
+          const m = SHIFTS.find(s =>
+            s.start_time === entry.work_start && s.end_time === entry.work_end && s.code !== "OFF");
+          if (m) return m.code;
+        }
+        return "MORNING";
+      }
+
+      // Hours to preserve on a schedule PUT (default housekeeping 07:00–16:00).
+      function hoursForEmployee(schedules) {
+        const entry = effectiveEntry(schedules);
+        if (entry && entry.work_start && entry.work_end) return [entry.work_start, entry.work_end];
+        return ["07:00", "16:00"];
+      }
+
+      async function loadHkoff() {
+        hkError.classList.add("hidden");
+        const maids = housekeepingEmployees();
+        if (maids.length === 0) {
+          hkLoading.classList.add("hidden");
+          hkContent.classList.add("hidden");
+          hkEmpty.classList.remove("hidden");
+          return;
+        }
+        hkEmpty.classList.add("hidden");
+        if (hkContent.classList.contains("hidden")) hkLoading.classList.remove("hidden");
+        try {
+          await Promise.all(maids.map(async e => {
+            if (SCHEDULE_CACHE[e.badge_number] === undefined) {
+              try { await refreshSchedule(e); } catch (_) { SCHEDULE_CACHE[e.badge_number] = []; }
+            }
+          }));
+          if (hkWeekMonday === null) hkWeekMonday = mondayOf(V2.bangkokDate());
+          hkLoading.classList.add("hidden");
+          hkContent.classList.remove("hidden");
+          renderHkStanding(maids);
+          await loadHkWeek();
+        } catch (err) {
+          hkLoading.classList.add("hidden");
+          hkError.textContent = "โหลดข้อมูลไม่สำเร็จ";
+          hkError.classList.remove("hidden");
+        }
+      }
+
+      // ---- A. Standing weekly day off ----
+      function renderHkStanding(maids) {
+        hkStandingBody.innerHTML = "";
+        maids.forEach(emp => {
+          const schedules = SCHEDULE_CACHE[emp.badge_number] || [];
+          const off = standingDayOff(schedules);
+
+          const tr = document.createElement("tr");
+          tr.className = "hover:bg-ink-50/50";
+
+          const nameTd = document.createElement("td");
+          nameTd.className = "px-5 py-3";
+          nameTd.innerHTML =
+            '<div class="font-medium text-ink-800">' +
+            V2.escapeHtml(emp.display_name || ("บัตร " + emp.badge_number)) + '</div>' +
+            '<div class="text-xs text-ink-400">#' + V2.escapeHtml(emp.badge_number) + '</div>';
+          tr.appendChild(nameTd);
+
+          const locTd = document.createElement("td");
+          locTd.className = "px-5 py-3 text-ink-600";
+          locTd.textContent = LOCATION_LABEL[emp.location] || "—";
+          tr.appendChild(locTd);
+
+          const offTd = document.createElement("td");
+          offTd.className = "px-5 py-3";
+          const sel = document.createElement("select");
+          sel.className = "h-9 rounded-lg border border-ink-200 bg-white px-2 text-sm";
+          const ph = document.createElement("option");
+          ph.value = ""; ph.textContent = "— เลือก —";
+          sel.appendChild(ph);
+          for (let i = 0; i < 7; i++) {
+            const o = document.createElement("option");
+            o.value = String(i);
+            o.textContent = "หยุด" + FULL_DAY_TH[i];
+            sel.appendChild(o);
+          }
+          const everyday = document.createElement("option");
+          everyday.value = "none";
+          everyday.textContent = "ทำงานทุกวัน (ไม่มีวันหยุดประจำ)";
+          sel.appendChild(everyday);
+          sel.value = off === -1 ? "none" : (off === null ? "" : String(off));
+
+          const status = document.createElement("span");
+          status.className = "ml-2 text-xs text-ink-400";
+
+          sel.addEventListener("change", async () => {
+            if (sel.value === "") return;
+            sel.disabled = true;
+            status.className = "ml-2 text-xs text-ink-400";
+            status.textContent = "กำลังบันทึก…";
+            const [ws, we] = hoursForEmployee(schedules);
+            let work_days;
+            if (sel.value === "none") work_days = [0, 1, 2, 3, 4, 5, 6];
+            else { const o = Number(sel.value); work_days = [0, 1, 2, 3, 4, 5, 6].filter(d => d !== o); }
+            try {
+              await V2.apiFetch(
+                "/api/private/employees/" + encodeURIComponent(emp.badge_number) + "/schedule",
+                {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    effective_from: V2.bangkokDate(),
+                    role: "housekeeping",
+                    work_days,
+                    work_start: ws,
+                    work_end: we,
+                  }),
+                }
+              );
+              await refreshSchedule(emp);
+              status.className = "ml-2 text-xs text-good-600";
+              status.textContent = "บันทึกแล้ว";
+              // The standing change shifts the week table's defaults.
+              await loadHkWeek();
+            } catch (err) {
+              status.className = "ml-2 text-xs text-bad-600";
+              status.textContent = "ไม่สำเร็จ";
+            } finally {
+              sel.disabled = false;
+            }
+          });
+
+          offTd.appendChild(sel);
+          offTd.appendChild(status);
+          tr.appendChild(offTd);
+          hkStandingBody.appendChild(tr);
+        });
+      }
+
+      // ---- B. Move day off for a specific week ----
+      document.getElementById("hkWeekPrev").addEventListener("click", () => {
+        hkWeekMonday = isoAddDays(hkWeekMonday || mondayOf(V2.bangkokDate()), -7);
+        loadHkWeek();
+      });
+      document.getElementById("hkWeekNext").addEventListener("click", () => {
+        hkWeekMonday = isoAddDays(hkWeekMonday || mondayOf(V2.bangkokDate()), 7);
+        loadHkWeek();
+      });
+      document.getElementById("hkWeekThis").addEventListener("click", () => {
+        hkWeekMonday = mondayOf(V2.bangkokDate());
+        loadHkWeek();
+      });
+
+      async function loadHkWeek() {
+        if (!hkWeekMonday) hkWeekMonday = mondayOf(V2.bangkokDate());
+        const from = hkWeekMonday;
+        const to = isoAddDays(hkWeekMonday, 6);
+        hkWeekLabel.textContent = dayMonth(from) + " – " + dayMonth(to);
+        hkWeekAssignments = {};
+        try {
+          const rows = await V2.apiFetch(
+            "/api/private/shifts/assignments?from=" + from + "&to=" + to);
+          (rows || []).forEach(r => {
+            (hkWeekAssignments[r.employee_badge_number] ||
+              (hkWeekAssignments[r.employee_badge_number] = {}))[r.date] = r.shift_code;
+          });
+        } catch (err) {
+          hkError.textContent = "โหลดตารางสัปดาห์ไม่สำเร็จ";
+          hkError.classList.remove("hidden");
+        }
+        renderHkWeek(housekeepingEmployees());
+      }
+
+      function renderHkWeek(maids) {
+        hkWeekBody.innerHTML = "";
+        const dates = [];
+        for (let i = 0; i < 7; i++) dates.push(isoAddDays(hkWeekMonday, i));
+
+        maids.forEach(emp => {
+          const schedules = SCHEDULE_CACHE[emp.badge_number] || [];
+          const ov = hkWeekAssignments[emp.badge_number] || {};
+          const isOff = (iso) => {
+            const c = ov[iso];
+            if (c === null) return true;            // override: off
+            if (typeof c === "string") return false; // override: work
+            return scheduleOffOnDate(schedules, iso); // standing
+          };
+          const offDate = dates.find(isOff) || "";
+          const hasOverride = Object.keys(ov).length > 0;
+
+          const tr = document.createElement("tr");
+          tr.className = "hover:bg-ink-50/50";
+
+          const nameTd = document.createElement("td");
+          nameTd.className = "px-5 py-3";
+          nameTd.innerHTML =
+            '<div class="font-medium text-ink-800">' +
+            V2.escapeHtml(emp.display_name || ("บัตร " + emp.badge_number)) + '</div>' +
+            '<div class="text-xs text-ink-400">#' + V2.escapeHtml(emp.badge_number) + '</div>';
+          tr.appendChild(nameTd);
+
+          const offTd = document.createElement("td");
+          offTd.className = "px-5 py-3";
+          const sel = document.createElement("select");
+          sel.className = "h-9 rounded-lg border border-ink-200 bg-white px-2 text-sm";
+          const ph = document.createElement("option");
+          ph.value = ""; ph.textContent = "— ไม่มีวันหยุด —";
+          sel.appendChild(ph);
+          dates.forEach(iso => {
+            const o = document.createElement("option");
+            o.value = iso;
+            o.textContent = FULL_DAY_TH[isoWeekday(iso)] + " " + dayMonth(iso);
+            sel.appendChild(o);
+          });
+          sel.value = offDate;
+          if (hasOverride) sel.classList.add("border-warn-300", "bg-warn-50");
+
+          const status = document.createElement("span");
+          status.className = "ml-2 text-xs text-ink-400";
+          if (hasOverride) { status.className = "ml-2 text-xs text-warn-600"; status.textContent = "ย้ายแล้ว"; }
+
+          sel.addEventListener("change", () =>
+            applyHkMove(emp, schedules, dates, sel.value, sel, status));
+          offTd.appendChild(sel);
+          offTd.appendChild(status);
+          tr.appendChild(offTd);
+
+          const actTd = document.createElement("td");
+          actTd.className = "px-5 py-3 text-right";
+          if (hasOverride) {
+            const reset = document.createElement("button");
+            reset.className = "text-xs font-medium text-ink-500 underline underline-offset-2 hover:text-ink-700";
+            reset.textContent = "คืนค่าปกติ";
+            reset.addEventListener("click", () =>
+              applyHkMove(emp, schedules, dates, "__std__", sel, status));
+            actTd.appendChild(reset);
+          }
+          tr.appendChild(actTd);
+
+          hkWeekBody.appendChild(tr);
+        });
+      }
+
+      // Make `targetOff` the only off day this week (or revert to standing
+      // when "__std__"), using the minimal set of override writes/deletes.
+      async function applyHkMove(emp, schedules, dates, targetOff, sel, status) {
+        sel.disabled = true;
+        status.className = "ml-2 text-xs text-ink-400";
+        status.textContent = "กำลังบันทึก…";
+        const badge = emp.badge_number;
+        const ov = hkWeekAssignments[badge] || {};
+        const workCode = shiftCodeForEmployee(schedules);
+        const revert = targetOff === "__std__";
+
+        const assignUrl = (iso) =>
+          "/api/private/shifts/assignments/" + encodeURIComponent(badge) + "/" + iso;
+        const calls = [];
+        for (const iso of dates) {
+          const desiredOff = !revert && targetOff !== "" && iso === targetOff;
+          const schedOff = scheduleOffOnDate(schedules, iso);
+          const cur = (iso in ov) ? ov[iso] : undefined; // undefined | null(off) | code(work)
+
+          if (revert || desiredOff === schedOff) {
+            // Standing already gives the right state → drop any override.
+            if (cur !== undefined) calls.push(V2.apiFetch(assignUrl(iso), { method: "DELETE" }));
+          } else if (desiredOff) {
+            // Want off, schedule says work → override OFF.
+            if (cur !== null) calls.push(V2.apiFetch(assignUrl(iso), {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ shift_code: null }),
+            }));
+          } else {
+            // Want work, schedule says off → override WORK with their shift.
+            if (typeof cur !== "string") calls.push(V2.apiFetch(assignUrl(iso), {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ shift_code: workCode }),
+            }));
+          }
+        }
+        try {
+          await Promise.all(calls);
+          await loadHkWeek();
+        } catch (err) {
+          status.className = "ml-2 text-xs text-bad-600";
+          status.textContent = "ไม่สำเร็จ";
+          sel.disabled = false;
+        }
+      }
     })();
   </script>
 </body>
