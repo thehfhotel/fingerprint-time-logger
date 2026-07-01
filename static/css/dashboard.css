@@ -120,14 +120,14 @@
     white-space: nowrap;
 }
 .punch-badge.punch-in {
-    background: #e8f5e9;
-    color: #1b5e20;
-    border: 1px solid #a5d6a7;
+    background: #DCEEE3;
+    color: #1D5438;
+    border: 1px solid #B7D9C4;
 }
 .punch-badge.punch-out {
-    background: #fff3e0;
-    color: #b71c1c;
-    border: 1px solid #ffcc80;
+    background: #FBF0DC;
+    color: #7A5A16;
+    border: 1px solid #E7C97F;
 }
 
 

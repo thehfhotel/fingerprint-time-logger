@@ -8,9 +8,9 @@
      */
     const DEFAULT_AVATAR_SVG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
-        '<circle cx="32" cy="32" r="32" fill="#e0e0e0"/>' +
-        '<circle cx="32" cy="26" r="11" fill="#bdbdbd"/>' +
-        '<path d="M10 58c4-12 14-18 22-18s18 6 22 18z" fill="#bdbdbd"/>' +
+        '<circle cx="32" cy="32" r="32" fill="#E8E4DF"/>' +
+        '<circle cx="32" cy="26" r="11" fill="#CFC9C1"/>' +
+        '<path d="M10 58c4-12 14-18 22-18s18 6 22 18z" fill="#CFC9C1"/>' +
         '</svg>'
     );
 

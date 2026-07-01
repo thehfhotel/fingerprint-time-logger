@@ -11,45 +11,47 @@
   "use strict";
 
   // ---------- Tailwind theme extension ----------
-  // Palette: slate background, indigo primary, semantic emerald/amber/rose.
+  // Palette: HF One — warm neutrals, burgundy primary, semantic
+  // success/warning/error. Mirrors /Users/nut/HF-erp/design/HF-ONE.md;
+  // don't invent colors here, propose additions in that file first.
   // Kept narrow on purpose — every utility class we use elsewhere can map here.
   const THEME = {
     colors: {
-      // Surfaces
+      // Surfaces (warm neutrals, not Tailwind slate/gray)
       ink: {
-        50:  "#f8fafc",
-        100: "#f1f5f9",
-        200: "#e2e8f0",
-        300: "#cbd5e1",
-        400: "#94a3b8",
-        500: "#64748b",
-        600: "#475569",
-        700: "#334155",
-        800: "#1e293b",
-        900: "#0f172a",
+        50:  "#FAF9F7",
+        100: "#F4F1ED",
+        200: "#E8E4DF",
+        300: "#CFC9C1",
+        400: "#ABA299",
+        500: "#7A7268",
+        600: "#5C554C",
+        700: "#443E37",
+        800: "#332D27",
+        900: "#26221E",
       },
-      // Primary (indigo, slightly muted)
+      // Primary (HF One burgundy)
       brand: {
-        50:  "#eef2ff",
-        100: "#e0e7ff",
-        200: "#c7d2fe",
-        400: "#818cf8",
-        500: "#6366f1",
-        600: "#4f46e5",
-        700: "#4338ca",
+        50:  "#FBEAEA",
+        100: "#F5C9C9",
+        200: "#DE9494",
+        400: "#A83535",
+        500: "#8B0000",
+        600: "#7A0000",
+        700: "#6B1212",
       },
       // Semantic
-      good: { 50: "#ecfdf5", 100: "#d1fae5", 500: "#10b981", 600: "#059669", 700: "#047857" },
-      warn: { 50: "#fffbeb", 100: "#fef3c7", 500: "#f59e0b", 600: "#d97706", 700: "#b45309" },
-      bad:  { 50: "#fff1f2", 100: "#ffe4e6", 500: "#f43f5e", 600: "#e11d48", 700: "#be123c" },
-      off:  { 50: "#f8fafc", 100: "#f1f5f9", 500: "#94a3b8", 600: "#64748b" },
+      good: { 50: "#EAF6EF", 100: "#D3E7DC", 500: "#2F855A", 600: "#256B47", 700: "#1D5438" },
+      warn: { 50: "#FBF3E1", 100: "#F6EACB", 500: "#B7791F", 600: "#93691F", 700: "#7A4F15" },
+      bad:  { 50: "#FBEAEA", 100: "#F5C6C6", 500: "#C53030", 600: "#9B2626", 700: "#7F1F1F" },
+      off:  { 50: "#FAF9F7", 100: "#F4F1ED", 500: "#ABA299", 600: "#7A7268" },
     },
     fontFamily: {
-      sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+      sans: ['Sarabun', '"Noto Sans Thai"', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
     },
     boxShadow: {
-      card: "0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06)",
-      soft: "0 4px 16px rgba(15, 23, 42, 0.06)",
+      card: "0 1px 2px rgba(38, 34, 30, 0.04), 0 1px 3px rgba(38, 34, 30, 0.06)",
+      soft: "0 4px 16px rgba(38, 34, 30, 0.06)",
     },
     keyframes: {
       slideInTop: {
@@ -57,7 +59,7 @@
         "100%": { opacity: "1", transform: "translateY(0)" },
       },
       pulseHighlight: {
-        "0%":   { backgroundColor: "rgba(99, 102, 241, 0.10)" },
+        "0%":   { backgroundColor: "rgba(139, 0, 0, 0.10)" },
         "100%": { backgroundColor: "rgba(255, 255, 255, 0)" },
       },
     },

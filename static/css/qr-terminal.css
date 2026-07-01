@@ -7,11 +7,11 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    font-family: 'Sarabun', 'Noto Sans Thai', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
     min-height: 100vh;
     overflow: hidden;
-    color: #333;
+    color: #26221E;
 }
 
 .terminal-container {
@@ -28,7 +28,7 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 25px 40px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
     color: white;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
@@ -79,7 +79,7 @@ body {
     gap: 8px;
     padding: 10px 20px;
     background: white;
-    border: 2px solid #dee2e6;
+    border: 2px solid #E8E4DF;
     border-radius: 8px;
     font-size: 15px;
     font-weight: 500;
@@ -90,22 +90,22 @@ body {
 }
 
 .location-btn:hover {
-    background: #f8f9fa;
-    border-color: #667eea;
+    background: #F4F1ED;
+    border-color: #8B0000;
     transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.2);
+    box-shadow: 0 4px 8px rgba(139, 0, 0, 0.2);
 }
 
 .location-btn.active {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    border-color: #667eea;
+    background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
+    border-color: #8B0000;
     color: white;
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    box-shadow: 0 4px 12px rgba(139, 0, 0, 0.3);
 }
 
 .location-btn.active:hover {
     transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 6px 16px rgba(139, 0, 0, 0.4);
 }
 
 .location-icon {
@@ -117,7 +117,7 @@ body {
 }
 
 .location-loading {
-    color: #6c757d;
+    color: #7A7268;
     font-size: 14px;
     padding: 5px;
 }
@@ -150,16 +150,16 @@ body {
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #ffc107;
+    background: #B7791F;
     animation: pulse 2s infinite;
 }
 
 .status-dot.connected {
-    background: #28a745;
+    background: #2F855A;
 }
 
 .status-dot.disconnected {
-    background: #dc3545;
+    background: #C53030;
 }
 
 @keyframes pulse {
@@ -193,7 +193,7 @@ body {
     border-radius: 24px;
     padding: 40px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-    border: 2px solid #e9ecef;
+    border: 2px solid #E8E4DF;
 }
 
 .qr-code-container {
@@ -214,15 +214,15 @@ body {
 
 .qr-loading {
     text-align: center;
-    color: #6c757d;
+    color: #7A7268;
 }
 
 .spinner {
     width: 50px;
     height: 50px;
     margin: 0 auto 20px;
-    border: 4px solid #f3f3f3;
-    border-top: 4px solid #667eea;
+    border: 4px solid #F4F1ED;
+    border-top: 4px solid #8B0000;
     border-radius: 50%;
     animation: spin 1s linear infinite;
 }
@@ -246,59 +246,59 @@ body {
 
 .timer-label {
     font-size: 16px;
-    color: #6c757d;
+    color: #7A7268;
     font-weight: 600;
 }
 
 .countdown {
     font-size: 48px;
     font-weight: 700;
-    color: #667eea;
+    color: #8B0000;
     min-width: 80px;
     text-align: center;
 }
 
 .countdown.warning {
-    color: #ffc107;
+    color: #B7791F;
 }
 
 .countdown.danger {
-    color: #dc3545;
+    color: #C53030;
 }
 
 .timer-unit {
     font-size: 16px;
-    color: #6c757d;
+    color: #7A7268;
 }
 
 .progress-bar-container {
     width: 100%;
     height: 8px;
-    background: #e9ecef;
+    background: #E8E4DF;
     border-radius: 4px;
     overflow: hidden;
 }
 
 .progress-bar {
     height: 100%;
-    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(90deg, #4F0E0E 0%, #7A0000 100%);
     border-radius: 4px;
     transition: width 1s linear;
 }
 
 /* Instructions */
 .instructions {
-    background: #f8f9fa;
+    background: #F4F1ED;
     border-radius: 20px;
     padding: 30px;
-    border-left: 5px solid #667eea;
+    border-left: 5px solid #8B0000;
 }
 
 .instructions h3 {
     font-size: 22px;
     font-weight: 600;
     margin-bottom: 20px;
-    color: #333;
+    color: #26221E;
 }
 
 .instructions ol {
@@ -307,7 +307,7 @@ body {
 
 .instructions li {
     font-size: 16px;
-    color: #6c757d;
+    color: #7A7268;
     margin-bottom: 12px;
     line-height: 1.6;
 }
@@ -320,7 +320,7 @@ body {
     border-radius: 24px;
     padding: 30px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-    border: 2px solid #e9ecef;
+    border: 2px solid #E8E4DF;
     max-height: calc(100vh - 280px);
     overflow: hidden;
 }
@@ -331,13 +331,13 @@ body {
     align-items: center;
     margin-bottom: 25px;
     padding-bottom: 15px;
-    border-bottom: 2px solid #e9ecef;
+    border-bottom: 2px solid #E8E4DF;
 }
 
 .section-header h3 {
     font-size: 24px;
     font-weight: 600;
-    color: #333;
+    color: #26221E;
 }
 
 .live-indicator {
@@ -346,14 +346,14 @@ body {
     gap: 8px;
     font-size: 14px;
     font-weight: 600;
-    color: #dc3545;
+    color: #C53030;
 }
 
 .live-dot {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #dc3545;
+    background: #C53030;
     animation: blink 1.5s infinite;
 }
 
@@ -377,17 +377,17 @@ body {
 }
 
 .recent-feed::-webkit-scrollbar-track {
-    background: #f8f9fa;
+    background: #F4F1ED;
     border-radius: 3px;
 }
 
 .recent-feed::-webkit-scrollbar-thumb {
-    background: #dee2e6;
+    background: #E8E4DF;
     border-radius: 3px;
 }
 
 .recent-feed::-webkit-scrollbar-thumb:hover {
-    background: #adb5bd;
+    background: #B8AFA6;
 }
 
 .empty-state {
@@ -397,7 +397,7 @@ body {
     justify-content: center;
     height: 100%;
     text-align: center;
-    color: #adb5bd;
+    color: #B8AFA6;
     padding: 40px;
 }
 
@@ -418,11 +418,11 @@ body {
 }
 
 .feed-item {
-    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    background: linear-gradient(135deg, #F4F1ED 0%, #E8E4DF 100%);
     padding: 20px;
     border-radius: 16px;
     margin-bottom: 15px;
-    border-left: 4px solid #667eea;
+    border-left: 4px solid #8B0000;
     animation: slideIn 0.5s ease-out;
 }
 
@@ -438,20 +438,20 @@ body {
 }
 
 .feed-item.new {
-    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-    border-left-color: #28a745;
+    background: linear-gradient(135deg, #DCEEE3 0%, #CFE4D8 100%);
+    border-left-color: #2F855A;
     animation: highlight 2s ease-out;
 }
 
 @keyframes highlight {
     0% {
-        box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
+        box-shadow: 0 0 0 0 rgba(47, 133, 90, 0.7);
     }
     50% {
-        box-shadow: 0 0 0 20px rgba(40, 167, 69, 0);
+        box-shadow: 0 0 0 20px rgba(47, 133, 90, 0);
     }
     100% {
-        box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
+        box-shadow: 0 0 0 0 rgba(47, 133, 90, 0);
     }
 }
 
@@ -465,13 +465,13 @@ body {
 .feed-name {
     font-size: 18px;
     font-weight: 600;
-    color: #333;
+    color: #26221E;
 }
 
 .feed-badge {
     font-size: 14px;
     font-weight: 600;
-    color: #667eea;
+    color: #8B0000;
     background: white;
     padding: 4px 12px;
     border-radius: 20px;
@@ -481,7 +481,7 @@ body {
     display: flex;
     gap: 20px;
     font-size: 14px;
-    color: #6c757d;
+    color: #7A7268;
 }
 
 .feed-detail {
@@ -496,8 +496,8 @@ body {
     justify-content: space-around;
     align-items: center;
     padding: 20px 40px;
-    background: #f8f9fa;
-    border-top: 2px solid #e9ecef;
+    background: #F4F1ED;
+    border-top: 2px solid #E8E4DF;
 }
 
 .footer-item {
@@ -509,13 +509,13 @@ body {
 
 .footer-item .label {
     font-size: 14px;
-    color: #6c757d;
+    color: #7A7268;
     font-weight: 600;
 }
 
 .footer-item .value {
     font-size: 16px;
-    color: #333;
+    color: #26221E;
     font-weight: 600;
 }
 
@@ -562,7 +562,7 @@ body {
     font-size: 20px;
     font-weight: 600;
     color: white;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
     border: none;
     border-radius: 12px;
     cursor: pointer;
@@ -571,7 +571,7 @@ body {
 
 .retry-btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 8px 24px rgba(139, 0, 0, 0.4);
 }
 
 /* Fullscreen Button */
@@ -582,7 +582,7 @@ body {
     width: 60px;
     height: 60px;
     border-radius: 50%;
-    background: rgba(102, 126, 234, 0.9);
+    background: rgba(139, 0, 0, 0.9);
     color: white;
     border: none;
     font-size: 24px;
@@ -593,7 +593,7 @@ body {
 }
 
 .fullscreen-btn:hover {
-    background: rgba(102, 126, 234, 1);
+    background: rgba(139, 0, 0, 1);
     transform: scale(1.1);
 }
 
@@ -688,12 +688,12 @@ body {
     width: 60px;
     height: 60px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: linear-gradient(135deg, #2F855A 0%, #256B47 100%);
     border: none;
     color: white;
     font-size: 28px;
     cursor: pointer;
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+    box-shadow: 0 4px 12px rgba(47, 133, 90, 0.4);
     transition: all 0.3s ease;
     z-index: 999;
     display: flex;
@@ -703,7 +703,7 @@ body {
 
 .gps-config-btn:hover {
     transform: scale(1.1);
-    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.6);
+    box-shadow: 0 6px 20px rgba(47, 133, 90, 0.6);
 }
 
 /* GPS Modal */
@@ -753,7 +753,7 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 25px 30px;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: linear-gradient(135deg, #2F855A 0%, #256B47 100%);
     color: white;
     border-radius: 20px 20px 0 0;
 }
@@ -792,7 +792,7 @@ body {
     width: 100%;
     padding: 15px;
     font-size: 18px;
-    border: 2px solid #e5e7eb;
+    border: 2px solid #E8E4DF;
     border-radius: 10px;
     margin-bottom: 15px;
     transition: border-color 0.3s ease;
@@ -800,12 +800,12 @@ body {
 
 .gps-password-input:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: #2F855A;
 }
 
 .gps-error-message {
-    background: #fee2e2;
-    color: #dc2626;
+    background: #F7E2E2;
+    color: #C53030;
     padding: 12px;
     border-radius: 8px;
     margin-bottom: 15px;
@@ -823,7 +823,7 @@ body {
     flex: 1;
     padding: 12px;
     background: white;
-    border: 2px solid #e5e7eb;
+    border: 2px solid #E8E4DF;
     border-radius: 10px;
     font-size: 16px;
     font-weight: 600;
@@ -832,13 +832,13 @@ body {
 }
 
 .gps-office-btn:hover {
-    border-color: #10b981;
+    border-color: #2F855A;
 }
 
 .gps-office-btn.active {
-    background: #10b981;
+    background: #2F855A;
     color: white;
-    border-color: #10b981;
+    border-color: #2F855A;
 }
 
 /* Form Groups */
@@ -849,7 +849,7 @@ body {
 .gps-form-group label {
     display: block;
     font-weight: 600;
-    color: #374151;
+    color: #26221E;
     margin-bottom: 8px;
     font-size: 15px;
 }
@@ -857,7 +857,7 @@ body {
 .gps-input {
     width: 100%;
     padding: 12px;
-    border: 2px solid #e5e7eb;
+    border: 2px solid #E8E4DF;
     border-radius: 8px;
     font-size: 16px;
     transition: border-color 0.3s ease;
@@ -865,7 +865,7 @@ body {
 
 .gps-input:focus {
     outline: none;
-    border-color: #10b981;
+    border-color: #2F855A;
 }
 
 /* Map Container */
@@ -874,7 +874,7 @@ body {
     height: 350px;
     border-radius: 12px;
     margin: 20px 0;
-    border: 2px solid #e5e7eb;
+    border: 2px solid #E8E4DF;
     overflow: hidden;
 }
 
@@ -889,7 +889,7 @@ body {
 .gps-coord-item label {
     display: block;
     font-weight: 600;
-    color: #374151;
+    color: #26221E;
     margin-bottom: 5px;
     font-size: 14px;
 }
@@ -897,11 +897,11 @@ body {
 .gps-coord-value {
     width: 100%;
     padding: 10px;
-    background: #f3f4f6;
-    border: 2px solid #e5e7eb;
+    background: #F4F1ED;
+    border: 2px solid #E8E4DF;
     border-radius: 8px;
     font-family: 'Courier New', monospace;
-    color: #10b981;
+    color: #2F855A;
     font-size: 14px;
 }
 
@@ -910,7 +910,7 @@ body {
     width: 100%;
     height: 8px;
     border-radius: 5px;
-    background: #e5e7eb;
+    background: #E8E4DF;
     outline: none;
     -webkit-appearance: none;
 }
@@ -921,7 +921,7 @@ body {
     width: 20px;
     height: 20px;
     border-radius: 50%;
-    background: #10b981;
+    background: #2F855A;
     cursor: pointer;
 }
 
@@ -929,7 +929,7 @@ body {
     width: 20px;
     height: 20px;
     border-radius: 50%;
-    background: #10b981;
+    background: #2F855A;
     cursor: pointer;
 }
 
@@ -954,13 +954,13 @@ body {
 }
 
 .gps-btn-primary {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: linear-gradient(135deg, #2F855A 0%, #256B47 100%);
     color: white;
 }
 
 .gps-btn-primary:hover:not(:disabled) {
     transform: scale(1.02);
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    box-shadow: 0 4px 12px rgba(47, 133, 90, 0.3);
 }
 
 .gps-btn-primary:disabled {
@@ -969,21 +969,21 @@ body {
 }
 
 .gps-btn-secondary {
-    background: #6b7280;
+    background: #7A7268;
     color: white;
 }
 
 .gps-btn-secondary:hover {
-    background: #4b5563;
+    background: #5C554C;
 }
 
 .gps-btn-danger {
-    background: #dc2626;
+    background: #C53030;
     color: white;
 }
 
 .gps-btn-danger:hover:not(:disabled) {
-    background: #b91c1c;
+    background: #9B2626;
 }
 
 .gps-btn-danger:disabled {
@@ -1001,19 +1001,19 @@ body {
 }
 
 .gps-status-message.success {
-    background: #d1fae5;
-    color: #065f46;
+    background: #DCEEE3;
+    color: #1D5438;
 }
 
 .gps-status-message.error {
-    background: #fee2e2;
-    color: #dc2626;
+    background: #F7E2E2;
+    color: #C53030;
 }
 
 /* Info Box */
 .gps-info-box {
-    background: #dbeafe;
-    border-left: 4px solid #3b82f6;
+    background: #E4EBF3;
+    border-left: 4px solid #2C5282;
     padding: 15px;
     border-radius: 8px;
     margin-bottom: 20px;
@@ -1021,7 +1021,7 @@ body {
 
 .gps-info-box p {
     margin: 0;
-    color: #1e40af;
+    color: #1F3F66;
 }
 
 /* Responsive */

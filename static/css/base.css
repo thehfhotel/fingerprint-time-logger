@@ -1,45 +1,48 @@
 /* Base styles for fingerprint time logger application */
 
-/* Professional color palette */
+/* HF One color palette (see /Users/nut/HF-erp/design/HF-ONE.md) */
 :root {
-    /* Primary grays */
+    /* Structural dark-surface scale (card headers, back buttons, log
+       viewer) — kept separate from the text/bg/border tokens below so a
+       burgundy header bar never bleeds into body text color. */
     --primary-white: #ffffff;
-    --primary-gray-50: #f8f9fa;
-    --primary-gray-100: #e9ecef;
-    --primary-gray-200: #dee2e6;
-    --primary-gray-300: #ced4da;
-    --primary-gray-400: #adb5bd;
-    --primary-gray-500: #6c757d;
-    --primary-gray-600: #495057;
-    --primary-gray-700: #343a40;
-    --primary-gray-800: #212529;
-    --primary-gray-900: #1a1d20;
+    --primary-gray-50: #FAF9F7;
+    --primary-gray-100: #F4F1ED;
+    --primary-gray-200: #E8E4DF;
+    --primary-gray-300: #CFC9C1;
+    --primary-gray-400: #B8AFA6;
+    --primary-gray-500: #7A7268;
+    --primary-gray-600: #5C554C;
+    --primary-gray-700: #6B1212;
+    --primary-gray-800: #4F0E0E;
+    --primary-gray-900: #3A0A0A;
 
-    /* Accent colors */
-    --accent-blue: #4a90e2;
-    --accent-green: #27ae60;
-    --accent-red: #e74c3c;
-    --accent-orange: #f39c12;
+    /* Accent colors -> HF One primary + semantic tokens */
+    --accent-blue: #8B0000;
+    --accent-green: #2F855A;
+    --accent-red: #C53030;
+    --accent-orange: #B7791F;
 
-    /* Text colors */
-    --text-primary: var(--primary-gray-800);
-    --text-secondary: var(--primary-gray-600);
-    --text-muted: var(--primary-gray-500);
+    /* Text colors (warm, direct HF tokens — not chained through the
+       structural gray scale above) */
+    --text-primary: #26221E;
+    --text-secondary: #5C554C;
+    --text-muted: #7A7268;
 
     /* Background colors */
     --bg-primary: var(--primary-white);
-    --bg-secondary: var(--primary-gray-50);
-    --bg-tertiary: var(--primary-gray-100);
+    --bg-secondary: #FAF9F7;
+    --bg-tertiary: #F4F1ED;
 
     /* Border colors */
-    --border-light: var(--primary-gray-200);
-    --border-medium: var(--primary-gray-300);
-    --border-dark: var(--primary-gray-400);
+    --border-light: #E8E4DF;
+    --border-medium: #CFC9C1;
+    --border-dark: #B8AFA6;
 
-    /* Shadow colors */
-    --shadow-light: rgba(0, 0, 0, 0.05);
-    --shadow-medium: rgba(0, 0, 0, 0.1);
-    --shadow-dark: rgba(0, 0, 0, 0.15);
+    /* Shadow colors (warm near-black, per HF One) */
+    --shadow-light: rgba(38, 34, 30, 0.06);
+    --shadow-medium: rgba(38, 34, 30, 0.1);
+    --shadow-dark: rgba(38, 34, 30, 0.15);
 }
 
 /* Reset and base styles */
@@ -50,7 +53,7 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+    font-family: 'Sarabun', 'Noto Sans Thai', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
     background-color: var(--bg-secondary);
     color: var(--text-primary);
     line-height: 1.5;
@@ -139,8 +142,8 @@ body {
 }
 
 .import-btn:hover {
-    background: #3a7bc8;
-    border-color: #3a7bc8;
+    background: #7A0000;
+    border-color: #7A0000;
     color: var(--primary-white);
 }
 
@@ -197,8 +200,8 @@ body {
 }
 
 .btn-primary:hover {
-    background: #3a7bc8;
-    border-color: #3a7bc8;
+    background: #7A0000;
+    border-color: #7A0000;
     transform: translateY(-1px);
     box-shadow: 0 2px 4px var(--shadow-medium);
 }
@@ -247,7 +250,7 @@ body {
 .form-group textarea:focus {
     outline: none;
     border-color: var(--accent-blue);
-    box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1);
+    box-shadow: 0 0 0 3px rgba(139, 0, 0, 0.1);
 }
 
 .checkbox-group {

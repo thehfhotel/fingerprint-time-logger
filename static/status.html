@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>สถานะระบบ - ระบบบันทึกเวลาด้วยลายนิ้วมือ</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="static/css/base.css">
     <link rel="stylesheet" href="static/css/modal.css">
     
@@ -32,16 +35,16 @@
             background: white;
             border-radius: 12px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            border: 1px solid #e5e7eb;
+            border: 1px solid #E8E4DF;
             overflow: hidden;
         }
 
         .status-card-header {
-            background: #f9fafb;
+            background: #FAF9F7;
             padding: 1rem 1.5rem;
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid #E8E4DF;
             font-weight: 600;
-            color: #374151;
+            color: #26221E;
         }
 
         .status-card-content {
@@ -59,18 +62,18 @@
         }
 
         .status-healthy {
-            background: #dcfce7;
-            color: #166534;
+            background: #DCEEE3;
+            color: #1D5438;
         }
 
         .status-warning {
-            background: #fef3c7;
-            color: #92400e;
+            background: #F6EACB;
+            color: #93691F;
         }
 
         .status-error {
-            background: #fee2e2;
-            color: #dc2626;
+            background: #F7E2E2;
+            color: #C53030;
         }
 
         .status-dot {
@@ -81,16 +84,16 @@
         }
 
         .dot-green {
-            background-color: #10b981;
+            background-color: #2F855A;
             animation: pulse 2s infinite;
         }
 
         .dot-yellow {
-            background-color: #f59e0b;
+            background-color: #B7791F;
         }
 
         .dot-red {
-            background-color: #ef4444;
+            background-color: #C53030;
         }
 
         .metric-row {
@@ -98,7 +101,7 @@
             justify-content: space-between;
             align-items: center;
             padding: 0.75rem 0;
-            border-bottom: 1px solid #f3f4f6;
+            border-bottom: 1px solid #F4F1ED;
         }
 
         .metric-row:last-child {
@@ -106,39 +109,39 @@
         }
 
         .metric-label {
-            color: #6b7280;
+            color: #7A7268;
             font-size: 0.875rem;
         }
 
         .metric-value {
             font-weight: 600;
-            color: #374151;
+            color: #26221E;
         }
 
         .metric-value#device-clock {
-            color: #374151;
+            color: #26221E;
         }
 
         .metric-row .metric-label {
-            color: #6b7280;
+            color: #7A7268;
         }
 
         .status-card-content .metric-row:nth-child(4) .metric-label {
-            color: #6b7280;
+            color: #7A7268;
         }
 
         .logs-section {
             background: white;
             border-radius: 12px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            border: 1px solid #e5e7eb;
+            border: 1px solid #E8E4DF;
             margin-top: 2rem;
         }
 
         .logs-header {
-            background: #f9fafb;
+            background: #FAF9F7;
             padding: 1rem 1.5rem;
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid #E8E4DF;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -160,7 +163,7 @@
             font-family: 'Courier New', monospace;
             font-size: 0.875rem;
             padding: 0.5rem;
-            border-bottom: 1px solid #f3f4f6;
+            border-bottom: 1px solid #F4F1ED;
             display: flex;
             gap: 1rem;
         }
@@ -170,7 +173,7 @@
         }
 
         .log-timestamp {
-            color: #6b7280;
+            color: #7A7268;
             white-space: nowrap;
         }
 
@@ -180,24 +183,24 @@
         }
 
         .log-level.INFO {
-            color: #059669;
+            color: #256B47;
         }
 
         .log-level.WARNING {
-            color: #d97706;
+            color: #93691F;
         }
 
         .log-level.ERROR {
-            color: #dc2626;
+            color: #C53030;
         }
 
         .log-message {
-            color: #374151;
+            color: #26221E;
             word-break: break-all;
         }
 
         .refresh-button {
-            background: #3b82f6;
+            background: #2C5282;
             color: white;
             border: none;
             padding: 0.5rem 1rem;
@@ -208,11 +211,11 @@
         }
 
         .refresh-button:hover {
-            background: #2563eb;
+            background: #2C5282;
         }
 
         .refresh-button:disabled {
-            background: #9ca3af;
+            background: #ABA299;
             cursor: not-allowed;
         }
 
@@ -221,14 +224,14 @@
             align-items: center;
             gap: 0.5rem;
             font-size: 0.875rem;
-            color: #6b7280;
+            color: #7A7268;
         }
 
         .loading-spinner {
             width: 20px;
             height: 20px;
-            border: 2px solid #f3f4f6;
-            border-top: 2px solid #3b82f6;
+            border: 2px solid #F4F1ED;
+            border-top: 2px solid #2C5282;
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
@@ -245,13 +248,13 @@
 
         .empty-logs {
             text-align: center;
-            color: #6b7280;
+            color: #7A7268;
             padding: 2rem;
             font-style: italic;
         }
 
         .sync-btn {
-            background: #3b82f6;
+            background: #2C5282;
             color: white;
             border: none;
             padding: 0.5rem 1rem;
@@ -262,12 +265,12 @@
         }
 
         .sync-btn:hover {
-            background: #2563eb;
+            background: #2C5282;
             transform: translateY(-1px);
         }
 
         .sync-btn:disabled {
-            background: #9ca3af;
+            background: #ABA299;
             cursor: not-allowed;
             transform: none;
         }
@@ -276,7 +279,7 @@
             position: fixed;
             top: 20px;
             right: 20px;
-            background: #1f2937;
+            background: #26221E;
             color: white;
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
@@ -293,7 +296,7 @@
 
         .notification-icon {
             font-size: 1.25rem;
-            color: #fbbf24;
+            color: #D9A441;
         }
 
         .notification-text {
@@ -305,7 +308,7 @@
         .notification-close {
             background: none;
             border: none;
-            color: #9ca3af;
+            color: #ABA299;
             font-size: 1.25rem;
             cursor: pointer;
             padding: 0;
@@ -333,7 +336,7 @@
 
         select {
             padding: 0.25rem 0.5rem;
-            border: 1px solid #d1d5db;
+            border: 1px solid #CFC9C1;
             border-radius: 4px;
             font-size: 0.875rem;
         }
@@ -345,11 +348,11 @@
         .stat-value {
             font-size: 1.5rem;
             font-weight: 600;
-            color: #1f2937;
+            color: #26221E;
         }
 
         .stat-label {
-            color: #6b7280;
+            color: #7A7268;
             font-size: 0.75rem;
             text-transform: uppercase;
             letter-spacing: 0.05em;
@@ -409,8 +412,8 @@
                         <span class="metric-label">ตรวจสอบล่าสุด</span>
                         <span class="metric-value" id="last-check">กำลังโหลด...</span>
                     </div>
-                    <div id="status-details" style="display: none; margin-top: 1rem; padding: 0.75rem; background: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 4px; font-size: 0.875rem;">
-                        <div style="font-weight: 600; color: #92400e; margin-bottom: 0.5rem;">ปัญหาที่พบ:</div>
+                    <div id="status-details" style="display: none; margin-top: 1rem; padding: 0.75rem; background: #F6EACB; border-left: 4px solid #B7791F; border-radius: 4px; font-size: 0.875rem;">
+                        <div style="font-weight: 600; color: #93691F; margin-bottom: 0.5rem;">ปัญหาที่พบ:</div>
                         <div id="status-issues" style="color: #78350f;"></div>
                     </div>
                 </div>
@@ -583,7 +586,7 @@
                     </div>
                 </div>
             </div>
-            <div id="log-stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; padding: 1rem; background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+            <div id="log-stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; padding: 1rem; background-color: #FAF9F7; border-bottom: 1px solid #E8E4DF;">
                 <div class="loading">กำลังโหลดสถิติบันทึก...</div>
             </div>
             <div class="logs-content" id="logs-content">
@@ -722,8 +725,8 @@
                     // Show issues for error status
                     if (issues.length > 0) {
                         statusDetailsElement.style.display = 'block';
-                        statusDetailsElement.style.background = '#fee2e2';
-                        statusDetailsElement.style.borderColor = '#dc2626';
+                        statusDetailsElement.style.background = '#F7E2E2';
+                        statusDetailsElement.style.borderColor = '#C53030';
                         statusIssuesElement.innerHTML = issues.map(issue => `<div style="margin-bottom: 0.25rem;">• ${this.escapeHtml(issue)}</div>`).join('');
                     } else {
                         statusDetailsElement.style.display = 'none';
@@ -938,7 +941,7 @@
                 }
 
                 const healthColor = summary.health_status === 'good' ? '#22c55e' :
-                                  summary.health_status === 'warning' ? '#f59e0b' : '#ef4444';
+                                  summary.health_status === 'warning' ? '#B7791F' : '#C53030';
 
                 statsDiv.innerHTML = `
                     <div class="stat-item">
@@ -946,11 +949,11 @@
                         <div class="stat-label">บันทึกทั้งหมด</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-value" style="color: #ef4444;">${summary.recent_errors || 0}</div>
+                        <div class="stat-value" style="color: #C53030;">${summary.recent_errors || 0}</div>
                         <div class="stat-label">ข้อผิดพลาด</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-value" style="color: #f59e0b;">${summary.recent_warnings || 0}</div>
+                        <div class="stat-value" style="color: #B7791F;">${summary.recent_warnings || 0}</div>
                         <div class="stat-label">คำเตือน</div>
                     </div>
                     <div class="stat-item">
@@ -1040,7 +1043,7 @@
                 if (result.success) {
                     // Show success message
                     syncBtn.textContent = '✅ ซิงค์เสร็จแล้ว!';
-                    syncBtn.style.background = '#10b981';
+                    syncBtn.style.background = '#2F855A';
                     
                     // Update device clock display
                     const newTime = new Date(result.new_time);
@@ -1061,7 +1064,7 @@
                     // Reset button after 3 seconds
                     setTimeout(() => {
                         syncBtn.textContent = '🔄 ซิงค์เวลาเซิร์ฟเวอร์';
-                        syncBtn.style.background = '#3b82f6';
+                        syncBtn.style.background = '#2C5282';
                         syncBtn.disabled = false;
                     }, 3000);
                 } else {
@@ -1071,12 +1074,12 @@
             } catch (error) {
                 console.error('Error syncing device time:', error);
                 syncBtn.textContent = '❌ ล้มเหลว';
-                syncBtn.style.background = '#ef4444';
+                syncBtn.style.background = '#C53030';
                 
                 // Reset button after 3 seconds
                 setTimeout(() => {
                     syncBtn.textContent = '🔄 ซิงค์เวลาเซิร์ฟเวอร์';
-                    syncBtn.style.background = '#3b82f6';
+                    syncBtn.style.background = '#2C5282';
                     syncBtn.disabled = false;
                 }, 3000);
             }
@@ -1136,13 +1139,13 @@
                     });
                     document.getElementById('auto-import-next').textContent = `~${nextTimeString}`;
                 } else {
-                    document.getElementById('auto-import-status').innerHTML = '<span style="color: #ef4444;">❌ ไม่ทำงาน</span>';
+                    document.getElementById('auto-import-status').innerHTML = '<span style="color: #C53030;">❌ ไม่ทำงาน</span>';
                     document.getElementById('auto-import-interval').textContent = `${syncInterval} นาที`;
                     document.getElementById('auto-import-next').textContent = 'N/A';
                 }
             } catch (error) {
                 console.error('Failed to load auto-import status:', error);
-                document.getElementById('auto-import-status').innerHTML = '<span style="color: #ef4444;">❌ ข้อผิดพลาด</span>';
+                document.getElementById('auto-import-status').innerHTML = '<span style="color: #C53030;">❌ ข้อผิดพลาด</span>';
                 document.getElementById('auto-import-interval').textContent = '30 นาที';
                 document.getElementById('auto-import-next').textContent = 'N/A';
             }

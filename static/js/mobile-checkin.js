@@ -157,9 +157,9 @@
      */
     const DEFAULT_AVATAR_SVG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
-        '<circle cx="32" cy="32" r="32" fill="#e0e0e0"/>' +
-        '<circle cx="32" cy="26" r="11" fill="#bdbdbd"/>' +
-        '<path d="M10 58c4-12 14-18 22-18s18 6 22 18z" fill="#bdbdbd"/>' +
+        '<circle cx="32" cy="32" r="32" fill="#E8E4DF"/>' +
+        '<circle cx="32" cy="26" r="11" fill="#CFC9C1"/>' +
+        '<path d="M10 58c4-12 14-18 22-18s18 6 22 18z" fill="#CFC9C1"/>' +
         '</svg>'
     );
 
@@ -209,9 +209,9 @@
         if (isGPSAccurate(accuracy)) {
             // Good GPS lock achieved - phone GPS (not WiFi)
             elements.gpsText.textContent = 'GPS พร้อมใช้งาน ✓';
-            elements.gpsText.style.color = '#28a745';
+            elements.gpsText.style.color = '#2F855A';
             elements.gpsAccuracy.textContent = `±${accuracy}m`;
-            elements.gpsAccuracy.style.color = '#28a745';
+            elements.gpsAccuracy.style.color = '#2F855A';
 
             // Enable scanner button
             if (elements.startScanButton) {
@@ -222,9 +222,9 @@
         } else {
             // Waiting for GPS lock (likely using WiFi positioning)
             elements.gpsText.textContent = 'กำลังรอสัญญาณ GPS...';
-            elements.gpsText.style.color = '#ffc107';
+            elements.gpsText.style.color = '#B7791F';
             elements.gpsAccuracy.textContent = `±${accuracy}m`;
-            elements.gpsAccuracy.style.color = '#ffc107';
+            elements.gpsAccuracy.style.color = '#B7791F';
 
             // Disable scanner button until GPS accuracy improves
             if (elements.startScanButton) {
@@ -241,7 +241,7 @@
     function startGPSTracking() {
         if (!navigator.geolocation) {
             elements.gpsText.textContent = 'ไม่รองรับ GPS';
-            elements.gpsText.style.color = '#dc3545';
+            elements.gpsText.style.color = '#C53030';
             elements.gpsAccuracy.textContent = '-';
             return;
         }
@@ -253,7 +253,7 @@
             (error) => {
                 console.error('[GPS] Error:', error);
                 elements.gpsText.textContent = 'ไม่สามารถเข้าถึง GPS';
-                elements.gpsText.style.color = '#dc3545';
+                elements.gpsText.style.color = '#C53030';
                 elements.gpsAccuracy.textContent = '-';
 
                 // Disable scanner when GPS unavailable
@@ -468,7 +468,7 @@
 
                 // Show error with GPS details for debugging
                 const errorDetails = currentGPS ? `
-                    <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #f5c6cb;">
+                    <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #EFC2C2;">
                         <div><strong>🎯 ความแม่นยำ GPS:</strong> ±${Math.round(currentGPS.accuracy)}m</div>
                         <div><strong>📍 ตำแหน่ง:</strong> ${currentGPS.latitude.toFixed(6)}, ${currentGPS.longitude.toFixed(6)}</div>
                     </div>

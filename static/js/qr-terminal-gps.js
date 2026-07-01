@@ -236,8 +236,8 @@ function updateGPSRadiusCircle() {
         [gpsState.selectedLocation.lat, gpsState.selectedLocation.lng],
         {
             radius: radius,  // meters
-            color: '#10b981',
-            fillColor: '#10b981',
+            color: '#2F855A',
+            fillColor: '#2F855A',
             fillOpacity: 0.2,
             weight: 2
         }

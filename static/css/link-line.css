@@ -7,14 +7,14 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    font-family: 'Sarabun', 'Noto Sans Thai', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
     min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 20px;
-    color: #333;
+    color: #26221E;
 }
 
 .container {
@@ -28,7 +28,7 @@ body {
 
 /* Header */
 .header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
     color: white;
     padding: 30px 20px;
     text-align: center;
@@ -49,8 +49,8 @@ body {
 /* Profile Section */
 .profile-section {
     padding: 30px 20px;
-    background: #f8f9fa;
-    border-bottom: 1px solid #e9ecef;
+    background: #F4F1ED;
+    border-bottom: 1px solid #E8E4DF;
 }
 
 .profile-card {
@@ -68,7 +68,7 @@ body {
     height: 80px;
     border-radius: 50%;
     object-fit: cover;
-    border: 3px solid #667eea;
+    border: 3px solid #8B0000;
 }
 
 .profile-info {
@@ -78,13 +78,13 @@ body {
 .display-name {
     font-size: 20px;
     font-weight: 600;
-    color: #333;
+    color: #26221E;
     margin-bottom: 5px;
 }
 
 .line-user-id {
     font-size: 14px;
-    color: #6c757d;
+    color: #7A7268;
     font-family: monospace;
 }
 
@@ -101,7 +101,7 @@ body {
     display: block;
     font-size: 16px;
     font-weight: 600;
-    color: #333;
+    color: #26221E;
     margin-bottom: 10px;
 }
 
@@ -110,24 +110,24 @@ body {
     padding: 18px;
     font-size: 24px;
     text-align: center;
-    border: 2px solid #e9ecef;
+    border: 2px solid #E8E4DF;
     border-radius: 12px;
     letter-spacing: 8px;
     font-weight: 600;
-    color: #333;
+    color: #26221E;
     transition: all 0.3s ease;
 }
 
 .code-input:focus {
     outline: none;
-    border-color: #667eea;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    border-color: #8B0000;
+    box-shadow: 0 0 0 3px rgba(139, 0, 0, 0.1);
 }
 
 .code-input::placeholder {
     letter-spacing: normal;
     font-size: 16px;
-    color: #adb5bd;
+    color: #B8AFA6;
 }
 
 .submit-btn {
@@ -137,7 +137,7 @@ body {
     font-size: 18px;
     font-weight: 600;
     color: white;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
     border: none;
     border-radius: 12px;
     cursor: pointer;
@@ -146,7 +146,7 @@ body {
 
 .submit-btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 6px 20px rgba(139, 0, 0, 0.4);
 }
 
 .submit-btn:active {
@@ -154,23 +154,23 @@ body {
 }
 
 .submit-btn:disabled {
-    background: #adb5bd;
+    background: #B8AFA6;
     cursor: not-allowed;
     transform: none;
 }
 
 /* Help Text */
 .help-text {
-    background: #f8f9fa;
+    background: #F4F1ED;
     padding: 20px;
     border-radius: 12px;
-    border-left: 4px solid #667eea;
+    border-left: 4px solid #8B0000;
 }
 
 .help-text p {
     font-size: 16px;
     font-weight: 600;
-    color: #333;
+    color: #26221E;
     margin-bottom: 15px;
 }
 
@@ -180,7 +180,7 @@ body {
 
 .help-text li {
     font-size: 14px;
-    color: #6c757d;
+    color: #7A7268;
     margin-bottom: 8px;
     line-height: 1.6;
 }
@@ -195,8 +195,8 @@ body {
     width: 50px;
     height: 50px;
     margin: 0 auto 20px;
-    border: 4px solid #f3f3f3;
-    border-top: 4px solid #667eea;
+    border: 4px solid #F4F1ED;
+    border-top: 4px solid #8B0000;
     border-radius: 50%;
     animation: spin 1s linear infinite;
 }
@@ -208,7 +208,7 @@ body {
 
 .loading-section p {
     font-size: 16px;
-    color: #6c757d;
+    color: #7A7268;
 }
 
 /* Success Section */
@@ -225,13 +225,13 @@ body {
 .success-section h2 {
     font-size: 28px;
     font-weight: 600;
-    color: #28a745;
+    color: #2F855A;
     margin-bottom: 15px;
 }
 
 .success-section p {
     font-size: 16px;
-    color: #6c757d;
+    color: #7A7268;
     margin-bottom: 30px;
 }
 
@@ -241,7 +241,7 @@ body {
     font-size: 18px;
     font-weight: 600;
     color: white;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
     text-decoration: none;
     border-radius: 12px;
     transition: all 0.3s ease;
@@ -249,7 +249,7 @@ body {
 
 .action-btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 6px 20px rgba(139, 0, 0, 0.4);
 }
 
 /* Error Section */
@@ -266,13 +266,13 @@ body {
 .error-section h2 {
     font-size: 24px;
     font-weight: 600;
-    color: #dc3545;
+    color: #C53030;
     margin-bottom: 15px;
 }
 
 .error-section p {
     font-size: 16px;
-    color: #6c757d;
+    color: #7A7268;
     margin-bottom: 30px;
     line-height: 1.6;
 }
@@ -282,7 +282,7 @@ body {
     font-size: 18px;
     font-weight: 600;
     color: white;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
     border: none;
     border-radius: 12px;
     cursor: pointer;
@@ -293,7 +293,7 @@ body {
 
 .retry-btn:hover, .login-btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 6px 20px rgba(139, 0, 0, 0.4);
 }
 
 /* Mobile Optimization */

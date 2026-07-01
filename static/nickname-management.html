@@ -7,6 +7,9 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>จัดการชื่อเล่นพนักงาน - ระบบบันทึกเวลาด้วยลายนิ้วมือ</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
     <!-- CSS Files with cache busting -->
     <script>
         const cssTimestamp = Date.now();
@@ -55,14 +58,14 @@
         .nickname-input {
             width: 100%;
             padding: 8px;
-            border: 1px solid #ddd;
+            border: 1px solid #CFC9C1;
             border-radius: 4px;
             font-size: 14px;
         }
 
         .nickname-input:focus {
             outline: none;
-            border-color: #007bff;
+            border-color: #2C5282;
         }
 
         .search-box {
@@ -72,7 +75,7 @@
         .search-input {
             width: 300px;
             padding: 10px;
-            border: 1px solid #ddd;
+            border: 1px solid #CFC9C1;
             border-radius: 4px;
             font-size: 14px;
         }
@@ -80,18 +83,18 @@
         .loading {
             text-align: center;
             padding: 40px;
-            color: #666;
+            color: #5C554C;
         }
 
         .success-message {
-            color: #28a745;
+            color: #2F855A;
             font-size: 12px;
             margin-left: 10px;
             display: none;
         }
 
         .error-message {
-            color: #dc3545;
+            color: #C53030;
             font-size: 12px;
             margin-left: 10px;
             display: none;
@@ -105,18 +108,18 @@
         }
 
         .status-active {
-            background-color: #d4edda;
-            color: #155724;
+            background-color: #DCEEE3;
+            color: #1D5438;
         }
 
         .status-inactive {
-            background-color: #f8d7da;
-            color: #721c24;
+            background-color: #F7E2E2;
+            color: #7F1F1F;
         }
 
         .status-hidden {
-            background-color: #e2e3e5;
-            color: #383d41;
+            background-color: #E8E4DF;
+            color: #443E37;
         }
 
         .btn.inactive {
@@ -149,20 +152,20 @@
 
         .source-tag-zkdevice {
             background-color: #e3f2fd;
-            color: #1565c0;
-            border: 1px solid #90caf9;
+            color: #1F3F66;
+            border: 1px solid #A9C2DA;
         }
 
         .source-tag-database {
-            background-color: #fff3e0;
-            color: #e65100;
-            border: 1px solid #ffb74d;
+            background-color: #FBF0DC;
+            color: #8A5A16;
+            border: 1px solid #DEB157;
         }
 
         /* Delete button styling */
         .btn-delete {
-            background-color: #dc3545 !important;
-            border-color: #dc3545 !important;
+            background-color: #C53030 !important;
+            border-color: #C53030 !important;
             color: white !important;
             padding: 6px 12px;
             font-size: 13px;
@@ -170,8 +173,8 @@
         }
 
         .btn-delete:hover {
-            background-color: #c82333 !important;
-            border-color: #bd2130 !important;
+            background-color: #9B2626 !important;
+            border-color: #9B2626 !important;
         }
     </style>
 </head>
@@ -203,9 +206,9 @@
                     </div>
 
                     <!-- Admin Mode Panel (Hidden by default) -->
-                    <div id="adminPanel" style="display: none; margin-bottom: 20px; padding: 20px; background: #f8f9fa; border-radius: 6px; border: 2px solid #007bff;">
+                    <div id="adminPanel" style="display: none; margin-bottom: 20px; padding: 20px; background: #F4F1ED; border-radius: 6px; border: 2px solid #2C5282;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                            <h3 style="margin: 0; color: #007bff;">🔐 โหมดผู้ดูแลระบบ - จัดการรหัสเชื่อมต่อ LINE</h3>
+                            <h3 style="margin: 0; color: #2C5282;">🔐 โหมดผู้ดูแลระบบ - จัดการรหัสเชื่อมต่อ LINE</h3>
                             <button class="btn btn-secondary" onclick="deactivateAdminMode()">ออกจากโหมดผู้ดูแล</button>
                         </div>
                         <div id="adminStats" style="margin-bottom: 15px; padding: 10px; background: white; border-radius: 4px;">
@@ -363,8 +366,8 @@
                         // Already linked - allow re-linking with new code
                         lineCodeCell = `
                             <td>
-                                <span style="color: #28a745; font-weight: bold;">✅ เชื่อมต่อแล้ว</span><br>
-                                <span style="font-size: 12px; color: #666;">${escapeHtml(employee.line_display_name || 'N/A')}</span><br>
+                                <span style="color: #2F855A; font-weight: bold;">✅ เชื่อมต่อแล้ว</span><br>
+                                <span style="font-size: 12px; color: #5C554C;">${escapeHtml(employee.line_display_name || 'N/A')}</span><br>
                                 <button class="btn btn-primary" style="font-size: 12px; margin-top: 5px;"
                                         onclick="generateLinkingCode('${safeBadgeForJs}')">
                                     🔄 สร้างรหัสเชื่อมต่อใหม่
@@ -375,8 +378,8 @@
                         // Has code, waiting for link
                         lineCodeCell = `
                             <td>
-                                <span style="color: #007bff; font-weight: bold; font-size: 18px;">${escapeHtml(employee.line_linking_code)}</span><br>
-                                <span style="font-size: 12px; color: #666;">รอพนักงานเชื่อมต่อ</span><br>
+                                <span style="color: #2C5282; font-weight: bold; font-size: 18px;">${escapeHtml(employee.line_linking_code)}</span><br>
+                                <span style="font-size: 12px; color: #5C554C;">รอพนักงานเชื่อมต่อ</span><br>
                                 <button class="btn btn-secondary" style="font-size: 12px; margin-top: 5px;"
                                         onclick="regenerateLinkingCode('${safeBadgeForJs}')">
                                     สร้างรหัสใหม่
@@ -717,23 +720,23 @@
                 document.getElementById('adminStats').innerHTML = `
                     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
                         <div style="text-align: center;">
-                            <div style="font-size: 24px; font-weight: bold; color: #007bff;">${stats.total_active_employees}</div>
-                            <div style="font-size: 12px; color: #666;">พนักงานทั้งหมด</div>
+                            <div style="font-size: 24px; font-weight: bold; color: #2C5282;">${stats.total_active_employees}</div>
+                            <div style="font-size: 12px; color: #5C554C;">พนักงานทั้งหมด</div>
                         </div>
                         <div style="text-align: center;">
-                            <div style="font-size: 24px; font-weight: bold; color: #28a745;">${stats.linked_accounts}</div>
-                            <div style="font-size: 12px; color: #666;">เชื่อมต่อแล้ว</div>
+                            <div style="font-size: 24px; font-weight: bold; color: #2F855A;">${stats.linked_accounts}</div>
+                            <div style="font-size: 12px; color: #5C554C;">เชื่อมต่อแล้ว</div>
                         </div>
                         <div style="text-align: center;">
-                            <div style="font-size: 24px; font-weight: bold; color: #ffc107;">${stats.pending_codes}</div>
-                            <div style="font-size: 12px; color: #666;">รอเชื่อมต่อ</div>
+                            <div style="font-size: 24px; font-weight: bold; color: #B7791F;">${stats.pending_codes}</div>
+                            <div style="font-size: 12px; color: #5C554C;">รอเชื่อมต่อ</div>
                         </div>
                         <div style="text-align: center;">
-                            <div style="font-size: 24px; font-weight: bold; color: #dc3545;">${stats.unlinked}</div>
-                            <div style="font-size: 12px; color: #666;">ยังไม่สร้างรหัส</div>
+                            <div style="font-size: 24px; font-weight: bold; color: #C53030;">${stats.unlinked}</div>
+                            <div style="font-size: 12px; color: #5C554C;">ยังไม่สร้างรหัส</div>
                         </div>
                     </div>
-                    <div style="margin-top: 10px; text-align: center; font-size: 14px; color: #666;">
+                    <div style="margin-top: 10px; text-align: center; font-size: 14px; color: #5C554C;">
                         เชื่อมต่อแล้ว: ${stats.linking_percentage}%
                     </div>
                 `;
@@ -1050,19 +1053,19 @@
     <!-- Add Employee Modal -->
     <div id="addEmployeeModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
         <div style="background: white; padding: 30px; border-radius: 8px; max-width: 500px; width: 90%; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-            <h3 style="margin: 0 0 20px 0; color: #333;">➕ เพิ่มพนักงานใหม่</h3>
+            <h3 style="margin: 0 0 20px 0; color: #26221E;">➕ เพิ่มพนักงานใหม่</h3>
 
             <div style="margin-bottom: 15px;">
-                <label for="newBadgeNumber" style="display: block; margin-bottom: 5px; font-weight: 500; color: #555;">หมายเลขบัตร <span style="color: red;">*</span></label>
-                <input type="text" id="newBadgeNumber" placeholder="ระบุหมายเลขบัตร" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; box-sizing: border-box;">
+                <label for="newBadgeNumber" style="display: block; margin-bottom: 5px; font-weight: 500; color: #5C554C;">หมายเลขบัตร <span style="color: red;">*</span></label>
+                <input type="text" id="newBadgeNumber" placeholder="ระบุหมายเลขบัตร" style="width: 100%; padding: 10px; border: 1px solid #CFC9C1; border-radius: 4px; font-size: 14px; box-sizing: border-box;">
             </div>
 
             <div style="margin-bottom: 20px;">
-                <label for="newNickname" style="display: block; margin-bottom: 5px; font-weight: 500; color: #555;">ชื่อเล่น <span style="color: red;">*</span></label>
-                <input type="text" id="newNickname" placeholder="ระบุชื่อเล่นพนักงาน" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; box-sizing: border-box;">
+                <label for="newNickname" style="display: block; margin-bottom: 5px; font-weight: 500; color: #5C554C;">ชื่อเล่น <span style="color: red;">*</span></label>
+                <input type="text" id="newNickname" placeholder="ระบุชื่อเล่นพนักงาน" style="width: 100%; padding: 10px; border: 1px solid #CFC9C1; border-radius: 4px; font-size: 14px; box-sizing: border-box;">
             </div>
 
-            <div id="addEmployeeError" style="display: none; margin-bottom: 15px; padding: 10px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; color: #721c24; font-size: 14px;"></div>
+            <div id="addEmployeeError" style="display: none; margin-bottom: 15px; padding: 10px; background: #F7E2E2; border: 1px solid #EFC2C2; border-radius: 4px; color: #7F1F1F; font-size: 14px;"></div>
 
             <div style="display: flex; gap: 10px; justify-content: flex-end;">
                 <button class="btn btn-secondary" onclick="hideAddEmployeeModal()">ยกเลิก</button>

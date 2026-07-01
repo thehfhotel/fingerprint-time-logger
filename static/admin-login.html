@@ -4,16 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Login - ระบบบันทึกเวลา</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="static/css/base.css">
     <style>
         body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
             margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-family: 'Sarabun', 'Noto Sans Thai', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
 
         .login-container {
@@ -43,14 +46,14 @@
         }
 
         .login-header h1 {
-            color: #1f2937;
+            color: #26221E;
             font-size: 1.875rem;
             font-weight: 700;
             margin: 0 0 0.5rem 0;
         }
 
         .login-header p {
-            color: #6b7280;
+            color: #7A7268;
             font-size: 0.875rem;
             margin: 0;
         }
@@ -66,7 +69,7 @@
 
         .form-group label {
             display: block;
-            color: #374151;
+            color: #26221E;
             font-weight: 500;
             margin-bottom: 0.5rem;
             font-size: 0.875rem;
@@ -75,7 +78,7 @@
         .form-group input {
             width: 100%;
             padding: 0.75rem 1rem;
-            border: 2px solid #e5e7eb;
+            border: 2px solid #E8E4DF;
             border-radius: 8px;
             font-size: 1rem;
             transition: all 0.2s;
@@ -84,14 +87,14 @@
 
         .form-group input:focus {
             outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            border-color: #8B0000;
+            box-shadow: 0 0 0 3px rgba(139, 0, 0, 0.1);
         }
 
         .btn-login {
             width: 100%;
             padding: 0.875rem;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
             color: white;
             border: none;
             border-radius: 8px;
@@ -103,7 +106,7 @@
 
         .btn-login:hover {
             transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+            box-shadow: 0 10px 20px rgba(139, 0, 0, 0.3);
         }
 
         .btn-login:active {
@@ -125,15 +128,15 @@
         }
 
         .alert-error {
-            background-color: #fef2f2;
-            border: 1px solid #fecaca;
-            color: #dc2626;
+            background-color: #F7E2E2;
+            border: 1px solid #EFC2C2;
+            color: #C53030;
         }
 
         .alert-success {
-            background-color: #dcfce7;
-            border: 1px solid #bbf7d0;
-            color: #166534;
+            background-color: #DCEEE3;
+            border: 1px solid #CFE4D8;
+            color: #1D5438;
         }
 
         .alert.show {
@@ -158,14 +161,14 @@
         }
 
         .back-link a {
-            color: #6b7280;
+            color: #7A7268;
             text-decoration: none;
             font-size: 0.875rem;
             transition: color 0.2s;
         }
 
         .back-link a:hover {
-            color: #667eea;
+            color: #8B0000;
         }
 
         .password-toggle {
@@ -179,14 +182,14 @@
             transform: translateY(-50%);
             background: none;
             border: none;
-            color: #6b7280;
+            color: #7A7268;
             cursor: pointer;
             padding: 0.25rem;
             font-size: 1.125rem;
         }
 
         .password-toggle button:hover {
-            color: #374151;
+            color: #26221E;
         }
     </style>
 

@@ -107,8 +107,8 @@ function updateRadiusCircle() {
 
     radiusCircle = L.circle([state.selectedLocation.lat, state.selectedLocation.lng], {
         radius: radius,  // meters
-        color: '#667eea',
-        fillColor: '#667eea',
+        color: '#8B0000',
+        fillColor: '#8B0000',
         fillOpacity: 0.2,
         weight: 2
     }).addTo(map);
@@ -142,7 +142,7 @@ function renderTerminalList() {
 
     if (terminals.length === 0) {
         listContainer.innerHTML = `
-            <div style="text-align: center; padding: 20px; color: #666;">
+            <div style="text-align: center; padding: 20px; color: #5C554C;">
                 <p>ยังไม่มี QR Terminal</p>
                 <p style="font-size: 0.9rem; margin-top: 5px;">คลิกปุ่ม "เพิ่ม QR Terminal" เพื่อเริ่มต้น</p>
             </div>
@@ -171,7 +171,7 @@ function renderTerminalList() {
                         | รัศมี: ${gps.radius}m
                     </div>
                 ` : `
-                    <div class="terminal-location" style="color: #dc3545;">
+                    <div class="terminal-location" style="color: #C53030;">
                         ⚠️ ยังไม่ได้ตั้งค่า GPS
                     </div>
                 `}
