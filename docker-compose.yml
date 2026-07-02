@@ -42,6 +42,14 @@ services:
       - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
       - LINE_CALLBACK_URL=${LINE_CALLBACK_URL}
       - JWT_SECRET=${JWT_SECRET}
+      # HF ID — OIDC identity provider (LINE-brokered employee SSO for
+      # Cloudflare Access). All optional: the /oidc surface ships DARK (404)
+      # until HFID_SIGNING_KEY is set. See app/services/oidc_service.py.
+      - HFID_SIGNING_KEY=${HFID_SIGNING_KEY:-}
+      - HFID_CLIENT_ID=${HFID_CLIENT_ID:-}
+      - HFID_CLIENT_SECRET=${HFID_CLIENT_SECRET:-}
+      - HFID_ISSUER=${HFID_ISSUER:-}
+      - HFID_REDIRECT_URIS=${HFID_REDIRECT_URIS:-}
       # Admin Console Security
       - ADMIN_PASSCODE_HASH=${ADMIN_PASSCODE_HASH}
       # Slack webhook for ZK time-sync notifications (the main app now owns

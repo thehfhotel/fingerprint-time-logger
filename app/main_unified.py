@@ -16,7 +16,7 @@ from app.core.database import engine, Base
 from app.api import (
     consolidated_attendance, consolidated_devices, consolidated_employees,
     admin_line_codes, line_auth, qr_checkin, shifts, leaves,
-    admin_employees, admin_onboarding, public_onboarding,
+    admin_employees, admin_onboarding, public_onboarding, oidc,
 )
 from app.services.cf_access_service import get_cf_access_email
 
@@ -785,6 +785,15 @@ app.include_router(
     public_onboarding.router,
     prefix="/api/public/onboarding",
     tags=["onboarding-public"]
+)
+
+# HF ID — OIDC identity provider (LINE-brokered employee SSO for Cloudflare
+# Access). Served at id.thehfhotel.org/oidc/*. Ships DARK: every endpoint
+# 404s until HFID_SIGNING_KEY is configured (see app/services/oidc_service.py).
+app.include_router(
+    oidc.router,
+    prefix="/oidc",
+    tags=["hf-id-oidc"],
 )
 
 # ============================================================================

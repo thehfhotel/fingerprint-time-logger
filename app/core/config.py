@@ -115,6 +115,28 @@ def get_server_config() -> dict:
 
 
 # ============================================================================
+# HF ID — OIDC IDENTITY PROVIDER (optional; ships DARK when unset)
+# ============================================================================
+# These are read directly via os.getenv() in app/services/oidc_service.py
+# (same pattern as JWT_SECRET / LINE_* / CF_* — secrets never live in this
+# pydantic Settings object or the image). Documented here for discoverability.
+#
+#   HFID_SIGNING_KEY   RSA private key PEM (RS256). REQUIRED to enable HF ID.
+#                      When unset/blank/unparseable the entire /oidc surface
+#                      returns 404 (dark, like CF_AUTO_LOGIN). Supports either
+#                      real newlines or a single line with "\n" escapes.
+#                      Generate: openssl genrsa 2048
+#   HFID_CLIENT_ID     Confidential client id = Cloudflare Access.
+#   HFID_CLIENT_SECRET Confidential client secret = Cloudflare Access.
+#   HFID_ISSUER        Issuer URL. Default https://id.thehfhotel.org/oidc
+#                      (every endpoint URL derives from this).
+#   HFID_REDIRECT_URIS Comma-separated exact-match redirect_uri allowlist.
+#                      Default is the Cloudflare Access team callback:
+#                      https://laikaexpress.cloudflareaccess.com/cdn-cgi/access/callback
+# ============================================================================
+
+
+# ============================================================================
 # REMOVED CONFIGURATIONS (Post-Simplification)
 # ============================================================================
 # The following configurations were removed during simplification:

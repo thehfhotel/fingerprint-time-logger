@@ -455,6 +455,21 @@ async def line_callback(
         display_name = profile.get("displayName", "ผู้ใช้ LINE")
         picture_url = profile.get("pictureUrl", "")
 
+        # HF ID (OIDC) continuation — additive hook. When this LINE login was
+        # initiated by /oidc/authorize, the redirect hint carries an OIDC login
+        # ticket ("oidc:<ticket>"). Hand control to the HF ID provider to
+        # resolve the employee identity and mint an authorization code. This
+        # does not alter any existing QR/guest redirect behaviour — no existing
+        # redirect hint uses the "oidc:" prefix.
+        if redirect and redirect.startswith("oidc:"):
+            from app.api.oidc import continue_oidc_after_line
+
+            return continue_oidc_after_line(
+                ticket_id=redirect[len("oidc:"):],
+                line_user_id=line_user_id,
+                db=db,
+            )
+
         # Check if this LINE user is already linked to an employee
         existing_employee = db.query(Employee).filter(
             Employee.line_user_id == line_user_id
