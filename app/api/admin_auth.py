@@ -12,6 +12,7 @@ import threading
 import time
 
 from app.services.admin_auth_service import admin_auth_service
+from app.services.cf_access_service import get_cf_access_email
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +170,46 @@ def get_token_from_cookie_or_header(
         detail="Unauthorized: Missing authentication token"
     )
 
+
+def _extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
+    """Pull the token out of an ``Authorization: Bearer <token>`` header."""
+    if not authorization:
+        return None
+    parts = authorization.split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1]
+    return None
+
+
+def resolve_admin_identity(
+    request: Request,
+    admin_session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+) -> Optional[str]:
+    """
+    Resolve the authenticated admin identity for this request.
+
+    Checked in order:
+      1. Cloudflare Access — a fully verified CF Access JWT (see
+         app.services.cf_access_service) counts as an authenticated admin.
+         This never raises on failure, so it's safe to check first.
+      2. The existing passcode session — HttpOnly cookie, then Bearer
+         header — unchanged fallback behavior.
+
+    Returns an opaque identity string on success (a ``cf-access:<email>``
+    marker or the passcode session token), or None if neither path
+    authenticates the request.
+    """
+    cf_email = get_cf_access_email(request)
+    if cf_email:
+        return f"cf-access:{cf_email}"
+
+    token = admin_session_token or _extract_bearer_token(authorization)
+    if token and admin_auth_service.validate_session(token):
+        return token
+
+    return None
+
 @router.post("/login")
 async def admin_login(login_payload: LoginRequest, request: Request):
     """
@@ -234,13 +275,27 @@ async def admin_login(login_payload: LoginRequest, request: Request):
         )
 
 @router.get("/validate", response_model=ValidateResponse)
-async def validate_session(token: str = Depends(get_token_from_cookie_or_header)):
+async def validate_session(
+    request: Request,
+    admin_session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
     """
     Validate admin session token
 
-    Returns session validity and remaining time
+    Recognizes a verified Cloudflare Access identity first — so
+    admin-login.html auto-skips the passcode prompt for admins already
+    authenticated via CF Access — then falls back to validating the
+    existing passcode session (unchanged behavior).
     """
     try:
+        if get_cf_access_email(request):
+            return ValidateResponse(valid=True)
+
+        token = admin_session_token or _extract_bearer_token(authorization)
+        if not token:
+            return ValidateResponse(valid=False)
+
         # Clean up expired sessions periodically
         admin_auth_service.cleanup_expired_sessions()
 
@@ -322,20 +377,35 @@ async def get_session_info(token: str = Depends(get_token_from_cookie_or_header)
         )
 
 # Dependency for protected routes
-async def require_admin_auth(token: str = Depends(get_token_from_cookie_or_header)) -> str:
+async def require_admin_auth(
+    request: Request,
+    admin_session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+) -> str:
     """
-    Dependency to require valid admin authentication
-    Accepts token from HttpOnly cookie or Authorization header
+    Dependency to require valid admin authentication.
+
+    Checks Cloudflare Access first (see resolve_admin_identity) — this is
+    intentionally NOT built on top of get_token_from_cookie_or_header,
+    which raises immediately when no cookie/header is present. That hard
+    fail would short-circuit before the CF Access check ever ran, which
+    would break auto-login for CF-authenticated admins who don't have a
+    passcode session cookie.
+
+    Accepts token from HttpOnly cookie or Authorization header as the
+    fallback, unchanged from prior behavior.
 
     Returns:
-        Valid session token
+        Opaque identity string: a verified CF Access email marker, or the
+        passcode session token.
 
     Raises:
-        HTTPException: If authentication fails
+        HTTPException: If authentication fails via both paths
     """
-    if not admin_auth_service.validate_session(token):
+    identity = resolve_admin_identity(request, admin_session_token, authorization)
+    if identity is None:
         raise HTTPException(
             status_code=401,
             detail="Unauthorized: Session expired or invalid"
         )
-    return token
+    return identity

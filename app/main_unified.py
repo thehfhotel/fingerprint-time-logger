@@ -17,6 +17,7 @@ from app.api import (
     consolidated_attendance, consolidated_devices, consolidated_employees,
     admin_line_codes, line_auth, qr_checkin, shifts, leaves,
 )
+from app.services.cf_access_service import get_cf_access_email
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -214,12 +215,14 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close(code=1008)
         return
 
-    # Admin session required for the privileged dashboard WebSocket
-    from app.services.admin_auth_service import admin_auth_service
-    admin_token = websocket.cookies.get("admin_session_token")
-    if not admin_token or not admin_auth_service.validate_session(admin_token):
-        await websocket.close(code=1008)
-        return
+    # Admin session required for the privileged dashboard WebSocket.
+    # A verified Cloudflare Access identity satisfies this too (auto-login).
+    if not get_cf_access_email(websocket):
+        from app.services.admin_auth_service import admin_auth_service
+        admin_token = websocket.cookies.get("admin_session_token")
+        if not admin_token or not admin_auth_service.validate_session(admin_token):
+            await websocket.close(code=1008)
+            return
 
     await manager.connect(websocket)
     last_refresh_at = None
@@ -313,7 +316,14 @@ async def serve_nickname_management(request: Request):
     """Serve employee nickname management page (requires authentication)
 
     Server-side authentication check to prevent unauthorized access.
+    Recognizes a verified Cloudflare Access identity as well as the
+    existing passcode session cookie.
     """
+    # A verified Cloudflare Access identity is treated as authenticated
+    # admin (auto-login), no passcode prompt needed.
+    if get_cf_access_email(request):
+        return serve_html_with_cache_control("static/nickname-management.html")
+
     # Check for session token in cookie
     admin_token = request.cookies.get('admin_session_token')
 
@@ -342,7 +352,14 @@ async def serve_status(request: Request):
     """Serve system status page (requires authentication)
 
     Server-side authentication check to prevent unauthorized access.
+    Recognizes a verified Cloudflare Access identity as well as the
+    existing passcode session cookie.
     """
+    # A verified Cloudflare Access identity is treated as authenticated
+    # admin (auto-login), no passcode prompt needed.
+    if get_cf_access_email(request):
+        return serve_html_with_cache_control("static/status.html")
+
     # Check for session token in cookie
     admin_token = request.cookies.get('admin_session_token')
 
@@ -401,7 +418,14 @@ async def serve_terminal_gps_admin(request: Request):
     """Serve QR terminal GPS location admin page (requires authentication)
 
     Server-side authentication check to prevent unauthorized access.
+    Recognizes a verified Cloudflare Access identity as well as the
+    existing passcode session cookie.
     """
+    # A verified Cloudflare Access identity is treated as authenticated
+    # admin (auto-login), no passcode prompt needed.
+    if get_cf_access_email(request):
+        return serve_html_with_cache_control("static/terminal-gps-admin.html")
+
     # Check for session token in cookie
     admin_token = request.cookies.get('admin_session_token')
 
@@ -434,7 +458,15 @@ async def serve_admin_console(request: Request):
     from loading before authentication is verified. This ensures NO HTML,
     CSS, JavaScript, or any other assets are sent to the browser before
     authentication is confirmed on the server side.
+
+    Recognizes a verified Cloudflare Access identity as well as the
+    existing passcode session cookie.
     """
+    # A verified Cloudflare Access identity is treated as authenticated
+    # admin (auto-login), no passcode prompt needed.
+    if get_cf_access_email(request):
+        return serve_html_with_cache_control("static/admin-console.html")
+
     # Check for session token in cookie
     admin_token = request.cookies.get('admin_session_token')
 

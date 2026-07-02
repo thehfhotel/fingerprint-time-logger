@@ -27,6 +27,11 @@ requests==2.31.0
 # Authentication & Security (Phase 2 - LINE OAuth, Admin Console)
 PyJWT==2.8.0
 bcrypt==4.1.2
+# RS256/JWKS support for PyJWT (Cloudflare Access admin auto-login —
+# app/services/cf_access_service.py). PyJWT's RS256 verification is a
+# no-op without this; not optional despite the "no new deps" starting
+# point.
+cryptography==43.0.3
 
 # QR Code Generation (Phase 3 - QR Check-in)
 qrcode[pil]==7.4.2
