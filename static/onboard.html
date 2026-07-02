@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>สมัครเป็นพนักงานใหม่ - The Harbour Front Hotel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Sarabun', sans-serif;
+            margin: 0;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 460px;
+            width: 100%;
+            overflow: hidden;
+        }
+        .banner {
+            background: linear-gradient(135deg, #8B0000 0%, #4F0E0E 100%);
+            color: white;
+            padding: 28px 24px;
+            text-align: center;
+        }
+        .banner h1 { margin: 0 0 4px; font-size: 20px; font-weight: 700; }
+        .banner p { margin: 0; font-size: 13px; opacity: 0.85; }
+        .body { padding: 28px 24px; }
+
+        .section { display: none; }
+        .section.active { display: block; }
+
+        .spinner {
+            border: 4px solid #F4F1ED;
+            border-radius: 50%;
+            border-top: 4px solid #8B0000;
+            width: 40px; height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .center-text { text-align: center; color: #5C554C; }
+
+        .field-group { margin-bottom: 16px; }
+        .field-group label { display: block; margin-bottom: 6px; font-weight: 600; color: #26221E; font-size: 14px; }
+        .field-group input[type=text] {
+            width: 100%; padding: 12px; border: 1px solid #CFC9C1; border-radius: 8px;
+            font-size: 15px; font-family: inherit;
+        }
+        .field-group input[type=text]:focus { outline: none; border-color: #8B0000; }
+        .hint { font-size: 12px; color: #7A7268; margin-top: 4px; }
+        .required { color: #C53030; }
+
+        .location-choice { display: flex; gap: 10px; }
+        .location-btn {
+            flex: 1; padding: 16px; border: 2px solid #CFC9C1; border-radius: 10px;
+            background: white; font-size: 16px; font-weight: 700; cursor: pointer;
+            color: #5C554C; font-family: inherit;
+        }
+        .location-btn.selected { border-color: #8B0000; background: #FBEAEA; color: #8B0000; }
+
+        .submit-btn, .action-btn, .retry-btn, .login-btn {
+            width: 100%; padding: 14px; border: none; border-radius: 10px;
+            background: linear-gradient(135deg, #8B0000 0%, #4F0E0E 100%);
+            color: white; font-size: 16px; font-weight: 700; cursor: pointer;
+            font-family: inherit; margin-top: 8px;
+        }
+        .submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .error-box {
+            background: #F7E2E2; border: 1px solid #EFC2C2; color: #7F1F1F;
+            border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 14px; display: none;
+        }
+
+        .avatar { width: 64px; height: 64px; border-radius: 50%; display: block; margin: 0 auto 12px; object-fit: cover; }
+        .pending-icon { font-size: 48px; text-align: center; margin-bottom: 12px; }
+        .pending-name { text-align: center; font-weight: 700; color: #26221E; font-size: 18px; margin-bottom: 4px; }
+        .pending-meta { text-align: center; color: #7A7268; font-size: 14px; margin-bottom: 16px; }
+
+        @media (max-width: 480px) {
+            body { padding: 0; align-items: flex-start; }
+            .container { border-radius: 0; min-height: 100vh; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="banner">
+            <h1>สมัครเป็นพนักงานใหม่</h1>
+            <p>The Harbour Front Hotel</p>
+        </div>
+        <div class="body">
+            <!-- Checking status -->
+            <div id="loadingSection" class="section active">
+                <div class="spinner"></div>
+                <p class="center-text">กำลังตรวจสอบข้อมูล...</p>
+            </div>
+
+            <!-- No LINE session yet -->
+            <div id="loginSection" class="section">
+                <p class="center-text">กรุณาเข้าสู่ระบบด้วย LINE เพื่อเริ่มสมัคร</p>
+                <a href="/api/public/auth/line/login?redirect=onboard" class="login-btn" style="display:block; text-align:center; text-decoration:none; box-sizing:border-box;">
+                    เข้าสู่ระบบด้วย LINE
+                </a>
+            </div>
+
+            <!-- Onboarding form -->
+            <div id="formSection" class="section">
+                <div id="formError" class="error-box"></div>
+                <div class="field-group">
+                    <label>ชื่อจริงภาษาไทย <span class="required">*</span></label>
+                    <input type="text" id="thaiName" placeholder="เช่น สมชาย ใจดี">
+                </div>
+                <div class="field-group">
+                    <label>ชื่อภาษาอังกฤษ (ถ้ามี)</label>
+                    <input type="text" id="englishName" placeholder="เช่น Somchai Jaidee">
+                </div>
+                <div class="field-group">
+                    <label>ชื่อเล่น <span class="required">*</span></label>
+                    <input type="text" id="nickname" placeholder="ชื่อที่ใช้เรียกในทีม">
+                </div>
+                <div class="field-group">
+                    <label>สาขาที่ทำงาน <span class="required">*</span></label>
+                    <div class="location-choice">
+                        <button type="button" class="location-btn" data-loc="HF" onclick="selectLocation('HF')">HF</button>
+                        <button type="button" class="location-btn" data-loc="HF_VILLE" onclick="selectLocation('HF_VILLE')">HF VILLE</button>
+                    </div>
+                </div>
+                <div class="field-group">
+                    <label>แผนก (ถ้าทราบ)</label>
+                    <input type="text" id="department" placeholder="เช่น แม่บ้าน, ต้อนรับ">
+                </div>
+                <div class="field-group">
+                    <label>ตำแหน่ง (ถ้าทราบ)</label>
+                    <input type="text" id="position" placeholder="เช่น พนักงานต้อนรับ">
+                </div>
+                <button id="submitBtn" class="submit-btn" onclick="submitOnboarding()">ส่งข้อมูลสมัคร</button>
+            </div>
+
+            <!-- Waiting for approval -->
+            <div id="pendingSection" class="section">
+                <div class="pending-icon">⏳</div>
+                <div class="pending-name" id="pendingName"></div>
+                <p class="pending-meta">ส่งข้อมูลสมัครแล้ว กำลังรอผู้ดูแลระบบอนุมัติ</p>
+                <button class="action-btn" onclick="checkStatus()">รีเฟรชสถานะ</button>
+            </div>
+
+            <!-- Approved -->
+            <div id="approvedSection" class="section">
+                <div class="pending-icon">✅</div>
+                <p class="center-text">อนุมัติแล้ว! กำลังพาไปหน้าเช็คอิน...</p>
+            </div>
+
+            <!-- Rejected -->
+            <div id="rejectedSection" class="section">
+                <div class="pending-icon">❌</div>
+                <p class="center-text">คำขอสมัครของคุณไม่ได้รับการอนุมัติ กรุณาติดต่อฝ่ายบุคคล</p>
+            </div>
+
+            <!-- Generic error -->
+            <div id="errorSection" class="section">
+                <p class="center-text" id="genericErrorText">เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง</p>
+                <button class="retry-btn" onclick="location.reload()">ลองใหม่</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/public';
+        let selectedLocation = null;
+
+        function showSection(id) {
+            document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+        }
+
+        /**
+         * Resolve the LINE JWT: query param first (fresh OAuth redirect),
+         * persisted to localStorage and stripped from the URL, else fall
+         * back to whatever's already stored. Mirrors link-line.js.
+         */
+        function getJWTToken() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlToken = urlParams.get('jwt');
+            if (urlToken) {
+                localStorage.setItem('line_jwt_token', urlToken);
+                window.history.replaceState({}, document.title, window.location.pathname);
+                return urlToken;
+            }
+            return localStorage.getItem('line_jwt_token');
+        }
+
+        function selectLocation(loc) {
+            selectedLocation = loc;
+            document.querySelectorAll('.location-btn').forEach(btn => {
+                btn.classList.toggle('selected', btn.dataset.loc === loc);
+            });
+        }
+
+        async function checkStatus() {
+            const token = getJWTToken();
+            if (!token) {
+                showSection('loginSection');
+                return;
+            }
+
+            showSection('loadingSection');
+
+            try {
+                const response = await fetch(`${API_BASE}/onboarding/status`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (response.status === 401) {
+                    localStorage.removeItem('line_jwt_token');
+                    showSection('loginSection');
+                    return;
+                }
+
+                if (!response.ok) throw new Error('โหลดสถานะไม่สำเร็จ');
+
+                const data = await response.json();
+
+                if (data.status === 'approved') {
+                    showSection('approvedSection');
+                    setTimeout(() => { window.location.href = '/qr-checkin/mobile'; }, 1500);
+                } else if (data.status === 'pending') {
+                    document.getElementById('pendingName').textContent =
+                        data.nickname ? `${data.nickname}` : '';
+                    showSection('pendingSection');
+                } else if (data.status === 'rejected') {
+                    showSection('rejectedSection');
+                } else {
+                    // 'none' - prefill from LINE profile if available and show the form
+                    showSection('formSection');
+                }
+            } catch (error) {
+                console.error('Error checking onboarding status:', error);
+                document.getElementById('genericErrorText').textContent =
+                    'เกิดข้อผิดพลาดในการตรวจสอบสถานะ กรุณาลองใหม่อีกครั้ง';
+                showSection('errorSection');
+            }
+        }
+
+        async function submitOnboarding() {
+            const token = getJWTToken();
+            if (!token) { showSection('loginSection'); return; }
+
+            const thaiName = document.getElementById('thaiName').value.trim();
+            const englishName = document.getElementById('englishName').value.trim();
+            const nickname = document.getElementById('nickname').value.trim();
+            const department = document.getElementById('department').value.trim();
+            const position = document.getElementById('position').value.trim();
+            const errorBox = document.getElementById('formError');
+            errorBox.style.display = 'none';
+
+            if (!thaiName) { errorBox.textContent = 'กรุณาระบุชื่อจริงภาษาไทย'; errorBox.style.display = 'block'; return; }
+            if (!nickname) { errorBox.textContent = 'กรุณาระบุชื่อเล่น'; errorBox.style.display = 'block'; return; }
+            if (!selectedLocation) { errorBox.textContent = 'กรุณาเลือกสาขาที่ทำงาน'; errorBox.style.display = 'block'; return; }
+
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'กำลังส่งข้อมูล...';
+
+            try {
+                const response = await fetch(`${API_BASE}/onboarding/submit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jwt_token: token,
+                        thai_name: thaiName,
+                        english_name: englishName || null,
+                        nickname: nickname,
+                        location: selectedLocation,
+                        department: department || null,
+                        position: position || null
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    errorBox.textContent = result.detail || 'ส่งข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
+                    errorBox.style.display = 'block';
+                    return;
+                }
+
+                document.getElementById('pendingName').textContent = nickname;
+                showSection('pendingSection');
+            } catch (error) {
+                console.error('Error submitting onboarding:', error);
+                errorBox.textContent = 'เกิดข้อผิดพลาดในการส่งข้อมูล กรุณาลองใหม่อีกครั้ง';
+                errorBox.style.display = 'block';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'ส่งข้อมูลสมัคร';
+            }
+        }
+
+        checkStatus();
+    </script>
+</body>
+</html>

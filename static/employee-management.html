@@ -1,0 +1,1346 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>ทะเบียนพนักงาน - ระบบบันทึกเวลาด้วยลายนิ้วมือ</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- CSS Files with cache busting -->
+    <script>
+        const cssTimestamp = Date.now();
+        document.write(`<link rel="stylesheet" href="static/css/base.css?v=${cssTimestamp}">`);
+        document.write(`<link rel="stylesheet" href="static/css/modal.css?v=${cssTimestamp}">`);
+    </script>
+
+    <!-- JavaScript Files -->
+    <script>
+        const timestamp = Date.now();
+        const randomId = Math.random().toString(36).substring(7);
+        const buildNumber = '2026070200';
+        const version = `v1.0-employee-registry-${buildNumber}`;
+        const cacheBuster = `${timestamp}.${randomId}&build=${buildNumber}`;
+        document.write(`<script src="static/js/config.js?v=${cacheBuster}&version=${version}&force=${Date.now()}"><\/script>`);
+    </script>
+    <style>
+        .nickname-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1.5rem;
+            background: var(--primary-white);
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px var(--shadow-light);
+        }
+
+        .nickname-table th,
+        .nickname-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-light);
+            vertical-align: top;
+        }
+
+        .nickname-table th {
+            background-color: var(--bg-tertiary);
+            font-weight: 600;
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+
+        .nickname-table tr:hover {
+            background-color: var(--bg-secondary);
+        }
+
+        .nickname-input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #CFC9C1;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .nickname-input:focus {
+            outline: none;
+            border-color: #2C5282;
+        }
+
+        .search-box {
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .search-input {
+            width: 300px;
+            padding: 10px;
+            border: 1px solid #CFC9C1;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #5C554C;
+        }
+
+        .success-message {
+            color: #2F855A;
+            font-size: 12px;
+            margin-left: 10px;
+            display: none;
+        }
+
+        .error-message {
+            color: #C53030;
+            font-size: 12px;
+            margin-left: 10px;
+            display: none;
+        }
+
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-active { background-color: #DCEEE3; color: #1D5438; }
+        .status-inactive { background-color: #F7E2E2; color: #7F1F1F; }
+        .status-hidden { background-color: #E8E4DF; color: #443E37; }
+
+        .btn.inactive { background: var(--text-muted) !important; border-color: var(--text-muted) !important; }
+        .btn.hidden { background: var(--accent-orange) !important; border-color: var(--accent-orange) !important; color: var(--text-primary) !important; }
+        .btn.active { background: var(--accent-blue) !important; border-color: var(--accent-blue) !important; color: var(--primary-white) !important; }
+
+        /* Employee source type chips */
+        .source-tag {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+            vertical-align: middle;
+            white-space: nowrap;
+        }
+        .source-tag-device { background-color: #e3f2fd; color: #1F3F66; border: 1px solid #A9C2DA; }
+        .source-tag-manual { background-color: #FBF0DC; color: #8A5A16; border: 1px solid #DEB157; }
+        .source-tag-qronly { background-color: #DCEEE3; color: #1D5438; border: 1px solid #9DD6B4; }
+        .source-tag-pending { background-color: #FCEFC7; color: #7A4F15; border: 1px solid #E7C766; }
+
+        .line-yes { color: #2F855A; font-weight: 600; }
+        .line-no { color: #ABA299; }
+
+        .btn-delete {
+            background-color: #C53030 !important;
+            border-color: #C53030 !important;
+            color: white !important;
+            padding: 6px 12px;
+            font-size: 13px;
+            margin-top: 5px;
+        }
+        .btn-delete:hover { background-color: #9B2626 !important; border-color: #9B2626 !important; }
+
+        .btn-edit {
+            background-color: #2C5282 !important;
+            border-color: #2C5282 !important;
+            color: white !important;
+            padding: 6px 12px;
+            font-size: 13px;
+            margin-top: 5px;
+        }
+        .btn-merge {
+            background-color: #7A0000 !important;
+            border-color: #7A0000 !important;
+            color: white !important;
+            padding: 6px 12px;
+            font-size: 13px;
+            margin-top: 5px;
+        }
+
+        /* Pending approvals */
+        #pendingSection { margin-bottom: 10px; }
+        .pending-empty { color: #7A7268; padding: 10px 0; }
+        .pending-card {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            background: #FFFBF0;
+            border: 1px solid #E7C766;
+            border-radius: 8px;
+            padding: 14px;
+            margin-bottom: 12px;
+        }
+        .pending-avatar {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: #E8E4DF;
+            flex-shrink: 0;
+            object-fit: cover;
+        }
+        .pending-info { flex: 1; min-width: 200px; }
+        .pending-name { font-weight: 600; color: #26221E; }
+        .pending-meta { font-size: 12px; color: #7A7268; margin-top: 2px; }
+        .pending-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+        /* Generic modal overlay (shared by add/edit/merge) */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            overflow-y: auto;
+        }
+        .modal-box {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 560px;
+            width: 92%;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            margin: 30px 0;
+        }
+        .modal-box h3 { margin: 0 0 20px 0; color: #26221E; }
+        .field-group { margin-bottom: 15px; }
+        .field-group label { display: block; margin-bottom: 5px; font-weight: 500; color: #5C554C; }
+        .field-group input[type=text], .field-group select {
+            width: 100%; padding: 10px; border: 1px solid #CFC9C1; border-radius: 4px;
+            font-size: 14px; box-sizing: border-box;
+        }
+        .field-row { display: flex; gap: 12px; }
+        .field-row .field-group { flex: 1; }
+        .location-choice { display: flex; gap: 10px; }
+        .location-choice button {
+            flex: 1; padding: 12px; border: 2px solid #CFC9C1; border-radius: 6px;
+            background: white; font-size: 14px; font-weight: 600; cursor: pointer; color: #5C554C;
+        }
+        .location-choice button.selected { border-color: #8B0000; background: #FBEAEA; color: #8B0000; }
+        .grant-checkboxes { display: flex; flex-direction: column; gap: 8px; }
+        .grant-checkboxes label { display: flex; align-items: center; gap: 8px; font-weight: 400; color: #26221E; }
+        .modal-error {
+            display: none; margin-bottom: 15px; padding: 10px;
+            background: #F7E2E2; border: 1px solid #EFC2C2; border-radius: 4px;
+            color: #7F1F1F; font-size: 14px;
+        }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-row-1">
+            <h1>ทะเบียนพนักงาน</h1>
+        </div>
+        <div class="header-row-2">
+            <div class="header-actions">
+                <a href="/fingerprintlogs/admin-console" class="action-btn" style="background: var(--accent-blue); color: white;">← กลับสู่คอนโซลผู้ดูแล</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Pending Approvals -->
+        <div class="card">
+            <div class="card-header">
+                <h2>🆕 รออนุมัติ (<span id="pendingCount">0</span>)</h2>
+            </div>
+            <div class="card-body">
+                <div id="pendingSection" class="pending-empty">กำลังโหลด...</div>
+            </div>
+        </div>
+
+        <!-- Employee registry -->
+        <div class="card">
+            <div class="card-header">
+                <h2>รายชื่อพนักงานทั้งหมด</h2>
+                <button id="adminModeBtn" class="btn btn-primary" onclick="activateAdminMode()" style="float: right; margin-top: -10px;">
+                    🔐 จัดการรหัสเชื่อมต่อ LINE
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="search-box">
+                    <input type="text" id="searchInput" class="search-input" placeholder="ค้นหาด้วยหมายเลขบัตรหรือชื่อเล่น...">
+                    <button id="showHiddenBtn" class="btn btn-secondary" onclick="toggleShowHidden()">แสดงที่ซ่อน</button>
+                    <button id="showInactiveBtn" class="btn btn-secondary" onclick="toggleShowInactive()">แสดงไม่ใช้งาน/รออนุมัติ</button>
+                    <button id="addEmployeeBtn" class="btn btn-primary" onclick="showAddEmployeeModal()">➕ เพิ่มพนักงานใหม่</button>
+                </div>
+
+                <!-- Admin Mode Panel (Hidden by default) -->
+                <div id="adminPanel" style="display: none; margin-bottom: 20px; padding: 20px; background: #F4F1ED; border-radius: 6px; border: 2px solid #2C5282;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <h3 style="margin: 0; color: #2C5282;">🔐 โหมดผู้ดูแลระบบ - จัดการรหัสเชื่อมต่อ LINE</h3>
+                        <button class="btn btn-secondary" onclick="deactivateAdminMode()">ออกจากโหมดผู้ดูแล</button>
+                    </div>
+                    <div id="adminStats" style="margin-bottom: 15px; padding: 10px; background: white; border-radius: 4px;">
+                        กำลังโหลดสถิติ...
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <button class="btn btn-primary" onclick="showPendingCodes()">📋 รหัสที่รอเชื่อมต่อ</button>
+                        <button class="btn btn-success" onclick="showLinkedAccounts()">✅ บัญชีที่เชื่อมต่อแล้ว</button>
+                        <button class="btn btn-secondary" onclick="refreshAdminData()">🔄 รีเฟรชข้อมูล</button>
+                    </div>
+                </div>
+
+                <div id="loadingDiv" class="loading">กำลังโหลดข้อมูลพนักงาน...</div>
+
+                <table class="nickname-table" id="nicknameTable" style="display: none;">
+                    <thead>
+                        <tr>
+                            <th>หมายเลขบัตร / แหล่งที่มา</th>
+                            <th>ชื่อเล่น</th>
+                            <th>LINE</th>
+                            <th>สถานะ</th>
+                            <th>การแสดงผล</th>
+                            <th>การดำเนินการ</th>
+                            <th id="lineCodeHeader" style="display: none;">🔐 รหัสเชื่อมต่อ LINE</th>
+                        </tr>
+                    </thead>
+                    <tbody id="nicknameTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * Escape HTML-special characters to prevent stored XSS via innerHTML.
+         */
+        function escapeHtml(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, function(c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+        }
+
+        /**
+         * Escape a value for safe inclusion inside a single-quoted JS string literal
+         * that itself sits inside an HTML attribute (e.g. onclick="foo('${val}')").
+         */
+        function escapeJsInAttr(value) {
+            const jsEscaped = String(value == null ? '' : value)
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'")
+                .replace(/\r/g, '\\r')
+                .replace(/\n/g, '\\n');
+            return escapeHtml(jsEscaped);
+        }
+
+        const APP_CATALOG = [
+            { app_id: 'rooms', name: 'Room Daily Report' },
+            { app_id: 'portal', name: 'HF Portal' }
+        ];
+
+        let employees = [];
+        let showHidden = false;
+        let showInactive = false;
+
+        // ============================================================================
+        // PENDING APPROVALS
+        // ============================================================================
+
+        async function loadPendingApprovals() {
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl('admin/onboarding/pending'), {
+                    credentials: 'include'
+                });
+                if (!response.ok) throw new Error('โหลดรายการรออนุมัติไม่สำเร็จ');
+                const pending = await response.json();
+                renderPendingApprovals(pending);
+            } catch (error) {
+                console.error('Error loading pending approvals:', error);
+                document.getElementById('pendingSection').innerHTML =
+                    '<div class="pending-empty">โหลดรายการรออนุมัติไม่สำเร็จ: ' + escapeHtml(error.message) + '</div>';
+            }
+        }
+
+        function renderPendingApprovals(pending) {
+            document.getElementById('pendingCount').textContent = pending.length;
+            const section = document.getElementById('pendingSection');
+
+            if (pending.length === 0) {
+                section.innerHTML = '<div class="pending-empty">ไม่มีพนักงานรออนุมัติ</div>';
+                return;
+            }
+
+            section.innerHTML = pending.map(p => {
+                const safeBadge = escapeJsInAttr(p.badge_number);
+                const avatar = p.line_picture_url
+                    ? `<img class="pending-avatar" src="${escapeHtml(p.line_picture_url)}" alt="">`
+                    : `<div class="pending-avatar"></div>`;
+                const submitted = p.submitted_at ? new Date(p.submitted_at).toLocaleString('th-TH') : '';
+                return `
+                    <div class="pending-card">
+                        ${avatar}
+                        <div class="pending-info">
+                            <div class="pending-name">${escapeHtml(p.nickname)} ${p.thai_name ? '(' + escapeHtml(p.thai_name) + ')' : ''}</div>
+                            <div class="pending-meta">
+                                สาขา: ${escapeHtml(p.location || '-')}
+                                ${p.department ? ' · แผนก: ' + escapeHtml(p.department) : ''}
+                                ${p.position ? ' · ตำแหน่ง: ' + escapeHtml(p.position) : ''}
+                            </div>
+                            <div class="pending-meta">ส่งคำขอเมื่อ: ${escapeHtml(submitted)}</div>
+                        </div>
+                        <div class="pending-actions">
+                            <button class="btn btn-success" onclick="approveOnboarding('${safeBadge}')">✅ อนุมัติ</button>
+                            <button class="btn btn-delete" onclick="rejectOnboarding('${safeBadge}')">❌ ปฏิเสธ</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function approveOnboarding(badgeNumber) {
+            if (!confirm(`อนุมัติพนักงานหมายเลขบัตร ${badgeNumber} ใช่หรือไม่?`)) return;
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl('admin/onboarding/approve'), {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ badge_number: badgeNumber })
+                });
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(`อนุมัติไม่สำเร็จ: ${error.detail || 'เกิดข้อผิดพลาด'}`);
+                    return;
+                }
+                const result = await response.json();
+                alert(result.message || 'อนุมัติสำเร็จ');
+                await loadPendingApprovals();
+                await loadEmployees();
+            } catch (error) {
+                console.error('Error approving onboarding:', error);
+                alert('เกิดข้อผิดพลาดในการอนุมัติ');
+            }
+        }
+
+        async function rejectOnboarding(badgeNumber) {
+            if (!confirm(`ปฏิเสธคำขอสมัครของหมายเลขบัตร ${badgeNumber} ใช่หรือไม่?`)) return;
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl('admin/onboarding/reject'), {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ badge_number: badgeNumber })
+                });
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(`ปฏิเสธไม่สำเร็จ: ${error.detail || 'เกิดข้อผิดพลาด'}`);
+                    return;
+                }
+                const result = await response.json();
+                alert(result.message || 'ปฏิเสธสำเร็จ');
+                await loadPendingApprovals();
+                await loadEmployees();
+            } catch (error) {
+                console.error('Error rejecting onboarding:', error);
+                alert('เกิดข้อผิดพลาดในการปฏิเสธ');
+            }
+        }
+
+        // ============================================================================
+        // EMPLOYEE LIST
+        // ============================================================================
+
+        async function loadEmployees() {
+            try {
+                await appConfig.loadConfig();
+
+                const params = new URLSearchParams({
+                    from_device: 'true',
+                    include_hidden: showHidden.toString(),
+                    include_inactive: showInactive.toString()
+                });
+                const deviceResponse = await fetch(appConfig.getApiUrl(`employees/?${params}`));
+                if (!deviceResponse.ok) throw new Error('โหลดข้อมูลพนักงานจากเครื่อง ZK ไม่สำเร็จ');
+                const deviceData = await deviceResponse.json();
+                const deviceEmployees = deviceData.employees || [];
+
+                const dbParams = new URLSearchParams({
+                    from_device: 'false',
+                    include_hidden: showHidden.toString(),
+                    include_inactive: showInactive.toString()
+                });
+                const dbResponse = await fetch(appConfig.getApiUrl(`employees/?${dbParams}`));
+                if (!dbResponse.ok) throw new Error('โหลดข้อมูลพนักงานจากฐานข้อมูลไม่สำเร็จ');
+                const dbData = await dbResponse.json();
+                const dbEmployees = dbData.employees || [];
+
+                const deviceBadges = new Set(deviceEmployees.map(e => e.badge_number));
+                const dbOnlyEmployees = dbEmployees.filter(e => !deviceBadges.has(e.badge_number));
+                dbOnlyEmployees.forEach(emp => { emp.from_database_only = true; });
+
+                employees = [...deviceEmployees, ...dbOnlyEmployees];
+
+                employees.sort((a, b) => {
+                    const numA = parseInt(a.badge_number);
+                    const numB = parseInt(b.badge_number);
+                    if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+                    return a.badge_number.localeCompare(b.badge_number);
+                });
+
+                displayEmployees(getFilteredEmployees());
+                document.getElementById('loadingDiv').style.display = 'none';
+                document.getElementById('nicknameTable').style.display = 'table';
+            } catch (error) {
+                console.error('Error loading employees:', error);
+                document.getElementById('loadingDiv').innerHTML = 'โหลดข้อมูลพนักงานไม่สำเร็จ: ' + escapeHtml(error.message);
+            }
+        }
+
+        /** Source chip vocabulary: DEVICE / MANUAL / QR-ONLY / PENDING. */
+        function sourceChip(employee) {
+            if (employee.pending_approval) {
+                return '<span class="source-tag source-tag-pending" title="รออนุมัติ">PENDING</span>';
+            }
+            if (employee.join_source === 'self_onboard') {
+                return '<span class="source-tag source-tag-qronly" title="สมัครด้วยตนเองผ่าน LINE">QR-ONLY</span>';
+            }
+            if (employee.from_database_only || employee.join_source === 'manual') {
+                return '<span class="source-tag source-tag-manual" title="สร้างด้วยมือ - ไม่ได้มาจากเครื่อง ZK">MANUAL</span>';
+            }
+            return '<span class="source-tag source-tag-device" title="ซิงค์จากเครื่อง ZKTeco">DEVICE</span>';
+        }
+
+        function displayEmployees(employeeList) {
+            const tbody = document.getElementById('nicknameTableBody');
+            tbody.innerHTML = '';
+
+            employeeList.forEach(employee => {
+                const row = document.createElement('tr');
+                const statusClass = employee.is_active ? 'status-active' : 'status-inactive';
+                const statusText = employee.is_active ? 'ใช้งาน' : 'ไม่ใช้งาน';
+                const hiddenClass = employee.is_hidden ? 'status-hidden' : 'status-active';
+                const hiddenText = employee.is_hidden ? 'ซ่อน' : 'แสดง';
+
+                let lineCodeCell = '';
+                if (adminMode) {
+                    const safeBadgeForJs = escapeJsInAttr(employee.badge_number);
+                    if (employee.line_user_id) {
+                        lineCodeCell = `
+                            <td>
+                                <span style="color: #2F855A; font-weight: bold;">✅ เชื่อมต่อแล้ว</span><br>
+                                <span style="font-size: 12px; color: #5C554C;">${escapeHtml(employee.line_display_name || 'N/A')}</span><br>
+                                <button class="btn btn-primary" style="font-size: 12px; margin-top: 5px;"
+                                        onclick="generateLinkingCode('${safeBadgeForJs}')">
+                                    🔄 สร้างรหัสเชื่อมต่อใหม่
+                                </button>
+                            </td>
+                        `;
+                    } else if (employee.line_linking_code) {
+                        lineCodeCell = `
+                            <td>
+                                <span style="color: #2C5282; font-weight: bold; font-size: 18px;">${escapeHtml(employee.line_linking_code)}</span><br>
+                                <span style="font-size: 12px; color: #5C554C;">รอพนักงานเชื่อมต่อ</span><br>
+                                <button class="btn btn-secondary" style="font-size: 12px; margin-top: 5px;"
+                                        onclick="regenerateLinkingCode('${safeBadgeForJs}')">
+                                    สร้างรหัสใหม่
+                                </button>
+                            </td>
+                        `;
+                    } else {
+                        lineCodeCell = `
+                            <td>
+                                <button class="btn btn-primary" onclick="generateLinkingCode('${safeBadgeForJs}')">
+                                    สร้างรหัสเชื่อมต่อ
+                                </button>
+                            </td>
+                        `;
+                    }
+                }
+
+                const safeBadge = escapeHtml(employee.badge_number);
+                const safeDisplayName = escapeHtml(employee.display_name || '');
+                const safeBadgeForJs = escapeJsInAttr(employee.badge_number);
+                const safeDisplayNameForJs = escapeJsInAttr(employee.display_name || '');
+                const isQBadge = /^Q\d+$/i.test(employee.badge_number);
+                const isDeviceOnly = employee.in_database === false;
+
+                let mergeButton = '';
+                if (isDeviceOnly) {
+                    mergeButton = `<br><button class="btn-merge" onclick="showMergeModal('into_device', '${safeBadgeForJs}')">🔀 ย้ายข้อมูลจากพนักงาน Q…</button>`;
+                } else if (isQBadge) {
+                    mergeButton = `<br><button class="btn-merge" onclick="showMergeModal('from_q', '${safeBadgeForJs}')">🔀 ย้ายไปรหัสเครื่องสแกน…</button>`;
+                }
+
+                row.innerHTML = `
+                    <td>${safeBadge}${sourceChip(employee)}</td>
+                    <td>
+                        <input type="text"
+                               class="nickname-input"
+                               id="nickname-${safeBadge}"
+                               value="${safeDisplayName}"
+                               data-original="${safeDisplayName}"
+                               placeholder="${employee.in_database ? 'ใส่ชื่อเล่น' : 'ใส่ชื่อเล่น (จะสร้างข้อมูลพนักงาน)'}">
+                    </td>
+                    <td>${employee.line_user_id ? '<span class="line-yes">✅ เชื่อมต่อ</span>' : '<span class="line-no">➖ ยังไม่เชื่อมต่อ</span>'}</td>
+                    <td>
+                        <button class="btn btn-secondary toggle-btn ${employee.is_active ? '' : 'inactive'}"
+                                onclick="toggleStatus('${safeBadgeForJs}', ${!employee.is_active})">
+                            ${employee.is_active ? 'ตั้งเป็นไม่ใช้งาน' : 'ตั้งเป็นใช้งาน'}
+                        </button>
+                        <span class="status-badge ${statusClass}">${statusText}</span>
+                    </td>
+                    <td>
+                        <button class="btn btn-secondary toggle-btn ${employee.is_hidden ? 'hidden' : ''}"
+                                onclick="toggleHidden('${safeBadgeForJs}', ${!employee.is_hidden})">
+                            ${employee.is_hidden ? 'แสดง' : 'ซ่อน'}
+                        </button>
+                        <span class="status-badge ${hiddenClass}">${hiddenText}</span>
+                    </td>
+                    <td>
+                        <button class="btn btn-primary save-btn"
+                                onclick="saveNickname('${safeBadgeForJs}')"
+                                id="save-${safeBadge}"
+                                disabled>
+                            ${employee.in_database ? 'บันทึก' : 'สร้างและบันทึก'}
+                        </button>
+                        <br><button class="btn-edit" onclick="showEditModal('${safeBadgeForJs}')">✏️ แก้ไข</button>
+                        ${employee.from_database_only ?
+                            `<br><button class="btn-delete" onclick="deleteEmployee('${safeBadgeForJs}', '${safeDisplayNameForJs}')">🗑️ ลบ</button>`
+                            : ''}
+                        ${mergeButton}
+                        <span class="success-message" id="success-${safeBadge}">บันทึกแล้ว!</span>
+                        <span class="error-message" id="error-${safeBadge}">บันทึกไม่สำเร็จ</span>
+                    </td>
+                    ${lineCodeCell}
+                `;
+                tbody.appendChild(row);
+
+                const input = document.getElementById(`nickname-${employee.badge_number}`);
+                input.addEventListener('input', function() {
+                    const saveBtn = document.getElementById(`save-${employee.badge_number}`);
+                    saveBtn.disabled = this.value === this.getAttribute('data-original');
+                });
+            });
+        }
+
+        async function saveNickname(badgeNumber) {
+            const input = document.getElementById(`nickname-${badgeNumber}`);
+            const saveBtn = document.getElementById(`save-${badgeNumber}`);
+            const successMsg = document.getElementById(`success-${badgeNumber}`);
+            const errorMsg = document.getElementById(`error-${badgeNumber}`);
+
+            saveBtn.disabled = true;
+            successMsg.style.display = 'none';
+            errorMsg.style.display = 'none';
+
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}/nickname`), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ nickname: input.value })
+                });
+                if (!response.ok) throw new Error('บันทึกชื่อเล่นไม่สำเร็จ');
+
+                input.setAttribute('data-original', input.value);
+                successMsg.style.display = 'inline';
+                setTimeout(() => { successMsg.style.display = 'none'; }, 3000);
+
+                const employee = employees.find(e => e.badge_number === badgeNumber);
+                if (employee) {
+                    employee.display_name = input.value;
+                    employee.in_database = true;
+                }
+
+                const result = await response.json();
+                if (result.created) {
+                    saveBtn.textContent = 'บันทึก';
+                    displayEmployees(getFilteredEmployees());
+                }
+            } catch (error) {
+                console.error('Error saving nickname:', error);
+                errorMsg.style.display = 'inline';
+                setTimeout(() => { errorMsg.style.display = 'none'; }, 3000);
+                if (input.value !== input.getAttribute('data-original')) saveBtn.disabled = false;
+            }
+        }
+
+        async function toggleStatus(badgeNumber, newStatus) {
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}/status`), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_active: newStatus })
+                });
+                if (!response.ok) throw new Error('อัปเดตสถานะไม่สำเร็จ');
+
+                const employee = employees.find(e => e.badge_number === badgeNumber);
+                if (employee) employee.is_active = newStatus;
+                displayEmployees(getFilteredEmployees());
+            } catch (error) {
+                console.error('Error updating status:', error);
+                alert('อัปเดตสถานะพนักงานไม่สำเร็จ');
+            }
+        }
+
+        async function toggleHidden(badgeNumber, newHiddenStatus) {
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}/hidden`), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_hidden: newHiddenStatus })
+                });
+                if (!response.ok) throw new Error('อัปเดตสถานะการซ่อนไม่สำเร็จ');
+
+                const employee = employees.find(e => e.badge_number === badgeNumber);
+                if (employee) employee.is_hidden = newHiddenStatus;
+                displayEmployees(getFilteredEmployees());
+            } catch (error) {
+                console.error('Error updating hidden status:', error);
+                alert('อัปเดตสถานะการซ่อนพนักงานไม่สำเร็จ');
+            }
+        }
+
+        async function deleteEmployee(badgeNumber, displayName) {
+            if (!confirm(`คุณต้องการลบพนักงาน "${displayName}" (เลขบัตร: ${badgeNumber}) ใช่หรือไม่?\n\n⚠️ การลบนี้ไม่สามารถย้อนกลับได้`)) return;
+
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}`), {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(`ลบพนักงานไม่สำเร็จ: ${error.detail || 'เกิดข้อผิดพลาด'}`);
+                    return;
+                }
+                const result = await response.json();
+                alert(result.message || 'ลบพนักงานสำเร็จแล้ว');
+                employees = employees.filter(e => e.badge_number !== badgeNumber);
+                displayEmployees(getFilteredEmployees());
+            } catch (error) {
+                console.error('Error deleting employee:', error);
+                alert('เกิดข้อผิดพลาดในการลบพนักงาน กรุณาลองใหม่อีกครั้ง');
+            }
+        }
+
+        function toggleShowHidden() {
+            showHidden = !showHidden;
+            const btn = document.getElementById('showHiddenBtn');
+            btn.textContent = showHidden ? 'ซ่อนที่ซ่อน' : 'แสดงที่ซ่อน';
+            btn.classList.toggle('active', showHidden);
+            loadEmployees();
+        }
+
+        function toggleShowInactive() {
+            showInactive = !showInactive;
+            const btn = document.getElementById('showInactiveBtn');
+            btn.textContent = showInactive ? 'ซ่อนไม่ใช้งาน/รออนุมัติ' : 'แสดงไม่ใช้งาน/รออนุมัติ';
+            btn.classList.toggle('active', showInactive);
+            loadEmployees();
+        }
+
+        function getFilteredEmployees() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            return employees.filter(employee => {
+                const badgeMatch = employee.badge_number.toLowerCase().includes(searchTerm);
+                const nameMatch = (employee.display_name || '').toLowerCase().includes(searchTerm);
+                return badgeMatch || nameMatch;
+            });
+        }
+
+        document.getElementById('searchInput').addEventListener('input', function() {
+            displayEmployees(getFilteredEmployees());
+        });
+
+        loadEmployees();
+        loadPendingApprovals();
+
+        // ============================================================================
+        // ADMIN MODE (LINE codes)
+        // ============================================================================
+
+        let adminMode = false;
+
+        async function activateAdminMode() {
+            try {
+                await appConfig.loadConfig();
+                adminMode = true;
+                document.getElementById('adminPanel').style.display = 'block';
+                document.getElementById('lineCodeHeader').style.display = 'table-cell';
+                document.getElementById('adminModeBtn').style.display = 'none';
+                await loadAdminStats();
+                displayEmployees(getFilteredEmployees());
+            } catch (error) {
+                console.error('Error activating admin mode:', error);
+                alert('เกิดข้อผิดพลาดในการเข้าสู่โหมดจัดการรหัสเชื่อมต่อ LINE');
+            }
+        }
+
+        function deactivateAdminMode() {
+            adminMode = false;
+            document.getElementById('adminPanel').style.display = 'none';
+            document.getElementById('lineCodeHeader').style.display = 'none';
+            document.getElementById('adminModeBtn').style.display = 'inline-block';
+            displayEmployees(getFilteredEmployees());
+        }
+
+        async function loadAdminStats() {
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl('admin/line-codes/stats'), { credentials: 'include' });
+                if (!response.ok) throw new Error('Failed to load stats');
+                const stats = await response.json();
+                document.getElementById('adminStats').innerHTML = `
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #2C5282;">${stats.total_active_employees}</div>
+                            <div style="font-size: 12px; color: #5C554C;">พนักงานทั้งหมด</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #2F855A;">${stats.linked_accounts}</div>
+                            <div style="font-size: 12px; color: #5C554C;">เชื่อมต่อแล้ว</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #B7791F;">${stats.pending_codes}</div>
+                            <div style="font-size: 12px; color: #5C554C;">รอเชื่อมต่อ</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #C53030;">${stats.unlinked}</div>
+                            <div style="font-size: 12px; color: #5C554C;">ยังไม่สร้างรหัส</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px; text-align: center; font-size: 14px; color: #5C554C;">
+                        เชื่อมต่อแล้ว: ${stats.linking_percentage}%
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading admin stats:', error);
+                document.getElementById('adminStats').innerHTML = '<div style="color: red;">โหลดสถิติไม่สำเร็จ</div>';
+            }
+        }
+
+        async function generateLinkingCode(badgeNumber) {
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl('admin/line-codes/generate'), {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ badge_number: badgeNumber })
+                });
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(`เกิดข้อผิดพลาด: ${error.detail}`);
+                    return;
+                }
+                const result = await response.json();
+                let message = `รหัสเชื่อมต่อ LINE สำหรับ ${result.display_name}:\n\n${result.linking_code}\n\n(หมดอายุใน 24 ชั่วโมง)`;
+                if (result.is_relink) {
+                    message = `🔄 ยกเลิกการเชื่อมต่อเดิม\n(${result.old_line_display_name})\n\nรหัสใหม่สำหรับ ${result.display_name}:\n\n${result.linking_code}\n\n(หมดอายุใน 24 ชั่วโมง)`;
+                }
+                alert(message);
+                await loadAdminStats();
+                displayEmployees(getFilteredEmployees());
+            } catch (error) {
+                console.error('Error generating code:', error);
+                alert('เกิดข้อผิดพลาดในการสร้างรหัสเชื่อมต่อ');
+            }
+        }
+
+        async function regenerateLinkingCode(badgeNumber) {
+            if (!confirm('คุณต้องการสร้างรหัสใหม่ใช่หรือไม่? รหัสเก่าจะถูกลบทิ้ง')) return;
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl('admin/line-codes/regenerate'), {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ badge_number: badgeNumber, reason: 'พนักงานทำรหัสหาย' })
+                });
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(`เกิดข้อผิดพลาด: ${error.detail}`);
+                    return;
+                }
+                const result = await response.json();
+                alert(`สร้างรหัสใหม่สำเร็จ!\n\nรหัสเก่า: ${result.old_code}\nรหัสใหม่: ${result.new_code}\n\n(หมดอายุใน 24 ชั่วโมง)`);
+                await loadAdminStats();
+                displayEmployees(getFilteredEmployees());
+            } catch (error) {
+                console.error('Error regenerating code:', error);
+                alert('เกิดข้อผิดพลาดในการสร้างรหัสใหม่');
+            }
+        }
+
+        async function showPendingCodes() {
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl('admin/line-codes/list?include_expired=true'), { credentials: 'include' });
+                if (!response.ok) throw new Error('Failed to load pending codes');
+                const codes = await response.json();
+                if (codes.length === 0) { alert('ไม่มีรหัสที่รอเชื่อมต่อ'); return; }
+                let message = '📋 รหัสที่รอเชื่อมต่อ:\n\n';
+                codes.forEach(code => {
+                    const status = code.is_expired ? '(หมดอายุ)' : '(ใช้งานได้)';
+                    message += `${code.badge_number} - ${code.display_name}\n`;
+                    message += `รหัส: ${code.linking_code} ${status}\n`;
+                    message += `สร้างเมื่อ: ${new Date(code.generated_at).toLocaleString('th-TH')}\n\n`;
+                });
+                alert(message);
+            } catch (error) {
+                console.error('Error loading pending codes:', error);
+                alert('เกิดข้อผิดพลาดในการโหลดรหัสที่รอเชื่อมต่อ');
+            }
+        }
+
+        async function showLinkedAccounts() {
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl('admin/line-codes/linked'), { credentials: 'include' });
+                if (!response.ok) throw new Error('Failed to load linked accounts');
+                const accounts = await response.json();
+                if (accounts.length === 0) { alert('ยังไม่มีบัญชีที่เชื่อมต่อ'); return; }
+                let message = '✅ บัญชีที่เชื่อมต่อแล้ว:\n\n';
+                accounts.forEach(account => {
+                    message += `${account.badge_number} - ${account.display_name}\n`;
+                    message += `LINE: ${account.line_display_name || 'N/A'}\n`;
+                    message += `เชื่อมต่อเมื่อ: ${new Date(account.linked_at).toLocaleString('th-TH')}\n\n`;
+                });
+                alert(message);
+            } catch (error) {
+                console.error('Error loading linked accounts:', error);
+                alert('เกิดข้อผิดพลาดในการโหลดบัญชีที่เชื่อมต่อ');
+            }
+        }
+
+        async function refreshAdminData() {
+            await loadAdminStats();
+            displayEmployees(getFilteredEmployees());
+            alert('รีเฟรชข้อมูลสำเร็จ');
+        }
+
+        // ============================================================================
+        // ADD NEW EMPLOYEE
+        // ============================================================================
+
+        function showAddEmployeeModal() {
+            document.getElementById('addEmployeeModal').style.display = 'flex';
+            document.getElementById('newBadgeNumber').focus();
+        }
+
+        function hideAddEmployeeModal() {
+            document.getElementById('addEmployeeModal').style.display = 'none';
+            document.getElementById('newBadgeNumber').value = '';
+            document.getElementById('newNickname').value = '';
+            document.getElementById('addEmployeeError').style.display = 'none';
+        }
+
+        async function createNewEmployee() {
+            const badgeNumber = document.getElementById('newBadgeNumber').value.trim();
+            const nickname = document.getElementById('newNickname').value.trim();
+            const errorDiv = document.getElementById('addEmployeeError');
+            const submitBtn = document.getElementById('createEmployeeBtn');
+
+            if (!badgeNumber) { errorDiv.textContent = 'กรุณาระบุหมายเลขบัตร'; errorDiv.style.display = 'block'; return; }
+            if (!nickname) { errorDiv.textContent = 'กรุณาระบุชื่อเล่น'; errorDiv.style.display = 'block'; return; }
+
+            errorDiv.style.display = 'none';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'กำลังสร้าง...';
+
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl('employees/'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ badge_number: badgeNumber, thai_name: nickname, is_active: true, is_hidden: false })
+                });
+                if (!response.ok) {
+                    const error = await response.json();
+                    errorDiv.textContent = error.detail || 'เกิดข้อผิดพลาดในการสร้างพนักงาน';
+                    errorDiv.style.display = 'block';
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'สร้างพนักงาน';
+                    return;
+                }
+                const result = await response.json();
+                alert(`สร้างพนักงานสำเร็จ!\n\nหมายเลขบัตร: ${result.badge_number}\nชื่อเล่น: ${result.display_name}`);
+                hideAddEmployeeModal();
+                await loadEmployees();
+            } catch (error) {
+                console.error('Error creating employee:', error);
+                errorDiv.textContent = 'เกิดข้อผิดพลาดในการสร้างพนักงาน กรุณาลองใหม่อีกครั้ง';
+                errorDiv.style.display = 'block';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'สร้างพนักงาน';
+            }
+        }
+
+        // ============================================================================
+        // EDIT EMPLOYEE MODAL (names, department, position, location, NFC, app grants)
+        // ============================================================================
+
+        let editingBadge = null;
+        let editingLocation = null;
+
+        function selectEditLocation(loc) {
+            editingLocation = loc;
+            document.querySelectorAll('#editLocationChoice button').forEach(btn => {
+                btn.classList.toggle('selected', btn.dataset.loc === loc);
+            });
+        }
+
+        async function showEditModal(badgeNumber) {
+            const employee = employees.find(e => e.badge_number === badgeNumber);
+            if (!employee) return;
+
+            editingBadge = badgeNumber;
+            editingLocation = employee.location || null;
+
+            document.getElementById('editModalTitle').textContent = `แก้ไขพนักงาน — ${badgeNumber}`;
+            document.getElementById('editThaiName').value = employee.thai_name || '';
+            document.getElementById('editEnglishName').value = employee.english_name || '';
+            document.getElementById('editNickname').value = employee.display_name || '';
+            document.getElementById('editDepartment').value = employee.department || '';
+            document.getElementById('editPosition').value = employee.position || '';
+            document.getElementById('editNfcCard').value = employee.nfc_card_uid || '';
+            document.getElementById('editError').style.display = 'none';
+            selectEditLocation(editingLocation);
+
+            document.getElementById('editEmployeeModal').style.display = 'flex';
+
+            // Load current app grants (best-effort; grid still usable if this fails)
+            const grantBox = document.getElementById('editGrantCheckboxes');
+            grantBox.innerHTML = APP_CATALOG.map(app =>
+                `<label><input type="checkbox" value="${escapeHtml(app.app_id)}"> ${escapeHtml(app.name)}</label>`
+            ).join('');
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl(`admin/employees/${badgeNumber}/grants`), { credentials: 'include' });
+                if (response.ok) {
+                    const data = await response.json();
+                    const granted = new Set(data.granted_app_ids || []);
+                    grantBox.querySelectorAll('input[type=checkbox]').forEach(cb => {
+                        cb.checked = granted.has(cb.value);
+                    });
+                }
+            } catch (error) {
+                console.warn('Could not load app grants (admin session required):', error);
+            }
+        }
+
+        function hideEditModal() {
+            document.getElementById('editEmployeeModal').style.display = 'none';
+            editingBadge = null;
+        }
+
+        async function saveEditModal() {
+            if (!editingBadge) return;
+            const badgeNumber = editingBadge;
+            const errorDiv = document.getElementById('editError');
+            const saveBtn = document.getElementById('saveEditBtn');
+            errorDiv.style.display = 'none';
+
+            const thaiName = document.getElementById('editThaiName').value.trim();
+            const englishName = document.getElementById('editEnglishName').value.trim();
+            const nickname = document.getElementById('editNickname').value.trim();
+            const department = document.getElementById('editDepartment').value.trim();
+            const position = document.getElementById('editPosition').value.trim();
+            const nfcUid = document.getElementById('editNfcCard').value.trim();
+            const grantedAppIds = Array.from(document.querySelectorAll('#editGrantCheckboxes input:checked')).map(cb => cb.value);
+
+            const employee = employees.find(e => e.badge_number === badgeNumber) || {};
+
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'กำลังบันทึก...';
+
+            try {
+                await appConfig.loadConfig();
+
+                // 1) Names + department + position (this endpoint also recomputes
+                //    display_name from thai/english name — step 2 below restores
+                //    the intended nickname afterward).
+                let response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}`), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        thai_name: thaiName || null,
+                        english_name: englishName || null,
+                        department: department || null,
+                        position: position || null
+                    })
+                });
+                if (!response.ok) throw new Error((await response.json()).detail || 'บันทึกข้อมูลชื่อไม่สำเร็จ');
+
+                // 2) Nickname (display_name) — independent of thai/english name.
+                response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}/nickname`), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ nickname: nickname })
+                });
+                if (!response.ok) throw new Error('บันทึกชื่อเล่นไม่สำเร็จ');
+
+                // 3) Location — pass through the employee's existing role/shift so
+                //    this endpoint (which also manages role+shift) doesn't clear them.
+                response = await fetch(appConfig.getApiUrl(`employees/${badgeNumber}/shift`), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        role: employee.role || null,
+                        default_shift_code: employee.default_shift_code || null,
+                        location: editingLocation || null
+                    })
+                });
+                if (!response.ok) throw new Error('บันทึกสาขาไม่สำเร็จ');
+
+                // 4) NFC card.
+                response = await fetch(appConfig.getApiUrl(`admin/employees/${badgeNumber}/nfc-card`), {
+                    method: 'PUT',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ uid: nfcUid || null })
+                });
+                if (!response.ok) throw new Error((await response.json()).detail || 'บันทึกบัตร NFC ไม่สำเร็จ');
+
+                // 5) App grants.
+                response = await fetch(appConfig.getApiUrl(`admin/employees/${badgeNumber}/grants`), {
+                    method: 'PUT',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ app_ids: grantedAppIds })
+                });
+                if (!response.ok) throw new Error('บันทึกสิทธิ์แอปไม่สำเร็จ');
+
+                hideEditModal();
+                await loadEmployees();
+                alert('บันทึกข้อมูลพนักงานสำเร็จ');
+            } catch (error) {
+                console.error('Error saving employee edit:', error);
+                errorDiv.textContent = error.message || 'เกิดข้อผิดพลาดในการบันทึก';
+                errorDiv.style.display = 'block';
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'บันทึก';
+            }
+        }
+
+        // ============================================================================
+        // MERGE TOOL (device badge <-> Q-badge)
+        // ============================================================================
+
+        let mergeFromBadge = null;
+        let mergeToBadge = null;
+
+        /**
+         * mode 'into_device': triggered from a device-only row (no DB record yet).
+         *   toBadge is fixed to this row; admin picks the Q-badge to move FROM.
+         * mode 'from_q': triggered from a Q-badge row.
+         *   fromBadge is fixed to this row; admin picks/types the destination badge.
+         */
+        function showMergeModal(mode, badgeNumber) {
+            document.getElementById('mergeError').style.display = 'none';
+
+            if (mode === 'into_device') {
+                mergeToBadge = badgeNumber;
+                mergeFromBadge = null;
+                document.getElementById('mergeModalTitle').textContent = `ย้ายข้อมูลเข้าสู่รหัสเครื่องสแกน ${badgeNumber}`;
+                document.getElementById('mergeFromRow').style.display = 'block';
+                document.getElementById('mergeToRow').style.display = 'none';
+                const qBadges = employees.filter(e => /^Q\d+$/i.test(e.badge_number));
+                const select = document.getElementById('mergeFromSelect');
+                select.innerHTML = qBadges.length
+                    ? qBadges.map(e => `<option value="${escapeHtml(e.badge_number)}">${escapeHtml(e.badge_number)} — ${escapeHtml(e.display_name || '')}</option>`).join('')
+                    : '<option value="">(ไม่มีพนักงาน Q-badge)</option>';
+            } else {
+                mergeFromBadge = badgeNumber;
+                mergeToBadge = null;
+                document.getElementById('mergeModalTitle').textContent = `ย้าย ${badgeNumber} ไปรหัสเครื่องสแกน`;
+                document.getElementById('mergeFromRow').style.display = 'none';
+                document.getElementById('mergeToRow').style.display = 'block';
+                document.getElementById('mergeToInput').value = '';
+                const nonQBadges = employees.filter(e => !/^Q\d+$/i.test(e.badge_number));
+                const datalist = document.getElementById('mergeToSuggestions');
+                datalist.innerHTML = nonQBadges.map(e => `<option value="${escapeHtml(e.badge_number)}">`).join('');
+            }
+
+            document.getElementById('mergeEmployeeModal').style.display = 'flex';
+        }
+
+        function hideMergeModal() {
+            document.getElementById('mergeEmployeeModal').style.display = 'none';
+        }
+
+        async function performMerge() {
+            const errorDiv = document.getElementById('mergeError');
+            errorDiv.style.display = 'none';
+
+            let fromBadge = mergeFromBadge;
+            let toBadge = mergeToBadge;
+            if (!fromBadge) fromBadge = document.getElementById('mergeFromSelect').value;
+            if (!toBadge) toBadge = document.getElementById('mergeToInput').value.trim();
+
+            if (!fromBadge || !toBadge) {
+                errorDiv.textContent = 'กรุณาเลือก/ระบุรหัสทั้งสองฝั่ง';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            if (!confirm(`ย้ายข้อมูลจาก ${fromBadge} ไปยัง ${toBadge}?\n\nการดำเนินการนี้ไม่สามารถย้อนกลับได้`)) return;
+
+            const btn = document.getElementById('performMergeBtn');
+            btn.disabled = true;
+            btn.textContent = 'กำลังย้ายข้อมูล...';
+
+            try {
+                await appConfig.loadConfig();
+                const response = await fetch(appConfig.getApiUrl('admin/employees/merge'), {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ from_badge: fromBadge, to_badge: toBadge })
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    errorDiv.textContent = result.detail || 'ย้ายข้อมูลไม่สำเร็จ';
+                    errorDiv.style.display = 'block';
+                    return;
+                }
+
+                const summaryLines = Object.entries(result.summary || {}).map(([table, counts]) =>
+                    `${table}: ย้าย ${counts.moved}${counts.dropped_duplicate ? `, ตัดซ้ำ ${counts.dropped_duplicate}` : ''}`
+                ).join('\n');
+                alert(`รวมข้อมูลสำเร็จ (${result.case})\n\n${summaryLines}`);
+
+                hideMergeModal();
+                await loadEmployees();
+            } catch (error) {
+                console.error('Error merging employees:', error);
+                errorDiv.textContent = 'เกิดข้อผิดพลาดในการย้ายข้อมูล';
+                errorDiv.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'ยืนยันย้ายข้อมูล';
+            }
+        }
+
+        // Handle Enter key in add-employee form
+        document.addEventListener('DOMContentLoaded', function() {
+            const newBadgeNumber = document.getElementById('newBadgeNumber');
+            const newNickname = document.getElementById('newNickname');
+            if (newBadgeNumber) {
+                newBadgeNumber.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') { e.preventDefault(); newNickname.focus(); }
+                });
+            }
+            if (newNickname) {
+                newNickname.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') { e.preventDefault(); createNewEmployee(); }
+                });
+            }
+        });
+    </script>
+
+    <!-- Add Employee Modal -->
+    <div id="addEmployeeModal" class="modal-overlay">
+        <div class="modal-box">
+            <h3>➕ เพิ่มพนักงานใหม่</h3>
+            <div class="field-group">
+                <label for="newBadgeNumber">หมายเลขบัตร <span style="color: red;">*</span></label>
+                <input type="text" id="newBadgeNumber" placeholder="ระบุหมายเลขบัตร">
+            </div>
+            <div class="field-group">
+                <label for="newNickname">ชื่อเล่น <span style="color: red;">*</span></label>
+                <input type="text" id="newNickname" placeholder="ระบุชื่อเล่นพนักงาน">
+            </div>
+            <div id="addEmployeeError" class="modal-error"></div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="hideAddEmployeeModal()">ยกเลิก</button>
+                <button id="createEmployeeBtn" class="btn btn-primary" onclick="createNewEmployee()">สร้างพนักงาน</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Employee Modal -->
+    <div id="editEmployeeModal" class="modal-overlay">
+        <div class="modal-box">
+            <h3 id="editModalTitle">แก้ไขพนักงาน</h3>
+            <div class="field-row">
+                <div class="field-group">
+                    <label for="editThaiName">ชื่อจริงภาษาไทย</label>
+                    <input type="text" id="editThaiName">
+                </div>
+                <div class="field-group">
+                    <label for="editEnglishName">ชื่อภาษาอังกฤษ</label>
+                    <input type="text" id="editEnglishName">
+                </div>
+            </div>
+            <div class="field-group">
+                <label for="editNickname">ชื่อเล่น</label>
+                <input type="text" id="editNickname">
+            </div>
+            <div class="field-row">
+                <div class="field-group">
+                    <label for="editDepartment">แผนก</label>
+                    <input type="text" id="editDepartment">
+                </div>
+                <div class="field-group">
+                    <label for="editPosition">ตำแหน่ง</label>
+                    <input type="text" id="editPosition">
+                </div>
+            </div>
+            <div class="field-group">
+                <label>สาขา</label>
+                <div class="location-choice" id="editLocationChoice">
+                    <button type="button" data-loc="HF" onclick="selectEditLocation('HF')">HF</button>
+                    <button type="button" data-loc="HF_VILLE" onclick="selectEditLocation('HF_VILLE')">HF VILLE</button>
+                </div>
+            </div>
+            <div class="field-group">
+                <label for="editNfcCard">บัตร NFC</label>
+                <input type="text" id="editNfcCard" placeholder="แตะบัตร/พิมพ์รหัส UID (ว่าง = ไม่มีบัตร)">
+            </div>
+            <div class="field-group">
+                <label>สิทธิ์แอป</label>
+                <div class="grant-checkboxes" id="editGrantCheckboxes"></div>
+            </div>
+            <div id="editError" class="modal-error"></div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="hideEditModal()">ยกเลิก</button>
+                <button id="saveEditBtn" class="btn btn-primary" onclick="saveEditModal()">บันทึก</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Merge Modal -->
+    <div id="mergeEmployeeModal" class="modal-overlay">
+        <div class="modal-box">
+            <h3 id="mergeModalTitle">รวมข้อมูลพนักงาน</h3>
+            <div id="mergeFromRow" class="field-group" style="display:none;">
+                <label for="mergeFromSelect">ย้ายข้อมูลจากพนักงาน Q…</label>
+                <select id="mergeFromSelect"></select>
+            </div>
+            <div id="mergeToRow" class="field-group" style="display:none;">
+                <label for="mergeToInput">ย้ายไปรหัสเครื่องสแกน…</label>
+                <input type="text" id="mergeToInput" list="mergeToSuggestions" placeholder="พิมพ์หรือเลือกรหัสบัตร">
+                <datalist id="mergeToSuggestions"></datalist>
+            </div>
+            <div id="mergeError" class="modal-error"></div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="hideMergeModal()">ยกเลิก</button>
+                <button id="performMergeBtn" class="btn btn-primary" onclick="performMerge()">ยืนยันย้ายข้อมูล</button>
+            </div>
+        </div>
+    </div>
+
+    <script defer src="https://erp.thehfhotel.org/shell/hf-bar.js" data-app="Attendance" data-module="people"></script>
+</body>
+</html>

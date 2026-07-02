@@ -476,6 +476,18 @@ async def line_callback(
                 redirect_url = f"/qr-checkin/scan-callback?jwt={jwt_token}{qr_context_param}"
             else:
                 redirect_url = f"/qr-checkin/mobile?jwt={jwt_token}"
+        elif redirect == 'onboard':
+            # Not yet linked, arriving from the self-service onboarding page
+            # (/qr-checkin/onboard) — send them straight back there instead
+            # of the admin-code link-account page; a brand-new self-onboarder
+            # has no 6-digit admin code to enter.
+            jwt_token = line_auth_service.create_jwt_token(
+                line_user_id=line_user_id,
+                employee_badge=None,
+                display_name=display_name,
+                picture_url=picture_url
+            )
+            redirect_url = f"/qr-checkin/onboard?jwt={jwt_token}"
         else:
             # Not yet linked - redirect to link account page with redirect hint and qr_context
             jwt_token = line_auth_service.create_jwt_token(

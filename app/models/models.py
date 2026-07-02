@@ -68,6 +68,25 @@ class Employee(Base):
     default_shift_id = Column(Integer, ForeignKey("shifts.id"), nullable=True)
     location = Column(String(20), nullable=True, index=True)
 
+    # Employee registry (2026-07). Self-service onboarding + HF ID identity layer.
+    # email: synthetic identity slot, admin-side only. Employees are LINE-only by
+    #   policy — never collected from the employee. Auto-filled on approval as
+    #   "<badge lowercase>@emp.thehfhotel.org" when still NULL.
+    # pending_approval: True from the moment a self-onboarded row is created
+    #   until an admin approves or rejects it. Pending employees are always
+    #   is_active=False so they can't check in before approval.
+    # join_source: how this employees row came to exist —
+    #   'device'       = lazy auto-create from a badge synced from the ZK device
+    #                    (the nickname/status/hidden PUT endpoints)
+    #   'manual'       = admin used "add employee" (POST /)
+    #   'self_onboard' = employee self-registered via /qr-checkin/onboard
+    # nfc_card_uid: physical NFC card slot for the HF ID identity layer built
+    #   next. NULL = no card assigned yet.
+    email = Column(String(120), nullable=True, unique=True, index=True)
+    pending_approval = Column(Boolean, nullable=False, default=False)
+    join_source = Column(String(20), nullable=False, default="device")
+    nfc_card_uid = Column(String(64), nullable=True, unique=True, index=True)
+
     # Metadata
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -285,6 +304,36 @@ class EmployeeSchedule(Base):
     )
 
     employee = relationship("Employee", back_populates="schedules")
+
+
+# ============================================================================
+# Employee Registry — App Grants (2026-07)
+# ============================================================================
+
+class EmployeeAppGrant(Base):
+    """One granted app for one employee — powers the HF ID identity layer.
+
+    App catalog is a constant in code (see app.services.app_catalog) rather
+    than a table, since it's small and static for now. UNIQUE(badge, app_id)
+    makes the admin "full-set replace" PUT idempotent: it diffs the desired
+    set against existing rows instead of delete-all-then-reinsert.
+    """
+    __tablename__ = "employee_app_grants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_badge_number = Column(
+        String(50),
+        ForeignKey("employees.badge_number"),
+        nullable=False,
+        index=True,
+    )
+    app_id = Column(String(50), nullable=False)
+    granted_at = Column(DateTime, default=func.now())
+    granted_by = Column(String(100), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("employee_badge_number", "app_id", name="uq_employee_app_grant"),
+    )
 
 
 # ============================================================================

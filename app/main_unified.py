@@ -16,6 +16,7 @@ from app.core.database import engine, Base
 from app.api import (
     consolidated_attendance, consolidated_devices, consolidated_employees,
     admin_line_codes, line_auth, qr_checkin, shifts, leaves,
+    admin_employees, admin_onboarding, public_onboarding,
 )
 from app.services.cf_access_service import get_cf_access_email
 
@@ -312,8 +313,21 @@ async def serve_export():
     return serve_html_with_cache_control("static/export.html")
 
 @fingerprint_app.get("/nickname-management")
-async def serve_nickname_management(request: Request):
-    """Serve employee nickname management page (requires authentication)
+async def redirect_nickname_management():
+    """Old nickname-management page — replaced by the employee registry
+    (employee-management.html). APIs are unchanged; only the admin page
+    moved. Permanent redirect so bookmarks/links keep working.
+    """
+    return RedirectResponse(url="/fingerprintlogs/employee-management", status_code=301)
+
+
+@fingerprint_app.get("/employee-management")
+async def serve_employee_management(request: Request):
+    """Serve the employee registry page (requires authentication).
+
+    Replaces nickname-management.html: device+DB employee list, LINE
+    linking codes, pending self-onboarding approvals, app grants, NFC
+    card assignment, and the device-badge/Q-badge merge tool.
 
     Server-side authentication check to prevent unauthorized access.
     Recognizes a verified Cloudflare Access identity as well as the
@@ -322,7 +336,7 @@ async def serve_nickname_management(request: Request):
     # A verified Cloudflare Access identity is treated as authenticated
     # admin (auto-login), no passcode prompt needed.
     if get_cf_access_email(request):
-        return serve_html_with_cache_control("static/nickname-management.html")
+        return serve_html_with_cache_control("static/employee-management.html")
 
     # Check for session token in cookie
     admin_token = request.cookies.get('admin_session_token')
@@ -341,7 +355,7 @@ async def serve_nickname_management(request: Request):
         return response
 
     # Session valid - serve page
-    return serve_html_with_cache_control("static/nickname-management.html")
+    return serve_html_with_cache_control("static/employee-management.html")
 
 @fingerprint_app.get("/individual-attendance")
 async def serve_individual_attendance():
@@ -392,6 +406,15 @@ async def serve_openapi_spec():
 async def serve_link_account():
     """Serve LINE account linking page"""
     return serve_html_with_cache_control("static/link-line.html")
+
+@fingerprint_app.get("/qr-checkin/onboard")
+async def serve_onboard():
+    """Serve the public self-service employee onboarding page.
+
+    Public, chromeless (no hf-bar band), like link-line.html/mobile-checkin.html
+    — this path is already Cloudflare-bypassed.
+    """
+    return serve_html_with_cache_control("static/onboard.html")
 
 @fingerprint_app.get("/qr-checkin/mobile")
 async def serve_mobile_checkin():
@@ -595,6 +618,21 @@ app.include_router(
     tags=["leaves-protected"],
 )
 
+# Employee registry admin (2026-07): app grants, NFC card slot, and the
+# device-badge/Q-badge merge tool.
+app.include_router(
+    admin_employees.router,
+    prefix="/api/private/admin/employees",
+    tags=["admin-employees-protected"],
+)
+
+# Self-service onboarding approvals (2026-07).
+app.include_router(
+    admin_onboarding.router,
+    prefix="/api/private/admin/onboarding",
+    tags=["admin-onboarding-protected"],
+)
+
 # Protected endpoint: Auto-import status
 @app.get("/api/private/auto-import/status")
 async def get_auto_import_status():
@@ -716,6 +754,11 @@ async def root_serve_link_account():
     """Serve LINE account linking for direct IP access (without nginx proxy)"""
     return serve_html_with_cache_control("static/link-line.html")
 
+@app.get("/qr-checkin/onboard")
+async def root_serve_onboard():
+    """Serve self-service employee onboarding for direct IP access (without nginx proxy)"""
+    return serve_html_with_cache_control("static/onboard.html")
+
 # ============================================================================
 # PUBLIC APIs - QR Check-in & Authentication (No Authentication Required)
 # ============================================================================
@@ -734,6 +777,14 @@ app.include_router(
     line_auth.router,
     prefix="/api/public/auth/line",
     tags=["line-auth-public"]
+)
+
+# Mount self-service employee onboarding router for public access
+# (LINE-JWT-gated, not admin-auth — see app/api/public_onboarding.py)
+app.include_router(
+    public_onboarding.router,
+    prefix="/api/public/onboarding",
+    tags=["onboarding-public"]
 )
 
 # ============================================================================

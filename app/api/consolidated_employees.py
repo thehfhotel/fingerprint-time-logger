@@ -584,6 +584,13 @@ async def get_employees(
                 "role": emp.role,
                 "default_shift_code": emp.default_shift.code if emp.default_shift else None,
                 "location": emp.location,
+                # Employee registry fields (2026-07): self-service onboarding
+                # + HF ID identity layer.
+                "email": emp.email,
+                "pending_approval": emp.pending_approval,
+                "join_source": emp.join_source,
+                "nfc_card_uid": emp.nfc_card_uid,
+                "line_user_id": emp.line_user_id,
                 "created_at": emp.created_at.isoformat() if emp.created_at else None,
                 "in_database": True
             })
@@ -633,12 +640,20 @@ async def get_employees_from_device(include_hidden: bool, include_inactive: bool
                     "badge_number": db_employee.badge_number,
                     "name": db_employee.display_name or "",
                     "english_name": db_employee.english_name,
-                    "thai_name": db_employee.thai_name, 
+                    "thai_name": db_employee.thai_name,
                     "display_name": db_employee.display_name,
                     "department": db_employee.department,
                     "position": db_employee.position,
                         "is_active": db_employee.is_active,
                     "is_hidden": db_employee.is_hidden,
+                    "role": db_employee.role,
+                    "default_shift_code": db_employee.default_shift.code if db_employee.default_shift else None,
+                    "location": db_employee.location,
+                    "email": db_employee.email,
+                    "pending_approval": db_employee.pending_approval,
+                    "join_source": db_employee.join_source,
+                    "nfc_card_uid": db_employee.nfc_card_uid,
+                    "line_user_id": db_employee.line_user_id,
                     "created_at": db_employee.created_at.isoformat() if db_employee.created_at else None,
                     "in_database": True,
                     "zk_name": zk_user.get('name', '')
@@ -655,6 +670,14 @@ async def get_employees_from_device(include_hidden: bool, include_inactive: bool
                     "position": None,
                         "is_active": True,  # Assume active if in ZK device
                     "is_hidden": False, # Default to visible
+                    "role": None,
+                    "default_shift_code": None,
+                    "location": None,
+                    "email": None,
+                    "pending_approval": False,
+                    "join_source": "device",
+                    "nfc_card_uid": None,
+                    "line_user_id": None,
                     "created_at": None,
                     "in_database": False,
                     "zk_name": zk_user.get('name', '')
@@ -703,6 +726,13 @@ async def get_employee(badge_number: str, db: Session = Depends(get_db)):
             "position": employee.position,
             "is_active": employee.is_active,
             "is_hidden": employee.is_hidden,
+            "role": employee.role,
+            "location": employee.location,
+            "email": employee.email,
+            "pending_approval": employee.pending_approval,
+            "join_source": employee.join_source,
+            "nfc_card_uid": employee.nfc_card_uid,
+            "line_user_id": employee.line_user_id,
             "created_at": employee.created_at.isoformat() if employee.created_at else None
         }
     except HTTPException:
@@ -743,7 +773,11 @@ async def create_employee(employee_data: EmployeeCreate, db: Session = Depends(g
             department=employee_data.department,
             position=employee_data.position,
             is_active=employee_data.is_active,
-            is_hidden=employee_data.is_hidden
+            is_hidden=employee_data.is_hidden,
+            # Admin used "add employee" — distinguishes from a badge lazily
+            # auto-created while naming a ZK-device-synced badge (join_source
+            # stays at its 'device' column default for that path).
+            join_source="manual"
         )
 
         db.add(employee)
