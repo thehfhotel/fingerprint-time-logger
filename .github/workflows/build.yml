@@ -210,6 +210,10 @@ jobs:
           LINE_CHANNEL_SECRET:          ${{ secrets.LINE_CHANNEL_SECRET }}
           LINE_CALLBACK_URL:            ${{ secrets.LINE_CALLBACK_URL }}
           ZK_SYNC_SLACK_WEBHOOK_URL:    ${{ secrets.ZK_SYNC_SLACK_WEBHOOK_URL }}
+          # HF ID OIDC provider — un-darks the /oidc surface. Absent → dark.
+          HFID_SIGNING_KEY:             ${{ secrets.HFID_SIGNING_KEY }}
+          HFID_CLIENT_ID:               ${{ secrets.HFID_CLIENT_ID }}
+          HFID_CLIENT_SECRET:           ${{ secrets.HFID_CLIENT_SECRET }}
         # Payload shape consumed by /srv/run-deploy-fingerprint.sh on
         # evergreen. The script unpacks, writes .env, docker compose pull
         # + down + up -d, health-checks, and verifies the scheduler logs.
@@ -229,6 +233,9 @@ jobs:
             --arg LINE_CHANNEL_SECRET    "$LINE_CHANNEL_SECRET" \
             --arg LINE_CALLBACK_URL      "$LINE_CALLBACK_URL" \
             --arg ZK_SYNC_SLACK_WEBHOOK_URL "$ZK_SYNC_SLACK_WEBHOOK_URL" \
+            --arg HFID_SIGNING_KEY       "$HFID_SIGNING_KEY" \
+            --arg HFID_CLIENT_ID         "$HFID_CLIENT_ID" \
+            --arg HFID_CLIENT_SECRET     "$HFID_CLIENT_SECRET" \
             '{
               commit_sha: $commit_sha,
               ghcr: { user: $ghcr_user, token: $ghcr_token },
@@ -245,6 +252,9 @@ jobs:
                 LINE_CHANNEL_SECRET:       $LINE_CHANNEL_SECRET,
                 LINE_CALLBACK_URL:         $LINE_CALLBACK_URL,
                 ZK_SYNC_SLACK_WEBHOOK_URL: $ZK_SYNC_SLACK_WEBHOOK_URL,
+                HFID_SIGNING_KEY:          $HFID_SIGNING_KEY,
+                HFID_CLIENT_ID:            $HFID_CLIENT_ID,
+                HFID_CLIENT_SECRET:        $HFID_CLIENT_SECRET,
               }
             }' \
           | ssh -i ~/.ssh/deploy_key \
