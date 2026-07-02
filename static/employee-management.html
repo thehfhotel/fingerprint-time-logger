@@ -1013,6 +1013,7 @@
             document.getElementById('editDepartment').value = employee.department || '';
             document.getElementById('editPosition').value = employee.position || '';
             document.getElementById('editNfcCard').value = employee.nfc_card_uid || '';
+            document.getElementById('scanNfcStatus').textContent = '';
             document.getElementById('editError').style.display = 'none';
             selectEditLocation(editingLocation);
 
@@ -1130,6 +1131,85 @@
             } finally {
                 saveBtn.disabled = false;
                 saveBtn.textContent = 'บันทึก';
+            }
+        }
+
+        // ── NFC card scan via WebHID (RC500 encoder, VID 0x5458 PID 0x0002) ──
+        // Reads the card UID straight from the USB reader in the browser — no
+        // local bridge, no network. Requires Chrome/Edge + a one-time device
+        // permission (the button click is the required user gesture). The
+        // frame protocol mirrors app/reader/gcs_encoder.py in ~/hotel-keycard
+        // (the hardware-validated Python driver): request(0x26) → anticoll →
+        // read the 4 UID bytes. Manual entry stays available as the fallback.
+        const HF_RC500 = { vendorId: 0x5458, productId: 0x0002 };
+        const RC = { CMD_REQUEST: 0x41, CMD_ANTICOLL: 0x74 };
+
+        function rcBcc(bytes) {
+            let x = 0;
+            for (const b of bytes) x ^= b;
+            return (~x) & 0xff;
+        }
+        // Build the 64-byte frame: [0x00, cmd, len, ...payload, bcc, 0-pad].
+        function rcFrame(cmd, payload) {
+            const head = [0x00, cmd, payload.length, ...payload];
+            const withBcc = [...head, rcBcc(head)];
+            const f = new Uint8Array(64);
+            f.set(withBcc.slice(0, 64));
+            return f;
+        }
+        // One request/response transaction. Resolves {status, payload}.
+        function rcTxn(device, cmd, payload) {
+            return new Promise((resolve, reject) => {
+                const timer = setTimeout(() => { device.oninputreport = null; reject(new Error('reader timeout')); }, 1500);
+                device.oninputreport = (event) => {
+                    clearTimeout(timer);
+                    device.oninputreport = null;
+                    const d = new Uint8Array(event.data.buffer);
+                    // WebHID strips the report id → d[0]=status, d[1]=len, d[2..]=payload.
+                    const status = d[0], len = d[1];
+                    resolve({ status, payload: d.slice(2, 2 + len), raw: d });
+                };
+                device.sendReport(0, rcFrame(cmd, payload)).catch((e) => { clearTimeout(timer); reject(e); });
+            });
+        }
+
+        async function scanNfcCard() {
+            const statusEl = document.getElementById('scanNfcStatus');
+            const btn = document.getElementById('scanNfcBtn');
+            if (!('hid' in navigator)) {
+                statusEl.style.color = 'var(--hf-error, #C53030)';
+                statusEl.textContent = 'เบราว์เซอร์นี้ไม่รองรับการอ่านบัตร (ใช้ Chrome หรือ Edge) — พิมพ์รหัสเองได้';
+                return;
+            }
+            btn.disabled = true;
+            statusEl.style.color = 'var(--hf-text-muted, #7A7268)';
+            statusEl.textContent = 'กำลังเชื่อมต่อเครื่องอ่าน…';
+            let device;
+            try {
+                const existing = (await navigator.hid.getDevices()).filter(
+                    d => d.vendorId === HF_RC500.vendorId && d.productId === HF_RC500.productId);
+                device = existing[0] || (await navigator.hid.requestDevice({ filters: [HF_RC500] }))[0];
+                if (!device) { statusEl.textContent = 'ไม่ได้เลือกเครื่องอ่าน'; return; }
+                if (!device.opened) await device.open();
+
+                statusEl.textContent = 'แตะบัตรบนเครื่องอ่าน…';
+                await rcTxn(device, RC.CMD_REQUEST, [0x26]);              // ISO14443A request
+                const anti = await rcTxn(device, RC.CMD_ANTICOLL, [0x93, 0x00]);
+                if (anti.status !== 0 || anti.payload.length < 4) {
+                    console.warn('anticoll raw:', Array.from(anti.raw).map(b => b.toString(16)));
+                    throw new Error('อ่านบัตรไม่สำเร็จ — วางบัตรแล้วลองใหม่');
+                }
+                const uid = Array.from(anti.payload.slice(0, 4))
+                    .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+                document.getElementById('editNfcCard').value = uid;
+                statusEl.style.color = 'var(--hf-success, #2F855A)';
+                statusEl.textContent = 'อ่านบัตรสำเร็จ: ' + uid + ' (กด บันทึก เพื่อผูกกับพนักงาน)';
+            } catch (err) {
+                console.error('NFC scan error:', err);
+                statusEl.style.color = 'var(--hf-error, #C53030)';
+                statusEl.textContent = 'อ่านบัตรไม่สำเร็จ: ' + (err.message || err) + ' — พิมพ์รหัสเองได้';
+            } finally {
+                btn.disabled = false;
             }
         }
 
@@ -1306,7 +1386,11 @@
             </div>
             <div class="field-group">
                 <label for="editNfcCard">บัตร NFC</label>
-                <input type="text" id="editNfcCard" placeholder="แตะบัตร/พิมพ์รหัส UID (ว่าง = ไม่มีบัตร)">
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <input type="text" id="editNfcCard" style="flex:1;" placeholder="แตะบัตร/พิมพ์รหัส UID (ว่าง = ไม่มีบัตร)">
+                    <button type="button" id="scanNfcBtn" onclick="scanNfcCard()" title="อ่านรหัสบัตรจากเครื่องอ่าน RC500">📇 อ่านบัตร</button>
+                </div>
+                <div id="scanNfcStatus" style="font-size:12px; margin-top:4px; min-height:16px;"></div>
             </div>
             <div class="field-group">
                 <label>สิทธิ์แอป</label>
