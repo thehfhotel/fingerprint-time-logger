@@ -8,6 +8,9 @@ from typing import List, Optional, Tuple
 APP_CATALOG: List[Tuple[str, str]] = [
     ("rooms", "Room Daily Report"),
     ("portal", "HF Portal"),
+    # Deliberately NOT in DEFAULT_GRANTED_APP_IDS — payroll is granted
+    # per-person (Cloudflare Access checks the `apps` claim for it).
+    ("payroll", "Payroll"),
 ]
 
 # Apps granted automatically when an admin approves a pending onboarding.
