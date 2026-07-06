@@ -93,6 +93,143 @@ body {
     box-shadow: 0 6px 20px rgba(6, 199, 85, 0.4);
 }
 
+/* Card Login (staff NFC card) */
+.card-login-block {
+    margin-top: 10px;
+}
+
+.or-divider {
+    display: flex;
+    align-items: center;
+    text-align: center;
+    color: #B8AFA6;
+    font-size: 13px;
+    margin: 24px 0 18px;
+}
+
+.or-divider::before,
+.or-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #E8E4DF;
+}
+
+.or-divider span {
+    padding: 0 12px;
+}
+
+.card-login-btn {
+    display: inline-block;
+    width: 100%;
+    padding: 16px 24px;
+    font-size: 17px;
+    font-weight: 600;
+    color: white;
+    background: linear-gradient(135deg, #4F0E0E 0%, #7A0000 100%);
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.3s ease;
+}
+
+.card-login-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(139, 0, 0, 0.4);
+}
+
+.card-pairing {
+    margin-top: 8px;
+    text-align: left;
+}
+
+.pair-help {
+    font-size: 13px !important;
+    color: #7A7268 !important;
+    margin-bottom: 10px !important;
+}
+
+.pair-input {
+    width: 100%;
+    padding: 14px 16px;
+    font-size: 16px;
+    font-family: inherit;
+    color: #26221E;
+    background: #F4F1ED;
+    border: 1px solid #E8E4DF;
+    border-radius: 12px;
+    margin-bottom: 12px;
+    box-sizing: border-box;
+}
+
+.pair-input:focus {
+    outline: none;
+    border-color: #8B0000;
+    background: white;
+}
+
+.card-waiting {
+    margin-top: 8px;
+}
+
+.card-waiting p {
+    font-size: 15px !important;
+    color: #7A7268 !important;
+    margin: 12px 0 16px !important;
+}
+
+.spinner-sm {
+    width: 34px;
+    height: 34px;
+    margin: 0 auto;
+    border: 3px solid rgba(139, 0, 0, 0.2);
+    border-top: 3px solid #8B0000;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+.card-cancel-btn {
+    display: inline-block;
+    width: 100%;
+    padding: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #7A7268;
+    background: #F4F1ED;
+    border: 1px solid #E8E4DF;
+    border-radius: 12px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.3s ease;
+}
+
+.card-cancel-btn:hover {
+    background: #E8E4DF;
+}
+
+.card-error {
+    margin-top: 14px !important;
+    padding: 12px !important;
+    font-size: 14px !important;
+    color: #9B2C2C !important;
+    background: #FBEAEA !important;
+    border-radius: 8px !important;
+}
+
+.card-link-btn {
+    display: inline-block;
+    margin-top: 12px;
+    padding: 6px 4px;
+    font-size: 13px;
+    color: #7A7268;
+    background: none;
+    border: none;
+    text-decoration: underline;
+    cursor: pointer;
+    font-family: inherit;
+}
+
 /* Not Linked Section */
 .not-linked-section {
     display: flex;

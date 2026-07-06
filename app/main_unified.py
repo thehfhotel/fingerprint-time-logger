@@ -797,6 +797,17 @@ app.include_router(
     tags=["onboarding-public"]
 )
 
+# Employee self-service card-login (2026-07): "tap your NFC staff card to log
+# in" for an employee viewing their own attendance. Reader-secret-free (the
+# browser is the employee's own terminal); resolves the tap IN-PROCESS from the
+# reader module's pending-tap store and mints the same LINE-JWT self-service
+# session the LINE-login path mints. Ships DARK (404) until READER_SECRET is set.
+app.include_router(
+    reader.public_router,
+    prefix="/api/public/reader",
+    tags=["reader-self-login-public"],
+)
+
 # HF ID — OIDC identity provider (LINE-brokered employee SSO for Cloudflare
 # Access). Served at id.thehfhotel.org/oidc/*. Ships DARK: every endpoint
 # 404s until HFID_SIGNING_KEY is configured (see app/services/oidc_service.py).

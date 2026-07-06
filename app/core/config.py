@@ -134,13 +134,25 @@ def get_server_config() -> dict:
 #                      Default is the Cloudflare Access team callback:
 #                      https://laikaexpress.cloudflareaccess.com/cdn-cgi/access/callback
 #
-#   READER_RESOLVE_SECRET  Shared secret for the server-to-server NFC-card
-#                      resolver POST /api/private/reader/resolve (the new-hotel
-#                      PMS turns a tapped card UID into an employee identity).
-#                      Read directly via os.getenv() in app/api/reader.py and
-#                      compared constant-time against the X-Reader-Secret
-#                      header. When unset/blank the endpoint is dark (returns
-#                      404), like HF ID without a signing key.
+#   READER_RESOLVE_SECRET  Shared APP↔CENTRAL secret for the server-to-server
+#                      card-login surface: POST /api/private/reader/{resolve,
+#                      claim,wait}. Each consuming app's BACKEND holds it to
+#                      resolve a UID (/resolve), pair a terminal to a reader
+#                      (/claim) and long-poll for the tap + receive a signed
+#                      card assertion (/wait). Read directly via os.getenv() in
+#                      app/api/reader.py and compared constant-time against the
+#                      X-Reader-Secret header. When unset/blank that surface is
+#                      dark (returns 404), like HF ID without a signing key.
+#
+#   READER_SECRET      Shared READER↔CENTRAL secret for the tap ingest POST
+#                      /api/private/reader/scan — only the ESP32 reader holds
+#                      it. Distinct from READER_RESOLVE_SECRET so a compromised
+#                      app backend cannot forge taps. Read directly via
+#                      os.getenv() in app/api/reader.py, compared constant-time
+#                      against X-Reader-Secret. Unset/blank ⇒ /scan is dark
+#                      (returns 404). The signed card assertion /wait returns is
+#                      an RS256 OIDC id_token, so /wait ALSO needs HFID_SIGNING_KEY
+#                      set to actually mint (it is, in production).
 # ============================================================================
 
 

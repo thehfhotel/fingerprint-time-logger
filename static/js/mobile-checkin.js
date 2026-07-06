@@ -18,6 +18,17 @@
         notLinkedSection: document.getElementById('notLinkedSection'),
         scannerSection: document.getElementById('scannerSection'),
 
+        // Card login (staff NFC card)
+        cardLoginBlock: document.getElementById('cardLoginBlock'),
+        cardLoginBtn: document.getElementById('cardLoginBtn'),
+        cardPairingArea: document.getElementById('cardPairingArea'),
+        readerIdInput: document.getElementById('readerIdInput'),
+        saveReaderIdBtn: document.getElementById('saveReaderIdBtn'),
+        cardWaiting: document.getElementById('cardWaiting'),
+        cardCancelBtn: document.getElementById('cardCancelBtn'),
+        cardLoginError: document.getElementById('cardLoginError'),
+        cardChangeReaderBtn: document.getElementById('cardChangeReaderBtn'),
+
         profilePicture: document.getElementById('profilePicture'),
         displayName: document.getElementById('displayName'),
         employeeBadge: document.getElementById('employeeBadge'),
@@ -57,11 +68,19 @@
     // GPS Configuration
     const GPS_REQUIRED_ACCURACY = 30; // meters - stricter than backend 50m requirement
 
+    // Card-login state
+    const READER_ID_KEY = 'self_login_reader_id';
+    let cardLoginActive = false;
+
     /**
      * Initialize page
      */
     function init() {
         console.log('[Mobile Check-in] Initializing page...');
+
+        // Wire the "tap card" login option before any early return — it lives on
+        // the login screen, which is exactly what shows when there is no token.
+        setupCardLogin();
 
         // Get JWT token from URL or localStorage
         jwtToken = getJWTToken();
@@ -558,6 +577,174 @@
             localStorage.removeItem('line_jwt_token');
             window.location.reload();
         }
+    }
+
+    // ========================================================================
+    // Card login (tap staff NFC card)
+    // ========================================================================
+    //
+    // This device pairs to a per-terminal reader_id (kept in localStorage, set
+    // once). "Start" gets a short-lived login ticket bound to that reader; then
+    // we long-poll "wait" until the employee taps their card at the reader. On a
+    // tap the backend mints the SAME LINE-JWT self-service session the LINE path
+    // mints, which we persist under 'line_jwt_token' exactly like the LINE
+    // redirect and reload straight into the logged-in view.
+
+    function getReaderId() {
+        return (localStorage.getItem(READER_ID_KEY) || '').trim();
+    }
+
+    /**
+     * Reveal the card-login option and wire its controls (idempotent).
+     */
+    function setupCardLogin() {
+        if (!elements.cardLoginBlock) return;
+        elements.cardLoginBlock.style.display = 'block';
+
+        elements.cardLoginBtn.addEventListener('click', onCardLoginClick);
+        elements.saveReaderIdBtn.addEventListener('click', onSaveReaderId);
+        elements.cardCancelBtn.addEventListener('click', cancelCardLogin);
+        elements.cardChangeReaderBtn.addEventListener('click', onChangeReader);
+
+        setCardState('idle');
+    }
+
+    /**
+     * Toggle the card-login sub-views: 'idle' | 'pairing' | 'waiting'.
+     */
+    function setCardState(state) {
+        const hasReader = !!getReaderId();
+        elements.cardLoginBtn.style.display = state === 'idle' ? 'block' : 'none';
+        elements.cardPairingArea.style.display = state === 'pairing' ? 'block' : 'none';
+        elements.cardWaiting.style.display = state === 'waiting' ? 'block' : 'none';
+        // Offer "change reader" only when idle and a reader is already paired.
+        elements.cardChangeReaderBtn.style.display =
+            (state === 'idle' && hasReader) ? 'inline-block' : 'none';
+        if (state !== 'idle') hideCardError();
+    }
+
+    function showCardError(message) {
+        elements.cardLoginError.textContent = message;
+        elements.cardLoginError.style.display = 'block';
+    }
+
+    function hideCardError() {
+        elements.cardLoginError.style.display = 'none';
+    }
+
+    function onCardLoginClick() {
+        hideCardError();
+        if (!getReaderId()) {
+            // First use on this device — pair it to its reader (one-time).
+            elements.readerIdInput.value = '';
+            setCardState('pairing');
+            elements.readerIdInput.focus();
+        } else {
+            beginCardLogin();
+        }
+    }
+
+    function onChangeReader() {
+        elements.readerIdInput.value = getReaderId();
+        setCardState('pairing');
+        elements.readerIdInput.focus();
+    }
+
+    function onSaveReaderId() {
+        const value = (elements.readerIdInput.value || '').trim();
+        if (!value) {
+            showCardError('กรุณากรอกรหัสเครื่องอ่านบัตร');
+            return;
+        }
+        localStorage.setItem(READER_ID_KEY, value);
+        setCardState('idle');
+        beginCardLogin();
+    }
+
+    function cancelCardLogin() {
+        cardLoginActive = false;
+        setCardState('idle');
+    }
+
+    function beginCardLogin() {
+        cardLoginActive = true;
+        setCardState('waiting');
+        cardLoginLoop().catch((error) => {
+            console.error('[Card Login] Loop error:', error);
+            if (cardLoginActive) {
+                cardLoginActive = false;
+                setCardState('idle');
+                showCardError('ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้ กรุณาลองใหม่');
+            }
+        });
+    }
+
+    /**
+     * Outer loop: (re)acquire a login ticket, then long-poll until a tap lands,
+     * the employee cancels, or an unrecoverable error occurs.
+     */
+    async function cardLoginLoop() {
+        const readerId = getReaderId();
+
+        while (cardLoginActive) {
+            // 1) Pair to the reader and get a short-lived ticket.
+            const startResp = await fetch('/api/public/reader/self-login/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reader_id: readerId })
+            });
+
+            if (!cardLoginActive) return;
+
+            if (startResp.status === 404) {
+                stopCardLogin('ระบบแตะบัตรยังไม่พร้อมใช้งานบนเซิร์ฟเวอร์นี้');
+                return;
+            }
+            if (!startResp.ok) {
+                stopCardLogin('ไม่สามารถเริ่มการแตะบัตรได้ กรุณาลองใหม่');
+                return;
+            }
+
+            const { login_ticket: ticket } = await startResp.json();
+
+            // 2) Long-poll for the tap. Each request blocks server-side (~25s);
+            //    204 means "no tap yet" → re-poll the same ticket. 404 means the
+            //    ticket expired → break to the outer loop for a fresh one.
+            let ticketExpired = false;
+            while (cardLoginActive && !ticketExpired) {
+                const waitResp = await fetch(
+                    `/api/public/reader/self-login/wait?ticket=${encodeURIComponent(ticket)}`
+                );
+
+                if (!cardLoginActive) return;
+
+                if (waitResp.status === 200) {
+                    const data = await waitResp.json();
+                    cardLoginActive = false;
+                    // Persist the minted session exactly like the LINE redirect,
+                    // then reload into the logged-in self-service view.
+                    localStorage.setItem('line_jwt_token', data.token);
+                    window.location.reload();
+                    return;
+                } else if (waitResp.status === 204) {
+                    continue; // no tap yet — keep polling
+                } else if (waitResp.status === 403) {
+                    stopCardLogin('บัตรนี้ไม่มีสิทธิ์เข้าใช้งาน หรือบัญชียังไม่ได้รับการอนุมัติ');
+                    return;
+                } else if (waitResp.status === 404) {
+                    ticketExpired = true; // renew ticket via the outer loop
+                } else {
+                    stopCardLogin('เกิดข้อผิดพลาด กรุณาลองใหม่');
+                    return;
+                }
+            }
+        }
+    }
+
+    function stopCardLogin(errorMessage) {
+        cardLoginActive = false;
+        setCardState('idle');
+        if (errorMessage) showCardError(errorMessage);
     }
 
     /**

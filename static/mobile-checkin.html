@@ -29,6 +29,39 @@
                 <a href="/api/public/auth/line/login?redirect=mobile-checkin" class="login-btn">
                     🟢 เข้าสู่ระบบด้วย LINE
                 </a>
+
+                <!-- Card login (staff NFC card) -->
+                <div id="cardLoginBlock" class="card-login-block" style="display: none;">
+                    <div class="or-divider"><span>หรือ</span></div>
+
+                    <!-- Idle: offer to tap -->
+                    <button id="cardLoginBtn" class="card-login-btn" type="button">
+                        💳 แตะบัตรพนักงานเพื่อเข้าสู่ระบบ
+                    </button>
+
+                    <!-- One-time terminal pairing (bind this device to its reader) -->
+                    <div id="cardPairingArea" class="card-pairing" style="display: none;">
+                        <p class="pair-help">ตั้งค่าเครื่องอ่านบัตรสำหรับจุดนี้ (ตั้งค่าครั้งเดียว)</p>
+                        <input id="readerIdInput" class="pair-input" type="text"
+                               inputmode="text" autocomplete="off"
+                               placeholder="รหัสเครื่องอ่านบัตร (reader id)">
+                        <button id="saveReaderIdBtn" class="card-login-btn" type="button">
+                            บันทึกและแตะบัตร
+                        </button>
+                    </div>
+
+                    <!-- Waiting for a tap -->
+                    <div id="cardWaiting" class="card-waiting" style="display: none;">
+                        <div class="spinner-sm"></div>
+                        <p id="cardWaitingMsg">รอการแตะบัตร... กรุณาแตะบัตรพนักงานที่เครื่องอ่าน</p>
+                        <button id="cardCancelBtn" class="card-cancel-btn" type="button">ยกเลิก</button>
+                    </div>
+
+                    <p id="cardLoginError" class="card-error" style="display: none;"></p>
+                    <button id="cardChangeReaderBtn" class="card-link-btn" type="button" style="display: none;">
+                        เปลี่ยนเครื่องอ่านบัตร
+                    </button>
+                </div>
             </div>
         </div>
 
