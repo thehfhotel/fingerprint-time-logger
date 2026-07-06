@@ -133,6 +133,14 @@ def get_server_config() -> dict:
 #   HFID_REDIRECT_URIS Comma-separated exact-match redirect_uri allowlist.
 #                      Default is the Cloudflare Access team callback:
 #                      https://laikaexpress.cloudflareaccess.com/cdn-cgi/access/callback
+#
+#   READER_RESOLVE_SECRET  Shared secret for the server-to-server NFC-card
+#                      resolver POST /api/private/reader/resolve (the new-hotel
+#                      PMS turns a tapped card UID into an employee identity).
+#                      Read directly via os.getenv() in app/api/reader.py and
+#                      compared constant-time against the X-Reader-Secret
+#                      header. When unset/blank the endpoint is dark (returns
+#                      404), like HF ID without a signing key.
 # ============================================================================
 
 

@@ -16,7 +16,7 @@ from app.core.database import engine, Base
 from app.api import (
     consolidated_attendance, consolidated_devices, consolidated_employees,
     admin_line_codes, line_auth, qr_checkin, shifts, leaves,
-    admin_employees, admin_onboarding, public_onboarding, oidc,
+    admin_employees, admin_onboarding, public_onboarding, oidc, reader,
 )
 from app.services.cf_access_service import get_cf_access_email
 
@@ -631,6 +631,16 @@ app.include_router(
     admin_onboarding.router,
     prefix="/api/private/admin/onboarding",
     tags=["admin-onboarding-protected"],
+)
+
+# Card-reader identity resolution (2026-07): server-to-server NFC-card-UID ->
+# employee lookup the new-hotel PMS calls. Authenticated by the shared
+# X-Reader-Secret header (constant-time); dark/404 until READER_RESOLVE_SECRET
+# is set. This is the central identity authority for staff NFC cards.
+app.include_router(
+    reader.router,
+    prefix="/api/private/reader",
+    tags=["reader-protected"],
 )
 
 # Protected endpoint: Auto-import status
