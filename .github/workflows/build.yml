@@ -214,6 +214,15 @@ jobs:
           HFID_SIGNING_KEY:             ${{ secrets.HFID_SIGNING_KEY }}
           HFID_CLIENT_ID:               ${{ secrets.HFID_CLIENT_ID }}
           HFID_CLIENT_SECRET:           ${{ secrets.HFID_CLIENT_SECRET }}
+          # Central card-login (reader↔central + app↔central). Absent → dark.
+          # MUST ride the payload: the host script rewrites .env every deploy,
+          # so hand-set host values are wiped (observed live on new-hotel
+          # 2026-07-09).
+          READER_SECRET:                ${{ secrets.READER_SECRET }}
+          READER_RESOLVE_SECRET:        ${{ secrets.READER_RESOLVE_SECRET }}
+          # Staff LINE OA (Employee Hub rich menus). Absent → dark.
+          STAFF_OA_CHANNEL_ACCESS_TOKEN: ${{ secrets.STAFF_OA_CHANNEL_ACCESS_TOKEN }}
+          STAFF_OA_CHANNEL_SECRET:      ${{ secrets.STAFF_OA_CHANNEL_SECRET }}
         # Payload shape consumed by /srv/run-deploy-fingerprint.sh on
         # evergreen. The script unpacks, writes .env, docker compose pull
         # + down + up -d, health-checks, and verifies the scheduler logs.
@@ -236,6 +245,10 @@ jobs:
             --arg HFID_SIGNING_KEY       "$HFID_SIGNING_KEY" \
             --arg HFID_CLIENT_ID         "$HFID_CLIENT_ID" \
             --arg HFID_CLIENT_SECRET     "$HFID_CLIENT_SECRET" \
+            --arg READER_SECRET          "$READER_SECRET" \
+            --arg READER_RESOLVE_SECRET  "$READER_RESOLVE_SECRET" \
+            --arg STAFF_OA_CHANNEL_ACCESS_TOKEN "$STAFF_OA_CHANNEL_ACCESS_TOKEN" \
+            --arg STAFF_OA_CHANNEL_SECRET "$STAFF_OA_CHANNEL_SECRET" \
             '{
               commit_sha: $commit_sha,
               ghcr: { user: $ghcr_user, token: $ghcr_token },
@@ -255,6 +268,10 @@ jobs:
                 HFID_SIGNING_KEY:          $HFID_SIGNING_KEY,
                 HFID_CLIENT_ID:            $HFID_CLIENT_ID,
                 HFID_CLIENT_SECRET:        $HFID_CLIENT_SECRET,
+                READER_SECRET:             $READER_SECRET,
+                READER_RESOLVE_SECRET:     $READER_RESOLVE_SECRET,
+                STAFF_OA_CHANNEL_ACCESS_TOKEN: $STAFF_OA_CHANNEL_ACCESS_TOKEN,
+                STAFF_OA_CHANNEL_SECRET:   $STAFF_OA_CHANNEL_SECRET,
               }
             }' \
           | ssh -i ~/.ssh/deploy_key \

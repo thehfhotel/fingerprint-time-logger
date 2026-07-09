@@ -157,6 +157,30 @@ def get_server_config() -> dict:
 
 
 # ============================================================================
+# EMPLOYEE HUB — STAFF LINE OA (optional; ships DARK when unset)
+# ============================================================================
+# The Employee Hub is the rich menu on the dedicated STAFF LINE Official
+# Account (Messaging API channel) — a different channel from LINE_CHANNEL_*
+# (the LINE Login channel behind QR check-in OAuth). Secrets are read
+# directly via os.getenv() in app/services/staff_oa_service.py (same
+# pattern as the HFID_* keys above). Documented here for discoverability.
+#
+#   STAFF_OA_CHANNEL_ACCESS_TOKEN
+#                      Long-lived Messaging API channel access token of the
+#                      staff OA. Used for rich-menu CRUD, per-user Role Menu
+#                      linking and webhook replies.
+#   STAFF_OA_CHANNEL_SECRET
+#                      Channel secret of the same OA. Verifies the
+#                      X-Line-Signature (HMAC-SHA256 of the raw body) on
+#                      POST /api/public/staff-oa/webhook.
+#
+# EITHER unset/blank ⇒ the feature is DARK (fail closed): the webhook
+# answers 503 and scripts/staff_oa_sync.py refuses to run. Zero behavior
+# change until both are delivered to the prod host .env, like HFID_*.
+# ============================================================================
+
+
+# ============================================================================
 # REMOVED CONFIGURATIONS (Post-Simplification)
 # ============================================================================
 # The following configurations were removed during simplification:

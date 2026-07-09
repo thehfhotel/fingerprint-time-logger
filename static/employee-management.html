@@ -335,9 +335,13 @@
             return escapeHtml(jsEscaped);
         }
 
+        // Mirror of app/services/app_catalog.py APP_CATALOG — keep in sync.
         const APP_CATALOG = [
             { app_id: 'rooms', name: 'Room Daily Report' },
-            { app_id: 'portal', name: 'HF Portal' }
+            { app_id: 'portal', name: 'HF Portal' },
+            { app_id: 'payroll', name: 'Payroll' },
+            { app_id: 'ota', name: 'OTA Desk' },
+            { app_id: 'housekeeping', name: 'Housekeeping' }
         ];
 
         let employees = [];

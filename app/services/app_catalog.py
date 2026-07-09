@@ -11,6 +11,14 @@ APP_CATALOG: List[Tuple[str, str]] = [
     # Deliberately NOT in DEFAULT_GRANTED_APP_IDS — payroll is granted
     # per-person (Cloudflare Access checks the `apps` claim for it).
     ("payroll", "Payroll"),
+    # Per-person like payroll (Cloudflare Access already carries an
+    # 'HF ID grant: ota' policy on ota.thehfhotel.org). Also reveals the
+    # OTA Desk button on the Employee Hub Role Menu (staff_oa_menu).
+    ("ota", "OTA Desk"),
+    # Per-person like payroll — reveals the maids' Housekeeping button on
+    # the Employee Hub Role Menu (staff_oa_menu). The maid-facing surface
+    # itself is employee-login plan Phase 4 (hotel.thehfhotel.org/hk).
+    ("housekeeping", "Housekeeping"),
 ]
 
 # Apps granted automatically when an admin approves a pending onboarding.

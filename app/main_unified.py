@@ -17,6 +17,7 @@ from app.api import (
     consolidated_attendance, consolidated_devices, consolidated_employees,
     admin_line_codes, line_auth, qr_checkin, shifts, leaves,
     admin_employees, admin_onboarding, public_onboarding, oidc, reader,
+    staff_oa,
 )
 from app.services.cf_access_service import get_cf_access_email
 
@@ -815,6 +816,16 @@ app.include_router(
     oidc.router,
     prefix="/oidc",
     tags=["hf-id-oidc"],
+)
+
+# Employee Hub — staff LINE OA webhook (2026-07): follow events link each
+# employee's grant-driven Role Menu (rich menu). Ships DARK: answers 503
+# until STAFF_OA_CHANNEL_ACCESS_TOKEN + STAFF_OA_CHANNEL_SECRET are set
+# (see app/core/config.py + app/services/staff_oa_service.py).
+app.include_router(
+    staff_oa.router,
+    prefix="/api/public/staff-oa",
+    tags=["staff-oa-public"],
 )
 
 # ============================================================================
