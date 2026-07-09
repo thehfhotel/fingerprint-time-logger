@@ -633,3 +633,307 @@ class TestSelfLoginWait:
         assert _self_login_wait(test_client, self_ticket).status_code == 200
         # The app-consumer's /wait now finds nothing -> 204 (no double delivery).
         assert _wait(test_client, claim_token).status_code == 204
+
+
+# ============================================================================
+# Kiosk LINE-scan elevation (Phase 3b — LINE as the card tap's equal)
+#   POST /api/private/reader/elevate/start {app,label} -> {elevate_token}
+#   GET  /api/public/reader/elevate/{ticket}           -> phone confirm page
+#   (LINE callback) continue_elevate_after_line        -> parks the assertion
+#   POST /api/private/reader/elevate/wait {elevate_token}
+#        -> {assertion} | 204 pending | 403 not_authorized | 404 unknown
+# The assertion is the IDENTICAL one-time RS256 card assertion /wait mints for
+# a tap — one admission rule (grants ∋ app), whatever the Authenticator.
+# ============================================================================
+
+
+@pytest.fixture
+def elevate_env(monkeypatch):
+    """Enable the elevate surface with a tiny long-poll budget so
+    /elevate/wait timeout tests finish in a blink instead of 25 seconds."""
+    monkeypatch.setenv("READER_RESOLVE_SECRET", SECRET)
+    monkeypatch.setenv("HFID_SIGNING_KEY", _PRIVATE_PEM)
+    monkeypatch.delenv("HFID_ISSUER", raising=False)
+    monkeypatch.setenv("READER_WAIT_TIMEOUT_SECONDS", "0.2")
+    monkeypatch.setenv("READER_WAIT_TICK_SECONDS", "0.02")
+    oidc_service.reset_state()
+    yield
+    oidc_service.reset_state()
+
+
+def _elevate_start(test_client, app="portal", label="office-1", secret=SECRET):
+    return test_client.post(
+        "/api/private/reader/elevate/start",
+        json={"app": app, "label": label},
+        headers=_headers(secret),
+    )
+
+
+def _elevate_wait(test_client, token, secret=SECRET):
+    return test_client.post(
+        "/api/private/reader/elevate/wait",
+        json={"elevate_token": token},
+        headers=_headers(secret),
+    )
+
+
+def _confirm_page(test_client, ticket):
+    return test_client.get(f"/api/public/reader/elevate/{ticket}")
+
+
+def _continue_elevate(ticket, line_user_id, db):
+    return reader_module.continue_elevate_after_line(
+        ticket_id=ticket, line_user_id=line_user_id, db=db
+    )
+
+
+class TestElevateStart:
+    def test_dark_returns_404_when_secret_unset(self, test_client, monkeypatch):
+        monkeypatch.delenv("READER_RESOLVE_SECRET", raising=False)
+        assert _elevate_start(test_client).status_code == 404
+
+    def test_wrong_secret_returns_401(self, test_client, monkeypatch):
+        monkeypatch.setenv("READER_RESOLVE_SECRET", SECRET)
+        assert _elevate_start(test_client, secret="wrong").status_code == 401
+
+    def test_blank_app_returns_400(self, test_client, elevate_env):
+        assert _elevate_start(test_client, app="   ").status_code == 400
+
+    def test_returns_pending_ticket_bound_to_app_and_label(
+        self, test_client, elevate_env
+    ):
+        response = _elevate_start(test_client)
+        assert response.status_code == 200
+        token = response.json()["elevate_token"]
+        assert isinstance(token, str)
+        assert len(token) == 64  # 32 random bytes as hex
+
+        record = reader_module.lookup_elevate_ticket(token)
+        assert record["app"] == "portal"
+        assert record["label"] == "office-1"
+        assert record["status"] == "pending"
+        assert record["assertion"] is None
+
+    def test_label_is_optional_and_length_capped(self, test_client, elevate_env):
+        response = _elevate_start(test_client, label="x" * 500)
+        record = reader_module.lookup_elevate_ticket(
+            response.json()["elevate_token"]
+        )
+        assert len(record["label"]) == reader_module.ELEVATE_LABEL_MAX_CHARS
+
+        response = test_client.post(
+            "/api/private/reader/elevate/start",
+            json={"app": "portal"},
+            headers=_headers(),
+        )
+        record = reader_module.lookup_elevate_ticket(
+            response.json()["elevate_token"]
+        )
+        assert record["label"] == ""
+
+
+class TestElevateConfirmPage:
+    def test_dark_returns_404_when_secret_unset(self, test_client, monkeypatch):
+        # With no READER_RESOLVE_SECRET nothing can mint tickets — whole
+        # phone-side surface is dark.
+        monkeypatch.delenv("READER_RESOLVE_SECRET", raising=False)
+        assert _confirm_page(test_client, "whatever").status_code == 404
+
+    def test_unknown_ticket_gets_restart_page(self, test_client, elevate_env):
+        response = _confirm_page(test_client, "no-such-ticket")
+        assert response.status_code == 404
+        assert "หมดอายุ" in response.text  # friendly HTML, not a bare JSON 404
+
+    def test_pending_ticket_shows_line_button_and_label(
+        self, test_client, elevate_env
+    ):
+        ticket = _elevate_start(test_client).json()["elevate_token"]
+        response = _confirm_page(test_client, ticket)
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        # The one action: the stock LINE login with the elevate continuation.
+        assert (
+            f"/api/public/auth/line/login?redirect=elevate%3A{ticket}"
+            in response.text
+        )
+        # The person sees WHICH terminal is asking.
+        assert "office-1" in response.text
+
+    def test_resolved_ticket_gets_restart_page(
+        self, test_client, test_db, elevate_env
+    ):
+        _make_employee(
+            test_db, "1001", display_name="สมชาย", line_user_id="U-line-1001"
+        )
+        _grant(test_db, "1001", "portal")
+        ticket = _elevate_start(test_client).json()["elevate_token"]
+        _continue_elevate(ticket, "U-line-1001", test_db)
+
+        assert _confirm_page(test_client, ticket).status_code == 404
+
+
+class TestElevateContinue:
+    def test_granted_employee_parks_the_card_assertion(
+        self, test_client, test_db, elevate_env
+    ):
+        _make_employee(
+            test_db, "1001", display_name="สมชาย", line_user_id="U-line-1001"
+        )
+        _grant(test_db, "1001", "portal", "payroll")
+        ticket = _elevate_start(test_client).json()["elevate_token"]
+
+        page = _continue_elevate(ticket, "U-line-1001", test_db)
+        assert page.status_code == 200
+        assert "เข้าสู่ระบบสำเร็จ".encode() in page.body
+
+        response = _elevate_wait(test_client, ticket)
+        assert response.status_code == 200
+        assertion = response.json()["assertion"]
+
+        # Verify exactly as the kiosk backend must — and exactly as it already
+        # verifies CARD assertions: HF ID public key, issuer, aud = app grant.
+        claims = jwt.decode(
+            assertion, _PUBLIC_PEM, algorithms=["RS256"],
+            audience="portal", issuer=_ISSUER,
+        )
+        assert claims["sub"] == "1001"
+        assert claims["badge"] == "1001"
+        assert claims["aud"] == "portal"
+        assert claims["email"] == "1001@emp.thehfhotel.org"
+        assert claims["name"] == "สมชาย"
+        assert sorted(claims["apps"]) == ["payroll", "portal"]
+        assert jwt.get_unverified_header(assertion)["alg"] == "RS256"
+
+    def test_employee_without_grant_is_denied(
+        self, test_client, test_db, elevate_env
+    ):
+        # Same admission rule as a card tap: no app grant → not_authorized.
+        _make_employee(test_db, "1002", line_user_id="U-line-1002")
+        _grant(test_db, "1002", "rooms")
+        ticket = _elevate_start(test_client).json()["elevate_token"]
+
+        page = _continue_elevate(ticket, "U-line-1002", test_db)
+        assert page.status_code == 403
+
+        response = _elevate_wait(test_client, ticket)
+        assert response.status_code == 403
+        assert response.json() == {"error": "not_authorized"}
+        # Denial consumed the ticket — no replay.
+        assert _elevate_wait(test_client, ticket).status_code == 404
+
+    def test_inactive_or_pending_employee_leaves_ticket_pending(
+        self, test_client, test_db, elevate_env
+    ):
+        # Card path parallel: /scan rejects these taps and the kiosk keeps
+        # waiting — so here the ticket stays pending for the right person.
+        _make_employee(
+            test_db, "1003", line_user_id="U-line-1003",
+            is_active=False, pending_approval=True,
+        )
+        ticket = _elevate_start(test_client).json()["elevate_token"]
+
+        page = _continue_elevate(ticket, "U-line-1003", test_db)
+        assert page.status_code == 403
+
+        assert _elevate_wait(test_client, ticket).status_code == 204
+        assert reader_module.lookup_elevate_ticket(ticket)["status"] == "pending"
+
+    def test_unknown_line_user_redirected_to_onboarding(
+        self, test_client, test_db, elevate_env
+    ):
+        ticket = _elevate_start(test_client).json()["elevate_token"]
+
+        page = _continue_elevate(ticket, "U-never-seen", test_db)
+        assert page.status_code == 302
+        assert page.headers["location"] == "/qr-checkin/onboard"
+
+        # Ticket stays pending — the QR is still usable by a real employee.
+        assert _elevate_wait(test_client, ticket).status_code == 204
+
+    def test_completion_is_one_time(self, test_client, test_db, elevate_env):
+        _make_employee(test_db, "1001", line_user_id="U-line-1001")
+        _grant(test_db, "1001", "portal")
+        _make_employee(test_db, "1004", line_user_id="U-line-1004")
+        _grant(test_db, "1004", "portal")
+        ticket = _elevate_start(test_client).json()["elevate_token"]
+
+        assert _continue_elevate(ticket, "U-line-1001", test_db).status_code == 200
+        # A second completion against the same QR can never overwrite the first.
+        second = _continue_elevate(ticket, "U-line-1004", test_db)
+        assert second.status_code == 404
+
+        claims = jwt.decode(
+            _elevate_wait(test_client, ticket).json()["assertion"],
+            _PUBLIC_PEM, algorithms=["RS256"],
+            audience="portal", issuer=_ISSUER,
+        )
+        assert claims["sub"] == "1001"
+
+    def test_unknown_ticket_gets_restart_page(self, test_db, elevate_env):
+        page = _continue_elevate("no-such-ticket", "U-line-1001", test_db)
+        assert page.status_code == 404
+
+
+class TestElevateWait:
+    def test_dark_returns_404_when_secret_unset(self, test_client, monkeypatch):
+        monkeypatch.delenv("READER_RESOLVE_SECRET", raising=False)
+        assert _elevate_wait(test_client, "whatever").status_code == 404
+
+    def test_wrong_secret_returns_401(self, test_client, monkeypatch):
+        monkeypatch.setenv("READER_RESOLVE_SECRET", SECRET)
+        assert _elevate_wait(test_client, "whatever", secret="wrong").status_code == 401
+
+    def test_unknown_ticket_returns_404(self, test_client, elevate_env):
+        assert _elevate_wait(test_client, "no-such-ticket").status_code == 404
+
+    def test_pending_ticket_times_out_with_204(self, test_client, elevate_env):
+        ticket = _elevate_start(test_client).json()["elevate_token"]
+        assert _elevate_wait(test_client, ticket).status_code == 204
+        # Still pending afterwards — the kiosk re-polls with the same token.
+        assert reader_module.lookup_elevate_ticket(ticket)["status"] == "pending"
+
+
+class TestElevateCallbackHook:
+    def test_line_callback_routes_elevate_hint_to_continuation(
+        self, test_client, test_db, elevate_env, monkeypatch
+    ):
+        """End-to-end through the REAL LINE callback endpoint: the
+        ``elevate:<ticket>`` redirect hint must land in
+        continue_elevate_after_line and park a waitable assertion."""
+        _make_employee(
+            test_db, "1001", display_name="สมชาย", line_user_id="U-line-1001"
+        )
+        _grant(test_db, "1001", "portal")
+        ticket = _elevate_start(test_client).json()["elevate_token"]
+
+        monkeypatch.setattr(
+            line_auth_service, "validate_state",
+            lambda state: (True, f"elevate:{ticket}"),
+        )
+        monkeypatch.setattr(
+            line_auth_service, "exchange_code_for_token",
+            lambda code: {"access_token": "stub-access-token"},
+        )
+        monkeypatch.setattr(
+            line_auth_service, "get_user_profile",
+            lambda token: {
+                "userId": "U-line-1001",
+                "displayName": "ชาย LINE",
+                "pictureUrl": "",
+            },
+        )
+
+        response = test_client.get(
+            "/api/public/auth/line/callback",
+            params={"code": "stub-code", "state": "stub-state"},
+        )
+        assert response.status_code == 200
+        assert "เข้าสู่ระบบสำเร็จ" in response.text
+
+        wait = _elevate_wait(test_client, ticket)
+        assert wait.status_code == 200
+        claims = jwt.decode(
+            wait.json()["assertion"], _PUBLIC_PEM, algorithms=["RS256"],
+            audience="portal", issuer=_ISSUER,
+        )
+        assert claims["sub"] == "1001"

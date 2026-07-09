@@ -22,6 +22,24 @@ calls are server-to-server):
                                     verifiable at GET /oidc/jwks). The app verifies
                                     it and turns it into its own session.
 
+LINE-scan elevation flow (2026-07, Phase 3b of the employee-login plan): the
+LINE Authenticator's answer to the card tap for shared kiosks. Same trust
+boundaries, same assertion, no new OIDC client — the phone rides the EXISTING
+LINE OAuth login (app/api/line_auth.py) exactly like HF ID's /oidc/authorize
+does, via a redirect-hint continuation:
+
+    app backend ── POST /elevate/start ─▶  HF ID mints an elevate ticket
+                   (X-Reader-Secret)        (app + label, TTL 10 min)
+    kiosk shows a QR of the PUBLIC page GET /api/public/reader/elevate/{ticket}
+    employee's phone opens it (the erp /api/public* Cloudflare bypass), taps the
+    LINE button → the stock LINE OAuth login with redirect hint
+    ``elevate:<ticket>`` → the LINE callback hands control to
+    :func:`continue_elevate_after_line`, which authorizes (employee.apps ∋ app)
+    and parks the SAME one-time card assertion /wait would mint.
+    app backend ── POST /elevate/wait ──▶  long-polls; delivers the assertion
+                   (X-Reader-Secret)        once (or 403 not_authorized), so the
+                                            kiosk elevates identically to a tap.
+
 Each endpoint ships DARK: when its guarding secret is unset the whole surface
 returns 404, mirroring the HF ID (OIDC) dark-until-configured posture.
 
@@ -40,10 +58,11 @@ import os
 import secrets
 import threading
 import time
+import urllib.parse
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -79,6 +98,13 @@ CLAIM_TTL_SECONDS = 600  # 10 minutes
 # many long-poll cycles while the employee walks up to tap their own card, so
 # it shares the claim's generous lifetime.
 SELF_LOGIN_TICKET_TTL_SECONDS = 600  # 10 minutes
+# A kiosk elevate ticket (LINE-scan elevation) is the claim's LINE analogue:
+# displayed as a QR and re-polled by the kiosk backend while the employee pulls
+# out their phone, scans, and completes LINE OAuth — same generous lifetime.
+ELEVATE_TICKET_TTL_SECONDS = 600  # 10 minutes
+# The kiosk label an elevate ticket may carry (echoed on the phone-side page so
+# the person sees WHICH terminal they are signing in to). Length-capped defence.
+ELEVATE_LABEL_MAX_CHARS = 64
 # /wait long-poll budget. Env-overridable so tests don't wait 25s: set
 # READER_WAIT_TIMEOUT_SECONDS / READER_WAIT_TICK_SECONDS to tiny values.
 WAIT_TIMEOUT_SECONDS_DEFAULT = 25.0
@@ -167,16 +193,24 @@ _claims: Dict[str, Dict[str, Any]] = {}
 # still share the ONE _pending_taps store, so a tap is delivered once to
 # whichever consumer polls first — hence the one-terminal-per-reader assumption.
 _self_login_tickets: Dict[str, Dict[str, Any]] = {}
+# elevate_token -> {"app","label","status","assertion","expires_at"} — the
+# kiosk LINE-scan elevation store. status walks pending → authorized (assertion
+# parked) or pending → denied (tapped-equivalent employee without the grant);
+# the app backend's /elevate/wait then pops the resolved ticket (deliver-once).
+# Its own namespace for the same reason as _self_login_tickets above.
+_elevate_tickets: Dict[str, Dict[str, Any]] = {}
 
 
 def _prune_locked(now: float) -> None:
-    """Drop expired taps/claims/self-login tickets. Must hold ``_store_lock``."""
+    """Drop expired taps/claims/self-login/elevate tickets. Must hold ``_store_lock``."""
     for reader_id in [k for k, v in _pending_taps.items() if v["expires_at"] <= now]:
         _pending_taps.pop(reader_id, None)
     for token in [k for k, v in _claims.items() if v["expires_at"] <= now]:
         _claims.pop(token, None)
     for token in [k for k, v in _self_login_tickets.items() if v["expires_at"] <= now]:
         _self_login_tickets.pop(token, None)
+    for token in [k for k, v in _elevate_tickets.items() if v["expires_at"] <= now]:
+        _elevate_tickets.pop(token, None)
 
 
 def stash_pending_tap(*, reader: str, badge: str, display_name: str, apps: List[str]) -> None:
@@ -267,12 +301,90 @@ def lookup_self_login_ticket(token: str) -> Optional[Dict[str, Any]]:
     return dict(record)
 
 
+def create_elevate_ticket(*, app: str, label: str) -> str:
+    """Mint a kiosk LINE-scan elevate ticket; return its opaque token.
+
+    The LINE analogue of ``create_claim``: instead of binding a terminal to a
+    physical reader, the ticket itself IS what the person "taps" — its token
+    rides a QR to the employee's phone, and the LINE callback resolves it.
+    ``app`` is the grant key the kiosk requires (e.g. "portal"); ``label`` is a
+    short human name for the terminal, echoed on the phone-side page.
+    """
+    token = secrets.token_hex(32)  # 32 random bytes → 64 hex chars
+    now = time.time()
+    with _store_lock:
+        _prune_locked(now)
+        _elevate_tickets[token] = {
+            "app": app,
+            "label": label,
+            "status": "pending",
+            "assertion": None,
+            "expires_at": now + ELEVATE_TICKET_TTL_SECONDS,
+        }
+    return token
+
+
+def lookup_elevate_ticket(token: str) -> Optional[Dict[str, Any]]:
+    """Resolve an elevate token to a copy of its record, or None.
+
+    Read-only (not consume-once): the public QR page and the LINE continuation
+    both peek at the ticket before anything is decided; only
+    :func:`take_resolved_elevate_ticket` removes it.
+    """
+    now = time.time()
+    with _store_lock:
+        record = _elevate_tickets.get(token)
+    if record is None or record["expires_at"] <= now:
+        return None
+    return dict(record)
+
+
+def resolve_elevate_ticket(
+    token: str, *, authorized: bool, assertion: Optional[str] = None
+) -> bool:
+    """One-time pending → authorized/denied transition for an elevate ticket.
+
+    Returns False when the ticket is absent, expired, or already resolved — a
+    second LINE completion against the same QR can never overwrite the first
+    (mirrors the deliver-once posture of ``consume_pending_tap``).
+    """
+    now = time.time()
+    with _store_lock:
+        record = _elevate_tickets.get(token)
+        if record is None or record["expires_at"] <= now:
+            return False
+        if record["status"] != "pending":
+            return False
+        record["status"] = "authorized" if authorized else "denied"
+        record["assertion"] = assertion
+    return True
+
+
+def take_resolved_elevate_ticket(token: str) -> Optional[Dict[str, Any]]:
+    """Pop-and-return an elevate ticket IFF it has been resolved (deliver-once).
+
+    Pending tickets stay put (the /elevate/wait long-poll keeps watching them);
+    absent/expired tickets return None. Popping under the lock guarantees the
+    parked assertion is delivered to at most one caller.
+    """
+    now = time.time()
+    with _store_lock:
+        record = _elevate_tickets.get(token)
+        if record is None or record["expires_at"] <= now:
+            return None
+        if record["status"] == "pending":
+            return None
+        _elevate_tickets.pop(token, None)
+    return dict(record)
+
+
 def reset_state() -> None:
     """Clear the in-memory stores (test isolation only)."""
     with _store_lock:
         _pending_taps.clear()
         _claims.clear()
         _self_login_tickets.clear()
+        _elevate_tickets.clear()
 
 
 # ============================================================================
@@ -332,6 +444,15 @@ class WaitRequest(BaseModel):
 
 class SelfLoginStartRequest(BaseModel):
     reader_id: str
+
+
+class ElevateStartRequest(BaseModel):
+    app: str
+    label: Optional[str] = None
+
+
+class ElevateWaitRequest(BaseModel):
+    elevate_token: str
 
 
 # ============================================================================
@@ -504,6 +625,90 @@ async def wait_for_tap(
 
 
 # ============================================================================
+# POST /elevate/start + /elevate/wait — kiosk LINE-scan elevation (app↔central)
+# ============================================================================
+
+
+@router.post("/elevate/start")
+async def elevate_start(
+    body: ElevateStartRequest,
+    x_reader_secret: Optional[str] = Header(None),
+):
+    """Mint a kiosk LINE-scan elevate ticket for a specific app grant.
+
+    Auth: constant-time match of ``X-Reader-Secret`` against
+    ``READER_RESOLVE_SECRET``. Dark (404) when unset; 401 on mismatch.
+
+    The LINE analogue of /claim: returns an opaque ``elevate_token`` the app
+    backend (a) embeds in a QR pointing the employee's phone at the PUBLIC
+    ``GET /api/public/reader/elevate/{ticket}`` page, and (b) long-polls with
+    via /elevate/wait. ``app`` is the grant key the kiosk requires (e.g.
+    "portal"); ``label`` (optional, length-capped) names the terminal on the
+    phone-side page.
+    """
+    _require_secret(x_reader_secret, _resolve_secret())
+
+    app = body.app.strip()
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="app is required"
+        )
+    label = (body.label or "").strip()[:ELEVATE_LABEL_MAX_CHARS]
+
+    token = create_elevate_ticket(app=app, label=label)
+    return {"elevate_token": token}
+
+
+@router.post("/elevate/wait")
+async def elevate_wait(
+    body: ElevateWaitRequest,
+    x_reader_secret: Optional[str] = Header(None),
+):
+    """Long-poll for the LINE completion of an elevate ticket.
+
+    Auth: constant-time match of ``X-Reader-Secret`` against
+    ``READER_RESOLVE_SECRET``. Dark (404) when unset; 401 on mismatch.
+
+    Polls ~25s (env-overridable, the same knobs as /wait) until the LINE
+    callback resolves the ticket via :func:`continue_elevate_after_line`:
+
+    * authorized → the ticket is consumed (deliver-once) and its parked
+      one-time **card assertion** is returned: 200 ``{"assertion": "<jwt>"}``
+      — the identical artefact a card tap yields from /wait.
+    * denied (scanned by an employee without the app grant) → the ticket is
+      consumed and 403 ``{"error": "not_authorized"}`` — the card path's
+      exact answer for a tap without the grant.
+
+    On timeout with the ticket still pending → 204 (the app backend re-polls
+    with the same token). An unknown/expired ticket → 404.
+    """
+    _require_secret(x_reader_secret, _resolve_secret())
+
+    if lookup_elevate_ticket(body.elevate_token) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown or expired ticket"
+        )
+
+    timeout = _wait_timeout_seconds()
+    tick = _wait_tick_seconds()
+    deadline = time.monotonic() + timeout
+
+    while True:
+        record = take_resolved_elevate_ticket(body.elevate_token)
+        if record is not None:
+            if record["status"] != "authorized" or not record["assertion"]:
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"error": "not_authorized"},
+                )
+            return {"assertion": record["assertion"]}
+
+        if time.monotonic() >= deadline:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        await asyncio.sleep(tick)
+
+
+# ============================================================================
 # Employee self-service card-login (PUBLIC — no reader secret)
 # ============================================================================
 #
@@ -628,3 +833,213 @@ async def self_login_wait(ticket: str, db: Session = Depends(get_db)):
         if time.monotonic() >= deadline:
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         await asyncio.sleep(tick)
+
+
+# ============================================================================
+# Kiosk LINE-scan elevation — the phone side (PUBLIC — no reader secret)
+# ============================================================================
+#
+# The browser here is the EMPLOYEE'S OWN PHONE, which scanned the QR a kiosk is
+# showing. It reaches this app through the erp.thehfhotel.org ``/api/public*``
+# Cloudflare bypass (the same path the QR clock-in phones use), so no Access
+# account is needed. The page itself carries no secret and mints nothing: it
+# only forwards the phone into the stock LINE OAuth login with an
+# ``elevate:<ticket>`` redirect hint, exactly the way HF ID's /oidc/authorize
+# forwards with ``oidc:<ticket>``. All authority stays server-side — the LINE
+# callback resolves the LINE user, and :func:`continue_elevate_after_line`
+# checks grants and parks the assertion for the secret-guarded /elevate/wait.
+#
+# Gate: the surface is dark (404) until READER_RESOLVE_SECRET is configured —
+# without that secret no /elevate/start can mint a ticket, so there is nothing
+# for this page to show anyway (mirrors self-login's dark-until-a-reader-exists
+# posture, transposed to the secret that makes elevation possible).
+
+# The existing LINE login entrypoint, reused verbatim (no LINE config is
+# duplicated) — same constant oidc.py keeps for its own continuation.
+_LINE_LOGIN_PATH = "/api/public/auth/line/login"
+# Where a LINE user with no employee row is sent to self-onboard (mirrors oidc).
+_ONBOARD_PATH = "/qr-checkin/onboard"
+
+
+def _escape(value: str) -> str:
+    """Escape text for safe interpolation into the phone-side page markup."""
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _elevate_page(
+    heading: str,
+    message: str,
+    *,
+    status_code: int = 200,
+    button_href: Optional[str] = None,
+    button_text: str = "",
+) -> HTMLResponse:
+    """Render a minimal, self-contained phone-side page (no external assets).
+
+    Mirrors the chromeless status pages of the OIDC flow (app/api/oidc.py),
+    plus an optional LINE-green action button for the confirm step.
+    """
+    safe_heading = _escape(heading)
+    safe_message = _escape(message)
+    button = ""
+    if button_href is not None:
+        # button_href is app-constructed (a fixed path + a token we minted);
+        # escape anyway so no future caller can break out of the attribute.
+        button = (
+            f'<a class="line-btn" href="{_escape(button_href)}">'
+            f"{_escape(button_text)}</a>"
+        )
+    content = f"""<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HF Portal</title>
+    <style>
+        body {{
+            font-family: 'Sarabun', 'Prompt', sans-serif;
+            display: flex; justify-content: center; align-items: center;
+            min-height: 100vh; margin: 0; background: #f5f5f5; color: #333;
+        }}
+        .card {{
+            background: #fff; padding: 32px; border-radius: 12px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+            text-align: center; max-width: 420px; margin: 16px;
+        }}
+        h1 {{ font-size: 20px; margin: 0 0 12px; color: #6b1f2a; }}
+        p {{ color: #666; line-height: 1.6; margin: 0; }}
+        .line-btn {{
+            display: block; margin-top: 24px; padding: 14px 24px;
+            background: #06C755; color: #fff; text-decoration: none;
+            border-radius: 8px; font-size: 16px; font-weight: 600;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>{safe_heading}</h1>
+        <p>{safe_message}</p>
+        {button}
+    </div>
+</body>
+</html>"""
+    return HTMLResponse(content=content, status_code=status_code)
+
+
+def _expired_elevate_page() -> HTMLResponse:
+    """The shared answer for an unknown, expired, or already-used QR."""
+    return _elevate_page(
+        "คิวอาร์โค้ดหมดอายุ",
+        "QR นี้หมดอายุหรือถูกใช้ไปแล้ว กรุณากดสแกนใหม่ที่หน้าจอเครื่อง "
+        "(This QR has expired or was already used — restart it on the "
+        "kiosk screen.)",
+        status_code=status.HTTP_404_NOT_FOUND,
+    )
+
+
+@public_router.get("/elevate/{ticket}")
+async def elevate_confirm_page(ticket: str):
+    """The page the kiosk QR opens on the employee's phone.
+
+    Public and reader-secret-free (see the section header). Ships DARK (404)
+    until READER_RESOLVE_SECRET is configured. Shows WHICH terminal is asking
+    (the ticket's label) and a single LINE button that enters the stock LINE
+    OAuth login with the ``elevate:<ticket>`` continuation hint. Unknown,
+    expired, or already-used tickets get a friendly restart page (HTTP 404).
+    """
+    if not is_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    record = lookup_elevate_ticket(ticket)
+    if record is None or record["status"] != "pending":
+        return _expired_elevate_page()
+
+    label = record["label"]
+    where = f"เครื่อง {label}" if label else "เครื่องนี้"
+    hint = urllib.parse.quote(f"elevate:{ticket}", safe="")
+    return _elevate_page(
+        f"เข้าสู่ระบบที่{where}",
+        "ยืนยันตัวตนด้วย LINE เพื่อแสดงเครื่องมือของคุณบนหน้าจอเครื่องนี้ "
+        "(Sign in with LINE to reveal your tools on this terminal.)",
+        button_href=f"{_LINE_LOGIN_PATH}?redirect={hint}",
+        button_text="เข้าสู่ระบบด้วย LINE",
+    )
+
+
+def continue_elevate_after_line(*, ticket_id: str, line_user_id: str, db: Session):
+    """Resume a kiosk elevation after LINE resolves ``line_user_id``.
+
+    Called from the LINE OAuth callback (app/api/line_auth.py) via an additive
+    hook, exactly like :func:`app.api.oidc.continue_oidc_after_line`. This is
+    where the LINE Authenticator meets the card path's admission rule:
+
+    * grants contain the ticket's app → park the SAME one-time card assertion
+      /wait would mint (RS256, aud = the app grant key) and tell the person to
+      look up at the kiosk screen.
+    * active employee WITHOUT the grant → resolve the ticket as denied, so the
+      kiosk's /elevate/wait answers 403 not_authorized — the exact semantics of
+      a card tap without the grant.
+    * unknown LINE user → onboarding redirect; inactive/pending employee → an
+      "account not ready" page. In both cases the ticket STAYS pending (a card
+      path parallel: /scan rejects those taps and the kiosk keeps waiting), so
+      the right person can still scan the same QR.
+    """
+    ticket = lookup_elevate_ticket(ticket_id)
+    if ticket is None or ticket["status"] != "pending":
+        return _expired_elevate_page()
+
+    employee = (
+        db.query(Employee).filter(Employee.line_user_id == line_user_id).first()
+    )
+
+    # A valid LINE user with no employee row is a prospective new hire.
+    if employee is None:
+        return RedirectResponse(url=_ONBOARD_PATH, status_code=status.HTTP_302_FOUND)
+
+    # Registered but not yet cleared for access.
+    if employee.pending_approval or not employee.is_active:
+        return _elevate_page(
+            "บัญชียังไม่พร้อมใช้งาน",
+            "บัญชีของคุณกำลังรอการอนุมัติ หรือถูกปิดการใช้งาน "
+            "กรุณาติดต่อผู้ดูแลระบบ",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    apps = _grant_app_ids(db, employee.badge_number)
+    if ticket["app"] not in apps:
+        # Same admission rule as the card path's /wait: no grant → denied.
+        resolve_elevate_ticket(ticket_id, authorized=False)
+        return _elevate_page(
+            "ไม่มีสิทธิ์ใช้งานเครื่องนี้",
+            "บัญชีของคุณยังไม่มีสิทธิ์ใช้งานพอร์ทัลบนเครื่องนี้ "
+            "กรุณาติดต่อผู้ดูแลระบบ (Your account does not hold the "
+            "required app grant.)",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Mint the identical artefact a card tap yields from /wait — one assertion
+    # format, verified one way by the kiosk, whatever the Authenticator.
+    assertion = oidc_service.mint_id_token(
+        badge=employee.badge_number,
+        email=oidc_service.synthetic_email_for_badge(employee.badge_number),
+        name=employee.display_name,
+        apps=apps,
+        nonce=None,
+        audience=ticket["app"],
+    )
+    if not resolve_elevate_ticket(ticket_id, authorized=True, assertion=assertion):
+        # Raced by another completion or just expired — never overwrite.
+        return _expired_elevate_page()
+
+    label = ticket["label"]
+    where = f"เครื่อง {label}" if label else "เครื่อง"
+    return _elevate_page(
+        "เข้าสู่ระบบสำเร็จ",
+        f"สวัสดี {employee.display_name} — {where}กำลังแสดงเครื่องมือของคุณ "
+        "กลับไปดูที่หน้าจอได้เลย (Signed in — look up at the kiosk screen.)",
+    )

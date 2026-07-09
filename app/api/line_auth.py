@@ -470,6 +470,24 @@ async def line_callback(
                 db=db,
             )
 
+        # Kiosk LINE-scan elevation continuation — additive hook, the exact
+        # shape of the "oidc:" continuation above. When this LINE login was
+        # initiated from a kiosk elevate QR (GET /api/public/reader/elevate/
+        # {ticket}), the redirect hint carries the elevate ticket
+        # ("elevate:<ticket>"). Hand control to the reader module to check the
+        # employee's grants and park a one-time card assertion for the kiosk
+        # backend's /elevate/wait long-poll. This does not alter any existing
+        # QR/guest redirect behaviour — no existing redirect hint uses the
+        # "elevate:" prefix.
+        if redirect and redirect.startswith("elevate:"):
+            from app.api.reader import continue_elevate_after_line
+
+            return continue_elevate_after_line(
+                ticket_id=redirect[len("elevate:"):],
+                line_user_id=line_user_id,
+                db=db,
+            )
+
         # Check if this LINE user is already linked to an employee
         existing_employee = db.query(Employee).filter(
             Employee.line_user_id == line_user_id
