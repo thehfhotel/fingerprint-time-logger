@@ -19,10 +19,16 @@ APP_CATALOG: List[Tuple[str, str]] = [
     # the Employee Hub Role Menu (staff_oa_menu). The maid-facing surface
     # itself is employee-login plan Phase 4 (hotel.thehfhotel.org/hk).
     ("housekeeping", "Housekeeping"),
+    # Every active employee submits expenses — default-granted at onboarding.
+    # Cloudflare Access on reimbursement.thehfhotel.org checks the `apps`
+    # claim for it ('HF ID grant: reimbursement'), and the office NFC
+    # terminal's /reader/claim flow requires it too (403 not_authorized
+    # otherwise). Added 2026-07 when the app's own LINE login was retired.
+    ("reimbursement", "Reimbursement"),
 ]
 
 # Apps granted automatically when an admin approves a pending onboarding.
-DEFAULT_GRANTED_APP_IDS: Tuple[str, ...] = ("rooms", "portal")
+DEFAULT_GRANTED_APP_IDS: Tuple[str, ...] = ("rooms", "portal", "reimbursement")
 
 _VALID_APP_IDS = {app_id for app_id, _ in APP_CATALOG}
 

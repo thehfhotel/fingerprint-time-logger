@@ -34,10 +34,17 @@ Everyone gets the base buttons; grants in `employee_app_grants`
 | Button | URL | Needs grant |
 |---|---|---|
 | สแกนเข้างาน (QR clock-in) | https://erp.thehfhotel.org/qr-checkin | — |
-| เบิกค่าใช้จ่าย (Reimbursement) | https://reimbursement.thehfhotel.org | — |
+| เบิกค่าใช้จ่าย (Reimbursement) | https://reimbursement.thehfhotel.org | —\* |
 | เงินเดือน (Payroll) | https://payroll.thehfhotel.org | `payroll` |
 | OTA Desk | https://ota.thehfhotel.org | `ota` |
 | แม่บ้าน (Housekeeping) | https://hotel.thehfhotel.org/hk | `housekeeping` |
+
+\* The menu button itself is unchanged (base button, no grant needed to see
+it). But since reimbursement retired its own LINE login (2026-07),
+`reimbursement.thehfhotel.org` is now gated by Cloudflare Access checking
+the `apps` claim for the `reimbursement` grant — default-granted at
+onboarding, so most employees never notice, but an ungranted employee who
+taps through hits Cloudflare's block page.
 
 The sync script creates only the variants **actually held** by linked
 employees (plus `base`, the channel default). Rich-menu names embed a

@@ -74,7 +74,7 @@ class TestApprove:
         data = response.json()
         expected_email = f"{employee.badge_number.lower()}@emp.thehfhotel.org"
         assert data["email"] == expected_email
-        assert set(data["granted_app_ids"]) == {"rooms", "portal"}
+        assert set(data["granted_app_ids"]) == {"rooms", "portal", "reimbursement"}
 
         test_db.refresh(employee)
         assert employee.is_active is True
@@ -86,7 +86,7 @@ class TestApprove:
             .filter(EmployeeAppGrant.employee_badge_number == employee.badge_number)
             .all()
         )
-        assert {g.app_id for g in grants} == {"rooms", "portal"}
+        assert {g.app_id for g in grants} == {"rooms", "portal", "reimbursement"}
 
     def test_approve_keeps_existing_email(self, test_client, test_db):
         employee = _make_pending_employee(test_db, line_user_id="line-admin-onb-email")

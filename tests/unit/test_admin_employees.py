@@ -41,7 +41,7 @@ class TestAppGrants:
         data = response.json()
         assert data["granted_app_ids"] == []
         assert {c["app_id"] for c in data["catalog"]} == {
-            "rooms", "portal", "payroll", "ota", "housekeeping"
+            "rooms", "portal", "payroll", "ota", "housekeeping", "reimbursement"
         }
 
     def test_put_grants_full_set_replace(self, test_client, test_db):
