@@ -1026,11 +1026,16 @@ async def get_today_attendance():
 # ============================================================================
 
 @router.post("/sync")
-async def sync_attendance_from_device():
+async def sync_attendance_from_device(
+    full: bool = Query(
+        False,
+        description="Bypass the watermark/lookback floor and reconcile the entire device log (dedup only)."
+    )
+):
     """Trigger an attendance import through the lock-aware scheduler."""
     try:
         from app.services.background_scheduler import background_scheduler
-        return await background_scheduler.run_attendance_import_now()
+        return await background_scheduler.run_attendance_import_now(full=full)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1040,13 +1045,16 @@ async def get_sync_status():
     """Get sync status from the device-status cache (no live device call)."""
     try:
         from app.services.device_cache_service import device_cache_service
-        device_status = device_cache_service.get_raw("device_status") or {}
+        cached = device_cache_service.get("device_status", include_metadata=True)
+        device_status = (cached["data"] if cached else None) or {}
+        cache_status = "miss" if cached is None else ("stale" if cached["cache_metadata"]["stale"] else "fresh")
         device = device_service.get_default_device()
         connected = bool(device_status.get("connected", False))
 
         return {
             "status": "healthy" if connected else "unhealthy",
             "device_status": device_status,
+            "cache_status": cache_status,
             "last_sync": device.last_sync.isoformat() if device and device.last_sync else None,
             "sync_available": connected,
             "last": device.last_sync.isoformat() if device and device.last_sync else None,
@@ -1119,12 +1127,15 @@ async def attendance_health_check():
     """Health check for attendance system (cache-only — no live device call)."""
     try:
         from app.services.device_cache_service import device_cache_service
-        device_status = device_cache_service.get_raw("device_status") or {}
+        cached = device_cache_service.get("device_status", include_metadata=True)
+        device_status = (cached["data"] if cached else None) or {}
+        cache_status = "miss" if cached is None else ("stale" if cached["cache_metadata"]["stale"] else "fresh")
         recent_records = attendance_service.get_attendance_records(limit=1)
 
         return {
             "status": "healthy",
             "device_connected": bool(device_status.get("connected", False)),
+            "cache_status": cache_status,
             "has_recent_data": len(recent_records) > 0,
             "last_record": recent_records[0].timestamp.isoformat() if recent_records else None
         }

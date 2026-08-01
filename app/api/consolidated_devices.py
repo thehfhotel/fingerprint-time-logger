@@ -208,18 +208,22 @@ async def devices_health_check():
     that's what eliminates the cache-miss → live-connect path that used to
     add concurrent load.
     """
-    status_entry = device_cache_service.get_raw("device_status")
-    if not status_entry:
+    cached = device_cache_service.get("device_status", include_metadata=True)
+    if cached is None:
         return {
             "status": "warning",
             "device_connected": False,
+            "cache_status": "miss",
             "message": "Cache warming up — first scheduler run pending",
         }
 
+    status_entry = cached["data"] or {}
+    cache_status = "stale" if cached["cache_metadata"]["stale"] else "fresh"
     connected = status_entry.get("connected", False)
     response = {
         "status": "healthy" if connected else "unhealthy",
         "device_connected": connected,
+        "cache_status": cache_status,
         "device_name": "ZKTeco Device",
         "ip": status_entry.get("host", "Unknown"),
     }
@@ -270,9 +274,11 @@ async def get_device_status():
                     "cached_at": None,
                     "age_seconds": 0,
                     "stale": True
-                }
+                },
+                "cache_status": "miss",
             }
 
+        cached_data["cache_status"] = "stale" if cached_data["cache_metadata"]["stale"] else "fresh"
         return cached_data
 
     except Exception as e:
@@ -328,10 +334,15 @@ async def sync_device_time_legacy():
 
 
 @router.post("/sync/attendance")
-async def sync_attendance():
+async def sync_attendance(
+    full: bool = Query(
+        False,
+        description="Bypass the watermark/lookback floor and reconcile the entire device log (dedup only)."
+    )
+):
     """Trigger an attendance import through the scheduler (lock-aware)."""
     try:
-        return await background_scheduler.run_attendance_import_now()
+        return await background_scheduler.run_attendance_import_now(full=full)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -343,14 +354,21 @@ async def sync_attendance():
 
 
 @router.get("/time")
-async def get_device_time(auto_sync: bool = Query(False, description="Automatically sync if difference > 30 seconds")):
+async def get_device_time(
+    auto_sync: bool = Query(
+        False,
+        description="Deprecated, ignored. Device time sync only runs via POST /time/sync (or /sync-time) or the background scheduler — never from this GET."
+    )
+):
     """
     Get device clock time
 
     CACHE-FIRST ARCHITECTURE:
     - Serves data from cache (refreshed every 5 minutes by background scheduler)
     - No direct device connection from this API endpoint
-    - auto_sync parameter is now ignored (time sync handled by scheduler)
+    - auto_sync is accepted for backwards compatibility with old dashboard JS
+      but is always a no-op — device time sync only happens via POST
+      /time/sync (or the background scheduler), never from this GET
     - Response includes cache metadata (age, next_refresh)
     """
     try:
@@ -362,7 +380,7 @@ async def get_device_time(auto_sync: bool = Query(False, description="Automatica
         if cached_data is None:
             # Cache miss - return graceful degradation
             from datetime import datetime
-            return {
+            miss_response = {
                 "data": {
                     "success": False,
                     "message": "Cache warming up...",
@@ -372,9 +390,20 @@ async def get_device_time(auto_sync: bool = Query(False, description="Automatica
                     "cached_at": None,
                     "age_seconds": 0,
                     "stale": True
-                }
+                },
+                "cache_status": "miss",
             }
+            if auto_sync:
+                miss_response["deprecated_auto_sync"] = (
+                    "auto_sync is ignored; use POST /time/sync to sync the device clock."
+                )
+            return miss_response
 
+        cached_data["cache_status"] = "stale" if cached_data["cache_metadata"]["stale"] else "fresh"
+        if auto_sync:
+            cached_data["deprecated_auto_sync"] = (
+                "auto_sync is ignored; use POST /time/sync to sync the device clock."
+            )
         return cached_data
 
     except Exception as e:
@@ -461,16 +490,38 @@ async def get_app_configuration():
 
 @router.get("/diagnostics")
 async def get_device_diagnostics(db: Session = Depends(get_db)):
-    """Get basic device diagnostics via the locked ZkClient."""
+    """Get basic device diagnostics.
+
+    CACHE-FIRST ARCHITECTURE: served entirely from device_cache_service
+    (refreshed every 5 minutes by the background scheduler) — this endpoint
+    never opens its own device connection.
+    """
     try:
         device = device_service.get_default_device()
         if not device:
             return {"status": "no_device", "message": "ไม่ได้ตั้งค่าเครื่อง"}
 
-        status = await asyncio.to_thread(zk_client.get_status)
+        cached = device_cache_service.get("device_status", include_metadata=True)
+        if cached is None:
+            return {
+                "status": "cache_warming",
+                "cache_status": "miss",
+                "device": {
+                    "name": device.name,
+                    "ip_address": device.ip_address,
+                    "port": device.port,
+                },
+                "message": "Cache warming up — first scheduler run pending",
+                "last_sync": device.last_sync.isoformat() if device.last_sync else None,
+            }
+
+        status = cached["data"] or {}
+        cache_status = "stale" if cached["cache_metadata"]["stale"] else "fresh"
+
         if not status.get("connected"):
             return {
                 "status": "connection_failed",
+                "cache_status": cache_status,
                 "device": {
                     "name": device.name,
                     "ip_address": device.ip_address,
@@ -482,6 +533,7 @@ async def get_device_diagnostics(db: Session = Depends(get_db)):
 
         return {
             "status": "healthy",
+            "cache_status": cache_status,
             "device": {
                 "name": device.name,
                 "ip_address": device.ip_address,
