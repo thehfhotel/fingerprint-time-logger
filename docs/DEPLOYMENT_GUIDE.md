@@ -681,10 +681,9 @@ telnet 192.168.100.209 4370
 
 # Check device configuration
 python3 -c "
-from app.services.device_service import DeviceService
-service = DeviceService()
+from app.services.zk_client import zk_client
 try:
-    status = service.get_device_status()
+    status = zk_client.get_status()
     print(f'Device status: {status}')
 except Exception as e:
     print(f'Device error: {e}')
