@@ -4,7 +4,7 @@ Simplified configuration management for the unified FastAPI system
 """
 
 from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 from typing import Optional
 
 
@@ -13,21 +13,42 @@ class Settings(BaseSettings):
     Unified settings for the fingerprint time logger application.
     All configuration values are centralized here with clear defaults.
     """
-    
+
     # ========================================================================
     # DATABASE CONFIGURATION
     # ========================================================================
     database_url: str = "sqlite:///./database/attendance.db"
-    
+
     # ========================================================================
-    # ZKTECO DEVICE CONFIGURATION  
+    # ZKTECO DEVICE CONFIGURATION
     # ========================================================================
     zkteco_host: str = "192.168.100.209"  # Updated to current working device
     zkteco_port: int = 4370
     zkteco_password: int = 0
     zkteco_timeout: int = 5
     zkteco_max_retries: int = 3
-    
+
+    # Catch-up backfill lookback window: `zk_session._reconcile_attendance`
+    # scopes its watermark to `device_id` and subtracts this many hours
+    # before dedup-checking a record, so a punch missed by a blind
+    # live_capture window self-heals on the next sweep instead of being
+    # permanently blocked by a stale/advanced watermark. `full=True`
+    # bypasses this floor entirely (dedup-only, whole-log reconcile).
+    # No FINGERPRINT_ prefix — aliased to the exact env var name so ops
+    # can set it directly (see docs/agents / deploy payload).
+    zk_catchup_lookback_hours: int = Field(
+        48, validation_alias="ZK_CATCHUP_LOOKBACK_HOURS"
+    )
+
+    # Expected container UTC offset in minutes (+07:00 Bangkok = 420).
+    # `zk_session.start()` checks the actual local offset against this at
+    # startup and logs critical + Slack-alerts (never crashes) on mismatch,
+    # since every Bangkok-naive timestamp conversion in zk_session.py
+    # silently corrupts if the container TZ isn't actually Bangkok.
+    zk_expected_utc_offset_minutes: int = Field(
+        420, validation_alias="ZK_EXPECTED_UTC_OFFSET_MINUTES"
+    )
+
     # ========================================================================
     # SERVER CONFIGURATION (Unified FastAPI)
     # ========================================================================

@@ -45,6 +45,19 @@ def _utc_naive_to_bangkok_naive(ts: datetime) -> datetime:
     return ts.replace(tzinfo=timezone.utc).astimezone(_BANGKOK_TZ).replace(tzinfo=None)
 
 
+def _sanity_reject_reason(bangkok_ts: datetime) -> Optional[str]:
+    """Shared quarantine rule for BOTH ingestion paths (realtime + catch-up).
+    `bangkok_ts` is the device's own Bangkok-naive stamp. Returns a short
+    reason string if the record should be rejected, else None. Never used
+    for a bare `continue`/`return` — every caller logs the reason first."""
+    if bangkok_ts.year < 2010:
+        return "year<2010"
+    now_bangkok = datetime.now(_BANGKOK_TZ).replace(tzinfo=None)
+    if bangkok_ts > now_bangkok + timedelta(days=1):
+        return "future>1day"
+    return None
+
+
 class _OpEnvelope:
     __slots__ = ("op", "future")
 
@@ -77,6 +90,10 @@ class ZkSession:
         self._main_loop: Optional[asyncio.AbstractEventLoop] = None
         self._broadcast: Optional[Callable[[dict], Coroutine]] = None
         self._started = False
+        # Re-armed by `_run` on connect failure and by `_stream` on a
+        # swallowed live_capture error; cleared once a catch-up fetch
+        # succeeds. See `_run`'s Phase A.
+        self._needs_catch_up = True
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -88,6 +105,7 @@ class ZkSession:
         if self._started:
             logger.warning("[zk_session] start() called but already running")
             return
+        self._check_tz_guard()
         self._main_loop = main_loop
         self._broadcast = broadcast
         self._shutdown.clear()
@@ -106,6 +124,40 @@ class ZkSession:
         if wait and self._thread is not None:
             self._thread.join(timeout=10)
         self._started = False
+
+    def _check_tz_guard(self) -> None:
+        """Every Bangkok-naive conversion in this module (`_bangkok_naive_to_utc_naive`,
+        the sanity-rule `now_bangkok`, etc.) is independent of the container's
+        system TZ — but `_check_tz_guard` still asserts the container clock
+        actually IS Bangkok, because operational tooling (cron, log
+        timestamps, humans reading `docker logs`) assumes it. Best-effort;
+        never crashes the app."""
+        try:
+            from app.core.config import settings
+
+            local_offset = datetime.now().astimezone().utcoffset()
+            local_offset_minutes = (
+                int(local_offset.total_seconds() // 60) if local_offset is not None else None
+            )
+            expected = settings.zk_expected_utc_offset_minutes
+            if local_offset_minutes != expected:
+                logger.critical(
+                    f"[zk_session.tz_guard] container UTC offset={local_offset_minutes}min "
+                    f"!= expected={expected}min (ZK_EXPECTED_UTC_OFFSET_MINUTES) — fix the "
+                    f"container TZ; attendance timestamp math assumes Bangkok wall clock "
+                    f"conventions and will misbehave under a different offset."
+                )
+                try:
+                    from app.services.slack_notifier import slack_notifier
+
+                    slack_notifier.notify_error(
+                        f"zk_session TZ guard: container UTC offset={local_offset_minutes}min, "
+                        f"expected {expected}min — check TZ configuration."
+                    )
+                except Exception as slack_exc:
+                    logger.warning(f"[zk_session.tz_guard] Slack notify failed: {slack_exc!r}")
+        except Exception as exc:
+            logger.warning(f"[zk_session.tz_guard] guard check failed (non-fatal): {exc!r}")
 
     # ------------------------------------------------------------------ public ops
 
@@ -162,8 +214,10 @@ class ZkSession:
         # thousands of records). Running it every cycle starves the op
         # queue and times out periodic jobs. Only catch up after a
         # disruption; the 30-min import_attendance backstop covers
-        # steady-state gap recovery.
-        needs_catch_up = True
+        # steady-state gap recovery. Instance attribute (not a local) so
+        # `_stream`'s except handler can re-arm it directly when a
+        # live_capture session dies mid-stream.
+        self._needs_catch_up = True
         # Startup grace: K40 firmware doesn't immediately release the
         # previous TCP session on disconnect. A fresh container that
         # connects within ~1-2s of the prior container's shutdown gets
@@ -182,7 +236,7 @@ class ZkSession:
                 tb = traceback.format_exc(limit=4)
                 logger.error(f"[zk_session] connect failed: {exc!r}\n{tb}")
                 self._fail_queued_ops(exc)
-                needs_catch_up = True
+                self._needs_catch_up = True
                 if self._shutdown.is_set():
                     break
                 logger.warning(f"[zk_session] reconnecting in {backoff:.0f}s")
@@ -194,11 +248,11 @@ class ZkSession:
             # Phase A — streaming session. live_capture owns this conn.
             # Catch_up and stream errors are isolated to this conn; queued
             # ops still get a clean shot on phase B's fresh conn.
-            if needs_catch_up:
+            if self._needs_catch_up:
                 try:
                     inserted = self._catch_up(stream_conn)
                     logger.info(f"[zk_session] catch_up inserted={inserted}")
-                    needs_catch_up = False
+                    self._needs_catch_up = False
                 except BaseException as exc:
                     logger.warning(
                         f"[zk_session] catch_up failed (will retry next cycle): {exc!r}"
@@ -223,7 +277,7 @@ class ZkSession:
                     logger.warning(
                         f"[zk_session] ops connect failed (queue persists): {exc!r}"
                     )
-                    needs_catch_up = True
+                    self._needs_catch_up = True
                     continue
                 try:
                     drained = self._drain_op_queue(op_conn)
@@ -254,6 +308,10 @@ class ZkSession:
                         self._handle_punch(event)
                     except Exception as punch_exc:
                         logger.error(f"[zk_session] handle_punch error: {punch_exc!r}")
+                        # This punch was never stored — re-arm so the next
+                        # stream restart's catch-up reconciles it instead of
+                        # waiting for the 30-min sweep.
+                        self._needs_catch_up = True
                 if self._should_break(conn):
                     conn.end_live_capture = True
         except Exception as exc:
@@ -263,7 +321,11 @@ class ZkSession:
             # returns a malformed ACK. The streaming session is ending
             # anyway; swallow so the outer loop proceeds to the ops phase
             # on a fresh conn. Don't poison queued ops with this error.
+            # Re-arm catch-up: a session dying mid-stream can drop punches
+            # in the gap between the last delivered event and here, with
+            # nothing else to reconcile them until the next disruption.
             logger.warning(f"[zk_session] live_capture error (continuing): {exc!r}")
+            self._needs_catch_up = True
 
     def _should_break(self, conn: Any) -> bool:
         return self._shutdown.is_set() or not self._op_queue.empty()
@@ -298,12 +360,22 @@ class ZkSession:
         from app.models.models import AttendanceRecord, Device, Employee
         from app.services.attendance_service import attendance_service
         from app.services.device_cache_service import device_cache_service
+        from sqlalchemy.exc import IntegrityError
 
         bangkok_ts = att.timestamp
-        utc_ts = _bangkok_naive_to_utc_naive(bangkok_ts)
         badge_number = str(att.user_id)
         punch_type = att.punch
         status = att.status
+
+        reject_reason = _sanity_reject_reason(bangkok_ts)
+        if reject_reason is not None:
+            logger.warning(
+                f"[zk_session.sanity] rejected badge={badge_number} "
+                f"ts={bangkok_ts} reason={reject_reason}"
+            )
+            return
+
+        utc_ts = _bangkok_naive_to_utc_naive(bangkok_ts)
 
         db = next(get_db())
         try:
@@ -318,7 +390,12 @@ class ZkSession:
                 )
                 return
 
-            device = db.query(Device).filter(Device.is_active == True).first()
+            device = (
+                db.query(Device)
+                .filter(Device.is_active == True, Device.device_type == "fingerprint")
+                .order_by(Device.id)
+                .first()
+            )
             if device is None:
                 logger.warning("[zk_session.handle_punch] no active device; skipping")
                 return
@@ -328,12 +405,14 @@ class ZkSession:
                 .filter(
                     AttendanceRecord.employee_badge_number == badge_number,
                     AttendanceRecord.timestamp == utc_ts,
+                    AttendanceRecord.punch_type == punch_type,
                 )
                 .first()
             )
             if exists:
                 logger.debug(
-                    f"[zk_session.handle_punch] duplicate badge={badge_number} ts={utc_ts}"
+                    f"[zk_session.handle_punch] duplicate badge={badge_number} "
+                    f"ts={utc_ts} punch={punch_type}"
                 )
                 return
 
@@ -348,7 +427,20 @@ class ZkSession:
                 )
             )
             device.last_sync = datetime.now(timezone.utc)
-            db.commit()
+            # Mirrors `_reconcile_attendance`'s per-record guard: catch-up
+            # can insert this same punch on another connection (e.g. a
+            # manual/scheduled reconcile racing this realtime event), so the
+            # DB's unique constraint — not the exists-check above — is the
+            # final arbiter. Let the reconcile thread win the race.
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                logger.debug(
+                    f"[zk_session.handle_punch] duplicate (race) badge={badge_number} "
+                    f"ts={utc_ts} punch={punch_type}"
+                )
+                return
 
             display_name = employee.english_name or employee.display_name
             logger.info(
@@ -400,42 +492,103 @@ class ZkSession:
 
     # ------------------------------------------------------------------ catch-up
 
-    def _catch_up(self, conn: Any) -> int:
+    def _catch_up(self, conn: Any, full: bool = False) -> int:
+        """Device I/O is isolated to this one line — everything else is pure
+        DB and lives in `_reconcile_attendance`, which never touches `conn`.
+        Used directly by `_run`'s Phase A (fetch+reconcile inline, since the
+        daemon thread already owns `conn` there) and mirrors what the
+        module-level `catch_up_now()` does via `submit()`, except that
+        entrypoint fetches through the op queue and reconciles after the op
+        returns so it doesn't hold up other queued ops."""
+        records = conn.get_attendance()
+        return self._reconcile_attendance(records, full=full)
+
+    def _reconcile_attendance(self, records: List[Any], full: bool = False) -> int:
+        """Pure-DB reconciliation of a batch of device attendance records.
+        No device I/O — safe to run off the device connection/thread.
+
+        Per-device watermark (device_id-scoped, capped at utcnow to defend
+        against a poisoned/future-dated row inflating it), minus
+        `zk_catchup_lookback_hours`, is the floor below which a record is
+        assumed already-synced and skipped without a DB round trip.
+        `full=True` disables the floor entirely (dedup-only reconcile of the
+        whole device log). Records at/above the floor go through a
+        (badge, timestamp) dedup exists-check — deliberately narrower than
+        `_handle_punch`'s (badge, timestamp, punch_type) check. Catch-up
+        must be strictly stricter than the DB's own unique constraint so a
+        cross-protocol punch-byte mismatch (pyzk's live_capture and
+        get_attendance can report a different `punch` value for the same
+        physical scan) can never insert a duplicate of a row `_handle_punch`
+        already captured in realtime. The trade-off: a genuine same-badge,
+        same-second, different-punch-type pair would be treated as a dup
+        and only one side recovered. Punch parity between the two
+        ingestion paths has held on current firmware, so that lost case is
+        ~zero-frequency in practice — a much smaller risk than a silent
+        duplicate row on a future firmware/pyzk mismatch.
+        """
+        from app.core.config import settings
         from app.core.database import get_db
         from app.models.models import AttendanceRecord, Device, Employee
         from sqlalchemy import func
+        from sqlalchemy.exc import IntegrityError
 
         db = next(get_db())
         try:
-            device = db.query(Device).filter(Device.is_active == True).first()
+            device = (
+                db.query(Device)
+                .filter(Device.is_active == True, Device.device_type == "fingerprint")
+                .order_by(Device.id)
+                .first()
+            )
             if device is None:
                 logger.warning("[zk_session.catch_up] no active device configured")
                 return 0
-            watermark_utc = db.query(func.max(AttendanceRecord.timestamp)).scalar()
             device_id = device.id
+
+            floor_utc: Optional[datetime] = None
+            if not full:
+                watermark_utc = (
+                    db.query(func.max(AttendanceRecord.timestamp))
+                    .filter(AttendanceRecord.device_id == device_id)
+                    .scalar()
+                )
+                if watermark_utc is not None:
+                    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+                    watermark_utc = min(watermark_utc, now_utc)
+                    floor_utc = watermark_utc - timedelta(
+                        hours=settings.zk_catchup_lookback_hours
+                    )
         finally:
             db.close()
 
-        watermark_bangkok = None
-        if watermark_utc is not None:
-            watermark_bangkok = _utc_naive_to_bangkok_naive(watermark_utc)
+        new_count = 0
+        dedup_skipped = 0
+        sanity_skipped = 0
+        unknown_badge = 0
 
-        records = conn.get_attendance()
-        current_year = datetime.now().year
-        current_date = datetime.now().date()
-
-        inserted = 0
         db = next(get_db())
         try:
             for record in records:
-                ts = record.timestamp
-                if ts.year < 2010 or ts.year > current_year or ts.date() > current_date:
-                    continue
-                if watermark_bangkok is not None and ts <= watermark_bangkok:
+                bangkok_ts = record.timestamp
+                badge_number = str(record.user_id)
+
+                reject_reason = _sanity_reject_reason(bangkok_ts)
+                if reject_reason is not None:
+                    logger.warning(
+                        f"[zk_session.sanity] rejected badge={badge_number} "
+                        f"ts={bangkok_ts} reason={reject_reason}"
+                    )
+                    sanity_skipped += 1
                     continue
 
-                badge_number = str(record.user_id)
-                utc_ts = _bangkok_naive_to_utc_naive(ts)
+                utc_ts = _bangkok_naive_to_utc_naive(bangkok_ts)
+
+                if floor_utc is not None and utc_ts <= floor_utc:
+                    # Below the lookback floor: treated as already-synced,
+                    # same bucket as a confirmed dedup hit — skip without a
+                    # DB round trip.
+                    dedup_skipped += 1
+                    continue
 
                 employee = (
                     db.query(Employee)
@@ -446,6 +599,7 @@ class ZkSession:
                     logger.warning(
                         f"[zk_session.catch_up] unknown badge_number={badge_number}; skipping"
                     )
+                    unknown_badge += 1
                     continue
 
                 exists = (
@@ -457,6 +611,7 @@ class ZkSession:
                     .first()
                 )
                 if exists:
+                    dedup_skipped += 1
                     continue
 
                 db.add(
@@ -469,14 +624,35 @@ class ZkSession:
                         sync_status="synced",
                     )
                 )
-                inserted += 1
-
-            if inserted:
-                db.commit()
+                # Per-record commit: reconciliation may run concurrently
+                # with `_handle_punch` on the session thread, so the DB
+                # unique constraint is the final arbiter — a lost race must
+                # cost one record, not roll back the whole batch.
+                try:
+                    db.commit()
+                except IntegrityError:
+                    db.rollback()
+                    dedup_skipped += 1
+                    continue
+                new_count += 1
+                logger.info(
+                    f"[zk_session.catch_up] inserted badge={badge_number} "
+                    f"ts={utc_ts.isoformat()} punch={record.punch}"
+                )
         finally:
             db.close()
 
-        return inserted
+        logger.info(
+            f"[zk_session.catch_up] device_records={len(records)} new={new_count} "
+            f"dedup_skipped={dedup_skipped} sanity_skipped={sanity_skipped} "
+            f"unknown_badge={unknown_badge} full={full}"
+        )
+        if not full and new_count > 0:
+            logger.warning(
+                f"[zk_session.catch_up] backfilled {new_count} punches missed by realtime"
+            )
+
+        return new_count
 
 
 # Module-level singleton + legacy-API convenience wrappers
@@ -549,6 +725,63 @@ def get_time() -> dict:
         return {"success": False, "message": _describe_exc(exc)}
 
 
+def _op_get_status_and_time(conn: Any) -> dict:
+    # Isolate each half: a `get_time` hiccup must not report the whole
+    # device disconnected when `status` above already succeeded.
+    status = _op_get_status(conn)
+    try:
+        time_info = _op_get_time(conn)
+    except Exception as time_exc:
+        time_info = {"success": False, "message": _describe_exc(time_exc)}
+    # Users list rides the same connection window so the 5-min refresh job
+    # can keep the "device_users" cache warm without a dedicated device op
+    # (see `consolidated_employees.get_employees_from_device`, which used
+    # to call `get_users()` live on every admin page load). Same dict
+    # shape as the module-level `get_users()`. None (not []) on failure so
+    # callers can tell "couldn't fetch" from "device really has zero
+    # users" and leave the existing cache entry alone.
+    try:
+        users = [
+            {
+                "user_id": str(u.user_id),
+                "name": u.name or f"User {u.user_id}",
+                "privilege": u.privilege,
+                "password": u.password,
+                "group_id": u.group_id,
+            }
+            for u in conn.get_users()
+        ]
+    except Exception as users_exc:
+        logger.warning(f"[zk_session.get_status_and_time] users fetch failed: {users_exc!r}")
+        users = None
+    return {"status": status, "time": time_info, "users": users}
+
+
+def get_status_and_time() -> dict:
+    """Merged status+time+users read: ONE submitted op, one connection
+    window, instead of the two separate device round trips `get_status()` +
+    `get_time()` cost when called back to back. `status`/`time` shapes are
+    identical to what `get_status()`/`get_time()` return standalone — both
+    keep working for callers that only need one of the two. `users` is
+    `None` on any failure to fetch (including the whole-op failure path
+    below) so callers can leave their device_users cache untouched rather
+    than clobbering it with an empty list."""
+    try:
+        return zk_session.submit(_op_get_status_and_time, timeout=120.0)
+    except Exception as exc:
+        err = _describe_exc(exc)
+        return {
+            "status": {
+                "connected": False,
+                "host": zk_session.host,
+                "port": zk_session.port,
+                "error": err,
+            },
+            "time": {"success": False, "message": err},
+            "users": None,
+        }
+
+
 def _op_sync_time(conn: Any) -> dict:
     from zoneinfo import ZoneInfo
 
@@ -580,31 +813,6 @@ def sync_time() -> dict:
         return {"success": False, "error": _describe_exc(exc)}
 
 
-def pull_attendance(since_timestamp: Optional[datetime] = None) -> List[dict]:
-    def op(conn: Any) -> List[dict]:
-        records = conn.get_attendance()
-        current_year = datetime.now().year
-        current_date = datetime.now().date()
-        out: List[dict] = []
-        for r in records:
-            ts = r.timestamp
-            if ts.year < 2010 or ts.year > current_year or ts.date() > current_date:
-                continue
-            if since_timestamp is not None and ts <= since_timestamp:
-                continue
-            out.append(
-                {
-                    "user_id": str(r.user_id),
-                    "timestamp": ts,
-                    "punch_type": r.punch,
-                    "status": r.status,
-                }
-            )
-        return out
-
-    return zk_session.submit(op)
-
-
 def get_users() -> List[dict]:
     def op(conn: Any) -> List[dict]:
         users = conn.get_users()
@@ -622,8 +830,21 @@ def get_users() -> List[dict]:
     return zk_session.submit(op)
 
 
-def catch_up_now() -> int:
+def catch_up_now(full: bool = False) -> int:
     """Run the watermark-based catch-up against the live session.
+
+    The submitted op only fetches (`conn.get_attendance()`); the dedup/
+    sanity/insert reconciliation happens after `submit()` returns, off the
+    device connection, so it doesn't hold up other ops queued behind it —
+    the 30-min scheduled import used to block `_drain_op_queue` (and thus
+    delay resuming `live_capture`) for the entire reconciliation, not just
+    the device read.
+
+    `full=True` disables the per-device watermark floor entirely (dedup-only
+    reconcile of the whole device log) — used for the one-time post-deploy
+    backfill and the on-demand `full=true` sync endpoint.
+
     Generous timeout — a full `get_attendance()` over thousands of records
     can take 60s+; submit's default 30s would TimeoutError mid-fetch."""
-    return zk_session.submit(lambda conn: zk_session._catch_up(conn), timeout=180.0)
+    records = zk_session.submit(lambda conn: conn.get_attendance(), timeout=180.0)
+    return zk_session._reconcile_attendance(records, full=full)
