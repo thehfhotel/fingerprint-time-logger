@@ -101,9 +101,14 @@ class TestConsolidatedAttendanceAPI:
         assert "month" in data
         assert "calendar_data" in data
 
-    def test_sync_attendance(self, test_client, mock_device_service):
+    def test_sync_attendance(self, test_client):
         """Test POST /api/private/attendance/sync - Sync attendance from device"""
         response = test_client.post("/api/private/attendance/sync")
+        assert response.status_code in [200, 503]  # Success or Service Unavailable
+
+    def test_sync_attendance_full_param(self, test_client):
+        """Test POST /api/private/attendance/sync?full=true - full reconcile bypasses lookback floor"""
+        response = test_client.post("/api/private/attendance/sync?full=true")
         assert response.status_code in [200, 503]  # Success or Service Unavailable
 
     def test_get_sync_status(self, test_client):

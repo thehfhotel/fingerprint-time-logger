@@ -18,7 +18,7 @@ client now depends on:
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -314,7 +314,8 @@ class TestLinkedFingerprintDevices:
         _seed_record(test_db, badge="EMP002", device_id=ville.id, ts=now,
                      msg="QR Check-in at HF Ville, GPS: 13.7600,100.5100, Distance: 5m")
         # Fingerprint scan (no QR metadata tag, lives on the ZK device row)
-        _seed_record(test_db, badge="EMP001", device_id=zk.id, ts=now, msg=None)
+        _seed_record(test_db, badge="EMP001", device_id=zk.id,
+                     ts=now - timedelta(seconds=5), msg=None)
         return zk.id, hf.id, ville.id
 
     def test_hf_kiosk_recent_includes_linked_fingerprint_records(

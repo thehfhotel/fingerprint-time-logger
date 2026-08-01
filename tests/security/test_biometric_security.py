@@ -279,9 +279,14 @@ class TestBiometricSecurity:
         device_vulns = [v for v in vulnerabilities if v.severity in [SecurityLevel.HIGH, SecurityLevel.CRITICAL]]
         assert len(device_vulns) == 0, f"Critical device security issues: {device_vulns}"
 
-    @patch('app.services.device_service.device_service.sync_attendance_data')
+    @patch('app.services.background_scheduler.background_scheduler.run_attendance_import_now')
     async def test_biometric_sync_security(self, mock_sync, security_client):
-        """Test biometric data sync security"""
+        """Test biometric data sync security.
+
+        `device_service.sync_attendance_data` was deleted (fix/zk-ingestion-loss —
+        all device I/O now goes through `zk_session`); the manual-import trigger
+        endpoint calls `background_scheduler.run_attendance_import_now` instead.
+        """
 
         # Mock a normal sync response without malicious data
         mock_sync.return_value = {

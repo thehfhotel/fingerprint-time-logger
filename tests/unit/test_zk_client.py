@@ -1,16 +1,19 @@
 """
 Tests for app/services/zk_client.py — now a thin compatibility shim over
 `zk_session`. The shim preserves the historical public API
-(`get_status`, `get_time`, `sync_time`, `pull_attendance`, `get_users`) but
-delegates all device I/O to the long-lived `ZkSession` daemon. So these
-tests verify the shim contract rather than the lock-bracket invariants
-that lived in the old implementation (those have moved to
-`test_zk_session.py`).
+(`get_status`, `get_time`, `sync_time`, `get_users`) but delegates all
+device I/O to the long-lived `ZkSession` daemon. So these tests verify the
+shim contract rather than the lock-bracket invariants that lived in the old
+implementation (those have moved to `test_zk_session.py`).
+
+`pull_attendance` (zk_client + zk_session) was deleted (fix/zk-ingestion-loss —
+zero callers, superseded by `catch_up_now(full=...)`); its dedicated
+watermark-filter coverage now lives in `test_zk_ingestion.py`.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List
 from unittest.mock import MagicMock, patch
 
@@ -95,22 +98,6 @@ def test_sync_time_reads_writes_and_verifies():
     assert result["time_diff_after"] < 5.0
     assert result["time_diff_before"] >= 0
     assert conn.disconnected is True
-
-
-def test_pull_attendance_filters_by_since_timestamp():
-    now = datetime.now()
-    rec_old = MagicMock(timestamp=now - timedelta(hours=2), user_id=1, punch=0, status=0)
-    rec_new = MagicMock(timestamp=now - timedelta(minutes=5), user_id=2, punch=1, status=0)
-    rec_invalid_year = MagicMock(
-        timestamp=datetime(2009, 1, 1), user_id=3, punch=0, status=0
-    )
-    conn = FakeConn(attendance=[rec_old, rec_new, rec_invalid_year])
-    with _patch_one_shot_with(conn):
-        out = ZkClient(max_retries=1).pull_attendance(
-            since_timestamp=now - timedelta(hours=1)
-        )
-    user_ids = [r["user_id"] for r in out]
-    assert user_ids == ["2"]
 
 
 def test_get_users_returns_normalized_user_dicts():

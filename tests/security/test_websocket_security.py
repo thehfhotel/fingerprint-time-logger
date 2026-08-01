@@ -143,9 +143,13 @@ class WebSocketSecurityTester(SecurityTester):
         """Test WebSocket broadcast message security"""
         vulnerabilities = []
 
-        # Mock the broadcast functionality and device service to prevent real device calls
+        # Mock the broadcast functionality and the import trigger to prevent
+        # real device calls. `device_service.sync_attendance_data` was
+        # deleted (fix/zk-ingestion-loss — all device I/O now goes through
+        # `zk_session`); the manual-import trigger endpoint calls
+        # `background_scheduler.run_attendance_import_now` instead.
         with patch('app.main_unified.manager.broadcast') as mock_broadcast, \
-             patch('app.services.device_service.device_service.sync_attendance_data') as mock_sync:
+             patch('app.services.background_scheduler.background_scheduler.run_attendance_import_now') as mock_sync:
 
             # Mock device service to return success and trigger broadcast
             mock_sync.return_value = {
@@ -324,9 +328,14 @@ class TestWebSocketSecurity:
             # WebSocket disconnection during auto-import is acceptable for security test
             pass
 
-    @patch('app.services.device_service.device_service.sync_attendance_data')
+    @patch('app.services.background_scheduler.background_scheduler.run_attendance_import_now')
     def test_websocket_data_exposure(self, mock_sync):
-        """Test WebSocket doesn't expose sensitive data"""
+        """Test WebSocket doesn't expose sensitive data.
+
+        `device_service.sync_attendance_data` was deleted (fix/zk-ingestion-loss);
+        patch target updated to the current import-trigger path,
+        `background_scheduler.run_attendance_import_now`.
+        """
 
         # Mock service to return sensitive data
         mock_sync.return_value = {

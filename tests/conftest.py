@@ -294,33 +294,15 @@ def test_company_setup(test_db):
 
 
 # Mock Service Fixtures
-
-@pytest.fixture
-def mock_device_service(healthy_device_simulator):
-    """Mock device service with simulator"""
-    from unittest.mock import Mock
-    from app.services.device_service import device_service
-
-    # Mock the device service methods
-    original_connect = device_service.connect_to_device
-    original_get_attendance_records = device_service.get_attendance_records
-
-    def mock_connect(device):
-        connection = MockZKConnection(healthy_device_simulator)
-        return connection if connection.connect() else None
-
-    def mock_get_attendance_records(device):
-        return healthy_device_simulator.get_attendance()
-
-    device_service.connect_to_device = Mock(side_effect=mock_connect)
-    device_service.get_attendance_records = Mock(side_effect=mock_get_attendance_records)
-
-    yield device_service
-
-    # Restore original methods
-    device_service.connect_to_device = original_connect
-    device_service.get_attendance_records = original_get_attendance_records
-
+#
+# `mock_device_service` (mocked `device_service.connect_to_device` /
+# `get_attendance_records`) was removed (fix/zk-ingestion-loss): both
+# methods were deleted from `SimpleDeviceService` — all device I/O now goes
+# through the locked `ZkSession`/`ZkClient`, and no production API route
+# called the device_service variants any more (confirmed zero callers before
+# deletion). Tests that used this fixture purely for setup had it dropped
+# from their signature; none of the endpoints they exercise ever touched
+# `device_service.connect_to_device` in the first place.
 
 # API Testing Utilities
 
