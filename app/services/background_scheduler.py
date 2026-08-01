@@ -3,22 +3,32 @@ Background scheduler for ZKTeco device interactions.
 
 Replaces the old `auto_import_fingerprint_logs` asyncio loop in
 `main_unified.py` AND the standalone `zk-time-sync` Docker container with
-one APScheduler instance whose jobs all go through the locked `ZkClient`.
+one APScheduler instance whose jobs all go through `zk_session`.
 
-Three jobs:
-  * `refresh_status`        — every 5 min, writes `device_status` cache.
-  * `refresh_time_and_sync` — every 5 min, reads device clock, re-aligns to
-                              Bangkok if drift > tolerance, writes
-                              `device_time` cache, sends Slack on state
-                              change. This is the job that replaces
-                              `zk-time-sync/sync_service.py`.
-  * `import_attendance`     — every AUTO_IMPORT_INTERVAL_MINUTES (default 30),
-                              pulls records newer than the in-DB watermark,
-                              inserts them, broadcasts a WebSocket update.
+Jobs:
+  * `refresh_status_and_time`   — every 5 min, ONE device connection window
+                                  (`zk_session.get_status_and_time()`) that
+                                  reads both status and clock, writes the
+                                  `device_status` + `device_time` caches,
+                                  re-aligns to Bangkok if drift > tolerance,
+                                  and sends Slack on state change. Replaces
+                                  the old `refresh_status` +
+                                  `refresh_time_and_sync` pair (was two
+                                  separate device round trips / teardowns
+                                  of the live_capture stream every 5 min;
+                                  now one). Also the job that replaces
+                                  `zk-time-sync/sync_service.py`.
+  * `refresh_attendance_summary` — every 5 min, pure-DB cache refresh.
+  * `import_attendance`          — every AUTO_IMPORT_INTERVAL_MINUTES
+                                  (default 30), delegates to
+                                  `zk_session.catch_up_now()` — per-device
+                                  watermark + lookback-window backfill, not
+                                  a plain "since last import" pull.
 
-Serialization is guaranteed by the module-level lock inside `ZkClient`, not
-by APScheduler — APScheduler's `max_instances=1` only prevents one job from
-overlapping *itself*, not different jobs from overlapping each other.
+Serialization of device access is owned by `zk_session`'s single daemon
+thread + op queue, not by APScheduler — APScheduler's `max_instances=1`
+only prevents one job from overlapping *itself*, not different jobs from
+overlapping each other.
 """
 
 from __future__ import annotations
@@ -32,6 +42,7 @@ from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
+from apscheduler.jobstores.base import ConflictingIdError
 
 from app.services import zk_session
 from app.services.device_cache_service import device_cache_service
@@ -99,7 +110,7 @@ class BackgroundSchedulerService:
 
         sync_interval = int(os.getenv("AUTO_IMPORT_INTERVAL_MINUTES", "30"))
         logger.info(
-            f"Background scheduler started: status/time every 5 min, "
+            f"Background scheduler started: status+time (merged) every 5 min, "
             f"attendance import every {sync_interval} min, drift tolerance "
             f"{_DRIFT_TOLERANCE_SECONDS}s"
         )
@@ -127,28 +138,56 @@ class BackgroundSchedulerService:
             ],
         }
 
-    async def run_attendance_import_now(self) -> dict:
-        """Trigger the attendance import immediately (e.g. from POST /sync/attendance)."""
-        return await self._import_attendance(initial=False, on_demand=True)
+    async def run_attendance_import_now(self, full: bool = False) -> dict:
+        """Trigger the attendance import immediately (e.g. from POST /sync/attendance).
+        `full=True` bypasses the per-device watermark floor (dedup-only
+        reconcile of the whole device log) — the one-time post-deploy
+        backfill / `?full=true` sync endpoint.
+
+        `full=True` does NOT run inline: a full reconcile walks the entire
+        device log (thousands of records via `conn.get_attendance()`) and
+        can run well past a typical HTTP request/proxy timeout. Instead it
+        schedules a one-shot job and returns immediately.
+        `replace_existing=False` means a request that arrives while a
+        backfill is already scheduled/running gets `already_running` back
+        rather than stacking a second job behind it. The job has no
+        recurring trigger, so APScheduler drops it from the store once it
+        fires — no cleanup needed here. `full=False` is unchanged: awaited
+        inline, same as before."""
+        if not full:
+            return await self._import_attendance(initial=False, on_demand=True, full=False)
+
+        try:
+            self.scheduler.add_job(
+                self._import_attendance,
+                id="manual_full_backfill",
+                kwargs={"initial": False, "on_demand": True, "full": True},
+                replace_existing=False,
+                next_run_time=datetime.now(),
+            )
+        except ConflictingIdError:
+            return {
+                "success": False,
+                "already_running": True,
+                "message": "A full backfill is already scheduled or running",
+            }
+
+        return {
+            "success": True,
+            "scheduled": True,
+            "message": "Full backfill scheduled to run now",
+        }
 
     # ------------------------------------------------------------------ jobs
 
     def _register_jobs(self) -> None:
         self.scheduler.add_job(
-            self._refresh_status,
+            self._refresh_status_and_time,
             IntervalTrigger(minutes=5),
-            id="refresh_status",
-            name="Refresh device status",
+            id="refresh_status_and_time",
+            name="Refresh device status + time (and resync if drifted)",
             replace_existing=True,
             next_run_time=datetime.now(),  # run once on startup
-        )
-        self.scheduler.add_job(
-            self._refresh_time_and_sync,
-            IntervalTrigger(minutes=5),
-            id="refresh_time_and_sync",
-            name="Refresh device time + sync if drifted",
-            replace_existing=True,
-            next_run_time=datetime.now() + timedelta(seconds=10),
         )
         # DB-only refresh of the attendance_summary cache. Without this
         # the summary entry's 5-min TTL expires long before the 30-min
@@ -171,6 +210,11 @@ class BackgroundSchedulerService:
             name="Import attendance records",
             replace_existing=True,
             next_run_time=datetime.now() + timedelta(seconds=20),
+            # Longer than the 60s default: a missed misfire here means a
+            # full watermark-floor backfill import gets silently dropped
+            # instead of running late — worth tolerating up to 5 min of
+            # scheduler lag before APScheduler gives up on the run.
+            misfire_grace_time=300,
         )
 
     async def _refresh_attendance_summary(self) -> None:
@@ -184,15 +228,32 @@ class BackgroundSchedulerService:
         except Exception as exc:
             logger.warning(f"[scheduler.refresh_attendance_summary] failed: {exc}")
 
-    async def _refresh_status(self) -> None:
-        status = await asyncio.to_thread(zk_session.get_status)
-        device_cache_service.set("device_status", status)
-        connected = status.get("connected")
-        logger.info(f"[scheduler.refresh_status] connected={connected}")
+    async def _refresh_status_and_time(self) -> None:
+        """Merged status+time refresh: ONE device connection window via
+        `zk_session.get_status_and_time()` instead of the old two separate
+        5-min jobs (each its own device round trip / live_capture
+        teardown). Writes both `device_status` and `device_time` caches
+        with the same shapes `get_status()`/`get_time()` produced
+        standalone, and keeps the existing drift/resync + Slack
+        state-change logic unchanged."""
+        result = await asyncio.to_thread(zk_session.get_status_and_time)
+        status = result.get("status") or {"connected": False}
+        time_info = result.get("time") or {"success": False}
 
-    async def _refresh_time_and_sync(self) -> None:
-        # First, read the current drift without writing.
-        time_info = await asyncio.to_thread(zk_session.get_time)
+        device_cache_service.set("device_status", status)
+
+        # "users" is None when the device op failed — leave the existing
+        # device_users cache entry alone rather than clobbering it with an
+        # empty list (consumed by consolidated_employees's from_device=true
+        # branch, which now reads this cache instead of calling the device
+        # live on every admin page load).
+        users = result.get("users")
+        if isinstance(users, list):
+            device_cache_service.set("device_users", users)
+
+        connected = status.get("connected")
+        logger.info(f"[scheduler.refresh_status_and_time] connected={connected}")
+
         if not time_info.get("success"):
             device_cache_service.set("device_time", time_info)
             slack_notifier.notify_sync_result(
@@ -204,7 +265,7 @@ class BackgroundSchedulerService:
         if drift <= _DRIFT_TOLERANCE_SECONDS:
             device_cache_service.set("device_time", time_info)
             logger.info(
-                f"[scheduler.refresh_time_and_sync] drift={drift:.1f}s within "
+                f"[scheduler.refresh_status_and_time] drift={drift:.1f}s within "
                 f"tolerance — no resync"
             )
             # Treat in-tolerance reads as a successful sync result for the
@@ -221,7 +282,7 @@ class BackgroundSchedulerService:
 
         # Drifted — resync.
         logger.warning(
-            f"[scheduler.refresh_time_and_sync] drift={drift:.1f}s exceeds "
+            f"[scheduler.refresh_status_and_time] drift={drift:.1f}s exceeds "
             f"tolerance {_DRIFT_TOLERANCE_SECONDS}s — resyncing"
         )
         sync_result = await asyncio.to_thread(zk_session.sync_time)
@@ -238,7 +299,9 @@ class BackgroundSchedulerService:
         device_cache_service.set("device_time", cache_payload)
         slack_notifier.notify_sync_result(sync_result)
 
-    async def _import_attendance(self, initial: bool = False, on_demand: bool = False) -> dict:
+    async def _import_attendance(
+        self, initial: bool = False, on_demand: bool = False, full: bool = False
+    ) -> dict:
         """Backstop catch-up. live_capture in ZkSession is the primary path;
         this 30-min sweep is a safety net for outages and bugs.
         Delegates to `zk_session.catch_up_now()` so the same dedup + watermark
@@ -246,14 +309,21 @@ class BackgroundSchedulerService:
         from app.services.attendance_service import attendance_service
 
         try:
-            synced = await asyncio.to_thread(zk_session.catch_up_now)
+            synced = await asyncio.to_thread(zk_session.catch_up_now, full=full)
         except Exception as exc:
             logger.error(f"[scheduler.import_attendance] catch_up failed: {exc!r}")
             self._maybe_schedule_startup_retry(reason=repr(exc))
             return {"success": False, "message": repr(exc)}
 
+        # Any non-raising run replenishes the fast-retry budget — not just
+        # the first successful import after boot. Without this, a device
+        # outage months into uptime (long after `_startup_retry_count` was
+        # exhausted on some earlier blip) would fall straight to the
+        # 30-min interval instead of getting fast retries again.
+        self._startup_retry_count = 0
+
         logger.info(
-            f"[scheduler.import_attendance] synced={synced} on_demand={on_demand}"
+            f"[scheduler.import_attendance] synced={synced} on_demand={on_demand} full={full}"
         )
 
         try:
@@ -277,7 +347,12 @@ class BackgroundSchedulerService:
             except Exception as exc:
                 logger.warning(f"[scheduler.import_attendance] broadcast failed: {exc}")
 
-        if not self._first_import_succeeded:
+        # Only positive evidence of a working device read (synced>0) disarms
+        # the startup retry — a `synced=0` run (e.g. no active device
+        # configured, or genuinely nothing new) must NOT permanently
+        # disarm it, or the fast-retry window effectively never applies
+        # since most cycles are legitimately synced=0 in steady state.
+        if synced and not self._first_import_succeeded:
             self._first_import_succeeded = True
             logger.info("[scheduler.import_attendance] first import OK; startup retry disarmed")
 
