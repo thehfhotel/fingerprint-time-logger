@@ -3,7 +3,6 @@ Consolidated Employees API - All employee management in one place
 Replaces: employees_unified.py, employees.py, thai_names.py, roles.py
 """
 
-import asyncio
 from datetime import date, datetime, time
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, File, UploadFile, Depends, Query, Response
@@ -601,19 +600,32 @@ async def get_employees(
 
 
 async def get_employees_from_device(include_hidden: bool, include_inactive: bool, db: Session) -> Dict[str, Any]:
-    """Get employees from ZK device and merge with database records"""
+    """Get employees from ZK device (via cache) and merge with database records.
+
+    Used to call `zk_client.get_users()` live on every admin page load —
+    a queued device op that tears down the realtime live_capture stream
+    each time (one more scheduled-teardown source in the blind-window
+    budget). Reads `device_cache_service`'s "device_users" entry instead,
+    kept warm by the 5-min `refresh_status_and_time` background job.
+    A cache miss (e.g. shortly after startup, before the first refresh
+    cycle) is treated as an empty device roster rather than blocking the
+    page; `device_users_cache` on the response tells the difference
+    between "no device users yet" and "device really has zero users".
+    """
     try:
-        # Get users from ZK device via the locked ZkClient
         device = device_service.get_default_device()
         if not device:
             raise HTTPException(status_code=400, detail="No device configured")
 
-        from app.services.zk_client import zk_client
-        try:
-            zk_users = await asyncio.to_thread(zk_client.get_users)
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Failed to read device users: {e}")
-        
+        from app.services.device_cache_service import device_cache_service
+        cached_users = device_cache_service.get_raw("device_users")
+        if cached_users is None:
+            zk_users = []
+            device_users_cache = "miss"
+        else:
+            zk_users = cached_users
+            device_users_cache = "fresh"
+
         # Get all employees from database for merging
         # Load ALL employees first, apply filtering after merging to preserve hidden state
         db_employees = {}
@@ -685,9 +697,9 @@ async def get_employees_from_device(include_hidden: bool, include_inactive: bool
         
         # Sort by badge number (numeric sort)
         result.sort(key=lambda x: int(x['badge_number']) if x['badge_number'].isdigit() else float('inf'))
-        
-        return {"employees": result}
-        
+
+        return {"employees": result, "device_users_cache": device_users_cache}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching from device: {str(e)}")
 

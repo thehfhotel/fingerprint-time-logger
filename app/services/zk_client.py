@@ -13,7 +13,6 @@ API so existing callers (`consolidated_devices.py`, `consolidated_employees.py`,
 from __future__ import annotations
 
 import os
-from datetime import datetime
 from typing import List, Optional
 
 from app.services import zk_session as _zk_session
@@ -50,11 +49,6 @@ class ZkClient:
 
     def sync_time(self) -> dict:
         return _zk_session.sync_time()
-
-    def pull_attendance(
-        self, since_timestamp: Optional[datetime] = None
-    ) -> List[dict]:
-        return _zk_session.pull_attendance(since_timestamp)
 
     def get_users(self) -> List[dict]:
         return _zk_session.get_users()

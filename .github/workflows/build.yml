@@ -201,6 +201,8 @@ jobs:
           AUTO_IMPORT_INTERVAL_MINUTES: ${{ vars.AUTO_IMPORT_INTERVAL_MINUTES || '30' }}
           ZK_DRIFT_TOLERANCE_SECONDS:   ${{ vars.ZK_DRIFT_TOLERANCE_SECONDS || '5' }}
           ZK_STARTUP_RETRY_MINUTES:     ${{ vars.ZK_STARTUP_RETRY_MINUTES || '3' }}
+          ZK_CATCHUP_LOOKBACK_HOURS:    ${{ vars.ZK_CATCHUP_LOOKBACK_HOURS || '48' }}
+          ZK_EXPECTED_UTC_OFFSET_MINUTES: ${{ vars.ZK_EXPECTED_UTC_OFFSET_MINUTES || '420' }}
           # Secrets (delivered via the .secrets block — written to the same
           # .env file but grouped for documentation. Switch to file-mounted
           # secrets later if needed.)
@@ -236,6 +238,8 @@ jobs:
             --arg AUTO_IMPORT_INTERVAL_MINUTES "$AUTO_IMPORT_INTERVAL_MINUTES" \
             --arg ZK_DRIFT_TOLERANCE_SECONDS   "$ZK_DRIFT_TOLERANCE_SECONDS" \
             --arg ZK_STARTUP_RETRY_MINUTES     "$ZK_STARTUP_RETRY_MINUTES" \
+            --arg ZK_CATCHUP_LOOKBACK_HOURS    "$ZK_CATCHUP_LOOKBACK_HOURS" \
+            --arg ZK_EXPECTED_UTC_OFFSET_MINUTES "$ZK_EXPECTED_UTC_OFFSET_MINUTES" \
             --arg JWT_SECRET             "$JWT_SECRET" \
             --arg ADMIN_PASSCODE_HASH    "$ADMIN_PASSCODE_HASH" \
             --arg LINE_CHANNEL_ID        "$LINE_CHANNEL_ID" \
@@ -257,6 +261,8 @@ jobs:
                 AUTO_IMPORT_INTERVAL_MINUTES: $AUTO_IMPORT_INTERVAL_MINUTES,
                 ZK_DRIFT_TOLERANCE_SECONDS:   $ZK_DRIFT_TOLERANCE_SECONDS,
                 ZK_STARTUP_RETRY_MINUTES:     $ZK_STARTUP_RETRY_MINUTES,
+                ZK_CATCHUP_LOOKBACK_HOURS:    $ZK_CATCHUP_LOOKBACK_HOURS,
+                ZK_EXPECTED_UTC_OFFSET_MINUTES: $ZK_EXPECTED_UTC_OFFSET_MINUTES,
               },
               secrets: {
                 JWT_SECRET:                $JWT_SECRET,

@@ -126,6 +126,13 @@ class AttendanceRecord(Base):
     employee = relationship("Employee", back_populates="attendance_records")
     device = relationship("Device", back_populates="attendance_records")
 
+    __table_args__ = (
+        UniqueConstraint(
+            'employee_badge_number', 'timestamp', 'punch_type',
+            name='uq_attendance_badge_ts_punch',
+        ),
+    )
+
 
 
 

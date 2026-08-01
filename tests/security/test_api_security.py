@@ -439,9 +439,12 @@ class APISecurityTester(SecurityTester):
             except Exception:
                 pass
 
-        # Test device sync security
+        # Test device sync security.
+        # `device_service.sync_attendance_data` was deleted (fix/zk-ingestion-loss
+        # — all device I/O now goes through `zk_session`); the manual-import
+        # trigger endpoint calls `background_scheduler.run_attendance_import_now`.
         try:
-            with patch('app.services.device_service.device_service.sync_attendance_data') as mock_sync:
+            with patch('app.services.background_scheduler.background_scheduler.run_attendance_import_now') as mock_sync:
                 # Mock malicious sync response
                 mock_sync.return_value = {
                     "success": True,

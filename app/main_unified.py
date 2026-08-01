@@ -680,13 +680,13 @@ async def get_auto_import_status():
 
 
 @app.post("/api/private/auto-import/trigger/")
-async def trigger_manual_import():
+async def trigger_manual_import(full: bool = False):
     """Manually trigger an attendance import via the scheduler."""
     try:
         from app.services.background_scheduler import background_scheduler
 
-        logger.info("Manual import triggered via API")
-        result = await background_scheduler.run_attendance_import_now()
+        logger.info("Manual import triggered via API (full=%s)", full)
+        result = await background_scheduler.run_attendance_import_now(full=full)
 
         synced_count = result.get("synced", 0)
         if not isinstance(synced_count, int):

@@ -18,7 +18,6 @@ from app.utils.timezone import BANGKOK_TZ
 
 from app.core.database import get_db
 from app.models.models import Employee, AttendanceRecord, Device, ApplicationLog
-from app.services.device_service import device_service
 from app.services.logging_service import app_logger
 
 router = APIRouter()

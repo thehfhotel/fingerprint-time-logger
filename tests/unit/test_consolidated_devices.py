@@ -61,7 +61,7 @@ class TestConsolidatedDevicesAPI:
         data = response.json()
         assert "status" in data
 
-    def test_test_device_connection(self, test_client, test_company_setup, mock_device_service):
+    def test_test_device_connection(self, test_client, test_company_setup):
         """Test POST /api/private/devices/{device_id}/test-connection - Test device connection"""
         devices = test_company_setup["devices"]
         if devices:
@@ -69,7 +69,7 @@ class TestConsolidatedDevicesAPI:
             response = test_client.post(f"/api/private/devices/{device_id}/test-connection")
             assert response.status_code in [200, 404, 500]
 
-    def test_sync_device_time(self, test_client, test_company_setup, mock_device_service):
+    def test_sync_device_time(self, test_client, test_company_setup):
         """Test POST /api/private/devices/{device_id}/sync-time - Sync device time"""
         devices = test_company_setup["devices"]
         if devices:
@@ -89,7 +89,7 @@ class TestConsolidatedDevicesAPI:
                 assert "device_id" in data
                 assert "status" in data
 
-    def test_get_device_diagnostics(self, test_client, test_company_setup, mock_device_service):
+    def test_get_device_diagnostics(self, test_client, test_company_setup):
         """Test GET /api/private/devices/{device_id}/diagnostics - Get device diagnostics"""
         devices = test_company_setup["devices"]
         if devices:
@@ -140,7 +140,7 @@ class TestConsolidatedDevicesAPIPerformance:
         # Should complete in reasonable time even with multiple devices
 
     @pytest.mark.performance
-    def test_device_diagnostics_performance(self, test_client, test_company_setup, mock_device_service):
+    def test_device_diagnostics_performance(self, test_client, test_company_setup):
         """Test performance of device diagnostics"""
         devices = test_company_setup["devices"]
         if devices:

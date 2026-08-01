@@ -99,7 +99,7 @@ class TestAttendanceAPI:
         assert data["month"] == month
         assert isinstance(data["calendar_data"], dict)
 
-    def test_sync_attendance(self, test_client: TestClient, mock_device_service):
+    def test_sync_attendance(self, test_client: TestClient):
         """Test POST /api/private/attendance/sync endpoint.
 
         Response shape depends on whether the test environment can reach
@@ -110,6 +110,17 @@ class TestAttendanceAPI:
         endpoint returns 200 with a boolean 'success' key.
         """
         response = test_client.post("/api/private/attendance/sync")
+        data = assert_response_success(response)
+
+        assert "success" in data
+        assert isinstance(data["success"], bool)
+
+    def test_sync_attendance_full_param(self, test_client: TestClient):
+        """Test POST /api/private/attendance/sync?full=true bypasses the
+        watermark/lookback floor (full reconcile, dedup-only) — see
+        fix/zk-ingestion-loss. Same tolerant response-shape contract as the
+        default sync call above."""
+        response = test_client.post("/api/private/attendance/sync?full=true")
         data = assert_response_success(response)
 
         assert "success" in data

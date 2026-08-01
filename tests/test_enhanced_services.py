@@ -5,7 +5,6 @@ Tests actual service functionality with database integration
 
 import pytest
 from datetime import datetime, date, timedelta
-from unittest.mock import Mock, patch
 from io import StringIO
 import csv
 
@@ -167,78 +166,41 @@ class TestEnhancedExportService:
 
 
 class TestEnhancedDeviceService:
-    """Enhanced tests for device service with simulation"""
+    """Enhanced tests for device service — pure-DB device lookups only.
 
-    def test_device_service_properties(self):
-        """Test device service initialization properties"""
+    fix/zk-ingestion-loss removed all device I/O from `SimpleDeviceService`
+    (`connect_to_device`, `get_attendance_records`, `sync_attendance_data`,
+    the `from zk import ZK` import, and the `max_retries`/`timeout`
+    attributes that configured that I/O). All device access now goes
+    exclusively through `zk_session`/`zk_client` — see
+    `tests/unit/test_zk_session.py` and `tests/unit/test_zk_client.py`. This
+    service keeps only `get_default_device()`, a plain DB lookup with
+    real callers (`consolidated_devices.py`, `consolidated_attendance.py`).
+    """
+
+    def test_get_default_device_returns_existing_active_device(self, test_db):
+        """Returns the lowest-id active device when one already exists."""
+        from app.models.models import Device
+
+        device = Device(name="Existing Device", ip_address="192.168.1.50",
+                        port=4370, is_active=True)
+        test_db.add(device)
+        test_db.commit()
+
         service = SimpleDeviceService()
+        result = service.get_default_device()
 
-        assert hasattr(service, 'max_retries')
-        assert hasattr(service, 'timeout')
-        assert service.max_retries >= 1
-        assert service.timeout >= 1
+        assert result is not None
+        assert result.ip_address == "192.168.1.50"
 
-    @patch('app.services.device_service.ZK')
-    def test_connect_to_device_mock(self, mock_zk):
-        """Test device connection with mocked ZK library"""
+    def test_get_default_device_creates_one_from_env_when_none_exists(self, test_db):
+        """No active device configured -> creates one from env var defaults."""
         service = SimpleDeviceService()
+        result = service.get_default_device()
 
-        # Create a mock Device object
-        mock_device = Mock()
-        mock_device.ip_address = '192.168.1.100'
-        mock_device.port = 4370
-        mock_device.password = 0
-        mock_device.name = 'Test Device'
-
-        # Mock successful connection
-        mock_conn = Mock()
-        mock_conn.connect.return_value = mock_conn  # ZK connect returns the connection object
-        mock_zk.return_value = mock_conn
-
-        # Test connection attempt
-        if hasattr(service, 'connect_to_device'):
-            result = service.connect_to_device(mock_device)
-            # Should either succeed or handle gracefully
-            assert result is not None
-            # Verify ZK was called with correct parameters
-            mock_zk.assert_called_once_with(
-                '192.168.1.100',
-                port=4370,
-                timeout=service.timeout,
-                password=0,
-                force_udp=False,
-                ommit_ping=True
-            )
-
-    def test_device_service_error_handling(self):
-        """Test device service handles errors gracefully"""
-        service = SimpleDeviceService()
-
-        # Test with invalid connection parameters
-        if hasattr(service, 'connect_to_device'):
-            # Create a mock Device object with invalid parameters
-            invalid_device = Mock()
-            invalid_device.ip_address = 'invalid.ip'
-            invalid_device.port = -1
-            invalid_device.password = 0
-            invalid_device.name = 'Invalid Device'
-
-            # Should not crash with invalid parameters
-            try:
-                result = service.connect_to_device(invalid_device)
-                # Should handle gracefully (likely return None)
-                assert result is None or result is not None
-            except Exception as e:
-                # Or raise appropriate exception
-                assert isinstance(e, (ConnectionError, ValueError, Exception))
-
-    def test_device_service_timeout_configuration(self):
-        """Test device service timeout configuration"""
-        service = SimpleDeviceService()
-
-        # Should have reasonable timeout values
-        assert 1 <= service.timeout <= 30
-        assert 1 <= service.max_retries <= 10
+        assert result is not None
+        assert result.is_active is True
+        assert result.id is not None  # persisted
 
 
 class TestServiceIntegration:

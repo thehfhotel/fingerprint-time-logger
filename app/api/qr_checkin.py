@@ -10,6 +10,7 @@ from typing import Optional
 from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
@@ -192,8 +193,42 @@ async def scan_qr_code(
         )
 
         db.add(attendance_record)
-        db.commit()
-        db.refresh(attendance_record)
+        try:
+            db.commit()
+            db.refresh(attendance_record)
+        except IntegrityError:
+            # uq_attendance_badge_ts_punch (employee_badge_number, timestamp,
+            # punch_type) tripped — a duplicate submit (double-tap, retried
+            # request) raced this one and won. Benign: report the same
+            # success shape instead of a 500 with a raw SQL string, and skip
+            # cache-invalidate/broadcast since nothing new was written.
+            db.rollback()
+            existing = (
+                db.query(AttendanceRecord)
+                .filter(
+                    AttendanceRecord.employee_badge_number == employee.badge_number,
+                    AttendanceRecord.timestamp == attendance_record.timestamp,
+                    AttendanceRecord.punch_type == request.punch_type,
+                )
+                .first()
+            )
+            existing_ts = existing.timestamp if existing else attendance_record.timestamp
+            return QRScanResponse(
+                success=True,
+                message=f"บันทึกเวลาไปแล้ว ที่ {location_validation['terminal_location']['location_name']}",
+                attendance_record={
+                    "id": existing.id if existing else None,
+                    "badge_number": employee.badge_number,
+                    "timestamp": existing_ts.replace(tzinfo=timezone.utc).isoformat(),
+                    "employee_name": employee.display_name,
+                    "location": location_validation['terminal_location']['location_name']
+                },
+                location_validation={
+                    "distance": location_validation["distance"],
+                    "location_name": location_validation['terminal_location']['location_name'],
+                    "message": location_validation["message"]
+                }
+            )
 
         # Invalidate the dashboard's attendance_summary cache (5-min TTL).
         # Without this, the next /api/private/attendance/summary fetch
