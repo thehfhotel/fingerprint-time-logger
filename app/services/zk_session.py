@@ -49,7 +49,12 @@ def _sanity_reject_reason(bangkok_ts: datetime) -> Optional[str]:
     """Shared quarantine rule for BOTH ingestion paths (realtime + catch-up).
     `bangkok_ts` is the device's own Bangkok-naive stamp. Returns a short
     reason string if the record should be rejected, else None. Never used
-    for a bare `continue`/`return` — every caller logs the reason first."""
+    for a bare `continue`/`return` — every caller logs the reason first:
+    `_handle_punch` (realtime, rare/actionable) logs it at WARNING;
+    `_reconcile_attendance` (catch-up, can replay hundreds of permanently
+    -garbage device records per sweep) logs it at DEBUG and rolls the count
+    into its per-sweep INFO summary instead. The quarantine rule itself is
+    unchanged — only the log verbosity differs per caller."""
     if bangkok_ts.year < 2010:
         return "year<2010"
     now_bangkok = datetime.now(_BANGKOK_TZ).replace(tzinfo=None)
@@ -574,7 +579,10 @@ class ZkSession:
 
                 reject_reason = _sanity_reject_reason(bangkok_ts)
                 if reject_reason is not None:
-                    logger.warning(
+                    # Per-record noise, not per-record signal: a flash full
+                    # of permanently-garbage rows replays this every sweep.
+                    # DEBUG here; the count is summarized at INFO below.
+                    logger.debug(
                         f"[zk_session.sanity] rejected badge={badge_number} "
                         f"ts={bangkok_ts} reason={reject_reason}"
                     )
@@ -596,7 +604,10 @@ class ZkSession:
                     .first()
                 )
                 if employee is None:
-                    logger.warning(
+                    # Same rationale as the sanity reject above: a handful
+                    # of unenrolled-badge punches replay every sweep. DEBUG
+                    # here; the count is summarized at INFO below.
+                    logger.debug(
                         f"[zk_session.catch_up] unknown badge_number={badge_number}; skipping"
                     )
                     unknown_badge += 1
