@@ -12,8 +12,11 @@ Asserts the FIXED contracts CORE implements in app/services/zk_session.py:
   - dedup/exists key is `(employee_badge_number, timestamp, punch_type)` on
     BOTH the catch-up and realtime (`_handle_punch`) paths
   - sanity rule (`ts.year < 2010` or `ts > now_bangkok + 1 day`) rejects with
-    a logged `[zk_session.sanity] rejected badge=... ts=... reason=...`
-    warning on BOTH paths — never a bare `continue`
+    a logged `[zk_session.sanity] rejected badge=... ts=... reason=...` on
+    BOTH paths — never a bare `continue`. Realtime (`_handle_punch`) logs it
+    at WARNING (rare/actionable); catch-up (`_reconcile_attendance`) logs it
+    at DEBUG with the per-sweep count rolled into an INFO summary line, to
+    avoid drowning the log when the device flash holds garbage rows.
   - `get_status_and_time() -> {"status": ..., "time": ...}` opens exactly
     one device connection
 
@@ -478,9 +481,13 @@ def test_7_sanity_rejects_are_logged_not_silent(db, freeze_now, monkeypatch, ses
     db.add_employee("1001")
     freeze_now(datetime(2026, 8, 1, 12, 0, 0))
 
-    # catch-up path: pre-2010 record.
+    # catch-up path: pre-2010 record. Logged at DEBUG (not WARNING) since a
+    # device flash full of permanently-garbage rows replays this every
+    # sweep; the per-sweep count still surfaces at INFO in the summary line
+    # (see test 12). "Not silent" only requires the record-level message to
+    # exist at DEBUG, not that it be WARNING.
     bad_year = FakeAtt("1001", datetime(2009, 1, 1, 0, 0, 0), punch=0)
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         inserted = run_catch_up(monkeypatch, [bad_year])
 
     assert inserted == 0
