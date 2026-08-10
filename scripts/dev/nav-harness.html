@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#4F0E0E" />
+  <title>ทดสอบเมนู — ระบบบันทึกเวลา</title>
+
+  <!--
+    DEV HARNESS — not a product page, deliberately OUTSIDE static/v2/.
+    Carries only the nav placeholder + nav.js so WP-M0 can verify the shared
+    navigation in isolation without touching a real page.
+
+    Serve the repo root and open /scripts/dev/nav-harness.html:
+      python3 -m http.server 5056
+    Override the active page with ?page=system (etc).
+  -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/static/v2/theme.js"></script>
+  <script>
+    tailwind.config = { theme: { extend: window.V2.THEME } };
+  </script>
+  <script defer src="/static/v2/nav.js"></script>
+
+  <style>
+    html, body { font-family: 'Sarabun', 'Noto Sans Thai', system-ui, -apple-system, sans-serif; }
+    body { font-size: 0.875rem; line-height: 1.6; }
+  </style>
+</head>
+<body class="min-h-screen bg-ink-50 text-ink-900 antialiased">
+
+  <nav id="v2nav" data-page="monthly"></nav>
+
+  <main class="mx-auto max-w-5xl px-4 pt-5 pb-28 md:px-5 md:pt-8 md:pb-12">
+    <header class="mb-5 md:mb-7">
+      <p class="text-xs font-semibold tracking-wide text-brand-600">รายงาน</p>
+      <h1 class="mt-1 text-xl font-bold tracking-tight text-ink-900">รายงานรายเดือน</h1>
+      <p class="mt-1 text-sm text-ink-500">หน้าทดสอบเมนู — ไม่ใช่หน้าจริงของระบบ</p>
+    </header>
+
+    <div class="rounded-xl border border-ink-200 bg-white p-5 shadow-card">
+      <p class="text-sm text-ink-700">
+        กล่องเนื้อหาตัวอย่างสำหรับตรวจว่าแถบเมนูล่างไม่บังเนื้อหา และแถบด้านบน
+        (hf-bar) ไม่ถูกทับ
+      </p>
+      <div class="mt-4 h-[900px] rounded-lg border border-dashed border-ink-300 bg-ink-50"></div>
+      <p class="text-sm text-ink-700">ท้ายหน้า</p>
+    </div>
+  </main>
+
+  <script>
+    // Harness-only: let ?page= drive data-page before nav.js runs.
+    (function () {
+      var p = new URLSearchParams(location.search).get("page");
+      if (p) document.getElementById("v2nav").setAttribute("data-page", p);
+    })();
+  </script>
+
+  <script defer src="https://erp.thehfhotel.org/shell/hf-bar.js"
+          data-app="Attendance" data-module="people"></script>
+</body>
+</html>

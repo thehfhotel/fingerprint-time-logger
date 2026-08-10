@@ -80,6 +80,11 @@ jobs:
       - name: Run integration tests
         run: pytest tests/integration/ -v --cov=app --cov-append --cov-report=xml -m "not slow"
 
+      # v2 admin route + guard coverage. Lives at tests/ top level, so it
+      # matches neither of the directory globs above and has to be named.
+      - name: Run v2 route tests
+        run: pytest tests/test_v2_routes.py -v --cov=app --cov-append --cov-report=xml
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4

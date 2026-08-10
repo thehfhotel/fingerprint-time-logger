@@ -24,9 +24,14 @@ coverage.xml
 # Virtual environments
 venv/
 .venv/
+.venv-local/
 ENV/
 env/
 .env
+
+# Node deps for the dev-only screenshot helper (scripts/dev). The runtime
+# stage is a plain `COPY . .`, so without this they ride into the image.
+node_modules/
 
 # IDEs
 .vscode/

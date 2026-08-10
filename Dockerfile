@@ -65,8 +65,14 @@ ENV DATABASE_URL=sqlite:///./database/attendance.db
 ENV PYTHON_OPTIMIZE=${PYTHON_OPTIMIZE}
 
 # Health check
+# Must target a route that actually exists on the app. The devices health
+# endpoint lives on the ROOT app at /api/private/devices/health (admin-gated);
+# /fingerprintlogs/api/devices/health has never existed, so this probe always
+# 404'd and curl -f marked the container unhealthy forever. Production was
+# unaffected only because docker-compose.yml overrides the healthcheck with
+# the same URL used here. Keep the two in sync.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:5000/fingerprintlogs/api/devices/health || exit 1
+    CMD curl -f http://localhost:5000/fingerprintlogs/health || exit 1
 
 # Expose port
 EXPOSE 5000

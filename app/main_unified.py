@@ -273,6 +273,59 @@ def serve_html_with_cache_control(file_path: str):
     response.headers["Expires"] = "0"
     return response
 
+
+ADMIN_LOGIN_URL = "/fingerprintlogs/admin-login"
+
+
+def serve_admin_page(request: Request, file_path: str):
+    """Serve an admin-only HTML page, or redirect to the passcode login.
+
+    THE single server-side admin page guard. Server-side (not client-side)
+    so NO HTML/CSS/JS asset reaches the browser before authentication is
+    confirmed — a 302 is all an unauthenticated caller ever sees.
+
+    Resolution order (unchanged from the four inline copies this replaces —
+    /employee-management, /status, /admin/terminal-gps, /admin-console):
+      1. Verified Cloudflare Access identity for an admin-allowlisted email
+         -> serve (auto-login, no passcode prompt).
+      2. No ``admin_session_token`` cookie -> 302 to the login page.
+      3. Cookie present but session invalid/expired -> clear the cookie
+         (with matching attributes, see ``_clear_admin_session_cookie``)
+         and 302 to the login page.
+      4. Session valid -> serve.
+
+    NOTE FOR WP5b (v1 retirement, deploy 2): when the owner signals the
+    cutover, the v1 pages below (/employee-management, /status,
+    /admin/terminal-gps, /admin-console) become 302s to their /v2/*
+    replacements. THIS is where those redirects go — replace the v1 route
+    bodies, leave this helper and the /v2/* routes that use it alone.
+    Deploy 1 (this change) is purely additive: no v1 route behaviour changes.
+    """
+    # A verified Cloudflare Access identity is treated as authenticated
+    # admin (auto-login), no passcode prompt needed.
+    if get_cf_access_email(request):
+        return serve_html_with_cache_control(file_path)
+
+    # Check for session token in cookie
+    admin_token = request.cookies.get('admin_session_token')
+
+    # If no token, redirect to login page
+    if not admin_token:
+        return RedirectResponse(url=ADMIN_LOGIN_URL, status_code=302)
+
+    # Validate session server-side
+    from app.services.admin_auth_service import admin_auth_service
+
+    if not admin_auth_service.validate_session(admin_token):
+        # Session invalid or expired - clear cookie and redirect
+        response = RedirectResponse(url=ADMIN_LOGIN_URL, status_code=302)
+        _clear_admin_session_cookie(response)
+        return response
+
+    # Session valid - serve page
+    return serve_html_with_cache_control(file_path)
+
+
 # Serve HTML pages with cache control headers
 @fingerprint_app.get("/")
 async def serve_dashboard():
@@ -309,6 +362,31 @@ async def serve_v2_monthly():
     """
     return serve_html_with_cache_control("static/v2/monthly.html")
 
+# ----------------------------------------------------------------------------
+# v2 admin pages (2026-08). The v2 replacements for the four legacy admin
+# pages. ADDITIVE: the v1 pages below keep serving unchanged — the v1 -> v2
+# retirement is a separate, owner-signalled deploy (see serve_admin_page).
+#
+# Unlike the ungated v2 pages above, these carry the same server-side admin
+# guard as their v1 counterparts, so an unauthenticated caller gets a 302 and
+# no page assets.
+# ----------------------------------------------------------------------------
+
+@fingerprint_app.get("/v2/employees")
+async def serve_v2_employees(request: Request):
+    """v2 employee registry (replaces /employee-management)."""
+    return serve_admin_page(request, "static/v2/employees.html")
+
+@fingerprint_app.get("/v2/system")
+async def serve_v2_system(request: Request):
+    """v2 system status + admin console (replaces /status + /admin-console)."""
+    return serve_admin_page(request, "static/v2/system.html")
+
+@fingerprint_app.get("/v2/terminals")
+async def serve_v2_terminals(request: Request):
+    """v2 QR terminal GPS admin (replaces /admin/terminal-gps)."""
+    return serve_admin_page(request, "static/v2/terminals.html")
+
 @fingerprint_app.get("/export")
 async def serve_export():
     return serve_html_with_cache_control("static/export.html")
@@ -334,29 +412,7 @@ async def serve_employee_management(request: Request):
     Recognizes a verified Cloudflare Access identity as well as the
     existing passcode session cookie.
     """
-    # A verified Cloudflare Access identity is treated as authenticated
-    # admin (auto-login), no passcode prompt needed.
-    if get_cf_access_email(request):
-        return serve_html_with_cache_control("static/employee-management.html")
-
-    # Check for session token in cookie
-    admin_token = request.cookies.get('admin_session_token')
-
-    # If no token, redirect to login page
-    if not admin_token:
-        return RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
-
-    # Validate session server-side
-    from app.services.admin_auth_service import admin_auth_service
-
-    if not admin_auth_service.validate_session(admin_token):
-        # Session expired - clear cookie and redirect
-        response = RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
-        _clear_admin_session_cookie(response)
-        return response
-
-    # Session valid - serve page
-    return serve_html_with_cache_control("static/employee-management.html")
+    return serve_admin_page(request, "static/employee-management.html")
 
 @fingerprint_app.get("/individual-attendance")
 async def serve_individual_attendance():
@@ -370,29 +426,7 @@ async def serve_status(request: Request):
     Recognizes a verified Cloudflare Access identity as well as the
     existing passcode session cookie.
     """
-    # A verified Cloudflare Access identity is treated as authenticated
-    # admin (auto-login), no passcode prompt needed.
-    if get_cf_access_email(request):
-        return serve_html_with_cache_control("static/status.html")
-
-    # Check for session token in cookie
-    admin_token = request.cookies.get('admin_session_token')
-
-    # If no token, redirect to login page
-    if not admin_token:
-        return RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
-
-    # Validate session server-side
-    from app.services.admin_auth_service import admin_auth_service
-
-    if not admin_auth_service.validate_session(admin_token):
-        # Session expired - clear cookie and redirect
-        response = RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
-        _clear_admin_session_cookie(response)
-        return response
-
-    # Session valid - serve page
-    return serve_html_with_cache_control("static/status.html")
+    return serve_admin_page(request, "static/status.html")
 
 @fingerprint_app.get("/docs")
 async def serve_api_docs():
@@ -445,29 +479,7 @@ async def serve_terminal_gps_admin(request: Request):
     Recognizes a verified Cloudflare Access identity as well as the
     existing passcode session cookie.
     """
-    # A verified Cloudflare Access identity is treated as authenticated
-    # admin (auto-login), no passcode prompt needed.
-    if get_cf_access_email(request):
-        return serve_html_with_cache_control("static/terminal-gps-admin.html")
-
-    # Check for session token in cookie
-    admin_token = request.cookies.get('admin_session_token')
-
-    # If no token, redirect to login page
-    if not admin_token:
-        return RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
-
-    # Validate session server-side
-    from app.services.admin_auth_service import admin_auth_service
-
-    if not admin_auth_service.validate_session(admin_token):
-        # Session expired - clear cookie and redirect
-        response = RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
-        _clear_admin_session_cookie(response)
-        return response
-
-    # Session valid - serve page
-    return serve_html_with_cache_control("static/terminal-gps-admin.html")
+    return serve_admin_page(request, "static/terminal-gps-admin.html")
 
 @fingerprint_app.get("/admin-login")
 async def serve_admin_login():
@@ -486,32 +498,7 @@ async def serve_admin_console(request: Request):
     Recognizes a verified Cloudflare Access identity as well as the
     existing passcode session cookie.
     """
-    # A verified Cloudflare Access identity is treated as authenticated
-    # admin (auto-login), no passcode prompt needed.
-    if get_cf_access_email(request):
-        return serve_html_with_cache_control("static/admin-console.html")
-
-    # Check for session token in cookie
-    admin_token = request.cookies.get('admin_session_token')
-
-    # If no token, redirect immediately to login page
-    # No assets will be loaded - just an HTTP 302 redirect
-    if not admin_token:
-        return RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
-
-    # Validate token server-side before serving any content
-    from app.services.admin_auth_service import admin_auth_service
-
-    if not admin_auth_service.validate_session(admin_token):
-        # Session invalid or expired - clear cookie and redirect
-        # Still no assets loaded - just redirect with cookie cleanup
-        response = RedirectResponse(url="/fingerprintlogs/admin-login", status_code=302)
-        _clear_admin_session_cookie(response)
-        return response
-
-    # Session valid - NOW we serve admin console HTML
-    # Only at this point will any assets be loaded by the browser
-    return serve_html_with_cache_control("static/admin-console.html")
+    return serve_admin_page(request, "static/admin-console.html")
 
 @fingerprint_app.get("/health")
 async def health_check():

@@ -1,0 +1,9 @@
+{
+  "name": "fingerprint-v2-dev-tools",
+  "private": true,
+  "description": "Local-only dev tooling (screenshot helper) for fingerprint-time-logger. Not part of the deployed app — see scripts/dev/README.md.",
+  "type": "module",
+  "dependencies": {
+    "playwright": "^1.55.0"
+  }
+}
