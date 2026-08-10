@@ -59,6 +59,7 @@ def _make_pkce_pair():
 
 
 def _sample_request(challenge, *, state="client-state", nonce="client-nonce"):
+    """A validated request; ``challenge=None`` models a client without PKCE."""
     return oidc_service.AuthorizationRequest(
         client_id=_CLIENT_ID,
         redirect_uri=oidc_service.DEFAULT_REDIRECT_URI,
@@ -66,7 +67,7 @@ def _sample_request(challenge, *, state="client-state", nonce="client-nonce"):
         state=state,
         nonce=nonce,
         code_challenge=challenge,
-        code_challenge_method="S256",
+        code_challenge_method="S256" if challenge else None,
     )
 
 
@@ -168,6 +169,19 @@ class TestPkce:
         assert oidc_service.verify_pkce_s256("", challenge) is False
         assert oidc_service.verify_pkce_s256(None, challenge) is False
 
+    def test_absent_challenge_fails(self):
+        """Never "verify" against nothing — a caller that reaches here without
+        a stored challenge must get False, not an accidental pass."""
+        verifier, _ = _make_pkce_pair()
+        assert oidc_service.verify_pkce_s256(verifier, None) is False
+        assert oidc_service.verify_pkce_s256(verifier, "") is False
+
+    def test_non_ascii_verifier_fails_closed(self):
+        """RFC 7636 verifiers are ASCII; a non-ASCII one used to raise
+        UnicodeEncodeError and surface as a 500 from /oidc/token."""
+        _, challenge = _make_pkce_pair()
+        assert oidc_service.verify_pkce_s256("ทดสอบ-verifier", challenge) is False
+
 
 # ============================================================================
 # Client authentication
@@ -229,7 +243,33 @@ class TestAuthorizationValidation:
         with pytest.raises(oidc_service.AuthorizeError):
             oidc_service.validate_authorization_request(**kwargs)
 
-    def test_missing_pkce_raises_redirect_error(self, enabled_provider):
+    def test_missing_pkce_is_accepted_for_the_confidential_client(self, enabled_provider):
+        """Cloudflare Access's generic OIDC connector sends no code_challenge.
+
+        It is a confidential client (client_secret enforced at /oidc/token),
+        so the authorize request must still be honoured — rejecting it here is
+        what broke HF ID SSO for every Cloudflare-Access-gated app.
+        """
+        kwargs = self._valid_kwargs()
+        kwargs["code_challenge"] = None
+        kwargs["code_challenge_method"] = None
+        req = oidc_service.validate_authorization_request(**kwargs)
+        assert req.code_challenge is None
+        assert req.code_challenge_method is None
+
+    def test_empty_pkce_values_normalize_to_none(self, enabled_provider):
+        """An empty string and None must land in the store identically, so the
+        token endpoint's "did this client use PKCE?" check is a single
+        truthiness test with no third state."""
+        kwargs = self._valid_kwargs()
+        kwargs["code_challenge"] = ""
+        kwargs["code_challenge_method"] = ""
+        req = oidc_service.validate_authorization_request(**kwargs)
+        assert req.code_challenge is None
+        assert req.code_challenge_method is None
+
+    def test_method_without_challenge_raises_redirect_error(self, enabled_provider):
+        """Half a PKCE request is incoherent — fail rather than guess."""
         kwargs = self._valid_kwargs()
         kwargs["code_challenge"] = None
         with pytest.raises(oidc_service.AuthorizeRedirectError):
@@ -323,6 +363,22 @@ class TestAuthorizationCodes:
         assert record["client_id"] == _CLIENT_ID
         assert record["redirect_uri"] == oidc_service.DEFAULT_REDIRECT_URI
         assert oidc_service.verify_pkce_s256(verifier, record["code_challenge"])
+
+    def test_code_without_pkce_stores_no_challenge(self, enabled_provider):
+        """A PKCE-less request must store code_challenge=None — that stored
+        None is exactly what the token endpoint keys its PKCE decision on."""
+        code = oidc_service.issue_authorization_code(
+            request=_sample_request(None),
+            badge="Q001",
+            email="q001@emp.thehfhotel.org",
+            name="พนักงาน",
+            apps=[],
+        )
+        record = oidc_service.consume_authorization_code(code)
+        assert record["code_challenge"] is None
+        # Binding and single-use are untouched by the PKCE decision.
+        assert record["client_id"] == _CLIENT_ID
+        assert oidc_service.consume_authorization_code(code) is None
 
 
 # ============================================================================

@@ -10,9 +10,13 @@ LINE mocked end to end (no network):
 
 plus every security check from the spec: PKCE mismatch, replay of a used code,
 bad/absent client secret, wrong redirect_uri, unregistered redirect_uri,
-missing PKCE, inactive employee, pending employee, unknown LINE user, and an
-alg-confusion attempt against the emitted id_token. Also verifies the provider
-is fully dark (404) until configured.
+inactive employee, pending employee, unknown LINE user, and an alg-confusion
+attempt against the emitted id_token. Also verifies the provider is fully dark
+(404) until configured.
+
+PKCE is conditional: the flow must complete for a confidential client that
+never sends a code_challenge (Cloudflare Access), while a client that does
+send one is still held to it at the token endpoint.
 """
 
 import base64
@@ -92,8 +96,13 @@ def _seed_employee(session, *, badge="Q001", line_user_id=_ELIGIBLE_LINE_USER,
 
 
 def _authorize(test_client, *, state="client-state-xyz", scope="openid email profile",
-               overrides=None):
-    """Call /oidc/authorize and return the raw response (no redirect follow)."""
+               overrides=None, use_pkce=True):
+    """Call /oidc/authorize and return the raw response (no redirect follow).
+
+    ``use_pkce=False`` reproduces Cloudflare Access's generic OIDC connector,
+    which sends neither code_challenge nor code_challenge_method; the returned
+    verifier is then None.
+    """
     verifier, challenge = _pkce_pair()
     params = {
         "client_id": _CLIENT_ID,
@@ -105,6 +114,10 @@ def _authorize(test_client, *, state="client-state-xyz", scope="openid email pro
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     }
+    if not use_pkce:
+        params.pop("code_challenge")
+        params.pop("code_challenge_method")
+        verifier = None
     if overrides:
         params.update({k: v for k, v in overrides.items() if v is not None})
         for k, v in overrides.items():
@@ -154,9 +167,11 @@ def _drive_line_callback(test_client, monkeypatch, ticket, line_user_id):
 
 
 def _run_flow_to_code(test_client, monkeypatch, *, line_user_id=_ELIGIBLE_LINE_USER,
-                      state="client-state-xyz"):
+                      state="client-state-xyz", use_pkce=True):
     """Run authorize -> LINE -> callback and return (callback_response, verifier)."""
-    authorize_response, verifier = _authorize(test_client, state=state)
+    authorize_response, verifier = _authorize(
+        test_client, state=state, use_pkce=use_pkce
+    )
     assert authorize_response.status_code == 302
     ticket = _ticket_from_authorize(authorize_response)
     callback = _drive_line_callback(test_client, monkeypatch, ticket, line_user_id)
@@ -172,12 +187,15 @@ def _extract_code_and_state(callback_response):
 
 def _exchange(test_client, code, verifier, *, redirect_uri=_REDIRECT_URI,
               client_id=_CLIENT_ID, client_secret=_CLIENT_SECRET, use_basic=False):
+    """POST /oidc/token. ``verifier=None`` omits code_verifier entirely, the
+    way Cloudflare Access's token call does."""
     data = {
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": redirect_uri,
-        "code_verifier": verifier,
     }
+    if verifier is not None:
+        data["code_verifier"] = verifier
     headers = {}
     if use_basic:
         raw = f"{client_id}:{client_secret}".encode()
@@ -277,6 +295,44 @@ class TestHappyPath:
         assert response.status_code == 200
         assert "id_token" in response.json()
 
+    def test_full_flow_without_pkce_succeeds(self, test_client, test_db, hfid_enabled, monkeypatch):
+        """THE Cloudflare Access case — no code_challenge, no code_verifier.
+
+        Cloudflare Access's generic OIDC connector does not implement PKCE. It
+        is a confidential client and still proves itself with client_secret on
+        the token call, so the exchange must succeed. This flow used to die at
+        /oidc/token with 400 "code_verifier is required", which Cloudflare
+        reported to users as "Failed to fetch user/group information from the
+        identity provider".
+        """
+        _seed_employee(test_db)
+
+        callback, verifier = _run_flow_to_code(
+            test_client, monkeypatch, use_pkce=False
+        )
+        assert verifier is None
+        assert callback.status_code == 302
+        code, returned_state = _extract_code_and_state(callback)
+        assert returned_state == "client-state-xyz"
+
+        token_response = _exchange(test_client, code, None)
+        assert token_response.status_code == 200
+        body = token_response.json()
+
+        claims = jwt.decode(
+            body["id_token"], _PUBLIC_PEM, algorithms=["RS256"],
+            audience=_CLIENT_ID, issuer=_ISSUER,
+        )
+        assert claims["sub"] == "Q001"
+        assert claims["email"] == "q001@emp.thehfhotel.org"
+
+        userinfo = test_client.get(
+            "/oidc/userinfo",
+            headers={"Authorization": f"Bearer {body['access_token']}"},
+        )
+        assert userinfo.status_code == 200
+        assert userinfo.json()["badge"] == "Q001"
+
 
 # ============================================================================
 # Security — authorize endpoint
@@ -294,7 +350,21 @@ class TestAuthorizeSecurity:
         response, _ = _authorize(test_client, overrides={"client_id": "attacker"})
         assert response.status_code == 400
 
-    def test_missing_pkce_redirects_with_error(self, test_client, hfid_enabled):
+    def test_missing_pkce_is_brokered_into_line(self, test_client, hfid_enabled):
+        """No code_challenge is legal for this confidential client: the browser
+        must go on to LINE login, not bounce back with error=invalid_request."""
+        response, verifier = _authorize(test_client, use_pkce=False)
+        assert response.status_code == 302
+        assert verifier is None
+        location = response.headers["location"]
+        assert location.startswith("/api/public/auth/line/login")
+        assert "error" not in urllib.parse.parse_qs(
+            urllib.parse.urlparse(location).query
+        )
+        assert _ticket_from_authorize(response)  # a real login ticket was made
+
+    def test_pkce_method_without_challenge_redirects_with_error(self, test_client, hfid_enabled):
+        """Half a PKCE request stays an error — only *neither* value is OK."""
         response, _ = _authorize(test_client, overrides={"code_challenge": None})
         assert response.status_code == 302
         query = urllib.parse.parse_qs(
@@ -375,6 +445,77 @@ class TestTokenSecurity:
         callback, _ = _run_flow_to_code(test_client, monkeypatch)
         code, _ = _extract_code_and_state(callback)
         response = _exchange(test_client, code, "attacker-verifier-not-matching")
+        assert response.status_code == 400
+        assert response.json()["error"] == "invalid_grant"
+
+    def test_missing_verifier_rejected_when_challenge_was_sent(self, test_client, test_db, hfid_enabled, monkeypatch):
+        """A client that STARTED PKCE must finish it — relaxing PKCE for the
+        connector that never uses it must not let anyone drop a verifier."""
+        _seed_employee(test_db)
+        callback, _ = _run_flow_to_code(test_client, monkeypatch)  # sends a challenge
+        code, _ = _extract_code_and_state(callback)
+        response = _exchange(test_client, code, None)
+        assert response.status_code == 400
+        assert response.json()["error"] == "invalid_request"
+        assert response.json()["error_description"] == "code_verifier is required"
+
+    def test_malformed_non_ascii_verifier_rejected(self, test_client, test_db, hfid_enabled, monkeypatch):
+        """A non-ASCII verifier is malformed per RFC 7636 — it must be a clean
+        400, never a 500 from an unhandled UnicodeEncodeError."""
+        _seed_employee(test_db)
+        callback, _ = _run_flow_to_code(test_client, monkeypatch)
+        code, _ = _extract_code_and_state(callback)
+        response = _exchange(test_client, code, "ทดสอบ-verifier")
+        assert response.status_code == 400
+        assert response.json()["error"] == "invalid_grant"
+
+    def test_verifier_without_challenge_rejected(self, test_client, test_db, hfid_enabled, monkeypatch):
+        """No challenge on the code, but a verifier on the token call.
+
+        The implementation rejects with invalid_grant rather than ignoring the
+        stray verifier: a verifier that exists implies the client believed it
+        sent a challenge, so the missing challenge means something stripped it
+        on the front channel (a PKCE downgrade attack). Failing loudly makes
+        that visible; silently succeeding would hide it. Cloudflare Access
+        sends neither value, so this cannot affect real SSO traffic.
+        """
+        _seed_employee(test_db)
+        callback, verifier = _run_flow_to_code(
+            test_client, monkeypatch, use_pkce=False
+        )
+        assert verifier is None
+        code, _ = _extract_code_and_state(callback)
+        response = _exchange(test_client, code, "a-verifier-nobody-asked-for")
+        assert response.status_code == 400
+        assert response.json()["error"] == "invalid_grant"
+
+    def test_no_pkce_code_is_still_single_use(self, test_client, test_db, hfid_enabled, monkeypatch):
+        """Dropping PKCE must not soften replay protection."""
+        _seed_employee(test_db)
+        callback, _ = _run_flow_to_code(test_client, monkeypatch, use_pkce=False)
+        code, _ = _extract_code_and_state(callback)
+        assert _exchange(test_client, code, None).status_code == 200
+        replay = _exchange(test_client, code, None)
+        assert replay.status_code == 400
+        assert replay.json()["error"] == "invalid_grant"
+
+    def test_no_pkce_code_still_requires_client_secret(self, test_client, test_db, hfid_enabled, monkeypatch):
+        """The secret is what replaces PKCE here — it must still be checked."""
+        _seed_employee(test_db)
+        callback, _ = _run_flow_to_code(test_client, monkeypatch, use_pkce=False)
+        code, _ = _extract_code_and_state(callback)
+        response = _exchange(test_client, code, None, client_secret="wrong")
+        assert response.status_code == 401
+        assert response.json()["error"] == "invalid_client"
+
+    def test_no_pkce_code_still_binds_redirect_uri(self, test_client, test_db, hfid_enabled, monkeypatch):
+        _seed_employee(test_db)
+        callback, _ = _run_flow_to_code(test_client, monkeypatch, use_pkce=False)
+        code, _ = _extract_code_and_state(callback)
+        response = _exchange(
+            test_client, code, None,
+            redirect_uri="https://laikaexpress.cloudflareaccess.com/other",
+        )
         assert response.status_code == 400
         assert response.json()["error"] == "invalid_grant"
 
