@@ -1,0 +1,863 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#4F0E0E" />
+  <title>ตำแหน่ง QR Terminal — ระบบบันทึกเวลา</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Leaflet CSS (kept from v1, same SRI pin) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin="" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/fingerprintlogs/static/v2/theme.js"></script>
+  <!-- Shared navigation — renders BOTH navs. Every page, no exceptions. -->
+  <script defer src="/fingerprintlogs/static/v2/nav.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: { extend: window.V2.THEME },
+      safelist: [
+        "bg-brand-100", "text-brand-700",
+        "bg-good-100",  "text-good-700",
+        "bg-warn-100",  "text-warn-700",
+        "bg-bad-100",   "text-bad-700",
+        "bg-ink-200",   "text-ink-700",
+        "bg-off-100",   "text-off-600",
+        "bg-good-500",  "bg-warn-500", "bg-bad-500", "bg-ink-300",
+        "animate-pulse",
+        "border-brand-500", "bg-brand-50", "ring-brand-200",
+        /* terminal-card list + GPS row, assembled in JS (renderTerminalList) */
+        "text-bad-600", "border-bad-200", "bg-bad-50", "text-bad-700",
+        "mt-0.5", "p-3", "border-ink-200", "bg-white",
+        /* terminal-card GPS badge (renderTerminalList) */
+        "bg-good-100", "text-good-700", "bg-bad-100",
+      ],
+    };
+  </script>
+
+  <style>
+    html, body { font-family: 'Sarabun', 'Noto Sans Thai', system-ui, -apple-system, sans-serif; }
+    body { font-size: 0.875rem; line-height: 1.6; }
+
+    .btn-primary {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;
+      font-size: .875rem; font-weight: 600;
+      background: #8B0000;
+      border: 1px solid #8B0000;
+      color: #FFFFFF;
+      cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-primary:hover   { background: #7A0000; border-color: #7A0000; }
+    .btn-primary:active  { background: #6B1212; border-color: #6B1212; }
+    .btn-primary:disabled{ background: #E8E4DF; border-color: #E8E4DF; color: #7A7268; cursor: not-allowed; }
+
+    .btn-secondary {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;
+      font-size: .875rem; font-weight: 500;
+      background: #FFFFFF;
+      border: 1px solid #CFC9C1;
+      color: #332D27;
+      cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-secondary:hover { background: #FAF9F7; border-color: #7A7268; }
+    .btn-secondary:disabled { color: #7A7268; cursor: not-allowed; }
+
+    .btn-danger {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;
+      font-size: .875rem; font-weight: 600;
+      background: #C53030; border: 1px solid #C53030; color: #FFFFFF;
+      cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-danger:hover { background: #9B2626; border-color: #9B2626; }
+    .btn-danger:disabled { background: #E8E4DF; border-color: #E8E4DF; color: #7A7268; cursor: not-allowed; }
+
+    /* Soft danger — for the LESS destructive of the two delete actions on
+       this page (clearing a GPS pin vs. deleting the whole terminal). Two
+       full .btn-danger reds side by side outweigh the primary and read as
+       equally destructive when they are not. */
+    .btn-danger-soft {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;
+      font-size: .875rem; font-weight: 500;
+      background: #FFFFFF;
+      border: 1px solid #F5C6C6;   /* bad-100 */
+      color: #7F1F1F;              /* bad-700 */
+      cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-danger-soft:hover { background: #FBEAEA; border-color: #C53030; }  /* bad-50 / bad-500 */
+    .btn-danger-soft:disabled { background: #E8E4DF; border-color: #E8E4DF; color: #7A7268; cursor: not-allowed; }
+
+    .btn-primary:focus-visible, .btn-secondary:focus-visible, .btn-danger:focus-visible,
+    .btn-danger-soft:focus-visible, .terminal-card:focus-visible {
+      outline: 2px solid rgba(139, 0, 0, .40);
+      outline-offset: 2px;
+    }
+
+    /* Native range slider: off-the-shelf browser blue is off-contract. */
+    input[type="range"] { accent-color: #8B0000; }
+
+    .terminal-card {
+      cursor: pointer;
+      transition: border-color .12s ease, background-color .12s ease;
+    }
+    .terminal-card:hover { border-color: #C76060; }
+    .terminal-card.active {
+      border-color: #8B0000;
+      background: #FBEAEA;
+    }
+
+    /* Leaflet needs an explicit pixel height; Tailwind height utilities alone
+       render a 0-height map in some browsers before tiles load. Below md the
+       map is a compact ~h-72 band (never taller than ~60vh, or the page
+       becomes unscrollable past it on a phone) — md+ is unchanged from
+       before this wave. */
+    #map { height: 288px; }
+    @media (min-width: 768px) { #map { height: 520px; } }
+
+    #mapLoadError {
+      display: none;
+    }
+
+    /* Leaflet's own container is `position:relative; z-index:auto`, which
+       creates NO stacking context — its panes (z-index ~400-700) and
+       controls (~1000) then compete directly against the root stacking
+       context, painting over the fixed z-40 add-terminal dialog, its z-30
+       overlay, and the fixed z-20 mobile bottom nav regardless of DOM
+       order. Confining the map to its own stacking context keeps every
+       Leaflet z-index local. */
+    .leaflet-container { position: relative; z-index: 0; }
+  </style>
+</head>
+<body class="min-h-screen bg-ink-50 text-ink-900 antialiased">
+
+  <!-- The ONLY nav markup this page carries. See STYLE.md section 2.
+       terminals is not a topNav/bar destination — the เมนู cell carries
+       the active mark instead, same behaviour as before (no item active). -->
+  <nav id="v2nav" data-page="terminals"></nav>
+
+  <main class="mx-auto max-w-7xl px-4 pt-5 pb-28 md:px-5 md:pt-8 md:pb-12">
+    <header class="mb-5 md:mb-7">
+      <p class="text-xs font-semibold tracking-wide text-brand-600">
+        <a href="/fingerprintlogs/v2/system" class="hover:underline">ระบบ</a> · QR Terminal
+      </p>
+      <h1 class="mt-1 text-xl font-bold tracking-tight text-ink-900">ตำแหน่ง QR Terminal (GPS)</h1>
+      <p class="mt-1 text-sm text-ink-500">กำหนดพิกัดและรัศมีตรวจสอบสำหรับจุดสแกน QR แต่ละจุด</p>
+    </header>
+
+    <div class="grid grid-cols-1 gap-5 lg:grid-cols-[360px_1fr]">
+
+      <!-- Sidebar: terminal list -->
+      <section class="rounded-xl border border-ink-200 bg-white shadow-card">
+        <div class="border-b border-ink-200 bg-ink-50 px-4 py-2.5 text-sm font-semibold text-ink-800">
+          รายการ Terminal
+        </div>
+
+        <div id="listLoading" class="px-6 py-10 text-center">
+          <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
+          <p class="mt-3 text-sm text-ink-500">กำลังโหลด…</p>
+        </div>
+        <div id="listError" class="hidden px-4 py-3 text-sm text-bad-700">
+          <span id="listErrorText">ไม่สามารถโหลดข้อมูล Terminal ได้</span>
+          <button id="listRetry" type="button" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
+        </div>
+        <div id="listEmpty" class="hidden px-6 py-10 text-center">
+          <p class="text-sm font-medium text-ink-700">ยังไม่มี QR Terminal</p>
+          <p class="mt-1 text-xs text-ink-500">กด "เพิ่ม QR Terminal" เพื่อเริ่มต้น</p>
+        </div>
+        <div id="terminalList" class="hidden space-y-2 p-4"></div>
+
+        <div class="border-t border-ink-100 p-4">
+          <button id="addTerminalBtn" type="button" class="btn-primary w-full !min-h-[44px] md:!min-h-[2.5rem]">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><path d="M12 5v14M5 12h14"/></svg>
+            เพิ่ม QR Terminal
+          </button>
+        </div>
+      </section>
+
+      <!-- Map + form -->
+      <section class="space-y-4">
+        <!-- Kept within the page gutters at every width (no -mx-4 full-bleed
+             below md) — a full-bleed map removes the only two 16px strips a
+             thumb can use to scroll the page past it; Leaflet's own
+             touch-action:none otherwise traps the swipe. md+ is the original
+             rounded, bordered card, unchanged. -->
+        <div class="overflow-hidden rounded-xl border border-ink-200 bg-white shadow-card">
+          <div id="map"></div>
+          <p id="mapLoadError" class="border-t border-bad-100 bg-bad-50 px-4 py-2 text-xs text-bad-700">
+            ไม่สามารถโหลดแผนที่ได้ (ต้องเชื่อมต่ออินเทอร์เน็ต) — จะไม่สามารถเลือกตำแหน่งบนแผนที่ได้
+          </p>
+        </div>
+
+        <div class="rounded-xl border border-ink-200 bg-white p-4 shadow-card md:p-5">
+          <div id="editorHint" class="mb-4 rounded-lg border border-dashed border-ink-300 bg-ink-50 px-4 py-3 text-sm text-ink-600">
+            <!-- Below lg the terminal list sits ABOVE this panel (single
+                 column); at lg+ it's the left sidebar. Direction-correct
+                 copy per width, not a single "ด้านซ้าย" that's wrong on
+                 a phone. -->
+            <span class="lg:hidden">เลือก QR Terminal จากรายการด้านบน เพื่อดูและแก้ไขตำแหน่ง GPS</span>
+            <span class="hidden lg:inline">เลือก QR Terminal จากรายการด้านซ้าย เพื่อดูและแก้ไขตำแหน่ง GPS</span>
+          </div>
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <label class="mb-1 block text-xs font-semibold text-ink-700">ชื่อ Terminal</label>
+              <div class="flex gap-2">
+                <input id="terminalName" type="text" placeholder="เช่น QR Terminal - สาขา 1"
+                       class="h-11 w-full rounded-lg border border-ink-300 bg-white px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)] md:h-10" />
+                <button id="updateNameBtn" type="button" class="btn-secondary shrink-0 !min-h-[44px] md:!min-h-[2.5rem]" disabled>บันทึกชื่อ</button>
+              </div>
+              <p id="nameStatus" class="mt-1 text-xs text-ink-500"></p>
+            </div>
+
+            <div>
+              <label class="mb-1 block text-xs font-semibold text-ink-700">ชื่อสถานที่</label>
+              <input id="locationName" type="text" placeholder="เช่น สำนักงานใหญ่ (กรุงเทพฯ)"
+                     class="h-11 w-full rounded-lg border border-ink-300 bg-white px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)] md:h-10" />
+            </div>
+
+            <div>
+              <label class="mb-1 block text-xs font-semibold text-ink-700">ละติจูด (Latitude)</label>
+              <input id="latitude" type="text" readonly placeholder="เลือกบนแผนที่"
+                     class="h-10 w-full rounded-lg border border-ink-300 bg-ink-50 px-3 text-sm tabular-nums text-ink-700" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-semibold text-ink-700">ลองจิจูด (Longitude)</label>
+              <input id="longitude" type="text" readonly placeholder="เลือกบนแผนที่"
+                     class="h-10 w-full rounded-lg border border-ink-300 bg-ink-50 px-3 text-sm tabular-nums text-ink-700" />
+            </div>
+
+            <div class="md:col-span-2">
+              <label class="mb-1 block text-xs font-semibold text-ink-700">รัศมีการตรวจสอบ (เมตร)</label>
+              <div class="flex items-center gap-3">
+                <input id="radiusSlider" type="range" min="50" max="500" step="10" value="200" class="h-11 flex-1 md:h-auto" />
+                <span id="radiusValue" class="min-w-[4.5rem] rounded-full bg-brand-500 px-3 py-1 text-center text-sm font-semibold text-white">200m</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Normal in-flow row, directly under the map/form panel — never
+               fixed/floating, or it z-fights the fixed bottom nav (z-20). -->
+          <div class="mt-5 flex flex-col gap-2 border-t border-ink-100 pt-4 md:flex-row md:flex-wrap md:items-center md:gap-3">
+            <button id="saveBtn" type="button" class="btn-primary w-full !min-h-[44px] md:w-auto md:!min-h-[2.5rem]" disabled>บันทึกตำแหน่ง GPS</button>
+            <!-- self-start: the less-destructive of the two deletes stays
+                 sized to its content even in the flex-col (stretch-by-
+                 default) mobile layout, so it doesn't outweigh the primary
+                 Save button above it. -->
+            <button id="deleteBtn" type="button" class="btn-danger-soft self-start !min-h-[44px] md:w-auto md:!min-h-[2.5rem]" disabled>ลบตำแหน่ง GPS</button>
+            <span id="saveStatus" class="text-xs text-ink-500"></span>
+          </div>
+          <div class="mt-3 flex flex-col gap-2 border-t border-ink-100 pt-3 md:flex-row md:items-center md:gap-3">
+            <button id="deleteTerminalBtn" type="button" class="btn-danger self-start !min-h-[44px] md:w-auto md:!min-h-[2.5rem]" disabled>ลบ QR Terminal</button>
+            <span id="deleteTerminalStatus" class="text-xs text-ink-500"></span>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Add Terminal dialog — MODAL-TO-SHEET (STYLE.md 5a): centred card at
+       md+, full-screen sheet below it. z-30 overlay / z-40 panel, above the
+       mobile nav bar (z-20). -->
+  <div id="modalOverlay" class="fixed inset-0 z-30 hidden bg-ink-900/40"></div>
+
+  <div id="addTerminalModal" role="dialog" aria-modal="true" aria-labelledby="addTerminalTitle"
+       class="fixed inset-0 z-40 hidden flex-col bg-white
+              md:inset-auto md:left-1/2 md:top-1/2 md:max-h-[85vh] md:w-full md:max-w-md
+              md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl md:border md:border-ink-200 md:shadow-popover">
+
+    <!-- STICKY HEADER: title + a 44px close target -->
+    <header class="sticky top-0 z-10 flex items-center gap-3 border-b border-ink-200 bg-white px-4 py-3 md:px-5">
+      <h2 id="addTerminalTitle" class="flex-1 text-base font-semibold text-brand-700">เพิ่ม QR Terminal</h2>
+      <button id="modalCloseBtn" type="button" aria-label="ปิด"
+              class="-mr-2 flex h-11 w-11 items-center justify-center rounded-lg text-ink-500 hover:bg-ink-100 hover:text-ink-900">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </header>
+
+    <!-- SCROLLABLE BODY: the ONLY scrolling region -->
+    <div class="flex-1 overflow-y-auto overscroll-contain px-4 py-4 md:px-5">
+      <label class="mb-1 block text-xs font-semibold text-ink-700">ชื่อ Terminal</label>
+      <input id="newTerminalName" type="text" placeholder="เช่น QR Terminal - สาขา 1"
+             class="h-11 w-full rounded-lg border border-ink-300 bg-white px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)] md:h-10" />
+      <p class="mt-2 text-xs text-ink-500">หลังจากสร้าง Terminal แล้ว สามารถตั้งค่า GPS ได้ในหน้านี้</p>
+    </div>
+
+    <!-- STICKY FOOTER -->
+    <footer class="sticky bottom-0 flex items-center justify-end gap-2 border-t border-ink-200 bg-white px-4 py-3 md:px-5"
+            style="padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);">
+      <span id="createStatus" class="mr-auto text-xs text-ink-500"></span>
+      <button id="modalCancelBtn" type="button" class="btn-secondary !min-h-[44px] md:!min-h-[2.5rem]">ยกเลิก</button>
+      <button id="modalSaveBtn" type="button" class="btn-primary !min-h-[44px] md:!min-h-[2.5rem]">เพิ่ม QR Terminal</button>
+    </footer>
+  </div>
+
+  <!-- Leaflet JS (kept from v1, same SRI pin) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+          crossorigin=""
+          onerror="window.__leafletFailed = true; document.getElementById('mapLoadError').style.display = 'block';"></script>
+
+  <script>
+    (function () {
+      "use strict";
+      const V2 = window.V2;
+
+      const DEVICES_API = "/api/private/devices/";
+
+      let map = null;
+      let marker = null;
+      let radiusCircle = null;
+      let terminals = [];
+      let currentTerminal = null;
+      let selectedLocation = null;
+      // Unsaved-edit tracker (ported from v1's terminal-gps-admin.js
+      // `state.hasChanges` — dropped in the initial v2 port). Drives the
+      // beforeunload confirm below.
+      let hasChanges = false;
+
+      function setInlineStatus(el, text, cls) {
+        el.textContent = text;
+        el.className = "text-xs " + (cls || "text-ink-500");
+      }
+      // Guarded: only clears if nothing newer has overwritten this text in
+      // the meantime. Callers decide WHETHER to schedule a clear — only
+      // call this after a success message; a failure should stay put.
+      function clearInlineStatusLater(el, ms) {
+        const text = el.textContent;
+        setTimeout(function () {
+          if (el.textContent === text) el.textContent = "";
+        }, ms || 1800);
+      }
+      /** apiFetch's err.body is raw response text — try to pull {detail} out of it. */
+      function safeDetail(bodyText) {
+        try { return JSON.parse(bodyText).detail; } catch (e) { return null; }
+      }
+      function mutationErrorText(prefix, err) {
+        const detail = err && err.body && safeDetail(err.body);
+        return prefix + (detail ? ": " + detail : "") + " (" + ((err && err.status) || "เครือข่าย") + ")";
+      }
+
+      window.addEventListener("beforeunload", function (e) {
+        if (hasChanges) {
+          e.preventDefault();
+          e.returnValue = "";
+        }
+      });
+
+      // ---------------------------------------------------------------
+      // Map
+      // ---------------------------------------------------------------
+      function initMap() {
+        if (typeof L === "undefined") {
+          document.getElementById("mapLoadError").style.display = "block";
+          return;
+        }
+        const bangkok = [13.7563, 100.5018];
+        map = L.map("map").setView(bangkok, 12);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          maxZoom: 19,
+          minZoom: 3,
+        }).addTo(map);
+        map.on("click", function (e) { setLocation(e.latlng.lat, e.latlng.lng); });
+      }
+
+      function terminalMarkerIcon() {
+        return L.divIcon({
+          className: "",
+          html:
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 32" width="30" height="40">' +
+            '<path fill="#8B0000" stroke="#FFFFFF" stroke-width="1.5" ' +
+            'd="M12 0C5.9 0 1 4.9 1 11c0 8.3 11 21 11 21s11-12.7 11-21C23 4.9 18.1 0 12 0z"/>' +
+            '<circle cx="12" cy="11" r="4.5" fill="#FFFFFF"/>' +
+            "</svg>",
+          iconSize: [30, 40],
+          iconAnchor: [15, 40],
+          popupAnchor: [0, -36],
+        });
+      }
+
+      function setLocation(lat, lng) {
+        selectedLocation = { lat: lat, lng: lng };
+        hasChanges = true;
+
+        document.getElementById("latitude").value = lat.toFixed(6);
+        document.getElementById("longitude").value = lng.toFixed(6);
+
+        if (!map) return;
+
+        if (!marker) {
+          marker = L.marker([lat, lng], { draggable: true, title: "ตำแหน่ง Terminal", icon: terminalMarkerIcon() }).addTo(map);
+          marker.on("dragend", function (e) {
+            const pos = e.target.getLatLng();
+            setLocation(pos.lat, pos.lng);
+          });
+          marker.bindPopup("ตำแหน่ง QR Terminal").openPopup();
+        } else {
+          marker.setLatLng([lat, lng]);
+          marker.openPopup();
+        }
+
+        updateRadiusCircle();
+        map.setView([lat, lng], 16);
+        document.getElementById("saveBtn").disabled = false;
+      }
+
+      function updateRadiusCircle() {
+        const radius = parseInt(document.getElementById("radiusSlider").value, 10);
+        if (!selectedLocation || !map) return;
+        if (radiusCircle) map.removeLayer(radiusCircle);
+        radiusCircle = L.circle([selectedLocation.lat, selectedLocation.lng], {
+          radius: radius,
+          color: "#8B0000",
+          fillColor: "#8B0000",
+          fillOpacity: 0.15,
+          weight: 2,
+        }).addTo(map);
+      }
+
+      function resetForm() {
+        document.getElementById("terminalName").value = "";
+        document.getElementById("locationName").value = "";
+        document.getElementById("latitude").value = "";
+        document.getElementById("longitude").value = "";
+        document.getElementById("radiusSlider").value = 200;
+        document.getElementById("radiusValue").textContent = "200m";
+
+        if (map && marker) { map.removeLayer(marker); marker = null; }
+        if (map && radiusCircle) { map.removeLayer(radiusCircle); radiusCircle = null; }
+        selectedLocation = null;
+
+        document.getElementById("updateNameBtn").disabled = true;
+        document.getElementById("saveBtn").disabled = true;
+        document.getElementById("deleteBtn").disabled = true;
+        document.getElementById("deleteTerminalBtn").disabled = true;
+        hasChanges = false;
+
+        if (map) map.setView([13.7563, 100.5018], 12);
+      }
+
+      // ---------------------------------------------------------------
+      // Terminal list
+      // ---------------------------------------------------------------
+      const listLoading = document.getElementById("listLoading");
+      const listError = document.getElementById("listError");
+      const listErrorText = document.getElementById("listErrorText");
+      const listEmpty = document.getElementById("listEmpty");
+      const listEl = document.getElementById("terminalList");
+
+      function hideAllListPanes() {
+        listLoading.classList.add("hidden");
+        listError.classList.add("hidden");
+        listEmpty.classList.add("hidden");
+        listEl.classList.add("hidden");
+      }
+
+      function parseMetadata(metadataStr) {
+        try { return JSON.parse(metadataStr || "{}"); } catch (e) { return {}; }
+      }
+
+      function renderTerminalList() {
+        if (terminals.length === 0) {
+          hideAllListPanes();
+          listEmpty.classList.remove("hidden");
+          return;
+        }
+
+        listEl.innerHTML = terminals.map(function (t) {
+          // device_metadata is a free-form JSON blob (Optional[str] on the
+          // backend) — a malformed/string lat-lng must not throw inside
+          // this .map() and abort the whole list render (hideAllListPanes /
+          // listEl.classList.remove("hidden") below would then never run,
+          // stranding the sidebar on its spinner forever).
+          try {
+            const metadata = parseMetadata(t.device_metadata);
+            const gps = metadata.gps || {};
+            const lat = Number(gps.latitude);
+            const lng = Number(gps.longitude);
+            const hasGPS = Number.isFinite(lat) && Number.isFinite(lng);
+            const isActive = currentTerminal && currentTerminal.id === t.id;
+            const gpsBadge = hasGPS
+              ? "<span class='inline-flex items-center rounded-full bg-good-100 px-2 py-0.5 text-[11px] font-medium text-good-700'>มี GPS</span>"
+              : "<span class='inline-flex items-center rounded-full bg-bad-100 px-2 py-0.5 text-[11px] font-medium text-bad-700'>ยังไม่ได้ตั้งค่า GPS</span>";
+            return (
+              "<div class='terminal-card rounded-lg border p-3 " + (isActive ? "active" : "border-ink-200 bg-white") + "' data-terminal-id='" + t.id + "' tabindex='0' role='button'>" +
+                "<div class='text-sm font-semibold text-ink-900'>" + V2.escapeHtml(t.name) + "</div>" +
+                "<div class='mt-1.5 flex flex-wrap items-center gap-2'>" +
+                  gpsBadge +
+                  (hasGPS ? "<span class='text-xs text-ink-500 tabular-nums'>รัศมี " + (gps.radius != null ? gps.radius : "—") + "m</span>" : "") +
+                "</div>" +
+                (hasGPS
+                  ? "<div class='mt-1 text-xs text-ink-600'>" + V2.escapeHtml(gps.location_name || "ไม่ระบุชื่อ") + "</div>" +
+                    "<div class='mt-0.5 text-xs text-ink-500 tabular-nums'>" + lat.toFixed(4) + ", " + lng.toFixed(4) + "</div>"
+                  : "")
+              + "</div>"
+            );
+          } catch (e) {
+            return (
+              "<div class='terminal-card rounded-lg border border-bad-200 bg-bad-50 p-3' data-terminal-id='" + t.id + "' tabindex='0' role='button'>" +
+                "<div class='text-sm font-semibold text-ink-900'>" + V2.escapeHtml(t.name || "Terminal") + "</div>" +
+                "<div class='mt-1 text-xs text-bad-700'>ข้อมูล GPS ไม่ถูกต้อง</div>" +
+              "</div>"
+            );
+          }
+        }).join("");
+
+        hideAllListPanes();
+        listEl.classList.remove("hidden");
+
+        listEl.querySelectorAll(".terminal-card").forEach(function (card) {
+          card.addEventListener("click", function () {
+            selectTerminal(parseInt(card.dataset.terminalId, 10));
+          });
+          card.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              selectTerminal(parseInt(card.dataset.terminalId, 10));
+            }
+          });
+        });
+      }
+
+      async function loadTerminals(preserveSelection) {
+        hideAllListPanes();
+        listLoading.classList.remove("hidden");
+        try {
+          const data = await V2.apiFetch(DEVICES_API);
+          terminals = (data.devices || []).filter(function (d) { return d.device_type === "qr_terminal"; });
+          renderTerminalList();
+          if (preserveSelection && currentTerminal) {
+            const stillThere = terminals.find(function (t) { return t.id === currentTerminal.id; });
+            if (stillThere) selectTerminal(stillThere.id);
+          }
+        } catch (err) {
+          hideAllListPanes();
+          listError.classList.remove("hidden");
+          listErrorText.textContent = "ไม่สามารถโหลดข้อมูล Terminal ได้ (" + (err.status || "เครือข่าย") + ")";
+        }
+      }
+
+      function selectTerminal(terminalId) {
+        const terminal = terminals.find(function (t) { return t.id === terminalId; });
+        if (!terminal) return;
+
+        currentTerminal = terminal;
+        document.getElementById("editorHint").classList.add("hidden");
+        listEl.querySelectorAll(".terminal-card").forEach(function (card) {
+          card.classList.toggle("active", parseInt(card.dataset.terminalId, 10) === terminalId);
+          card.classList.toggle("border-ink-200", parseInt(card.dataset.terminalId, 10) !== terminalId);
+          card.classList.toggle("bg-white", parseInt(card.dataset.terminalId, 10) !== terminalId);
+        });
+
+        document.getElementById("terminalName").value = terminal.name;
+        document.getElementById("updateNameBtn").disabled = false;
+
+        const metadata = parseMetadata(terminal.device_metadata);
+        const gps = metadata.gps || {};
+        const lat = Number(gps.latitude);
+        const lng = Number(gps.longitude);
+
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          // Radius must be set BEFORE setLocation() — setLocation() calls
+          // updateRadiusCircle(), which reads #radiusSlider.value directly.
+          // Setting it after would draw the circle at the PREVIOUSLY
+          // selected terminal's radius for one frame (and permanently if a
+          // terminal without GPS was selected in between, since resetForm()
+          // resets the slider back to 200 first).
+          document.getElementById("radiusSlider").value = gps.radius || 200;
+          document.getElementById("radiusValue").textContent = (gps.radius || 200) + "m";
+          setLocation(lat, lng);
+          document.getElementById("locationName").value = gps.location_name || "";
+          document.getElementById("deleteBtn").disabled = false;
+        } else {
+          resetForm();
+          document.getElementById("terminalName").value = terminal.name;
+          document.getElementById("updateNameBtn").disabled = false;
+        }
+
+        document.getElementById("deleteTerminalBtn").disabled = false;
+        // Loading a terminal's saved state is not an unsaved edit.
+        hasChanges = false;
+      }
+
+      document.getElementById("listRetry").addEventListener("click", function () { loadTerminals(); });
+
+      // ---------------------------------------------------------------
+      // Mutations — all go through /api/private/devices/* (normalized;
+      // v1's create call used /fingerprintlogs/api/devices/, an inconsistent
+      // prefix vs every other call in that file).
+      // ---------------------------------------------------------------
+      document.getElementById("updateNameBtn").addEventListener("click", async function () {
+        if (!currentTerminal) return;
+        const btn = this;
+        const statusEl = document.getElementById("nameStatus");
+        const newName = document.getElementById("terminalName").value.trim();
+
+        if (!newName) { setInlineStatus(statusEl, "กรุณากรอกชื่อ Terminal", "text-bad-700"); return; }
+        if (newName === currentTerminal.name) { setInlineStatus(statusEl, "ชื่อไม่เปลี่ยนแปลง", "text-ink-500"); clearInlineStatusLater(statusEl); return; }
+
+        btn.disabled = true;
+        setInlineStatus(statusEl, "กำลังบันทึก…");
+        let ok = false;
+        try {
+          await V2.apiFetch(DEVICES_API + currentTerminal.id, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: newName }),
+          });
+          setInlineStatus(statusEl, "บันทึกแล้ว", "text-good-700");
+          ok = true;
+          await loadTerminals(true);
+        } catch (err) {
+          // Duplicate name -> 409 with the conflicting name in `detail`
+          // (app/api/consolidated_devices.py update_device) — surface it,
+          // not a bare "(409)".
+          setInlineStatus(statusEl, mutationErrorText("บันทึกไม่สำเร็จ", err), "text-bad-700");
+        } finally {
+          btn.disabled = false;
+          if (ok) clearInlineStatusLater(statusEl);
+        }
+      });
+
+      document.getElementById("saveBtn").addEventListener("click", async function () {
+        if (!currentTerminal || !selectedLocation) return;
+        const btn = this;
+        const statusEl = document.getElementById("saveStatus");
+        const locationName = document.getElementById("locationName").value.trim();
+        if (!locationName) { setInlineStatus(statusEl, "กรุณากรอกชื่อสถานที่", "text-bad-700"); return; }
+
+        const radius = parseInt(document.getElementById("radiusSlider").value, 10);
+        const metadata = parseMetadata(currentTerminal.device_metadata);
+        metadata.gps = {
+          latitude: selectedLocation.lat,
+          longitude: selectedLocation.lng,
+          radius: radius,
+          location_name: locationName,
+          updated_at: new Date().toISOString(),
+        };
+
+        btn.disabled = true;
+        setInlineStatus(statusEl, "กำลังบันทึก…");
+        let ok = false;
+        try {
+          await V2.apiFetch(DEVICES_API + currentTerminal.id, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ device_metadata: JSON.stringify(metadata) }),
+          });
+          setInlineStatus(statusEl, "บันทึกแล้ว", "text-good-700");
+          ok = true;
+          hasChanges = false;
+          await loadTerminals(true);
+        } catch (err) {
+          setInlineStatus(statusEl, mutationErrorText("บันทึกไม่สำเร็จ", err), "text-bad-700");
+        } finally {
+          btn.disabled = false;
+          if (ok) clearInlineStatusLater(statusEl);
+        }
+      });
+
+      document.getElementById("deleteBtn").addEventListener("click", async function () {
+        if (!currentTerminal) return;
+        if (!confirm("ต้องการลบตำแหน่ง GPS ของ " + currentTerminal.name + " ใช่หรือไม่?")) return;
+
+        const btn = this;
+        const statusEl = document.getElementById("saveStatus");
+        const terminalId = currentTerminal.id;
+        const metadata = parseMetadata(currentTerminal.device_metadata);
+        delete metadata.gps;
+
+        btn.disabled = true;
+        setInlineStatus(statusEl, "กำลังลบ…");
+        let ok = false;
+        try {
+          await V2.apiFetch(DEVICES_API + terminalId, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ device_metadata: JSON.stringify(metadata) }),
+          });
+          setInlineStatus(statusEl, "ลบตำแหน่ง GPS แล้ว", "text-good-700");
+          ok = true;
+          hasChanges = false;
+          await loadTerminals();
+          selectTerminal(terminalId);
+        } catch (err) {
+          setInlineStatus(statusEl, mutationErrorText("ลบไม่สำเร็จ", err), "text-bad-700");
+        } finally {
+          btn.disabled = false;
+          if (ok) clearInlineStatusLater(statusEl);
+        }
+      });
+
+      document.getElementById("deleteTerminalBtn").addEventListener("click", async function () {
+        if (!currentTerminal) return;
+        if (!confirm('คำเตือน: ต้องการลบ QR Terminal "' + currentTerminal.name + '" ออกจากระบบใช่หรือไม่?\n\nการดำเนินการนี้จะลบ Terminal และข้อมูล GPS ทั้งหมด')) return;
+
+        const btn = this;
+        const statusEl = document.getElementById("deleteTerminalStatus");
+        const terminalId = currentTerminal.id;
+
+        btn.disabled = true;
+        setInlineStatus(statusEl, "กำลังลบ…");
+        let ok = false;
+        try {
+          await V2.apiFetch(DEVICES_API + terminalId, { method: "DELETE" });
+          setInlineStatus(statusEl, "ลบ Terminal แล้ว", "text-good-700");
+          ok = true;
+          currentTerminal = null;
+          hasChanges = false;
+          resetForm();
+          document.getElementById("editorHint").classList.remove("hidden");
+          await loadTerminals();
+        } catch (err) {
+          // A terminal with attendance history returns 400 with the record
+          // count in `detail` (app/api/consolidated_devices.py delete_device)
+          // — surface it, not a bare "(400)".
+          setInlineStatus(statusEl, mutationErrorText("ลบไม่สำเร็จ", err), "text-bad-700");
+        } finally {
+          btn.disabled = false;
+          if (ok) clearInlineStatusLater(statusEl);
+        }
+      });
+
+      // ---------------------------------------------------------------
+      // Add-terminal modal
+      // ---------------------------------------------------------------
+      const modalOverlay = document.getElementById("modalOverlay");
+      const modal = document.getElementById("addTerminalModal");
+      let modalIsOpen = false;
+      let modalSavedOverflow = "";
+
+      function modalFocusables() {
+        return Array.prototype.slice
+          .call(modal.querySelectorAll("a[href],button:not([disabled]),input:not([disabled])"))
+          .filter(function (el) { return el.offsetParent !== null; });
+      }
+
+      function openModal() {
+        if (modalIsOpen) return;
+        modalIsOpen = true;
+        modalOverlay.classList.remove("hidden");
+        modal.classList.remove("hidden");
+        modal.classList.add("flex");
+        document.getElementById("newTerminalName").value = "";
+        document.getElementById("createStatus").textContent = "";
+        modalSavedOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        setTimeout(function () { document.getElementById("newTerminalName").focus(); }, 50);
+      }
+      function closeModal() {
+        if (!modalIsOpen) return;
+        modalIsOpen = false;
+        modalOverlay.classList.add("hidden");
+        modal.classList.add("hidden");
+        modal.classList.remove("flex");
+        document.body.style.overflow = modalSavedOverflow;
+        document.getElementById("addTerminalBtn").focus();
+      }
+      document.getElementById("addTerminalBtn").addEventListener("click", openModal);
+      document.getElementById("modalCloseBtn").addEventListener("click", closeModal);
+      document.getElementById("modalCancelBtn").addEventListener("click", closeModal);
+      modalOverlay.addEventListener("click", closeModal);
+
+      document.addEventListener("keydown", function (e) {
+        if (!modalIsOpen) return;
+        if (e.key === "Escape" || e.key === "Esc") {
+          e.preventDefault();
+          closeModal();
+          return;
+        }
+        if (e.key !== "Tab") return;
+        const items = modalFocusables();
+        if (!items.length) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (e.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      });
+
+      document.getElementById("modalSaveBtn").addEventListener("click", async function () {
+        const btn = this;
+        const statusEl = document.getElementById("createStatus");
+        const name = document.getElementById("newTerminalName").value.trim();
+        if (!name) { setInlineStatus(statusEl, "กรุณากรอกชื่อ Terminal", "text-bad-700"); return; }
+
+        btn.disabled = true;
+        setInlineStatus(statusEl, "กำลังบันทึก…");
+        try {
+          const result = await V2.apiFetch(DEVICES_API, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: name,
+              device_type: "qr_terminal",
+              ip_address: null,
+              port: null,
+              is_active: true,
+              device_metadata: null,
+            }),
+          });
+          setInlineStatus(statusEl, "เพิ่มแล้ว", "text-good-700");
+          closeModal();
+          await loadTerminals();
+          if (result && result.device && result.device.id) {
+            selectTerminal(result.device.id);
+          }
+        } catch (err) {
+          setInlineStatus(statusEl, mutationErrorText("เพิ่มไม่สำเร็จ", err), "text-bad-700");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      // ---------------------------------------------------------------
+      // Misc listeners
+      // ---------------------------------------------------------------
+      document.getElementById("radiusSlider").addEventListener("input", function () {
+        document.getElementById("radiusValue").textContent = this.value + "m";
+        updateRadiusCircle();
+        hasChanges = true;
+      });
+      document.getElementById("locationName").addEventListener("input", function () {
+        hasChanges = true;
+      });
+
+      // ---------------------------------------------------------------
+      // Init
+      // ---------------------------------------------------------------
+      initMap();
+      setTimeout(function () { loadTerminals(); }, typeof L === "undefined" ? 0 : 300);
+    })();
+  </script>
+
+  <script defer src="https://erp.thehfhotel.org/shell/hf-bar.js"
+          data-app="Attendance" data-module="people"></script>
+</body>
+</html>
