@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
   <meta name="theme-color" content="#4F0E0E" />
   <title>รายงาน — ระบบบันทึกเวลา</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -10,6 +11,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="/fingerprintlogs/static/v2/theme.js"></script>
+  <!-- Shared navigation — renders BOTH navs. Every page, no exceptions. -->
+  <script defer src="/fingerprintlogs/static/v2/nav.js"></script>
   <script>
     tailwind.config = {
       theme: { extend: window.V2.THEME },
@@ -21,115 +24,260 @@
         "bg-ink-200",   "text-ink-700",
         "bg-off-100",   "text-off-600",
         "bg-ink-100",   "text-ink-600",
+        "bg-ink-50",    "text-ink-500",
+        "bg-ink-50/30", "bg-ink-50/40", "bg-ink-50/60",
+        "bg-warn-50",   "text-warn-700",
+        "bg-brand-50",  "text-brand-600",
+        "text-good-600",
       ],
     };
   </script>
   <style>
+    /* Belt-and-braces: the CDN applies fontFamily only after theme.js parses. */
     html, body { font-family: 'Sarabun', 'Noto Sans Thai', system-ui, -apple-system, sans-serif; }
-    input[type="month"]::-webkit-calendar-picker-indicator { opacity: 0.6; cursor: pointer; }
+    /* HF One body type: 14px / 1.6 (Thai needs the tall leading). Set on BODY,
+       never on <html> — Tailwind's spacing scale is rem-based and rescaling the
+       root font-size shrinks every padding and gap utility on the page. */
+    body { font-size: 0.875rem; line-height: 1.6; }
+    input[type="month"]::-webkit-calendar-picker-indicator,
+    input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.6; cursor: pointer; }
+
     /* Sticky first column in the grid keeps the employee name visible while
-       the day columns scroll horizontally. */
+       the day columns scroll horizontally. Both stick to the grid's OWN
+       overflow container, never the viewport (the hf-bar sits in flow). */
     .grid-name { position: sticky; left: 0; z-index: 10; }
     .grid-head { position: sticky; top: 0; z-index: 20; }
     .grid-corner { position: sticky; left: 0; top: 0; z-index: 30; }
+    .grid-cell {
+      width: 2.6rem; min-width: 2.6rem; height: 2.2rem; text-align: center;
+      border-bottom: 1px solid #F4F1ED;   /* ink-100  --hf-panel-tint */
+    }
+    /* Below md, grid cells (name + day) are real tap targets — the delegated
+       click-to-timesheet handler fires on both — so they must clear 44px like
+       every other interactive element in the app (STYLE.md 2f). Desktop keeps
+       the dense 2.6rem x 2.2rem cell unchanged. */
+    @media (max-width: 767px) {
+      .grid-cell { width: 2.75rem; min-width: 2.75rem; height: 2.75rem; }
+    }
+    td.grid-name, th.grid-corner { background: #FFFFFF; }             /* --hf-panel */
+    thead .grid-corner, thead .grid-head { background: #F4F1ED; }     /* ink-100 */
+    /* Right-edge shadow cue on the sticky name column — the WIDE-TABLE
+       pattern (STYLE.md 5b): tells a phone user there is more to scroll. */
+    .grid-name, .grid-corner {
+      box-shadow: 4px 0 6px -4px rgb(38 34 30 / 0.15);   /* ink-900 / 15% */
+    }
+    /* The ONE gold highlight on this screen: today's column in the month grid. */
+    thead th.grid-today { box-shadow: inset 0 -2px 0 #D9A441; }       /* gold-500 */
+
+    /* Sticky first column (วันที่) in the ช่วงวันที่ range table — same
+       WIDE-TABLE pattern (STYLE.md 5b) as the month grid above, so a phone
+       user scrolled right still knows which day a row is. Zebra is dropped on
+       this column rather than repeated, matching the grid's own sticky cell. */
+    .range-date-cell {
+      position: sticky; left: 0; z-index: 10;
+      box-shadow: 4px 0 6px -4px rgb(38 34 30 / 0.15);   /* ink-900 / 15% */
+    }
+
+    /* ---------- Branch chip (pill, JS toggles .loc-on) ---------- */
+    .loc-chip {
+      display: inline-flex; align-items: center; gap: .375rem;
+      border-radius: 9999px;
+      font-size: .8125rem; line-height: 1.25rem; font-weight: 500;
+      border: 1px solid #E8E4DF;          /* ink-200  --hf-border */
+      background: #FFFFFF;                /* --hf-panel */
+      color: #5C554C;                     /* ink-600 */
+      cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+    }
+    .loc-chip:hover { border-color: #CFC9C1; background: #FAF9F7; }   /* ink-300 / ink-50 */
+    .loc-chip.loc-on {
+      border-color: #E9A3A3;              /* brand-200 */
+      background: #FBEAEA;                /* brand-50 */
+      color: #6B1212;                     /* brand-700 — 10.5:1 */
+      font-weight: 600;
+    }
+
+    /* ---------- Segmented view toggle (JS toggles .view-on) ---------- */
+    .seg {
+      padding: .375rem .875rem;
+      font-size: .8125rem; font-weight: 500;
+      color: #5C554C;                     /* ink-600 */
+      background: transparent;
+      border-radius: 6px;                 /* --hf-radius-sm */
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .seg:hover { background: #F4F1ED; }   /* ink-100 */
+    .seg.view-on {
+      background: #8B0000;                /* brand-500 — filled, white text 10:1 */
+      color: #FFFFFF;
+      font-weight: 600;
+    }
+
+    /* ---------- Primary / secondary buttons ---------- */
+    .btn-primary {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;                 /* --hf-radius */
+      font-size: .875rem; font-weight: 600;
+      background: #8B0000;                /* brand-500 */
+      border: 1px solid #8B0000;
+      color: #FFFFFF;                     /* 10.0:1 */
+      cursor: pointer;
+      /* Thai button copy must never wrap: a 2-line label inside a 40px box
+         clips the tone marks off the second line ("เดือน / นี้"). */
+      white-space: nowrap;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-primary:hover   { background: #7A0000; border-color: #7A0000; }  /* brand-600 */
+    .btn-primary:active  { background: #6B1212; border-color: #6B1212; }  /* brand-700 */
+    .btn-primary:disabled{ background: #E8E4DF; border-color: #E8E4DF; color: #7A7268; cursor: not-allowed; }
+
+    .btn-secondary {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;
+      font-size: .875rem; font-weight: 500;
+      background: #FFFFFF;
+      border: 1px solid #CFC9C1;          /* --hf-border-strong */
+      color: #332D27;                     /* ink-800 */
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-secondary:hover { background: #FAF9F7; border-color: #7A7268; }
+    .btn-secondary:disabled { color: #7A7268; cursor: not-allowed; }
+
+    /* ---------- Focus: brand-500 at 40%, never a colored glow ---------- */
+    a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid rgba(139, 0, 0, .40);   /* brand-500 / 40% */
+      outline-offset: 2px;
+    }
+
+    /* ---------- CSV export MODAL-TO-SHEET motion (STYLE.md 5a) ----------
+       data-open (set by openExport/closeExport, after a forced reflow so the
+       from-state commits first — same technique as nav.js's sheet) drives the
+       to-state. Below md: slide up. At md+: fade + scale, still centred via
+       this same rule (replaces the static md:-translate-x/y-1/2 utilities so
+       the centring translate can compose with the scale in one declaration).
+       Instant under prefers-reduced-motion, matching every other sheet here. */
+    #exportDialog {
+      transform: translateY(100%);
+      transition: transform 200ms ease-out;
+    }
+    #exportDialog[data-open="1"] { transform: translateY(0); }
+    @media (min-width: 768px) {
+      #exportDialog {
+        transform: translate(-50%, -50%) scale(0.98);
+        opacity: 0;
+        transition: opacity 150ms ease-out, transform 150ms ease-out;
+      }
+      #exportDialog[data-open="1"] { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    }
+    #exportOverlay { opacity: 0; transition: opacity 150ms ease-out; }
+    #exportOverlay[data-open="1"] { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) {
+      #exportDialog, #exportOverlay { transition: none; }
+    }
   </style>
 </head>
 <body class="min-h-screen bg-ink-50 text-ink-900 antialiased">
 
-  <!-- DESKTOP TOP NAV (md+) -->
-  <nav class="hidden border-b border-ink-200 bg-white md:block">
-    <div class="mx-auto flex max-w-7xl items-center justify-between px-5 py-3">
-      <a href="/fingerprintlogs/v2/" class="flex items-center gap-2 text-sm font-semibold text-ink-700 hover:text-brand-600">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><polyline points="15 18 9 12 15 6"/></svg>
-        ระบบบันทึกเวลา
-      </a>
-      <div class="flex items-center gap-1">
-        <a href="/fingerprintlogs/v2/live" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">ดูสด</a>
-        <a href="/fingerprintlogs/v2/monthly" class="rounded-md px-3 py-1.5 text-sm font-medium bg-brand-100 text-brand-700" aria-current="page">รายงาน</a>
-        <a href="/fingerprintlogs/v2/shifts-admin" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">จัดกะ</a>
-      </div>
-    </div>
-  </nav>
+  <!-- The ONLY nav markup this page carries. See STYLE.md section 2. -->
+  <nav id="v2nav" data-page="monthly"></nav>
 
-  <main class="mx-auto max-w-7xl px-4 pt-5 pb-16 md:px-5 md:pt-8">
+  <main class="mx-auto max-w-7xl px-4 pt-5 pb-28 md:px-5 md:pt-8 md:pb-12">
 
     <!-- HEADER -->
     <header class="mb-5 md:mb-7">
-      <p class="text-xs font-medium uppercase tracking-[0.18em] text-brand-600">รายงาน</p>
-      <h1 class="mt-1 text-2xl font-bold tracking-tight text-ink-900 md:text-3xl">รายงานเวลาทำงาน</h1>
+      <p class="text-xs font-semibold tracking-wide text-brand-600">รายงาน</p>
+      <h1 class="mt-1 text-xl font-bold tracking-tight text-ink-900">รายงานเวลาทำงาน</h1>
       <p class="mt-1 text-sm text-ink-500">ดูการเข้า–ออกรายวัน และสรุปการทำงาน มาสาย ขาด/ลา รายเดือน สำหรับทำเงินเดือนและบริหารจัดการ</p>
     </header>
 
     <!-- CONTROLS -->
-    <section class="mb-4 rounded-2xl border border-ink-200 bg-white p-3 shadow-card md:p-4">
+    <section class="mb-4 rounded-xl border border-ink-200 bg-white p-3 shadow-card md:p-4">
       <div class="flex flex-wrap items-center gap-2">
         <!-- DAY stepper (shown in "ตามวันที่" mode) -->
         <div id="dayControls" class="flex items-center gap-2">
-          <button id="prevDayBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50" aria-label="วันก่อนหน้า">
+          <button id="prevDayBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50" aria-label="วันก่อนหน้า">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
-          <input id="datePicker" type="date" class="h-11 min-w-[10rem] rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-800 shadow-card focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" />
-          <button id="nextDayBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50" aria-label="วันถัดไป">
+          <input id="datePicker" type="date" class="h-11 min-w-[10rem] rounded-lg border border-ink-300 bg-white px-3 text-sm font-medium text-ink-800 focus:outline-none" />
+          <button id="nextDayBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50" aria-label="วันถัดไป">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="9 18 15 12 9 6"/></svg>
           </button>
-          <button id="todayBtn" class="h-11 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">วันนี้</button>
+          <button id="todayBtn" class="btn-primary h-11">วันนี้</button>
         </div>
 
         <!-- MONTH stepper (shown in "ตาราง" / "รายคน" modes) -->
         <div id="monthControls" class="flex items-center gap-2 hidden">
-          <button id="prevBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50" aria-label="เดือนก่อนหน้า">
+          <button id="prevBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50" aria-label="เดือนก่อนหน้า">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
-          <input id="monthPicker" type="month" class="h-11 min-w-[10rem] rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-800 shadow-card focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" />
-          <button id="nextBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50" aria-label="เดือนถัดไป">
+          <input id="monthPicker" type="month" class="h-11 min-w-[10rem] rounded-lg border border-ink-300 bg-white px-3 text-sm font-medium text-ink-800 focus:outline-none" />
+          <button id="nextBtn" class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50" aria-label="เดือนถัดไป">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="9 18 15 12 9 6"/></svg>
           </button>
-          <button id="thisMonthBtn" class="h-11 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">เดือนนี้</button>
+          <button id="thisMonthBtn" class="btn-primary h-11">เดือนนี้</button>
         </div>
 
         <!-- View toggle -->
-        <div role="tablist" class="ml-auto flex rounded-lg border border-ink-200 bg-ink-50 p-0.5 text-sm">
-          <button id="viewDayBtn" class="rounded-md px-3 py-1.5 font-medium" data-view="day">ตามวันที่</button>
-          <button id="viewGridBtn" class="rounded-md px-3 py-1.5 font-medium" data-view="grid">ตาราง</button>
-          <button id="viewSheetBtn" class="rounded-md px-3 py-1.5 font-medium" data-view="timesheet">รายคน</button>
+        <div id="viewToggleWrap" role="tablist" class="ml-auto flex overflow-x-auto rounded-lg border border-ink-200 bg-ink-50 p-0.5">
+          <button id="viewDayBtn" class="seg inline-flex min-h-[44px] items-center justify-center md:min-h-0" data-view="day">ตามวันที่</button>
+          <button id="viewGridBtn" class="seg inline-flex min-h-[44px] items-center justify-center md:min-h-0" data-view="grid">ตาราง</button>
+          <button id="viewSheetBtn" class="seg inline-flex min-h-[44px] items-center justify-center md:min-h-0" data-view="timesheet">รายคน</button>
         </div>
       </div>
 
       <div class="mt-3 flex flex-wrap items-center gap-2">
         <div class="relative flex-1 min-w-[12rem]">
-          <input id="searchInput" type="search" placeholder="ค้นหาชื่อหรือรหัสบัตร…" class="h-10 w-full rounded-lg border border-ink-200 bg-white pl-9 pr-3 text-sm text-ink-800 placeholder:text-ink-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" />
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400">
+          <input id="searchInput" type="search" placeholder="ค้นหาชื่อหรือรหัสบัตร…" class="h-11 w-full rounded-lg border border-ink-300 bg-white pl-9 pr-3 text-sm text-ink-800 placeholder:text-ink-500 focus:outline-none md:h-10" />
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-500">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
         </div>
-        <div role="tablist" class="flex flex-wrap items-center gap-1.5 text-xs">
-          <span class="text-ink-400">สาขา:</span>
-          <button data-location="all" class="loc-chip loc-on h-10 rounded-full border px-3 font-medium">ทั้งหมด</button>
-          <button data-location="HF" class="loc-chip h-10 rounded-full border px-3 font-medium">HF</button>
-          <button data-location="HF_VILLE" class="loc-chip h-10 rounded-full border px-3 font-medium">HF Ville</button>
+        <!-- Branch filter — a horizontally scrolling rail below md (WIDE-TABLE
+             family pattern applied to a filter-chip row: STYLE.md section 2f). -->
+        <div role="tablist" class="flex w-full flex-nowrap items-center gap-1.5 overflow-x-auto sm:w-auto">
+          <span class="shrink-0 text-xs text-ink-500">สาขา:</span>
+          <button data-location="all" class="loc-chip loc-on h-11 min-w-[2.75rem] shrink-0 px-3 md:h-10 md:min-w-0">ทั้งหมด</button>
+          <button data-location="HF" class="loc-chip h-11 min-w-[2.75rem] shrink-0 px-3 md:h-10 md:min-w-0">HF</button>
+          <button data-location="HF_VILLE" class="loc-chip h-11 min-w-[2.75rem] shrink-0 px-3 md:h-10 md:min-w-0">HF Ville</button>
         </div>
+        <!-- Absorbs the retired v1 /export page. The server hardcodes the
+             "detailed" CSV format, so there is deliberately no format picker. -->
+        <button id="openExportBtn" type="button" class="btn-secondary h-11 w-full md:h-10 md:w-auto">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          ส่งออก CSV
+        </button>
       </div>
 
-      <p id="metaLine" class="mt-3 text-xs text-ink-500"></p>
+      <p id="metaLine" class="mt-3 text-xs text-ink-600"></p>
     </section>
 
     <!-- Loading / Error / Empty -->
-    <div id="loadingState" class="hidden rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+    <div id="loadingState" class="hidden rounded-xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
       <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
       <p class="mt-3 text-sm text-ink-500">กำลังโหลดรายงาน…</p>
     </div>
-    <div id="errorState" class="hidden rounded-2xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+    <div id="errorState" class="hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
       <span id="errorText">ไม่สามารถโหลดรายงานได้</span>
       <button id="retryBtn" class="ml-2 underline underline-offset-2">ลองใหม่</button>
     </div>
-    <div id="emptyState" class="hidden rounded-2xl border border-ink-200 bg-white px-6 py-16 text-center shadow-card">
+    <div id="emptyState" class="hidden rounded-xl border border-ink-200 bg-white px-6 py-16 text-center shadow-card">
       <p id="emptyText" class="text-sm font-medium text-ink-700">ไม่มีข้อมูลพนักงานในเดือนนี้</p>
       <p class="mt-1 text-xs text-ink-500">กำหนดบทบาทและกะการทำงานที่หน้า "จัดกะ"</p>
     </div>
 
     <!-- GRID VIEW -->
     <section id="gridWrap" class="hidden">
-      <div class="overflow-auto rounded-2xl border border-ink-200 bg-white shadow-card" style="max-height: 75vh;">
+      <div class="overflow-auto rounded-xl border border-ink-200 bg-white shadow-card" style="max-height: 75vh;"
+           tabindex="0" aria-label="ตารางเวลาทำงานรายเดือน แต่ละคอลัมน์คือหนึ่งวัน">
         <table class="border-collapse text-xs">
           <thead>
             <tr id="gridHeadRow" class="bg-ink-50 text-ink-500"></tr>
@@ -147,22 +295,28 @@
         <span><span class="rounded bg-brand-50 px-1 text-brand-600">ลา</span> = ลา/วันหยุดนักขัตฤกษ์</span>
         <span><span class="font-semibold text-ink-700">*</span> เวลาเข้า/ออก = ประมาณจากกะ (ไม่มีตอกบัตร)</span>
         <span><span class="font-semibold text-ink-700">+1</span> = ออกวันถัดไป (กะข้ามคืน)</span>
-        <span class="text-ink-400">คลิกที่ชื่อหรือช่องเพื่อดูรายคน</span>
+        <span class="text-ink-500">คลิกที่ชื่อหรือช่องเพื่อดูรายคน</span>
       </div>
     </section>
 
     <!-- TIMESHEET VIEW -->
     <section id="sheetWrap" class="hidden">
       <div class="mb-3 flex flex-wrap items-center gap-2">
-        <button id="backToGrid" class="inline-flex h-10 items-center gap-1.5 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-700 hover:bg-ink-50">
+        <button id="backToGrid" class="btn-secondary h-11 md:h-10">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><polyline points="15 18 9 12 15 6"/></svg>
           ตาราง
         </button>
-        <select id="employeeSelect" class="h-10 min-w-[14rem] flex-1 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"></select>
+        <select id="employeeSelect" class="h-11 min-w-[14rem] flex-1 rounded-lg border border-ink-300 bg-white px-3 text-sm font-medium text-ink-800 focus:outline-none md:h-10"></select>
+        <!-- Month sheet vs. free date range. The range mode absorbs the retired
+             v1 /individual-attendance page and works across month boundaries. -->
+        <div role="tablist" class="flex overflow-x-auto rounded-lg border border-ink-200 bg-ink-50 p-0.5">
+          <button id="sheetModeMonthBtn" class="seg inline-flex min-h-[44px] items-center justify-center md:min-h-0" data-sheetmode="month">รายเดือน</button>
+          <button id="sheetModeRangeBtn" class="seg inline-flex min-h-[44px] items-center justify-center md:min-h-0" data-sheetmode="range">ช่วงวันที่</button>
+        </div>
       </div>
 
-      <!-- Employee header + totals -->
-      <div class="mb-3 rounded-2xl border border-ink-200 bg-white p-4 shadow-card">
+      <!-- Employee header + totals (month mode only) -->
+      <div class="mb-3 rounded-xl border border-ink-200 bg-white p-4 shadow-card">
         <div class="flex items-center gap-3">
           <span id="sheetAvatar" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold"></span>
           <div class="min-w-0">
@@ -173,32 +327,97 @@
         <dl id="sheetTotals" class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"></dl>
       </div>
 
-      <div class="overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-card">
-        <table class="min-w-full divide-y divide-ink-100 text-sm">
-          <thead class="bg-ink-50/60">
-            <tr class="text-left text-xs uppercase tracking-wider text-ink-500">
-              <th class="px-4 py-3 font-semibold">วันที่</th>
-              <th class="px-4 py-3 font-semibold">กะ</th>
-              <th class="px-4 py-3 font-semibold">เข้า</th>
-              <th class="px-4 py-3 font-semibold">ออก</th>
-              <th class="px-4 py-3 font-semibold">ชั่วโมง</th>
-              <th class="px-4 py-3 font-semibold">สาย</th>
-              <th class="px-4 py-3 font-semibold">สถานะ</th>
-            </tr>
-          </thead>
-          <tbody id="sheetBody" class="divide-y divide-ink-100"></tbody>
-        </table>
+      <!-- MONTH SHEET (default) — desktop table (md+) + mobile cards (<md).
+           On a 390px phone the 7-column table pushed สาย and สถานะ (the two
+           columns the view exists for) off-screen, so the cards carry the
+           same fields stacked. -->
+      <div id="sheetMonthWrap">
+        <ul id="sheetCards" class="space-y-2 md:hidden"></ul>
+        <div class="hidden overflow-x-auto rounded-xl border border-ink-200 bg-white shadow-card md:block">
+          <table class="min-w-full divide-y divide-ink-100 text-[13px]">
+            <thead class="bg-ink-100">
+              <tr class="text-left text-xs tracking-wide text-ink-600">
+                <th class="px-4 py-3 font-semibold">วันที่</th>
+                <th class="px-4 py-3 font-semibold">กะ</th>
+                <th class="px-4 py-3 font-semibold">เข้า</th>
+                <th class="px-4 py-3 font-semibold">ออก</th>
+                <th class="px-4 py-3 font-semibold">ชั่วโมง</th>
+                <th class="px-4 py-3 font-semibold">สาย</th>
+                <th class="px-4 py-3 font-semibold">สถานะ</th>
+              </tr>
+            </thead>
+            <tbody id="sheetBody" class="divide-y divide-ink-100"></tbody>
+          </table>
+        </div>
+        <p class="mt-3 text-xs text-ink-500"><span class="font-semibold text-ink-600">*</span> เวลาเข้า/ออก = ประมาณจากกะ (ไม่มีการตอกบัตร)</p>
       </div>
-      <p class="mt-3 text-xs text-ink-400"><span class="font-semibold text-ink-600">*</span> เวลาเข้า/ออก = ประมาณจากกะ (ไม่มีการตอกบัตร)</p>
+
+      <!-- FREE DATE RANGE -->
+      <div id="sheetRangeWrap" class="hidden">
+        <div class="mb-3 rounded-xl border border-ink-200 bg-white p-3 shadow-card md:p-4">
+          <div class="flex flex-wrap items-end gap-2">
+            <label class="block">
+              <span class="mb-1 block text-xs font-semibold text-ink-600">ตั้งแต่วันที่</span>
+              <input id="rangeFrom" type="date" class="h-11 rounded-lg border border-ink-300 bg-white px-3 text-sm font-medium text-ink-800 focus:outline-none md:h-10" />
+            </label>
+            <label class="block">
+              <span class="mb-1 block text-xs font-semibold text-ink-600">ถึงวันที่</span>
+              <input id="rangeTo" type="date" class="h-11 rounded-lg border border-ink-300 bg-white px-3 text-sm font-medium text-ink-800 focus:outline-none md:h-10" />
+            </label>
+            <button id="rangeLoadBtn" type="button" class="btn-primary h-11 md:h-10">ดูข้อมูล</button>
+            <span id="rangeStatus" class="text-xs text-ink-500"></span>
+          </div>
+          <p class="mt-2 text-xs text-ink-500">ช่วงวันที่ข้ามเดือนได้ · แสดงเวลาตอกบัตรดิบทุกครั้งของพนักงานคนนี้</p>
+        </div>
+
+        <div id="rangeLoading" class="hidden rounded-xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+          <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
+          <p class="mt-3 text-sm text-ink-500">กำลังโหลดข้อมูลช่วงวันที่…</p>
+        </div>
+        <div id="rangeError" class="hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+          <span id="rangeErrorText">ไม่สามารถโหลดข้อมูลได้</span>
+          <button id="rangeRetry" type="button" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
+        </div>
+        <div id="rangeEmpty" class="hidden rounded-xl border border-ink-200 bg-white px-6 py-16 text-center shadow-card">
+          <p id="rangeEmptyText" class="text-sm font-medium text-ink-700">ไม่มีการตอกบัตรในช่วงที่เลือก</p>
+          <p class="mt-1 text-xs text-ink-500">ลองขยายช่วงวันที่ หรือเลือกพนักงานคนอื่น</p>
+        </div>
+
+        <div id="rangeData" class="hidden">
+          <!-- Truncation notice — the API caps at `limit` and returns the
+               NEWEST records, so an over-long range silently drops the oldest.
+               v1 never told anyone; this does, and offers to fetch more. -->
+          <div id="rangeTruncated" class="mb-3 hidden rounded-xl border border-warn-100 bg-warn-50 px-4 py-3 text-sm text-warn-700">
+            <span id="rangeTruncatedText"></span>
+            <button id="rangeMoreBtn" type="button" class="ml-2 font-semibold underline underline-offset-2">โหลดเพิ่ม</button>
+          </div>
+          <p id="rangeSummary" class="mb-2 text-xs text-ink-600"></p>
+          <div class="overflow-x-auto rounded-xl border border-ink-200 bg-white shadow-card"
+               tabindex="0" aria-label="ตารางเวลาช่วงวันที่ แต่ละแถวคือหนึ่งวัน">
+            <table class="min-w-full divide-y divide-ink-100 text-[13px]">
+              <thead class="bg-ink-100">
+                <tr class="text-left text-xs tracking-wide text-ink-600">
+                  <th class="range-date-cell bg-ink-100 px-4 py-3 font-semibold">วันที่</th>
+                  <th class="px-4 py-3 font-semibold">เข้าครั้งแรก</th>
+                  <th class="px-4 py-3 font-semibold">ออกครั้งสุดท้าย</th>
+                  <th class="px-4 py-3 font-semibold">จำนวนครั้ง</th>
+                  <th class="px-4 py-3 font-semibold">เวลาที่บันทึกทั้งหมด</th>
+                </tr>
+              </thead>
+              <tbody id="rangeBody" class="divide-y divide-ink-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- DAY VIEW (single date) -->
     <section id="dayWrap" class="hidden">
       <!-- Desktop table (md+) -->
-      <div class="hidden overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-card md:block">
+      <div class="hidden overflow-hidden rounded-xl border border-ink-200 bg-white shadow-card md:block">
         <table class="min-w-full divide-y divide-ink-100 text-sm">
-          <thead class="bg-ink-50/60">
-            <tr class="text-left text-xs uppercase tracking-wider text-ink-500">
+          <thead class="bg-ink-100">
+            <tr class="text-left text-xs tracking-wide text-ink-600">
               <th class="px-5 py-3 font-semibold">พนักงาน</th>
               <th class="px-5 py-3 font-semibold">กะ</th>
               <th class="px-5 py-3 font-semibold">เข้า</th>
@@ -213,24 +432,86 @@
       </div>
       <!-- Mobile cards (<md) -->
       <ul id="dayCards" class="space-y-2 md:hidden"></ul>
-      <p class="mt-3 text-xs text-ink-400"><span class="font-semibold text-ink-600">*</span> เวลาเข้า/ออก = ประมาณจากกะ (ไม่มีการตอกบัตร)</p>
+      <p class="mt-3 text-xs text-ink-500"><span class="font-semibold text-ink-600">*</span> เวลาเข้า/ออก = ประมาณจากกะ (ไม่มีการตอกบัตร)</p>
     </section>
   </main>
 
-  <style>
-    .loc-chip { border-color: rgb(226 232 240); background-color: white; color: rgb(71 85 105); }
-    .loc-chip:hover { background-color: rgb(248 250 252); }
-    .loc-chip.loc-on { background-color: rgb(238 242 255); border-color: rgb(199 210 254); color: rgb(67 56 202); }
-    .view-on { background-color: white; color: rgb(67 56 202); box-shadow: 0 1px 2px rgba(15,23,42,.06); }
-    .grid-cell { width: 2.6rem; min-width: 2.6rem; height: 2.2rem; text-align: center; border-bottom: 1px solid rgb(241 245 249); }
-    td.grid-name, th.grid-corner { background: white; }
-    thead .grid-corner, thead .grid-head { background: rgb(248 250 252); }
-  </style>
+  <!-- CSV EXPORT DIALOG (absorbs the retired v1 /export page).
+       MODAL-TO-SHEET (STYLE.md 5a): a centred dialog at md+, a full-screen
+       sheet with sticky header/footer below it. -->
+  <!-- OVERLAY: matters visually at md+ only — below md the sheet is opaque
+       and full-bleed and completely covers it (z-40 over z-30), so painting
+       it there is harmless, just redundant. No "md:block" gate here: display
+       is JS-controlled via "hidden" at every breakpoint, and pairing a
+       JS-toggled "hidden" with a static "md:block" would make md:block
+       permanently win at md+ regardless of JS state (the same bug the
+       dialog panel above avoids). -->
+  <div id="exportOverlay" class="fixed inset-0 z-30 hidden bg-ink-900/40"></div>
+
+  <!-- PANEL -->
+  <!-- NOTE: display is JS-controlled via "hidden" <-> "flex" (added/removed by
+       openExport/closeExport) at BOTH breakpoints — deliberately no static
+       "md:flex" here, which would permanently win over "hidden" at md+ and
+       leave the dialog stuck open on desktop regardless of JS state. -->
+  <div id="exportDialog" role="dialog" aria-modal="true" aria-labelledby="exportTitle"
+       class="fixed inset-0 z-40 hidden flex-col bg-white
+              md:inset-auto md:left-1/2 md:top-1/2 md:max-h-[85vh] md:w-full md:max-w-md
+              md:rounded-xl md:border md:border-ink-200 md:shadow-popover">
+
+    <!-- STICKY HEADER -->
+    <header class="sticky top-0 z-10 flex items-start gap-3 border-b border-ink-200 bg-white px-4 py-3 md:px-5">
+      <div class="flex-1">
+        <h2 id="exportTitle" class="text-base font-semibold text-ink-900">ส่งออกข้อมูลเป็น CSV</h2>
+        <p class="mt-0.5 text-xs text-ink-500">ไฟล์รูปแบบละเอียด หนึ่งบรรทัดต่อการตอกบัตรหนึ่งครั้ง</p>
+      </div>
+      <button id="closeExportBtn" type="button" aria-label="ปิด"
+              class="-mr-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-ink-500 hover:bg-ink-100 hover:text-ink-900">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </header>
+
+    <!-- SCROLLABLE BODY -->
+    <div class="flex-1 overflow-y-auto overscroll-contain px-4 py-4 md:px-5">
+      <div class="grid grid-cols-2 gap-3">
+        <label class="block">
+          <span class="mb-1 block text-xs font-semibold text-ink-600">ตั้งแต่วันที่</span>
+          <input id="exportFrom" type="date" class="h-11 w-full rounded-lg border border-ink-300 bg-white px-3 text-sm font-medium text-ink-800 focus:outline-none md:h-10" />
+        </label>
+        <label class="block">
+          <span class="mb-1 block text-xs font-semibold text-ink-600">ถึงวันที่</span>
+          <input id="exportTo" type="date" class="h-11 w-full rounded-lg border border-ink-300 bg-white px-3 text-sm font-medium text-ink-800 focus:outline-none md:h-10" />
+        </label>
+      </div>
+
+      <!-- Quick ranges. v1's /export page shipped วันนี้ / สัปดาห์นี้ / เดือนนี้ /
+           ทั้งหมด; all four are kept here (ทั้งหมด uses v1's own 2020-01-01
+           floor) so nobody loses a preset they relied on, plus the two extra
+           ranges v1 lacked. -->
+      <div class="mt-3 flex flex-wrap gap-1.5">
+        <button type="button" data-quick="today" class="loc-chip h-11 px-3 md:h-9">วันนี้</button>
+        <button type="button" data-quick="this-week" class="loc-chip h-11 px-3 md:h-9">สัปดาห์นี้</button>
+        <button type="button" data-quick="this-month" class="loc-chip h-11 px-3 md:h-9">เดือนนี้</button>
+        <button type="button" data-quick="last-month" class="loc-chip h-11 px-3 md:h-9">เดือนที่แล้ว</button>
+        <button type="button" data-quick="last-30" class="loc-chip h-11 px-3 md:h-9">30 วันล่าสุด</button>
+        <button type="button" data-quick="all" class="loc-chip h-11 px-3 md:h-9">ทั้งหมด</button>
+      </div>
+    </div>
+
+    <!-- STICKY FOOTER -->
+    <footer class="sticky bottom-0 flex flex-wrap items-center justify-end gap-2 border-t border-ink-200 bg-white px-4 py-3 md:px-5"
+            style="padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);">
+      <span id="exportStatus" class="mr-auto text-xs text-ink-500"></span>
+      <button id="cancelExportBtn" type="button" class="btn-secondary h-11 md:h-10">ยกเลิก</button>
+      <button id="runExportBtn" type="button" class="btn-primary h-11 md:h-10">ดาวน์โหลด CSV</button>
+    </footer>
+  </div>
 
   <script>
     (function () {
       const V2 = window.V2;
-      const DOW_TH = ["จ", "อ", "พ", "พฤ", "ศ", "ส", "อา"]; // Mon..Sun (Python weekday)
+      // Mon-first Thai weekday letters (index 0 = Monday) — matches the API's
+      // Python weekday / work_days. Shared, not re-declared per page.
+      const DOW_TH = V2.DOW_TH;
 
       const state = {
         date: V2.bangkokDate(),               // YYYY-MM-DD (drives the "day" view)
@@ -240,6 +521,17 @@
         search: "",
         data: null,
         selectedBadge: null,
+        // Timesheet sub-mode: the cached month payload, or a free date range
+        // fetched straight from the per-employee punch endpoint.
+        sheetMode: "month",                   // "month" | "range"
+        rangeLimit: 500,                      // server caps at `limit`, newest first
+        range: null,                          // { badge, from, to, records, total, truncated }
+        // Full employee roster for the "ช่วงวันที่" picker. The /monthly
+        // payload only carries employees TRACKED in the loaded month (and
+        // filtered by the branch chip), so on its own it cannot reach a
+        // former employee's punch history — which is exactly what v1's
+        // /individual-attendance page existed for. Loaded once, lazily.
+        allEmployees: null,                   // null = not loaded | [] = failed
       };
       const THIS_MONTH = V2.bangkokDate().slice(0, 7);
       const TODAY_DATE = V2.bangkokDate();
@@ -256,28 +548,30 @@
         gridWrap = el("gridWrap"), gridHeadRow = el("gridHeadRow"), gridBody = el("gridBody"),
         sheetWrap = el("sheetWrap"), employeeSelect = el("employeeSelect"), backToGrid = el("backToGrid"),
         sheetAvatar = el("sheetAvatar"), sheetName = el("sheetName"), sheetMeta = el("sheetMeta"),
-        sheetTotals = el("sheetTotals"), sheetBody = el("sheetBody"),
+        sheetTotals = el("sheetTotals"), sheetBody = el("sheetBody"), sheetCards = el("sheetCards"),
         dayWrap = el("dayWrap"), dayBody = el("dayBody"), dayCards = el("dayCards"),
-        viewDayBtn = el("viewDayBtn"), viewGridBtn = el("viewGridBtn"), viewSheetBtn = el("viewSheetBtn");
+        viewDayBtn = el("viewDayBtn"), viewGridBtn = el("viewGridBtn"), viewSheetBtn = el("viewSheetBtn"),
+        viewToggleWrap = el("viewToggleWrap"),
+        sheetMonthWrap = el("sheetMonthWrap"), sheetRangeWrap = el("sheetRangeWrap"),
+        sheetModeMonthBtn = el("sheetModeMonthBtn"), sheetModeRangeBtn = el("sheetModeRangeBtn"),
+        rangeFrom = el("rangeFrom"), rangeTo = el("rangeTo"), rangeLoadBtn = el("rangeLoadBtn"),
+        rangeStatus = el("rangeStatus"), rangeLoading = el("rangeLoading"),
+        rangeError = el("rangeError"), rangeErrorText = el("rangeErrorText"), rangeRetry = el("rangeRetry"),
+        rangeEmpty = el("rangeEmpty"), rangeEmptyText = el("rangeEmptyText"),
+        rangeDataWrap = el("rangeData"), rangeBody = el("rangeBody"), rangeSummary = el("rangeSummary"),
+        rangeTruncated = el("rangeTruncated"), rangeTruncatedText = el("rangeTruncatedText"),
+        rangeMoreBtn = el("rangeMoreBtn"),
+        exportOverlay = el("exportOverlay"), exportDialog = el("exportDialog"), openExportBtn = el("openExportBtn"),
+        closeExportBtn = el("closeExportBtn"), cancelExportBtn = el("cancelExportBtn"),
+        runExportBtn = el("runExportBtn"), exportFrom = el("exportFrom"), exportTo = el("exportTo"),
+        exportStatus = el("exportStatus");
 
       // ---------- Helpers ----------
-      function addMonth(ym, delta) {
-        const [y, m] = ym.split("-").map(Number);
-        const dt = new Date(Date.UTC(y, m - 1 + delta, 1));
-        return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
-      }
-      function monthLabel(ym) {
-        const [y, m] = ym.split("-").map(Number);
-        return new Intl.DateTimeFormat("th-TH", { month: "long", year: "numeric", timeZone: "UTC" })
-          .format(new Date(Date.UTC(y, m - 1, 1)));
-      }
-      // ISO yyyy-mm-dd math without TZ pitfalls (parse as UTC, shift, reformat).
-      function addDay(iso, delta) {
-        const [y, m, d] = iso.split("-").map(Number);
-        const dt = new Date(Date.UTC(y, m - 1, d));
-        dt.setUTCDate(dt.getUTCDate() + delta);
-        return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
-      }
+      // Month / day arithmetic and the Thai Buddhist-year month label all come
+      // from theme.js — string in, string out, parsed as UTC.
+      const addMonth = V2.addMonths;
+      const addDay = V2.addDays;
+      const monthLabel = V2.monthLabelTH;
       // Full Thai date, e.g. "ศ. 14 พ.ค. 2569" — for the day-view meta line.
       function dateLabelTH(iso) {
         const [y, m, d] = iso.split("-").map(Number);
@@ -305,15 +599,18 @@
       // assumed from the shift schedule — flag it with a muted "*" (and a
       // tooltip) so it's never mistaken for a real scan.
       function fmtPunch(time, assumed) {
-        if (!time) return '<span class="text-ink-300">—</span>';
+        if (!time) return '<span class="text-ink-500">—</span>';
         const t = V2.escapeHtml(time);
         return assumed
-          ? t + '<sup class="ml-0.5 font-normal text-ink-400" title="เวลาประมาณจากกะ (ไม่มีการตอกบัตร)">*</sup>'
+          ? t + '<sup class="ml-0.5 font-normal text-ink-500" title="เวลาประมาณจากกะ (ไม่มีการตอกบัตร)">*</sup>'
           : t;
       }
       function locLabel(loc) { return loc === "HF_VILLE" ? "HF Ville" : (loc || "—"); }
+      // Role labels must match shifts-admin.html's ROLE_BADGE exactly — the
+      // same employee is read on both screens. ("Reception" is the label the
+      // staff themselves use for that role; the rest are Thai.)
       function roleLabel(r) {
-        const map = { reception: "Reception", housekeeping: "แม่บ้าน", technician: "ช่าง", admin: "Admin" };
+        const map = { reception: "Reception", housekeeping: "แม่บ้าน", technician: "ช่าง", admin: "ธุรการ" };
         return r ? (map[r] || r) : "—";
       }
       function leaveLabel(t) {
@@ -328,13 +625,13 @@
           case "pending": return { text: "รอเริ่มงาน", klass: "bg-ink-100 text-ink-500" };
           case "leave": return { text: leaveLabel(d.leave_type), klass: "bg-brand-100 text-brand-700" };
           case "off": return { text: d.leave_type === "public_holiday" ? leaveLabel(d.leave_type) : "หยุด", klass: "bg-off-100 text-off-600" };
-          case "future": return { text: "—", klass: "bg-ink-50 text-ink-300" };
+          case "future": return { text: "—", klass: "bg-ink-50 text-ink-500" };
           default: return { text: "—", klass: "bg-ink-100 text-ink-600" };
         }
       }
       // Late cell (punctuality dimension), tiered.
       function lateCell(d) {
-        if (d.status !== "present") return '<span class="text-ink-300">—</span>';
+        if (d.status !== "present") return '<span class="text-ink-500">—</span>';
         switch (d.late_tier) {
           case 1: return '<span class="inline-flex items-center rounded-full bg-warn-100 px-2 py-0.5 text-xs font-medium text-warn-700">สาย</span>';
           case 2: return '<span class="inline-flex items-center rounded-full bg-warn-100 px-2 py-0.5 text-xs font-semibold text-warn-700">สาย · ' + d.late_minutes + ' นาที</span>';
@@ -346,7 +643,7 @@
       function gridCell(d) {
         const dd = d.date.slice(8);
         if (d.status === "future") return { text: "", klass: "bg-ink-50/30", title: dd + " (ยังไม่ถึง)" };
-        if (d.status === "untracked") return { text: "", klass: "text-ink-300 bg-ink-50/40", title: dd + " ไม่ติดตาม" };
+        if (d.status === "untracked") return { text: "", klass: "text-ink-500 bg-ink-50/40", title: dd + " ไม่ติดตาม" };
         if (d.status === "off") {
           const t = d.leave_type === "public_holiday" ? "วันหยุดนักขัตฤกษ์" : "หยุด";
           return { text: "หยุด", klass: "bg-off-100 text-off-600 text-[10px]", title: dd + " " + t };
@@ -408,12 +705,18 @@
         let head = '<th class="grid-corner grid-cell !w-44 !min-w-[11rem] px-3 text-left font-semibold">พนักงาน</th>';
         // Use first employee's day array for weekday labels (all share the month).
         const sample = (state.data.employees[0] && state.data.employees[0].days) || [];
+        // Today's column carries the ONE gold highlight this screen is allowed
+        // (a 2px gold-500 rule under the header cell) — see .grid-today.
+        const todayIdx = (TODAY_DATE.slice(0, 7) === state.month)
+          ? Number(TODAY_DATE.slice(8, 10)) - 1
+          : -1;
         for (let i = 0; i < days; i++) {
           const dow = sample[i] ? sample[i].dow : 0;
           const weekend = dow === 5 || dow === 6;
-          head += '<th class="grid-head grid-cell ' + (weekend ? "bg-ink-100 " : "") + 'font-medium">' +
+          head += '<th class="grid-head grid-cell ' + (weekend ? "bg-ink-100 " : "") +
+            (i === todayIdx ? "grid-today " : "") + 'font-medium">' +
             '<div class="leading-tight">' + (i + 1) + '</div>' +
-            '<div class="text-[10px] text-ink-400">' + DOW_TH[dow] + '</div></th>';
+            '<div class="text-[10px] text-ink-500">' + DOW_TH[dow] + '</div></th>';
         }
         head += '<th class="grid-head grid-cell !w-12 font-semibold text-ink-600">ชม.</th>';
         head += '<th class="grid-head grid-cell !w-12 font-semibold text-ink-600">สาย</th>';
@@ -444,7 +747,7 @@
 
           const t = e.totals;
           cells += '<td class="grid-cell tabular-nums font-semibold text-ink-800">' + fmtHours(t.hours_total) + '</td>';
-          cells += '<td class="grid-cell tabular-nums ' + (t.late_count ? "font-semibold text-warn-700" : "text-ink-400") + '">' + (t.late_count || "0") + '</td>';
+          cells += '<td class="grid-cell tabular-nums ' + (t.late_count ? "font-semibold text-warn-700" : "text-ink-500") + '">' + (t.late_count || "0") + '</td>';
 
           tr.innerHTML = cells;
           gridBody.appendChild(tr);
@@ -455,59 +758,148 @@
       }
 
       // ---------- Render: timesheet ----------
+      // Selecting a different employee must always drop a loaded date range —
+      // it belongs to the PREVIOUS person. There are three paths into a new
+      // selection (the <select>, a grid cell/name click, and renderSheet's
+      // "first employee" fallback after a month/branch change); all three go
+      // through here so none of them can leave A's punches sitting under B's
+      // name in the range table.
+      function setSelectedBadge(badge) {
+        if (state.selectedBadge === badge) return;
+        state.selectedBadge = badge;
+        state.range = null;
+      }
+
+      // The picker list. In month mode it is the loaded month's employees; in
+      // range mode it is the full roster (inactive included), because a range
+      // can cross out of the loaded month entirely.
+      function pickerEmployees() {
+        const monthly = (state.data && state.data.employees) || [];
+        if (state.sheetMode !== "range") return monthly;
+        const all = state.allEmployees;
+        if (!all || all.length === 0) return monthly;
+        const seen = new Set();
+        const out = [];
+        // Month employees first (the common case), then everyone else.
+        monthly.forEach(e => { if (!seen.has(e.badge_number)) { seen.add(e.badge_number); out.push(e); } });
+        all.forEach(e => { if (!seen.has(e.badge_number)) { seen.add(e.badge_number); out.push(e); } });
+        return out;
+      }
+
+      // v1 loaded its picker from GET /api/private/employees/ with
+      // include_inactive=true precisely because leavers still have punch
+      // history. Same endpoint, same intent — v1 also passed from_device=true,
+      // which is deliberately NOT used here: it serves the ZK device cache and
+      // returns an EMPTY roster on a cache miss, and the punch endpoint 404s
+      // for any badge that is not in the database anyway.
+      async function ensureAllEmployees() {
+        if (state.allEmployees) return;
+        try {
+          const data = await V2.apiFetch("/api/private/employees/?include_inactive=true");
+          const arr = (data && data.employees) || [];
+          state.allEmployees = arr.slice().sort((a, b) =>
+            (a.display_name || a.badge_number || "").localeCompare(
+              b.display_name || b.badge_number || "", "th"));
+        } catch (_) {
+          state.allEmployees = [];   // degrade to the month roster
+        }
+      }
+
       function renderEmployeeSelect() {
-        const emps = (state.data && state.data.employees) || [];
-        employeeSelect.innerHTML = emps.map(e =>
-          '<option value="' + V2.escapeHtml(e.badge_number) + '">' +
-          V2.escapeHtml((e.display_name || ("บัตร " + e.badge_number)) + " · " + locLabel(e.location)) +
-          '</option>').join("");
+        const emps = pickerEmployees();
+        const monthBadges = new Set(
+          ((state.data && state.data.employees) || []).map(e => e.badge_number));
+        employeeSelect.innerHTML = emps.map(e => {
+          const name = e.display_name || ("บัตร " + e.badge_number);
+          // Mark people the loaded month knows nothing about, so the picker
+          // never implies their monthly totals are on screen.
+          const extra = (state.sheetMode === "range" && !monthBadges.has(e.badge_number))
+            ? " · ไม่มีข้อมูลเดือนนี้" : "";
+          return '<option value="' + V2.escapeHtml(e.badge_number) + '">' +
+            V2.escapeHtml(name + " · " + locLabel(e.location) + extra) +
+            '</option>';
+        }).join("");
         if (state.selectedBadge) employeeSelect.value = state.selectedBadge;
       }
 
       function totalCard(label, value, klass) {
         return '<div class="rounded-lg bg-ink-50 px-3 py-2">' +
-          '<dt class="text-[11px] text-ink-400">' + label + '</dt>' +
+          '<dt class="text-[11px] text-ink-500">' + label + '</dt>' +
           '<dd class="mt-0.5 text-base font-semibold tabular-nums ' + (klass || "text-ink-800") + '">' + value + '</dd></div>';
       }
 
       function renderSheet() {
-        const emps = (state.data && state.data.employees) || [];
+        const monthly = (state.data && state.data.employees) || [];
+        const emps = pickerEmployees();
         if (emps.length === 0) { showEmpty(); return; }
-        if (!state.selectedBadge || !emps.some(e => e.badge_number === state.selectedBadge)) {
-          state.selectedBadge = emps[0].badge_number;
+        if (!state.selectedBadge || !emps.some(x => x.badge_number === state.selectedBadge)) {
+          setSelectedBadge(emps[0].badge_number);
         }
         renderEmployeeSelect();
+        // In range mode the selection can be someone the loaded month has no
+        // row for (a leaver, or staff at the other branch). They have no
+        // totals/days — the month sheet is hidden in range mode anyway.
         const e = emps.find(x => x.badge_number === state.selectedBadge);
+        const inMonth = monthly.some(x => x.badge_number === state.selectedBadge);
+        if (!inMonth && state.sheetMode !== "range") {
+          // Cannot happen via the UI (the month picker only lists month
+          // employees) — fall back rather than render an empty sheet.
+          setSelectedBadge(monthly.length ? monthly[0].badge_number : null);
+          if (!state.selectedBadge) { showEmpty(); return; }
+          renderSheet();
+          return;
+        }
 
         sheetAvatar.className = "flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold " +
           V2.avatarColor(e.badge_number || e.display_name || "");
         sheetAvatar.textContent = V2.initials(e.display_name || e.badge_number || "?");
         sheetName.textContent = e.display_name || ("บัตร " + e.badge_number);
-        sheetMeta.textContent = "#" + e.badge_number + " · " + roleLabel(e.role) + " · " + locLabel(e.location) + " · " + monthLabel(state.month);
+        // Only name a range once one has actually been LOADED for this
+        // employee — echoing the date inputs would read as "this range is on
+        // screen" when nothing has been fetched yet.
+        const loadedRange = state.range && state.range.badge === state.selectedBadge
+          ? state.range : null;
+        const periodText = state.sheetMode === "range"
+          ? (loadedRange
+              ? (dayLabelTH(loadedRange.from) + " ถึง " + dayLabelTH(loadedRange.to))
+              : "ช่วงวันที่")
+          : monthLabel(state.month);
+        sheetMeta.textContent = "#" + e.badge_number + " · " + roleLabel(e.role) + " · " + locLabel(e.location) + " · " + periodText;
 
-        const t = e.totals;
-        sheetTotals.innerHTML =
-          totalCard("ทำงาน (วัน)", t.worked_days) +
-          totalCard("ชั่วโมงรวม", fmtHours(t.hours_total)) +
-          totalCard("สาย (ครั้ง)", t.late_count, t.late_count ? "text-warn-700" : "") +
-          totalCard("สายรวม (นาที)", t.late_minutes_total, t.late_minutes_total ? "text-warn-700" : "") +
-          totalCard("สาย ≥30 น.", t.severe_count, t.severe_count ? "text-bad-700" : "") +
-          totalCard("ขาด (วัน)", t.absent_days, t.absent_days ? "text-bad-700" : "") +
-          totalCard("ลา / หยุด", t.leave_days + " / " + t.off_days);
+        // The month totals describe the loaded month only — hide them when the
+        // sheet is showing a free date range, or they would read as the range's.
+        sheetTotals.classList.toggle("hidden", state.sheetMode === "range");
+        sheetMonthWrap.classList.toggle("hidden", state.sheetMode === "range");
+        sheetRangeWrap.classList.toggle("hidden", state.sheetMode !== "range");
+
+        const t = inMonth ? e.totals : null;
+        sheetTotals.innerHTML = t
+          ? (totalCard("ทำงาน (วัน)", t.worked_days) +
+             totalCard("ชั่วโมงรวม", fmtHours(t.hours_total)) +
+             totalCard("สาย (ครั้ง)", t.late_count, t.late_count ? "text-warn-700" : "") +
+             totalCard("สายรวม (นาที)", t.late_minutes_total, t.late_minutes_total ? "text-warn-700" : "") +
+             totalCard("สาย ≥30 น.", t.severe_count, t.severe_count ? "text-bad-700" : "") +
+             totalCard("ขาด (วัน)", t.absent_days, t.absent_days ? "text-bad-700" : "") +
+             totalCard("ลา / หยุด", t.leave_days + " / " + t.off_days))
+          : "";
 
         sheetBody.innerHTML = "";
-        e.days.forEach(d => {
+        sheetCards.innerHTML = "";
+        ((inMonth && e.days) || []).forEach(d => {
           const dd = d.date.slice(8);
           const dow = DOW_TH[d.dow];
           const pill = statusPill(d);
           const shiftText = d.shift
-            ? V2.escapeHtml(d.shift.name_th) + ' <span class="text-ink-400 tabular-nums">' + d.shift.start_time + "–" + d.shift.end_time + (d.shift.crosses_midnight ? "+1" : "") + "</span>"
-            : '<span class="text-ink-300">—</span>';
+            ? V2.escapeHtml(d.shift.name_th) + ' <span class="text-ink-500 tabular-nums">' + d.shift.start_time + "–" + d.shift.end_time + (d.shift.crosses_midnight ? "+1" : "") + "</span>"
+            : '<span class="text-ink-500">—</span>';
+          const shiftPlainTxt = d.shift
+            ? (d.shift.name_th + " " + d.shift.start_time + "–" + d.shift.end_time + (d.shift.crosses_midnight ? "+1" : ""))
+            : "—";
           const weekend = d.dow === 5 || d.dow === 6;
           const tr = document.createElement("tr");
-          tr.className = "hover:bg-ink-50/50" + (weekend ? " bg-ink-50/30" : "");
+          tr.className = "odd:bg-ink-50/60 hover:bg-ink-50" + (weekend ? " bg-ink-50/30" : "");
           tr.innerHTML =
-            '<td class="px-4 py-2.5 whitespace-nowrap"><span class="font-medium tabular-nums text-ink-800">' + dd + '</span> <span class="text-xs text-ink-400">' + dow + '</span></td>' +
+            '<td class="px-4 py-2.5 whitespace-nowrap"><span class="font-medium tabular-nums text-ink-800">' + dd + '</span> <span class="text-xs text-ink-500">' + dow + '</span></td>' +
             '<td class="px-4 py-2.5 text-ink-700">' + shiftText + '</td>' +
             '<td class="px-4 py-2.5 tabular-nums text-ink-700">' + fmtPunch(d.first_in, d.check_in_assumed) + '</td>' +
             '<td class="px-4 py-2.5 tabular-nums text-ink-700">' + fmtPunch(d.last_out, d.check_out_assumed) + '</td>' +
@@ -515,9 +907,339 @@
             '<td class="px-4 py-2.5">' + lateCell(d) + '</td>' +
             '<td class="px-4 py-2.5"><span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' + pill.klass + '">' + pill.text + '</span></td>';
           sheetBody.appendChild(tr);
+
+          // Mobile card — same fields, stacked, no horizontal scroll.
+          const li = document.createElement("li");
+          li.className = "rounded-xl border border-ink-200 bg-white p-3 shadow-card";
+          li.innerHTML =
+            '<div class="flex items-center justify-between gap-2">' +
+              '<p class="text-sm font-semibold text-ink-900">' +
+                '<span class="tabular-nums">' + dd + '</span> ' +
+                '<span class="text-xs font-normal text-ink-500">' + dow + '</span></p>' +
+              '<span class="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium ' + pill.klass + '">' + pill.text + '</span>' +
+            '</div>' +
+            '<p class="mt-0.5 truncate text-xs text-ink-500">กะ ' + V2.escapeHtml(shiftPlainTxt) + '</p>' +
+            '<dl class="mt-2 grid grid-cols-3 gap-2 text-xs">' +
+              '<div><dt class="text-ink-500">เข้า</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + fmtPunch(d.first_in, d.check_in_assumed) + '</dd></div>' +
+              '<div><dt class="text-ink-500">ออก</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + fmtPunch(d.last_out, d.check_out_assumed) + '</dd></div>' +
+              '<div><dt class="text-ink-500">ชั่วโมง</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + fmtHours(d.hours_worked) + '</dd></div>' +
+            '</dl>' +
+            '<p class="mt-2 text-xs">' + lateCell(d) + '</p>';
+          sheetCards.appendChild(li);
         });
 
         hideAll(); sheetWrap.classList.remove("hidden");
+        if (state.sheetMode === "range") renderRangePane();
+      }
+
+      // ---------- Timesheet: free date range (absorbs v1 individual-attendance)
+      // Source: GET /api/private/attendance/employee/badge/{badge}. That endpoint
+      // returns RAW punches (no shift / lateness / hours), newest first, capped
+      // at `limit` — so a long range drops the OLDEST rows. v1 shipped that cap
+      // silently at 100; here the cap is explicit and raisable.
+      function hideRangePanes() {
+        [rangeLoading, rangeError, rangeEmpty, rangeDataWrap].forEach(n => n.classList.add("hidden"));
+      }
+      function showRangeLoading() { hideRangePanes(); rangeLoading.classList.remove("hidden"); }
+      function showRangeError(msg) { hideRangePanes(); rangeErrorText.textContent = msg; rangeError.classList.remove("hidden"); }
+      function showRangeEmpty(msg) { hideRangePanes(); if (msg) rangeEmptyText.textContent = msg; rangeEmpty.classList.remove("hidden"); }
+
+      // Bangkok calendar day of a punch. Backend timestamps may be naive; force
+      // them to UTC first, exactly like theme.js's own parser does.
+      // dd/mm/yyyy with the Buddhist year, matching v1's individual-attendance
+      // column ("วันที่ (วว/ดด/ปปปป)") and every other date on the v2 surface.
+      function dayLabelTH(ymd) {
+        const [y, m, d] = ymd.split("-");
+        return d + "/" + m + "/" + (Number(y) + 543);
+      }
+
+      function bkkDayOf(iso) {
+        let s = String(iso || "");
+        if (!s) return null;
+        if (!/[zZ]|[+-]\d\d:?\d\d$/.test(s)) s += "Z";
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : V2.bangkokDate(d);
+      }
+
+      function rangeGroups() {
+        const recs = (state.range && state.range.records) || [];
+        const byDay = new Map();
+        recs.forEach(r => {
+          const day = bkkDayOf(r.timestamp);
+          if (!day) return;
+          if (!byDay.has(day)) byDay.set(day, []);
+          byDay.get(day).push(r);
+        });
+        // Newest day first; punches within a day oldest → newest.
+        return Array.from(byDay.entries())
+          .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
+          .map(([day, list]) => {
+            list.sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));
+            const ins = list.filter(r => r.punch_type === 0 || r.punch_type === "0");
+            const outs = list.filter(r => !(r.punch_type === 0 || r.punch_type === "0"));
+            return {
+              day,
+              list,
+              firstIn: ins.length ? V2.bangkokTime(ins[0].timestamp) : null,
+              lastOut: outs.length ? V2.bangkokTime(outs[outs.length - 1].timestamp) : null,
+            };
+          });
+      }
+
+      function renderRangePane() {
+        // Belt-and-braces: never paint one employee's punches under another's
+        // name, whatever path changed the selection.
+        if (state.range && state.range.badge !== state.selectedBadge) state.range = null;
+        if (!state.range) {
+          hideRangePanes();
+          rangeStatus.textContent = "";
+          // Never leave the previous employee's summary/rows in the DOM, even
+          // hidden — the next render must not be able to flash them.
+          rangeSummary.textContent = "";
+          rangeBody.innerHTML = "";
+          rangeTruncated.classList.add("hidden");
+          showRangeEmpty("เลือกช่วงวันที่แล้วกด “ดูข้อมูล”");
+          return;
+        }
+        const groups = rangeGroups();
+        if (groups.length === 0) {
+          rangeSummary.textContent = "";
+          rangeBody.innerHTML = "";
+          showRangeEmpty("ไม่มีการตอกบัตรในช่วงที่เลือก");
+          return;
+        }
+
+        rangeBody.innerHTML = "";
+        groups.forEach(g => {
+          const [yy, mm, dd] = g.day.split("-").map(Number);
+          const jsDay = new Date(Date.UTC(yy, mm - 1, dd)).getUTCDay();
+          const dowTxt = V2.WEEKDAY_TH_SHORT[jsDay];
+          const times = g.list.map(r =>
+            '<span class="mr-2 inline-flex items-center gap-1 whitespace-nowrap">' +
+              '<span class="tabular-nums">' + V2.escapeHtml(V2.bangkokTime(r.timestamp)) + '</span>' +
+              '<span class="text-[11px] ' +
+                ((r.punch_type === 0 || r.punch_type === "0") ? 'text-good-700' : 'text-brand-700') + '">' +
+                ((r.punch_type === 0 || r.punch_type === "0") ? "เข้า" : "ออก") +
+              '</span>' +
+            '</span>').join("");
+          const tr = document.createElement("tr");
+          tr.className = "odd:bg-ink-50/60";
+          tr.innerHTML =
+            '<td class="range-date-cell bg-white px-4 py-2.5 whitespace-nowrap"><span class="font-medium tabular-nums text-ink-800">' +
+              V2.escapeHtml(dayLabelTH(g.day)) + '</span> <span class="text-xs text-ink-500">' + V2.escapeHtml(dowTxt) + '</span></td>' +
+            '<td class="px-4 py-2.5 tabular-nums text-ink-700">' + (g.firstIn ? V2.escapeHtml(g.firstIn) : '<span class="text-ink-500">—</span>') + '</td>' +
+            '<td class="px-4 py-2.5 tabular-nums text-ink-700">' + (g.lastOut ? V2.escapeHtml(g.lastOut) : '<span class="text-ink-500">—</span>') + '</td>' +
+            '<td class="px-4 py-2.5 tabular-nums text-ink-700">' + g.list.length + '</td>' +
+            '<td class="px-4 py-2.5 text-ink-700">' + times + '</td>';
+          rangeBody.appendChild(tr);
+        });
+
+        // The API's `total` is len(records) AFTER the cap, i.e. the number of
+        // rows on screen — not the true total for the range. Say "แสดง"
+        // (showing), never "รวม" (total), or a truncated fetch reads as a
+        // complete count directly above the truncation banner.
+        rangeSummary.textContent =
+          "แสดง " + state.range.records.length + " ครั้ง · " + groups.length + " วัน · " +
+          dayLabelTH(state.range.from) + " ถึง " + dayLabelTH(state.range.to);
+
+        const truncated = !!state.range.truncated;
+        rangeTruncated.classList.toggle("hidden", !truncated);
+        if (truncated) {
+          rangeTruncatedText.textContent =
+            "แสดงได้สูงสุด " + state.range.limit + " รายการ และช่วงนี้เต็มขีดจำกัดแล้ว — " +
+            "รายการที่เก่ากว่านี้ยังไม่ถูกแสดง";
+          rangeMoreBtn.textContent = "โหลดเพิ่มเป็น " + Math.min(state.range.limit * 2, 10000) + " รายการ";
+          rangeMoreBtn.disabled = state.range.limit >= 10000;
+        }
+
+        hideRangePanes();
+        rangeDataWrap.classList.remove("hidden");
+      }
+
+      async function loadRange() {
+        const badge = state.selectedBadge;
+        if (!badge) { showRangeEmpty("เลือกพนักงานก่อน"); return; }
+        const from = rangeFrom.value, to = rangeTo.value;
+        if (!from || !to) { rangeStatus.textContent = "กรุณาเลือกวันที่ให้ครบ"; return; }
+        if (from > to) { rangeStatus.textContent = "วันเริ่มต้องไม่เกินวันสิ้นสุด"; return; }
+        rangeStatus.textContent = "";
+        rangeLoadBtn.disabled = true;
+        showRangeLoading();
+        try {
+          const url = "/api/private/attendance/employee/badge/" + encodeURIComponent(badge) +
+            "?start_date=" + encodeURIComponent(from) +
+            "&end_date=" + encodeURIComponent(to) +
+            "&limit=" + state.rangeLimit;
+          const data = await V2.apiFetch(url);
+          const records = (data && data.records) || [];
+          state.range = {
+            badge, from, to, records,
+            total: (data && data.total != null) ? data.total : records.length,
+            limit: state.rangeLimit,
+            truncated: records.length >= state.rangeLimit,
+          };
+          // Re-render the whole sheet so the employee header's period line
+          // follows the range that was actually loaded, not the last defaults.
+          renderSheet();
+        } catch (err) {
+          if (err.status === 404) showRangeError("ไม่พบพนักงานรหัสนี้บนเซิร์ฟเวอร์");
+          else showRangeError("ไม่สามารถโหลดข้อมูลช่วงวันที่ได้ (" + (err.status || "เครือข่าย") + ")");
+        } finally {
+          rangeLoadBtn.disabled = false;
+        }
+      }
+
+      function setSheetMode(mode) {
+        state.sheetMode = mode;
+        sheetModeMonthBtn.classList.toggle("view-on", mode === "month");
+        sheetModeRangeBtn.classList.toggle("view-on", mode === "range");
+        // Month navigation is meaningless while a free range is on screen.
+        monthControls.classList.toggle("hidden", mode === "range" || state.view === "day");
+        syncViewToggleAlign();
+        if (mode === "range" && !rangeFrom.value) {
+          // Default to the loaded month, the range the user was just looking at.
+          rangeFrom.value = state.month + "-01";
+          rangeTo.value = (state.month === THIS_MONTH)
+            ? TODAY_DATE
+            : addDay(addMonth(state.month + "-01", 1), -1);
+        }
+        renderSheet();
+        // Range mode widens the picker to the full roster (leavers included).
+        // Fetch once, then re-render the picker in place.
+        if (mode === "range" && !state.allEmployees) {
+          ensureAllEmployees().then(() => {
+            if (state.sheetMode === "range") renderEmployeeSelect();
+          });
+        }
+      }
+
+      // ---------- CSV export (absorbs the retired v1 /export page) ----------
+      // GET /api/private/attendance/export/csv?start_date=&end_date= — the same
+      // call v1 made. The server hardcodes format_type="detailed", so there is
+      // no format picker to build.
+      let exportSavedOverflow = "";
+      let exportOpen = false;
+      let exportCloseTimer = null;
+
+      function exportFocusables() {
+        return Array.prototype.slice
+          .call(exportDialog.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled])'))
+          .filter((el) => el.offsetParent !== null);
+      }
+
+      function openExport() {
+        if (exportCloseTimer) { clearTimeout(exportCloseTimer); exportCloseTimer = null; }
+        if (!exportFrom.value) {
+          exportFrom.value = state.month + "-01";
+          exportTo.value = (state.month === THIS_MONTH)
+            ? TODAY_DATE
+            : addDay(addMonth(state.month + "-01", 1), -1);
+        }
+        exportStatus.textContent = "";
+        exportOpen = true;
+        exportOverlay.classList.remove("hidden");
+        exportDialog.classList.remove("hidden");
+        exportDialog.classList.add("flex");
+        exportSavedOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        // Force a reflow so the closed (off-screen / faded) state commits
+        // before data-open flips it to open — otherwise the browser collapses
+        // both into one frame and nothing appears to move (STYLE.md 5a).
+        void exportDialog.offsetHeight;
+        exportOverlay.setAttribute("data-open", "1");
+        exportDialog.setAttribute("data-open", "1");
+        exportFrom.focus();
+      }
+      function closeExport() {
+        if (!exportOpen) return;
+        exportOpen = false;
+        exportOverlay.removeAttribute("data-open");
+        exportDialog.removeAttribute("data-open");
+        document.body.style.overflow = exportSavedOverflow;
+        openExportBtn.focus();
+        const hide = function () {
+          exportOverlay.classList.add("hidden");
+          exportDialog.classList.add("hidden");
+          exportDialog.classList.remove("flex");
+          exportCloseTimer = null;
+        };
+        // Instant under prefers-reduced-motion; otherwise wait out the exit
+        // transition (200ms below md, 150ms at md+) before unmounting.
+        if (V2.reducedMotion()) hide();
+        else exportCloseTimer = setTimeout(hide, 220);
+      }
+
+      // v1's "ทั้งหมด" export hardcoded 2020-01-01 as its far-back floor
+      // (static/export.html quickExport('all')). Kept byte-identical so the
+      // v2 preset produces the same file v1 did.
+      const ALL_TIME_FLOOR = "2020-01-01";
+
+      function applyQuickRange(kind) {
+        const firstThis = THIS_MONTH + "-01";
+        if (kind === "today") { exportFrom.value = TODAY_DATE; exportTo.value = TODAY_DATE; }
+        else if (kind === "this-week") {
+          // v1 used a Sunday-start week (getDay() offset). Same rule here,
+          // computed on the Bangkok date so no browser timezone can shift it.
+          const [wy, wm, wd] = TODAY_DATE.split("-").map(Number);
+          const dow = new Date(Date.UTC(wy, wm - 1, wd)).getUTCDay(); // Sun = 0
+          exportFrom.value = addDay(TODAY_DATE, -dow);
+          exportTo.value = TODAY_DATE;
+        }
+        else if (kind === "this-month") { exportFrom.value = firstThis; exportTo.value = TODAY_DATE; }
+        else if (kind === "last-month") {
+          const prev = addMonth(firstThis, -1);
+          exportFrom.value = prev;
+          exportTo.value = addDay(firstThis, -1);
+        } else if (kind === "last-30") {
+          exportFrom.value = addDay(TODAY_DATE, -29);
+          exportTo.value = TODAY_DATE;
+        } else if (kind === "all") {
+          exportFrom.value = ALL_TIME_FLOOR;
+          exportTo.value = TODAY_DATE;
+        }
+      }
+
+      async function runExport() {
+        const from = exportFrom.value, to = exportTo.value;
+        if (!from || !to) { exportStatus.textContent = "กรุณาเลือกวันที่ให้ครบ"; return; }
+        if (from > to) { exportStatus.textContent = "วันเริ่มต้องไม่เกินวันสิ้นสุด"; return; }
+        runExportBtn.disabled = true;
+        exportStatus.textContent = "กำลังสร้างไฟล์…";
+        try {
+          // Raw fetch, not V2.apiFetch: this response is a file, not JSON.
+          const res = await fetch(
+            "/api/private/attendance/export/csv?start_date=" + encodeURIComponent(from) +
+            "&end_date=" + encodeURIComponent(to),
+            { credentials: "same-origin" });
+          if (!res.ok) { const e = new Error("export failed"); e.status = res.status; throw e; }
+          // An expired Cloudflare Access session answers 200 text/html (the
+          // login page) because fetch follows the redirect — without this
+          // guard the user silently downloads that HTML saved as ".csv".
+          const ctype = (res.headers.get("content-type") || "").toLowerCase();
+          if (ctype.includes("text/html")) {
+            exportStatus.textContent = "เซสชันหมดอายุ — รีเฟรชหน้าเพื่อเข้าสู่ระบบใหม่";
+            return;
+          }
+          const blob = await res.blob();
+          // Prefer the server's own filename (v1 never read it).
+          let filename = "attendance_" + from + "_" + to + ".csv";
+          const cd = res.headers.get("content-disposition") || "";
+          const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+          if (m && m[1]) { try { filename = decodeURIComponent(m[1]); } catch (_) { filename = m[1]; } }
+          const href = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = href; a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(href), 2000);
+          exportStatus.textContent = "ดาวน์โหลดแล้ว";
+          setTimeout(() => { exportStatus.textContent = ""; closeExport(); }, 1400);
+        } catch (err) {
+          exportStatus.textContent = "ส่งออกไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")";
+        } finally {
+          runExportBtn.disabled = false;
+        }
       }
 
       // ---------- Render: day (single date) ----------
@@ -534,9 +1256,9 @@
         return out;
       }
       function shiftHtml(d) {
-        if (!d.shift) return '<span class="text-ink-300">—</span>';
+        if (!d.shift) return '<span class="text-ink-500">—</span>';
         return V2.escapeHtml(d.shift.name_th) +
-          ' <span class="text-ink-400 tabular-nums">' + d.shift.start_time + "–" + d.shift.end_time +
+          ' <span class="text-ink-500 tabular-nums">' + d.shift.start_time + "–" + d.shift.end_time +
           (d.shift.crosses_midnight ? "+1" : "") + "</span>";
       }
       function shiftPlain(d) {
@@ -612,7 +1334,7 @@
 
           // Mobile card.
           const li = document.createElement("li");
-          li.className = "rounded-2xl border border-ink-200 bg-white p-4 shadow-card";
+          li.className = "rounded-xl border border-ink-200 bg-white p-4 shadow-card";
           li.innerHTML =
             '<div class="flex items-start gap-3">' +
               '<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold ' + avatar + '">' + initials + '</span>' +
@@ -623,9 +1345,9 @@
                 '</div>' +
                 '<p class="truncate text-xs text-ink-500">' + badge + ' · กะ ' + V2.escapeHtml(shiftPlain(d)) + '</p>' +
                 '<dl class="mt-3 grid grid-cols-3 gap-2 text-xs">' +
-                  '<div><dt class="text-ink-400">เข้า</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + firstIn + '</dd></div>' +
-                  '<div><dt class="text-ink-400">ออก</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + lastOut + '</dd></div>' +
-                  '<div><dt class="text-ink-400">ชั่วโมง</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + hours + '</dd></div>' +
+                  '<div><dt class="text-ink-500">เข้า</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + firstIn + '</dd></div>' +
+                  '<div><dt class="text-ink-500">ออก</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + lastOut + '</dd></div>' +
+                  '<div><dt class="text-ink-500">ชั่วโมง</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + hours + '</dd></div>' +
                 '</dl>' +
                 '<p class="mt-2 text-xs">' + lateCell(d) + '</p>' +
               '</div>' +
@@ -646,6 +1368,17 @@
         else renderSheet();
       }
 
+      // When neither the day nor the month stepper is showing (timesheet view
+      // in ช่วงวันที่ mode), the view-toggle segment is the row's only child —
+      // ml-auto then just leaves the left half empty. Drop it in that one
+      // state so the toggle sits with its row instead of floating at the
+      // edge; every other state keeps the stepper + right-aligned toggle
+      // layout unchanged.
+      function syncViewToggleAlign() {
+        const stepperless = state.view === "timesheet" && state.sheetMode === "range";
+        viewToggleWrap.classList.toggle("ml-auto", !stepperless);
+      }
+
       function setView(v) {
         state.view = v;
         viewDayBtn.classList.toggle("view-on", v === "day");
@@ -655,7 +1388,11 @@
         // picker for the grid / timesheet views.
         const dayMode = v === "day";
         dayControls.classList.toggle("hidden", !dayMode);
-        monthControls.classList.toggle("hidden", dayMode);
+        // The month stepper is irrelevant in the day view AND while the
+        // timesheet is showing a free date range.
+        monthControls.classList.toggle(
+          "hidden", dayMode || (v === "timesheet" && state.sheetMode === "range"));
+        syncViewToggleAlign();
         // Entering the day view: make sure the loaded month matches the
         // selected date's month before rendering (reload if it doesn't).
         if (dayMode) {
@@ -737,13 +1474,52 @@
       viewGridBtn.addEventListener("click", () => setView("grid"));
       viewSheetBtn.addEventListener("click", () => setView("timesheet"));
       backToGrid.addEventListener("click", () => setView("grid"));
-      employeeSelect.addEventListener("change", () => { state.selectedBadge = employeeSelect.value; renderSheet(); });
+      employeeSelect.addEventListener("change", () => {
+        // setSelectedBadge drops any loaded range — it belongs to the
+        // previous employee.
+        setSelectedBadge(employeeSelect.value);
+        renderSheet();
+      });
+
+      // Timesheet sub-mode + the free date range.
+      sheetModeMonthBtn.addEventListener("click", () => setSheetMode("month"));
+      sheetModeRangeBtn.addEventListener("click", () => setSheetMode("range"));
+      rangeLoadBtn.addEventListener("click", loadRange);
+      rangeRetry.addEventListener("click", loadRange);
+      rangeMoreBtn.addEventListener("click", () => {
+        state.rangeLimit = Math.min(state.rangeLimit * 2, 10000);
+        loadRange();
+      });
+
+      // CSV export dialog — MODAL-TO-SHEET (STYLE.md 5a).
+      openExportBtn.addEventListener("click", openExport);
+      closeExportBtn.addEventListener("click", closeExport);
+      cancelExportBtn.addEventListener("click", closeExport);
+      runExportBtn.addEventListener("click", runExport);
+      // The overlay only exists (and is only visible) at md+ — below md the
+      // sheet is opaque and full-bleed, so this listener is inert there.
+      exportOverlay.addEventListener("click", closeExport);
+      document.addEventListener("keydown", (ev) => {
+        if (!exportOpen) return;
+        if (ev.key === "Escape" || ev.key === "Esc") { ev.preventDefault(); closeExport(); return; }
+        if (ev.key !== "Tab") return;
+        const items = exportFocusables();
+        if (!items.length) return;
+        const first = items[0], last = items[items.length - 1];
+        if (ev.shiftKey && (document.activeElement === first || !exportDialog.contains(document.activeElement))) {
+          ev.preventDefault(); last.focus();
+        } else if (!ev.shiftKey && document.activeElement === last) {
+          ev.preventDefault(); first.focus();
+        }
+      });
+      Array.from(document.querySelectorAll("[data-quick]")).forEach(btn =>
+        btn.addEventListener("click", () => applyQuickRange(btn.getAttribute("data-quick"))));
 
       // Click an employee name / cell in the grid -> open their timesheet.
       gridBody.addEventListener("click", (ev) => {
         const cell = ev.target.closest("[data-badge]");
         if (!cell) return;
-        state.selectedBadge = cell.getAttribute("data-badge");
+        setSelectedBadge(cell.getAttribute("data-badge"));
         setView("timesheet");
       });
 
@@ -765,6 +1541,10 @@
       // "ตามวันที่" for the current date.
       applyMonthToControls();
       applyDayToControls();
+      // Timesheet sub-mode defaults to the month sheet; set the toggle's
+      // highlight without re-rendering (there is no data yet).
+      state.sheetMode = "month";
+      sheetModeMonthBtn.classList.add("view-on");
       setView("day");   // highlights + control visibility (render() is a no-op until data loads)
       load();           // fetch the current month, then render() → renderDay
     })();

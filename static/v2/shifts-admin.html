@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
   <meta name="theme-color" content="#4F0E0E" />
   <title>จัดกะพนักงาน — ระบบบันทึกเวลา</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -10,6 +11,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="/fingerprintlogs/static/v2/theme.js"></script>
+  <!-- Shared navigation — renders BOTH navs. Every page, no exceptions. -->
+  <script defer src="/fingerprintlogs/static/v2/nav.js"></script>
   <script>
     tailwind.config = {
       theme: { extend: window.V2.THEME },
@@ -21,95 +24,263 @@
         "bg-ink-200",   "text-ink-700",
         "bg-off-100",   "text-off-600",
         "bg-ink-100",   "text-ink-600",
+        "bg-ink-50/40", "bg-ink-50/50",
+        /* failed-cell marker on the roster / maid grids */
+        "ring-2",       "ring-bad-500",
+        "text-good-700","text-bad-700","text-ink-500",
       ],
     };
   </script>
   <style>
+    /* Belt-and-braces: the CDN applies fontFamily only after theme.js parses. */
     html, body { font-family: 'Sarabun', 'Noto Sans Thai', system-ui, -apple-system, sans-serif; }
+    /* HF One body type: 14px / 1.6 (Thai needs the tall leading). Set on BODY,
+       never on <html> — Tailwind's spacing scale is rem-based and rescaling the
+       root font-size shrinks every padding and gap utility on the page. */
+    body { font-size: 0.875rem; line-height: 1.6; }
+
+    /* ---------- Underlined tab (JS toggles .tab-on) — GOLD active mark ----
+       The active tab's 2px gold rule is the ONE gold mark on this screen. */
+    .tab {
+      padding: .5rem .75rem;
+      font-size: .875rem; font-weight: 500;
+      color: #5C554C;                     /* ink-600 */
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;                /* sit on the strip's hairline */
+      white-space: nowrap;
+      background: none; cursor: pointer;
+    }
+    .tab:hover { color: #26221E; }        /* ink-900 */
+    .tab.tab-on {
+      color: #6B1212;                     /* brand-700 */
+      font-weight: 600;
+      border-bottom-color: #D9A441;       /* gold-500 — the one gold mark */
+    }
+
+    /* ---------- Branch chip (pill, JS toggles .loc-on) ---------- */
+    .loc-chip {
+      display: inline-flex; align-items: center; gap: .375rem;
+      border-radius: 9999px;
+      font-size: .8125rem; line-height: 1.25rem; font-weight: 500;
+      border: 1px solid #E8E4DF;          /* ink-200  --hf-border */
+      background: #FFFFFF;                /* --hf-panel */
+      color: #5C554C;                     /* ink-600 */
+      cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+    }
+    .loc-chip:hover { border-color: #CFC9C1; background: #FAF9F7; }   /* ink-300 / ink-50 */
+    .loc-chip.loc-on {
+      border-color: #E9A3A3;              /* brand-200 */
+      background: #FBEAEA;                /* brand-50 */
+      color: #6B1212;                     /* brand-700 — 10.5:1 */
+      font-weight: 600;
+    }
+
+    /* ---------- Weekday toggle pill in the schedule editor ----------
+       The checkbox is visually hidden (sr-only) and the adjacent pill reflects
+       state via pure CSS, so we don't rely on Tailwind generating peer-checked
+       variants for dynamically-injected markup. Active = filled brand-500. */
+    .wd-pill {
+      border: 1px solid #E8E4DF;          /* ink-200 */
+      background: #FFFFFF;
+      color: #5C554C;                     /* ink-600 */
+      transition: background-color .12s, border-color .12s, color .12s;
+    }
+    .wd-chip:hover .wd-pill { border-color: #CFC9C1; }                /* ink-300 */
+    .wd-chip input:checked + .wd-pill {
+      border-color: #8B0000;              /* brand-500 */
+      background: #8B0000;
+      color: #FFFFFF;
+    }
+
+    /* ---------- Primary / secondary buttons ---------- */
+    .btn-primary {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;                 /* --hf-radius */
+      font-size: .875rem; font-weight: 600;
+      background: #8B0000;                /* brand-500 */
+      border: 1px solid #8B0000;
+      color: #FFFFFF;                     /* 10.0:1 */
+      cursor: pointer;
+      /* Thai copy must not wrap inside a 40px-tall button — the second line's
+         tone marks get clipped. */
+      white-space: nowrap;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-primary:hover   { background: #7A0000; border-color: #7A0000; }  /* brand-600 */
+    .btn-primary:active  { background: #6B1212; border-color: #6B1212; }  /* brand-700 */
+    .btn-primary:disabled{ background: #E8E4DF; border-color: #E8E4DF; color: #7A7268; cursor: not-allowed; }
+
+    .btn-secondary {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;
+      font-size: .875rem; font-weight: 500;
+      background: #FFFFFF;
+      border: 1px solid #CFC9C1;          /* --hf-border-strong */
+      color: #332D27;                     /* ink-800 */
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-secondary:hover { background: #FAF9F7; border-color: #7A7268; }
+    .btn-secondary:disabled { color: #7A7268; cursor: not-allowed; }
+
+    /* ---------- Focus: brand-500 at 40%, never a colored glow ---------- */
+    a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+    .wd-chip input:focus-visible + .wd-pill {
+      outline: 2px solid rgba(139, 0, 0, .40);   /* brand-500 / 40% */
+      outline-offset: 2px;
+    }
+
+    /* ---------- Touch targets: every interactive control >=44px below md --
+       Excludes the roster / housekeeping day-grid <select> cells on
+       purpose: those are a WIDE-TABLE comparison grid (STYLE.md §5b), and a
+       31-column month is only usable dense — same reasoning the pattern
+       itself uses to keep grid cells compact. Everything a user taps once
+       per action (tabs, chips, pagers, day toggles, buttons) gets the
+       full 44px. */
+    @media (max-width: 767px) {
+      .tab, .loc-chip, .wd-pill, .btn-primary, .btn-secondary,
+      .ed-quick-mf, .ed-quick-ms, .ed-quick-clear,
+      .color-swatch-select, .lb-emp-select, .lb-date-input {
+        min-height: 44px;
+      }
+      /* Two-letter branch chips ("HF") are narrower than 44px on width
+         alone even once height is bumped. */
+      .loc-chip { min-width: 44px; }
+    }
+
+    /* ---------- MODAL-TO-SHEET (STYLE.md §5a) for the roles-tab editor,
+       below md. Desktop keeps the inline expanding table row unchanged;
+       #mobileEditSheet reuses the same buildEditorPanel() markup + wiring
+       inside a full-screen sheet — see the script block. */
+    #mobileEditOverlay { position: fixed; inset: 0; z-index: 30; background: rgba(38, 34, 30, .4); display: none; }
+    #mobileEditOverlay.is-open { display: block; }
+    #mobileEditSheet {
+      position: fixed; inset: 0; z-index: 40; display: none;
+      flex-direction: column; background: #FFFFFF;
+    }
+    #mobileEditSheet.is-open { display: flex; }
+    #mobileEditSheet .sheet-head {
+      flex-shrink: 0; position: sticky; top: 0; z-index: 10;
+      background: #FFFFFF; border-bottom: 1px solid #E8E4DF;   /* ink-200 */
+      padding: .875rem 1rem;
+    }
+    #mobileEditSheet .sheet-body { flex: 1 1 auto; overflow-y: auto; padding: 1rem; }
+    #mobileEditSheet .sheet-foot {
+      flex-shrink: 0; position: sticky; bottom: 0; z-index: 10;
+      display: flex; align-items: center; justify-content: flex-end; gap: .5rem;
+      background: #FFFFFF; border-top: 1px solid #E8E4DF;   /* ink-200 */
+      padding: .75rem 1rem;
+      padding-bottom: calc(env(safe-area-inset-bottom) + .75rem);
+    }
+    /* Below md the sheet is the only way to reach this editor; above md it
+       must never linger from a resize (Escape is the only close path
+       otherwise) — belt-and-braces alongside the resize handler in the
+       script block, which also tears down .is-open/body scroll lock. */
+    @media (min-width: 768px) {
+      #mobileEditOverlay, #mobileEditSheet { display: none !important; }
+    }
   </style>
 </head>
 <body class="min-h-screen bg-ink-50 text-ink-900 antialiased">
 
-  <!-- TOP NAV -->
-  <nav class="border-b border-ink-200 bg-white">
-    <div class="mx-auto flex w-full items-center justify-between px-5 py-3">
-      <a href="/fingerprintlogs/v2/" class="flex items-center gap-2 text-sm font-semibold text-ink-700 hover:text-brand-600">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><polyline points="15 18 9 12 15 6"/></svg>
-        ระบบบันทึกเวลา
-      </a>
-      <div class="flex items-center gap-1">
-        <a href="/fingerprintlogs/v2/live" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">ดูสด</a>
-        <a href="/fingerprintlogs/v2/monthly" class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">รายงาน</a>
-        <a href="/fingerprintlogs/v2/shifts-admin" class="rounded-md px-3 py-1.5 text-sm font-medium bg-brand-100 text-brand-700" aria-current="page">จัดกะ</a>
-      </div>
-    </div>
-  </nav>
+  <!-- The ONLY nav markup this page carries. See STYLE.md §2. -->
+  <nav id="v2nav" data-page="shifts-admin"></nav>
 
-  <main class="w-full px-4 pt-5 pb-12 md:px-6 md:pt-8">
+  <main class="w-full px-4 pt-5 pb-28 md:px-6 md:pt-8 md:pb-12">
 
     <!-- HEADER -->
     <header class="mb-5 md:mb-7">
-      <p class="text-xs font-medium uppercase tracking-[0.18em] text-brand-600">จัดกะ</p>
-      <h1 class="mt-1 text-2xl font-bold tracking-tight text-ink-900 md:text-3xl">จัดกะพนักงาน</h1>
+      <p class="text-xs font-semibold tracking-wide text-brand-600">จัดกะ</p>
+      <h1 class="mt-1 text-xl font-bold tracking-tight text-ink-900">จัดกะพนักงาน</h1>
       <p class="mt-1 text-sm text-ink-500">กำหนดบทบาทและกะการทำงานให้พนักงานแต่ละคน รวมถึงตั้งกะรายวันสำหรับ Reception</p>
     </header>
 
-    <!-- TABS -->
-    <div role="tablist" class="mb-4 flex gap-1 border-b border-ink-200">
-      <button data-tab="roles" class="tab tab-on px-4 py-2 text-sm font-medium">บทบาท + กะหลัก</button>
-      <button data-tab="roster" class="tab px-4 py-2 text-sm font-medium">ตารางกะรายวัน (Reception)</button>
-      <button data-tab="hkoff" class="tab px-4 py-2 text-sm font-medium">วันหยุดแม่บ้าน</button>
-      <button data-tab="leaveboard" class="tab px-4 py-2 text-sm font-medium">วันลา · วันหยุด</button>
+    <!-- TABS — must scroll horizontally: four long Thai labels do not fit a
+         phone. -mx-4 px-4 bleeds the scroll strip to the viewport edge
+         below md so the last tab isn't clipped by <main>'s own padding. -->
+    <div role="tablist" class="mb-4 flex gap-1 overflow-x-auto border-b border-ink-200 -mx-4 px-4 md:mx-0 md:px-0">
+      <button role="tab" aria-selected="true" data-tab="roles" class="tab tab-on">บทบาท + กะหลัก</button>
+      <button role="tab" aria-selected="false" data-tab="roster" class="tab">ตารางกะรายวัน (Reception)</button>
+      <button role="tab" aria-selected="false" data-tab="hkoff" class="tab">วันหยุดแม่บ้าน</button>
+      <button role="tab" aria-selected="false" data-tab="leaveboard" class="tab">วันลา · วันหยุด</button>
     </div>
 
     <!-- TAB: Roles + default shift -->
-    <section id="tabRoles" class="tab-pane">
-      <div id="rolesLoading" class="rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+    <section id="tabRoles" class="tab-pane max-w-5xl">
+      <div id="rolesLoading" class="rounded-xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
         <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
         <p class="mt-3 text-sm text-ink-500">กำลังโหลดรายชื่อพนักงาน…</p>
       </div>
-      <div id="rolesError" class="hidden rounded-2xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+      <div id="rolesError" class="hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
         <span id="rolesErrorText">โหลดข้อมูลไม่สำเร็จ</span>
         <button id="rolesRetry" class="ml-2 underline underline-offset-2">ลองใหม่</button>
       </div>
-      <div id="rolesTableWrap" class="hidden overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-card">
-        <table class="min-w-full divide-y divide-ink-100 text-sm">
-          <thead class="bg-ink-50/60">
-            <tr class="text-left text-xs uppercase tracking-wider text-ink-500">
-              <th scope="col" class="px-5 py-3 font-semibold">พนักงาน</th>
-              <th scope="col" class="px-5 py-3 font-semibold">บทบาท</th>
-              <th scope="col" class="px-5 py-3 font-semibold">สาขา</th>
-              <th scope="col" class="px-5 py-3 font-semibold">วันทำงาน · เวลา</th>
-              <th scope="col" class="px-5 py-3 font-semibold w-0"></th>
-            </tr>
-          </thead>
-          <tbody id="rolesTableBody" class="divide-y divide-ink-100"></tbody>
-        </table>
+      <!-- #rolesListsWrap is the single loading/error/empty/data toggle
+           target (see renderRolesTable()); its two children carry their
+           OWN static responsive classes that JS never touches, so the
+           breakpoint switch always holds regardless of load state. -->
+      <div id="rolesListsWrap" class="hidden">
+        <!-- Desktop: unchanged table with the inline expanding editor row,
+             md+ only. overflow-x-auto, not overflow-hidden: the five columns
+             do not fit a phone and the แก้ไข button was being clipped
+             off-screen. -->
+        <div id="rolesTableWrap" class="hidden overflow-x-auto rounded-xl border border-ink-200 bg-white shadow-card md:block">
+          <!-- min-w keeps the five columns readable and lets the wrapper scroll,
+               instead of compressing "วันทำงาน · เวลา" into a one-word sliver. -->
+          <table class="w-full min-w-[720px] divide-y divide-ink-100 text-[13px]">
+            <thead class="bg-ink-100">
+              <tr class="text-left text-xs tracking-wide text-ink-600">
+                <th scope="col" class="px-5 py-3 font-semibold">พนักงาน</th>
+                <th scope="col" class="px-5 py-3 font-semibold">บทบาท</th>
+                <th scope="col" class="px-5 py-3 font-semibold">สาขา</th>
+                <th scope="col" class="px-5 py-3 font-semibold">วันทำงาน · เวลา</th>
+                <th scope="col" class="px-5 py-3 font-semibold w-0"></th>
+              </tr>
+            </thead>
+            <tbody id="rolesTableBody" class="divide-y divide-ink-100"></tbody>
+          </table>
+        </div>
+        <!-- Mobile: card-per-row, md:hidden. One data pass with the table
+             (buildEmployeeRow() also calls buildEmployeeCard()). Tapping a
+             card's "แก้ไข" opens the same editor as the desktop table, as a
+             MODAL-TO-SHEET full-screen sheet (#mobileEditSheet below). -->
+        <ul id="rolesCardsWrap" class="space-y-2 md:hidden"></ul>
       </div>
     </section>
 
     <!-- TAB: Roster (per-day reception assignments) -->
     <section id="tabRoster" class="tab-pane hidden">
-      <div class="mb-4 rounded-2xl border border-ink-200 bg-white p-3 shadow-card md:p-4">
+      <div class="mb-4 rounded-xl border border-ink-200 bg-white p-3 shadow-card md:p-4">
+        <!-- Branch selector on its own row, month stepper on the next: on a
+             390px phone a single wrap-anywhere row split "‹" and "›" across
+             two lines, so prev and next were nowhere near each other. -->
         <div class="flex flex-wrap items-center gap-2">
           <!-- Branch selector. Reception staff are filtered by location.
                'all' shows everyone regardless. -->
-          <div class="flex flex-wrap items-center gap-1.5 text-xs mr-3">
-            <button data-location="all" class="loc-chip loc-on h-10 rounded-full border px-3 font-medium">ทั้งหมด</button>
-            <button data-location="HF" class="loc-chip h-10 rounded-full border px-3 font-medium">HF</button>
-            <button data-location="HF_VILLE" class="loc-chip h-10 rounded-full border px-3 font-medium">HF Ville</button>
+          <div class="flex flex-wrap items-center gap-1.5 text-xs">
+            <button data-location="all" class="loc-chip loc-on h-10 px-3">ทั้งหมด</button>
+            <button data-location="HF" class="loc-chip h-10 px-3">HF</button>
+            <button data-location="HF_VILLE" class="loc-chip h-10 px-3">HF Ville</button>
           </div>
-          <button id="rosterPrev" class="h-10 w-10 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">‹</button>
+        </div>
+        <div class="mt-2 flex flex-nowrap items-center gap-2">
+          <button id="rosterPrev" type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50 md:h-10 md:w-10" aria-label="เดือนก่อนหน้า"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="15 18 9 12 15 6"/></svg></button>
           <!-- Big Thai month-year label (e.g. "พฤษภาคม 2569"). Buddhist
                year = Gregorian + 543. Browser-native month pickers don't
                render Thai locale, so we hand-roll the label and navigate
                purely via prev / next / "เดือนนี้". -->
           <div id="rosterPeriodLabel"
-               class="h-10 min-w-[12rem] flex-1 rounded-lg border border-ink-200 bg-white px-4 text-base font-semibold text-ink-800 shadow-card flex items-center justify-center tabular-nums">
+               class="flex h-10 min-w-0 flex-1 items-center justify-center rounded-lg border border-ink-200 bg-white px-2 text-base font-semibold tabular-nums text-ink-800 shadow-card md:min-w-[12rem] md:px-4">
             —
           </div>
-          <button id="rosterNext" class="h-10 w-10 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">›</button>
-          <button id="rosterThisMonth" class="h-10 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">เดือนนี้</button>
+          <button id="rosterNext" type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50 md:h-10 md:w-10" aria-label="เดือนถัดไป"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="9 18 15 12 9 6"/></svg></button>
+          <button id="rosterThisMonth" type="button" class="btn-secondary h-10">เดือนนี้</button>
         </div>
         <p class="mt-3 text-xs text-ink-500">ตารางกะรายเดือนสำหรับพนักงาน Reception แต่ละสาขา เลือกกะ A/B/C/D หรือ OFF ในแต่ละช่อง · A=07:00–16:00, B=13:00–22:00, C=11:00–20:00, D=22:00–07:00 (ข้ามคืน)</p>
       </div>
@@ -118,23 +289,33 @@
            Each PATCH /api/private/shifts/{code}/color persists the
            pick and the roster grid below re-renders with the new
            background. Built dynamically by JS once SHIFTS loads. -->
-      <div class="mb-4 rounded-2xl border border-ink-200 bg-white p-3 shadow-card md:p-4">
+      <div class="mb-4 rounded-xl border border-ink-200 bg-white p-3 shadow-card md:p-4">
         <p class="mb-2 text-xs font-semibold text-ink-600">ตั้งค่าสีกะ</p>
         <div id="shiftColorLegend" class="flex flex-wrap items-center gap-3"></div>
       </div>
 
-      <div id="rosterLoading" class="rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+      <div id="rosterLoading" class="rounded-xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
         <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
         <p class="mt-3 text-sm text-ink-500">กำลังโหลดตารางกะ…</p>
       </div>
-      <div id="rosterError" class="hidden rounded-2xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700"></div>
-      <div id="rosterEmpty" class="hidden rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+      <!-- LOAD failure only. Cell-save failures use #rosterSaveError below,
+           which never hides the grid — blanking a month of roster because one
+           PATCH failed loses the admin's place. -->
+      <div id="rosterError" class="hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+        <span id="rosterErrorText">โหลดตารางกะไม่สำเร็จ</span>
+        <button id="rosterRetry" type="button" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
+      </div>
+      <div id="rosterSaveError" class="mb-3 hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-2 text-sm text-bad-700">
+        <span id="rosterSaveErrorText"></span>
+        <button id="rosterSaveErrorDismiss" type="button" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ปิด</button>
+      </div>
+      <div id="rosterEmpty" class="hidden rounded-xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
         <p class="text-sm font-medium text-ink-700">ยังไม่มีพนักงานบทบาท Reception</p>
         <p class="mt-1 text-xs text-ink-500">กำหนดบทบาทที่แท็บ "บทบาท + กะหลัก" ก่อน</p>
       </div>
-      <div id="rosterTableWrap" class="hidden overflow-x-auto rounded-2xl border border-ink-200 bg-white shadow-card">
+      <div id="rosterTableWrap" class="hidden overflow-x-auto rounded-xl border border-ink-200 bg-white shadow-card" tabindex="0" aria-label="ตารางกะรายวัน เลื่อนแนวนอนได้">
         <table class="min-w-full divide-y divide-ink-100 text-sm">
-          <thead id="rosterHead" class="bg-ink-50/60"></thead>
+          <thead id="rosterHead" class="bg-ink-100"></thead>
           <tbody id="rosterBody" class="divide-y divide-ink-100"></tbody>
         </table>
       </div>
@@ -142,27 +323,36 @@
 
     <!-- TAB: Housekeeping (แม่บ้าน) day off -->
     <section id="tabHkoff" class="tab-pane hidden">
-      <div id="hkLoading" class="rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+      <div id="hkLoading" class="rounded-xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
         <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
         <p class="mt-3 text-sm text-ink-500">กำลังโหลดข้อมูลแม่บ้าน…</p>
       </div>
-      <div id="hkError" class="hidden rounded-2xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700"></div>
-      <div id="hkEmpty" class="hidden rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+      <!-- LOAD failure only; cell-save failures use #hkSaveError below. -->
+      <div id="hkError" class="hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+        <span id="hkErrorText">โหลดข้อมูลไม่สำเร็จ</span>
+        <button id="hkRetry" type="button" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
+      </div>
+      <div id="hkSaveError" class="mb-3 hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-2 text-sm text-bad-700">
+        <span id="hkSaveErrorText"></span>
+        <button id="hkSaveErrorDismiss" type="button" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ปิด</button>
+      </div>
+      <div id="hkEmpty" class="hidden rounded-xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
         <p class="text-sm font-medium text-ink-700">ยังไม่มีพนักงานบทบาทแม่บ้าน</p>
         <p class="mt-1 text-xs text-ink-500">กำหนดบทบาท “แม่บ้าน” ที่แท็บ “บทบาท + กะหลัก” ก่อน</p>
       </div>
 
       <div id="hkContent" class="hidden space-y-5">
         <!-- A. Standing weekly day off (per maid) -->
-        <div class="overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-card">
+        <div class="overflow-hidden rounded-xl border border-ink-200 bg-white shadow-card">
           <div class="border-b border-ink-100 px-5 py-3">
             <h2 class="text-base font-semibold text-ink-900">วันหยุดประจำสัปดาห์</h2>
             <p class="mt-0.5 text-xs text-ink-500">แม่บ้านแต่ละคนหยุด 1 วันต่อสัปดาห์ตามที่เลือก เปลี่ยนได้ที่นี่ — มีผลตั้งแต่วันนี้เป็นต้นไป</p>
           </div>
-          <div class="overflow-x-auto">
+          <!-- Desktop: table, md+ only. -->
+          <div class="hidden overflow-x-auto md:block">
             <table class="min-w-full divide-y divide-ink-100 text-sm">
-              <thead class="bg-ink-50/60">
-                <tr class="text-left text-xs uppercase tracking-wider text-ink-500">
+              <thead class="bg-ink-100">
+                <tr class="text-left text-xs tracking-wide text-ink-600">
                   <th class="px-5 py-3 font-semibold">พนักงาน</th>
                   <th class="px-5 py-3 font-semibold">สาขา</th>
                   <th class="px-5 py-3 font-semibold">วันหยุดประจำ</th>
@@ -171,34 +361,38 @@
               <tbody id="hkStandingBody" class="divide-y divide-ink-100"></tbody>
             </table>
           </div>
+          <!-- Mobile: card-per-row, md:hidden. One data pass with the table
+               (see renderHkStanding()). A 3-field RECORD list (STYLE.md
+               §5b) — cards, not horizontal scroll. -->
+          <ul id="hkStandingCards" class="divide-y divide-ink-100 md:hidden"></ul>
         </div>
 
         <!-- B. Monthly date grid (reception-style) for moving day-offs -->
-        <div class="overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-card">
+        <div class="overflow-hidden rounded-xl border border-ink-200 bg-white shadow-card">
           <div class="flex flex-wrap items-center justify-between gap-2 border-b border-ink-100 px-5 py-3">
             <div class="min-w-0">
               <h2 class="text-base font-semibold text-ink-900">ตารางวันหยุดรายวัน</h2>
               <p class="mt-0.5 text-xs text-ink-500">วันหยุดประจำแสดงเป็น OFF อัตโนมัติ · แก้แต่ละช่องเพื่อย้ายวันหยุดเฉพาะวัน (ไม่กระทบวันหยุดประจำ)</p>
             </div>
-            <div class="flex items-center gap-1.5">
-              <button id="hkPrev" class="h-10 w-10 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">‹</button>
-              <div id="hkPeriodLabel" class="flex h-10 min-w-[10rem] items-center justify-center rounded-lg border border-ink-200 bg-white px-4 text-base font-semibold tabular-nums text-ink-800 shadow-card">—</div>
-              <button id="hkNext" class="h-10 w-10 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">›</button>
-              <button id="hkThisMonth" class="h-10 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">เดือนนี้</button>
+            <div class="flex w-full items-center gap-1.5 md:w-auto">
+              <button id="hkPrev" type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50 md:h-10 md:w-10" aria-label="เดือนก่อนหน้า"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="15 18 9 12 15 6"/></svg></button>
+              <div id="hkPeriodLabel" class="flex h-10 min-w-0 flex-1 items-center justify-center rounded-lg border border-ink-200 bg-white px-2 text-base font-semibold tabular-nums text-ink-800 shadow-card md:min-w-[10rem] md:flex-none md:px-4">—</div>
+              <button id="hkNext" type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50 md:h-10 md:w-10" aria-label="เดือนถัดไป"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="9 18 15 12 9 6"/></svg></button>
+              <button id="hkThisMonth" type="button" class="btn-secondary h-10">เดือนนี้</button>
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-4 border-b border-ink-100 px-5 py-2 text-xs">
             <div class="flex items-center gap-1.5">
-              <button data-hkloc="all" class="loc-chip loc-on h-9 rounded-full border px-3 font-medium">ทั้งหมด</button>
-              <button data-hkloc="HF" class="loc-chip h-9 rounded-full border px-3 font-medium">HF</button>
-              <button data-hkloc="HF_VILLE" class="loc-chip h-9 rounded-full border px-3 font-medium">HF Ville</button>
+              <button data-hkloc="all" class="loc-chip loc-on h-9 px-3">ทั้งหมด</button>
+              <button data-hkloc="HF" class="loc-chip h-9 px-3">HF</button>
+              <button data-hkloc="HF_VILLE" class="loc-chip h-9 px-3">HF Ville</button>
             </div>
             <div id="hkLegend" class="flex flex-wrap items-center gap-3 text-ink-500"></div>
           </div>
           <div id="hkGridEmpty" class="hidden px-6 py-10 text-center text-sm text-ink-500">ไม่มีพนักงานแม่บ้านในสาขานี้</div>
-          <div id="hkGridWrap" class="overflow-x-auto">
+          <div id="hkGridWrap" class="overflow-x-auto" tabindex="0" aria-label="ตารางวันหยุดแม่บ้าน เลื่อนแนวนอนได้">
             <table class="min-w-full divide-y divide-ink-100 text-sm">
-              <thead id="hkGridHead" class="bg-ink-50/60"></thead>
+              <thead id="hkGridHead" class="bg-ink-100"></thead>
               <tbody id="hkGridBody" class="divide-y divide-ink-100"></tbody>
             </table>
           </div>
@@ -208,71 +402,40 @@
 
     <!-- TAB: Leave / holiday Kanban (per-employee, one column per type) -->
     <section id="tabLeaveBoard" class="tab-pane hidden">
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-ink-200 bg-white p-3 shadow-card">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-ink-200 bg-white p-3 shadow-card">
         <div class="min-w-0">
           <h2 class="text-base font-semibold text-ink-900">วันลา · วันหยุด</h2>
           <p class="mt-0.5 text-xs text-ink-500">การลาและวันหยุดของพนักงานรายบุคคล แยกตามประเภท — เลือกเดือนเพื่อดูและเพิ่มรายการ</p>
         </div>
-        <div class="flex items-center gap-1.5">
-          <button id="lbPrev" class="h-10 w-10 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">‹</button>
-          <div id="lbPeriodLabel" class="flex h-10 min-w-[10rem] items-center justify-center rounded-lg border border-ink-200 bg-white px-4 text-base font-semibold tabular-nums text-ink-800 shadow-card">—</div>
-          <button id="lbNext" class="h-10 w-10 rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50">›</button>
-          <button id="lbThisMonth" class="h-10 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100">เดือนนี้</button>
+        <div class="flex w-full items-center gap-1.5 md:w-auto">
+          <button id="lbPrev" type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50 md:h-10 md:w-10" aria-label="เดือนก่อนหน้า"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="15 18 9 12 15 6"/></svg></button>
+          <div id="lbPeriodLabel" class="flex h-10 min-w-0 flex-1 items-center justify-center rounded-lg border border-ink-200 bg-white px-2 text-base font-semibold tabular-nums text-ink-800 shadow-card md:min-w-[10rem] md:flex-none md:px-4">—</div>
+          <button id="lbNext" type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50 md:h-10 md:w-10" aria-label="เดือนถัดไป"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="9 18 15 12 9 6"/></svg></button>
+          <button id="lbThisMonth" type="button" class="btn-secondary h-10">เดือนนี้</button>
         </div>
       </div>
-      <div id="lbError" class="mb-3 hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-2 text-sm text-bad-700"></div>
+      <div id="lbError" class="mb-3 hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-2 text-sm text-bad-700">
+        <span id="lbErrorText">โหลดข้อมูลไม่สำเร็จ</span>
+        <button id="lbRetry" type="button" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
+      </div>
       <div id="lbBoard" class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"></div>
     </section>
   </main>
 
-  <style>
-    .tab {
-      color: rgb(71 85 105);
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
-    }
-    .tab:hover { background-color: rgb(248 250 252); }
-    .tab.tab-on {
-      color: rgb(67 56 202);
-      border-bottom-color: rgb(99 102 241);
-    }
-
-    /* Branch selector chips on the roster tab. Mirror the chip styling
-       on /v2/by-date so the two pages feel consistent. */
-    .loc-chip {
-      border-color: rgb(226 232 240);
-      background-color: white;
-      color: rgb(71 85 105);
-    }
-    .loc-chip:hover { background-color: rgb(248 250 252); }
-    .loc-chip.loc-on {
-      background-color: rgb(238 242 255);
-      border-color: rgb(199 210 254);
-      color: rgb(67 56 202);
-    }
-
-    /* Weekday toggle pills in the schedule editor. The checkbox is
-       visually hidden (sr-only) and the adjacent pill reflects state
-       via pure CSS, so we don't rely on Tailwind generating
-       peer-checked variants for dynamically-injected markup. Mirrors
-       the .loc-chip palette for visual consistency. */
-    .wd-pill {
-      border-color: rgb(226 232 240);
-      background-color: white;
-      color: rgb(71 85 105);
-      transition: background-color .12s, border-color .12s, color .12s;
-    }
-    .wd-chip:hover .wd-pill { background-color: rgb(248 250 252); }
-    .wd-chip input:checked + .wd-pill {
-      background-color: rgb(238 242 255);
-      border-color: rgb(199 210 254);
-      color: rgb(67 56 202);
-    }
-    .wd-chip input:focus-visible + .wd-pill {
-      outline: 2px solid rgb(99 102 241);
-      outline-offset: 1px;
-    }
-  </style>
+  <!-- MODAL-TO-SHEET (STYLE.md §5a): the roles-tab editor, below md only.
+       Desktop never sees this — it uses the inline expanding table row. -->
+  <div id="mobileEditOverlay"></div>
+  <div id="mobileEditSheet" role="dialog" aria-modal="true" aria-labelledby="mobileEditTitle">
+    <div class="sheet-head flex items-center gap-3">
+      <h2 id="mobileEditTitle" class="flex-1 text-base font-semibold text-ink-900">แก้ไขกะ</h2>
+      <button type="button" id="mobileEditClose" aria-label="ปิด"
+              class="-mr-2 flex h-11 w-11 items-center justify-center rounded-lg text-ink-600 hover:bg-ink-100 hover:text-ink-900">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" class="h-5 w-5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body" id="mobileEditBody"></div>
+    <div class="sheet-foot" id="mobileEditFoot"></div>
+  </div>
 
   <script>
     (function () {
@@ -295,6 +458,73 @@
         { value: "HF_VILLE", label: "HF Ville" },
       ];
 
+      // ---------- Grid fill colours: HF One tokens only ----------
+      // Shift.color / LeaveType.color are free-text hex columns seeded by the
+      // Alembic migrations with Tailwind's own DEFAULT ramps (#86efac,
+      // #93c5fd, #c4b5fd, #e5e7eb, …) — the cool green / azure / violet / grey
+      // families the v2 style contract bans, and the roster / maid grids
+      // paint a whole screen with them. We cannot change the seed (no backend
+      // changes in this migration), so the page treats the stored value as a
+      // HINT: it is honoured only when it is already an HF token, otherwise
+      // the code's own token fill is used. The colour picker below writes
+      // tokens only, so an edited colour survives the check on the next load.
+      //
+      // Every hex here is a theme.js token; the token name is in the comment.
+      const FILL_TOKENS = [
+        { hex: "#D3E7DC", name: "เขียว" },      /* good-100  */
+        { hex: "#EAF6EF", name: "เขียวอ่อน" },  /* good-50   */
+        { hex: "#F6EACB", name: "อำพัน" },      /* warn-100  */
+        { hex: "#FBF3E1", name: "ครีม" },       /* warn-50   */
+        { hex: "#F5C9C9", name: "ชมพู" },       /* brand-100 */
+        { hex: "#FBEAEA", name: "ชมพูอ่อน" },   /* brand-50  */
+        { hex: "#E9A3A3", name: "แดงอมชมพู" },  /* brand-200 */
+        { hex: "#F5C6C6", name: "แดงอ่อน" },    /* bad-100   */
+        { hex: "#CFC9C1", name: "น้ำตาลเทา" },  /* ink-300   */
+        { hex: "#E8E4DF", name: "เทา" },        /* ink-200   */
+        { hex: "#F4F1ED", name: "เทาอ่อน" },    /* ink-100   */
+        { hex: "#FAF9F7", name: "ขาวนวล" },     /* ink-50    */
+      ];
+      const FILL_TOKEN_SET = new Set(FILL_TOKENS.map(t => t.hex));
+
+      // Default fill per shift code / leave code. Chosen so the nine states a
+      // reception cell can hold stay mutually distinguishable, and so the maid
+      // grid's dominant "ปกติ" fill is the calmest of them.
+      const SHIFT_FILL_DEFAULT = {
+        MORNING:   "#D3E7DC",  /* good-100  A 07:00-16:00 */
+        AFTERNOON: "#F6EACB",  /* warn-100  B 13:00-22:00 */
+        MID:       "#F5C9C9",  /* brand-100 C 11:00-20:00 */
+        NIGHT:     "#E9A3A3",  /* brand-200 D 22:00-07:00 */
+        OFF:       "#E8E4DF",  /* ink-200                */
+        HK_WORK:   "#FAF9F7",  /* ink-50    maid "ปกติ"   */
+        NORMAL:    "#F4F1ED",  /* ink-100                */
+      };
+      const LEAVE_FILL_DEFAULT = {
+        vacation:       "#EAF6EF",  /* good-50   */
+        personal:       "#FBF3E1",  /* warn-50   */
+        sick:           "#FBEAEA",  /* brand-50  */
+        public_holiday: "#CFC9C1",  /* ink-300   */
+      };
+      const FILL_FALLBACK = "#F4F1ED";   /* ink-100 */
+
+      function normHex(c) {
+        const v = String(c || "").trim().toUpperCase();
+        return /^#[0-9A-F]{6}$/.test(v) ? v : null;
+      }
+      // Stored colour if it is an HF token, else the code's own token fill.
+      function tokenFill(stored, defaults, code) {
+        const v = normHex(stored);
+        if (v && FILL_TOKEN_SET.has(v)) return v;
+        return defaults[code] || FILL_FALLBACK;
+      }
+      function shiftFill(code) {
+        const sh = SHIFTS.find(s => s.code === code);
+        return tokenFill(sh && sh.color, SHIFT_FILL_DEFAULT, code);
+      }
+      function leaveFill(code) {
+        const lt = LEAVE_TYPES_BY_CODE[code];
+        return tokenFill(lt && lt.color, LEAVE_FILL_DEFAULT, code);
+      }
+
       // Loaded from /api/private/shifts/
       let SHIFTS = [];
       // Loaded from /api/private/employees/?include_hidden=true
@@ -315,7 +545,11 @@
       };
       tabs.forEach(t => t.addEventListener("click", () => {
         const target = t.getAttribute("data-tab");
-        tabs.forEach(x => x.classList.toggle("tab-on", x === t));
+        tabs.forEach(x => {
+          const on = x === t;
+          x.classList.toggle("tab-on", on);
+          x.setAttribute("aria-selected", on ? "true" : "false");
+        });
         Object.entries(panes).forEach(([k, el]) => el.classList.toggle("hidden", k !== target));
         if (target === "roster") loadRoster();
         if (target === "hkoff") loadHkoff();
@@ -351,14 +585,15 @@
       const rolesLoading = document.getElementById("rolesLoading");
       const rolesError = document.getElementById("rolesError");
       const rolesErrorText = document.getElementById("rolesErrorText");
-      const rolesTableWrap = document.getElementById("rolesTableWrap");
+      const rolesListsWrap = document.getElementById("rolesListsWrap");
       const rolesTableBody = document.getElementById("rolesTableBody");
+      const rolesCardsWrap = document.getElementById("rolesCardsWrap");
 
       document.getElementById("rolesRetry").addEventListener("click", loadAll);
 
       function showRolesError(msg) {
         rolesLoading.classList.add("hidden");
-        rolesTableWrap.classList.add("hidden");
+        rolesListsWrap.classList.add("hidden");
         rolesErrorText.textContent = msg;
         rolesError.classList.remove("hidden");
       }
@@ -438,7 +673,7 @@
       function renderRolesTable() {
         rolesLoading.classList.add("hidden");
         rolesError.classList.add("hidden");
-        rolesTableWrap.classList.remove("hidden");
+        rolesListsWrap.classList.remove("hidden");
 
         // Sort employees by display_name for predictable scrolling.
         const sorted = EMPLOYEES.slice().sort((a, b) =>
@@ -448,6 +683,7 @@
         );
 
         rolesTableBody.innerHTML = "";
+        rolesCardsWrap.innerHTML = "";
         Object.keys(rowRefs).forEach(k => delete rowRefs[k]);
         sorted.forEach(emp => buildEmployeeRow(emp));
 
@@ -464,6 +700,30 @@
             .catch(() => { SCHEDULE_CACHE[emp.badge_number] = null; })
             .then(() => renderScheduleCell(emp));
         });
+      }
+
+      /** Card-per-row (md:hidden), one data pass with buildEmployeeRow()'s
+          <tr>. "แก้ไข" opens the same editor as a MODAL-TO-SHEET sheet. */
+      function buildEmployeeCard(emp) {
+        const li = document.createElement("li");
+        li.className = "rounded-xl border border-ink-200 bg-white p-3 shadow-card";
+        const name = V2.escapeHtml(emp.display_name || ("บัตร " + emp.badge_number));
+        const badge = "#" + V2.escapeHtml(emp.badge_number);
+        const avatarKlass = V2.avatarColor(emp.badge_number || emp.display_name || "");
+        const initials = V2.escapeHtml(V2.initials(emp.display_name || emp.badge_number));
+        li.innerHTML =
+          '<div class="flex items-start gap-3">' +
+            '<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ' + avatarKlass + '">' + initials + '</span>' +
+            '<div class="min-w-0 flex-1">' +
+              '<p class="truncate font-semibold text-ink-900">' + name + '</p>' +
+              '<p class="truncate text-xs text-ink-500">' + badge + '</p>' +
+            '</div>' +
+            '<span class="card-role-cell shrink-0"></span>' +
+          '</div>' +
+          '<div class="mt-2 text-xs card-location-cell"></div>' +
+          '<div class="mt-1 card-schedule-cell"></div>' +
+          '<button type="button" class="card-edit-btn btn-secondary mt-3 w-full">แก้ไข</button>';
+        return li;
       }
 
       function buildEmployeeRow(emp) {
@@ -499,6 +759,8 @@
             '<div class="editor-panel rounded-xl border border-ink-200 bg-ink-50/40 p-4"></div>' +
           '</td>';
 
+        const card = buildEmployeeCard(emp);
+
         rowRefs[emp.badge_number] = {
           roleCell: tr.querySelector(".role-cell"),
           locationCell: tr.querySelector(".location-cell"),
@@ -506,6 +768,9 @@
           editBtn: tr.querySelector(".edit-btn"),
           editorRow,
           panel: editorRow.querySelector(".editor-panel"),
+          cardRoleCell: card.querySelector(".card-role-cell"),
+          cardLocationCell: card.querySelector(".card-location-cell"),
+          cardScheduleCell: card.querySelector(".card-schedule-cell"),
         };
 
         renderRoleCell(emp);
@@ -513,49 +778,68 @@
         renderScheduleCell(emp);
 
         rowRefs[emp.badge_number].editBtn.addEventListener("click", () => toggleEditor(emp));
+        card.querySelector(".card-edit-btn").addEventListener("click", () => openMobileEditor(emp));
 
         rolesTableBody.appendChild(tr);
         rolesTableBody.appendChild(editorRow);
+        rolesCardsWrap.appendChild(card);
       }
 
       function renderRoleCell(emp) {
         const meta = ROLE_BADGE[emp.role];
-        rowRefs[emp.badge_number].roleCell.innerHTML = meta
+        const html = meta
           ? '<span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ' + meta.cls + '">' + V2.escapeHtml(meta.label) + '</span>'
-          : '<span class="text-ink-300">—</span>';
+          : '<span class="text-ink-500">—</span>';
+        const refs = rowRefs[emp.badge_number];
+        refs.roleCell.innerHTML = html;
+        if (refs.cardRoleCell) refs.cardRoleCell.innerHTML = html;
       }
 
       function renderLocationCell(emp) {
         const label = LOCATION_LABEL[emp.location];
-        rowRefs[emp.badge_number].locationCell.innerHTML = label
+        const refs = rowRefs[emp.badge_number];
+        refs.locationCell.innerHTML = label
           ? '<span class="text-ink-700">' + V2.escapeHtml(label) + '</span>'
-          : '<span class="text-ink-300">—</span>';
+          : '<span class="text-ink-500">—</span>';
+        // The card has no column header, so its copy names the field.
+        if (refs.cardLocationCell) {
+          refs.cardLocationCell.innerHTML = label
+            ? '<span class="text-ink-500">สาขา:</span> <span class="text-ink-700">' + V2.escapeHtml(label) + '</span>'
+            : '<span class="text-ink-500">สาขา: —</span>';
+        }
       }
 
       function renderScheduleCell(emp) {
-        const cell = rowRefs[emp.badge_number].scheduleCell;
+        const refs = rowRefs[emp.badge_number];
+        const cell = refs.scheduleCell;
+        const cardCell = refs.cardScheduleCell;
+        function set(html) {
+          cell.innerHTML = html;
+          if (cardCell) cardCell.innerHTML = html;
+        }
         if ((emp.role || "") === "reception") {
-          cell.innerHTML = '<span class="text-xs text-ink-400">ตามตารางกะรายวัน</span>';
+          set('<span class="text-xs text-ink-500">ตามตารางกะรายวัน</span>');
           return;
         }
         const schedules = SCHEDULE_CACHE[emp.badge_number];
         if (schedules === undefined) {
-          cell.innerHTML = '<span class="text-xs text-ink-300">กำลังโหลด…</span>';
+          set('<span class="text-xs text-ink-500">กำลังโหลด…</span>');
           return;
         }
         const eff = effectiveEntry(schedules);
         const days = eff ? workdaysSummary(eff.work_days) : null;
         if (!days) {
-          cell.innerHTML = '<span class="text-ink-300">—</span>';
+          set('<span class="text-ink-500">—</span>');
           return;
         }
         const hours = (eff.work_start && eff.work_end)
           ? (eff.work_start + "–" + eff.work_end) : "—";
-        cell.innerHTML =
+        set(
           '<div class="flex flex-col gap-0.5">' +
             '<span class="w-fit rounded-md bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-700">' + V2.escapeHtml(days) + '</span>' +
             '<span class="text-xs text-ink-500 tabular-nums">' + V2.escapeHtml(hours) + '</span>' +
-          '</div>';
+          '</div>'
+        );
       }
 
       function closeAllEditors() {
@@ -572,8 +856,84 @@
         if (willOpen) {
           refs.editorRow.classList.remove("hidden");
           refs.editBtn.textContent = "ปิด";
-          buildEditor(emp);
+          buildEditorPanel(emp, refs.panel);
         }
+      }
+
+      // ---------- Mobile edit sheet (MODAL-TO-SHEET, STYLE.md §5a) ----------
+      // Below md only — desktop never opens this, it uses toggleEditor()
+      // above. Same buildEditorPanel() renders into the sheet body instead
+      // of the inline table row, so every field/save/history capability is
+      // identical on both surfaces.
+      const mobileEditOverlay = document.getElementById("mobileEditOverlay");
+      const mobileEditSheet = document.getElementById("mobileEditSheet");
+      const mobileEditBody = document.getElementById("mobileEditBody");
+      const mobileEditFoot = document.getElementById("mobileEditFoot");
+      const mobileEditTitle = document.getElementById("mobileEditTitle");
+      let mobileEditOpener = null;
+
+      // Same focusable-elements + Tab-trap approach nav.js uses for its own
+      // sheet (STYLE.md §5a: "Trap Tab inside the panel").
+      function mobileEditFocusables() {
+        return Array.prototype.slice
+          .call(mobileEditSheet.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+          .filter((el) => el.offsetParent !== null || el === document.activeElement);
+      }
+
+      function openMobileEditor(emp) {
+        mobileEditOpener = document.activeElement;
+        mobileEditFoot.innerHTML = "";
+        mobileEditTitle.textContent = "แก้ไขกะ — " + (emp.display_name || emp.badge_number);
+        mobileEditOverlay.classList.add("is-open");
+        mobileEditSheet.classList.add("is-open");
+        document.body.style.overflow = "hidden";
+        buildEditorPanel(emp, mobileEditBody).then(() => {
+          // Move the primary action (บันทึกกะ + its status) out of the
+          // scrolling body into the sheet's own sticky footer — same
+          // buildEditorPanel() markup, just relocated for the mobile sheet
+          // only (the desktop inline editor keeps it inline). STYLE.md §5a:
+          // "sticky footer … so the primary action is always … thumb-reachable."
+          const saveBtn = mobileEditBody.querySelector(".ed-save");
+          const saveRow = saveBtn && saveBtn.closest(".flex.items-center.gap-2");
+          if (saveRow) mobileEditFoot.appendChild(saveRow);
+          const first = mobileEditFocusables()[0];
+          if (first) first.focus();
+        });
+      }
+      function closeMobileEditor() {
+        mobileEditOverlay.classList.remove("is-open");
+        mobileEditSheet.classList.remove("is-open");
+        document.body.style.overflow = "";
+        if (mobileEditOpener && mobileEditOpener.focus) mobileEditOpener.focus();
+      }
+      document.getElementById("mobileEditClose").addEventListener("click", closeMobileEditor);
+      mobileEditOverlay.addEventListener("click", closeMobileEditor);
+      document.addEventListener("keydown", (e) => {
+        if (!mobileEditSheet.classList.contains("is-open")) return;
+        if (e.key === "Escape") { closeMobileEditor(); return; }
+        if (e.key !== "Tab") return;
+        const items = mobileEditFocusables();
+        if (!items.length) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (e.shiftKey && (document.activeElement === first || !mobileEditSheet.contains(document.activeElement))) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      });
+      // Crossing md with the sheet open would strand it full-screen over the
+      // desktop layout with body scroll still locked — close it, same as
+      // nav.js's own sheet.
+      if (window.matchMedia) {
+        const mobileEditMq = window.matchMedia("(min-width: 768px)");
+        const onMobileEditMqChange = (e) => {
+          if (e.matches && mobileEditSheet.classList.contains("is-open")) closeMobileEditor();
+        };
+        if (mobileEditMq.addEventListener) mobileEditMq.addEventListener("change", onMobileEditMqChange);
+        else if (mobileEditMq.addListener) mobileEditMq.addListener(onMobileEditMqChange);
       }
 
       function addSelectOption(select, value, label, selected) {
@@ -585,18 +945,18 @@
       }
 
       // Static markup for the inline editor panel. Populated/wired in
-      // buildEditor(); no interpolated values so it's safe as a constant.
+      // buildEditorPanel(); no interpolated values so it's safe as a constant.
       const EDITOR_TEMPLATE =
         '<div class="grid gap-5 md:grid-cols-2">' +
           '<div class="space-y-4">' +
-            '<div class="grid grid-cols-2 gap-3">' +
+            '<div class="grid grid-cols-1 gap-3 md:grid-cols-2">' +
               '<label class="block">' +
                 '<span class="mb-1 block text-xs font-semibold text-ink-600">บทบาท</span>' +
-                '<select class="ed-role h-10 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800"></select>' +
+                '<select class="ed-role h-11 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800 md:h-10"></select>' +
               '</label>' +
               '<label class="block">' +
                 '<span class="mb-1 block text-xs font-semibold text-ink-600">สาขา</span>' +
-                '<select class="ed-location h-10 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800"></select>' +
+                '<select class="ed-location h-11 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800 md:h-10"></select>' +
               '</label>' +
             '</div>' +
             '<div class="ed-shift-fields space-y-3">' +
@@ -611,28 +971,28 @@
                 '</div>' +
                 '<div class="ed-weekdays flex flex-wrap gap-1.5"></div>' +
               '</div>' +
-              '<div class="grid grid-cols-2 gap-3">' +
+              '<div class="grid grid-cols-1 gap-3 md:grid-cols-2">' +
                 '<label class="block">' +
                   '<span class="mb-1 block text-xs font-semibold text-ink-600">เวลาเริ่ม</span>' +
-                  '<input type="time" class="ed-start h-10 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800" />' +
+                  '<input type="time" class="ed-start h-11 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800 md:h-10" />' +
                 '</label>' +
                 '<label class="block">' +
                   '<span class="mb-1 block text-xs font-semibold text-ink-600">เวลาเลิก</span>' +
-                  '<input type="time" class="ed-end h-10 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800" />' +
+                  '<input type="time" class="ed-end h-11 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800 md:h-10" />' +
                 '</label>' +
               '</div>' +
             '</div>' +
             '<div class="ed-reception-note hidden rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-xs text-brand-700">' +
               'กะรับช่วงจากตารางกะรายวัน' +
             '</div>' +
-            '<div class="grid grid-cols-2 items-end gap-3">' +
+            '<div class="grid grid-cols-1 items-end gap-3 md:grid-cols-2">' +
               '<label class="block">' +
                 '<span class="mb-1 block text-xs font-semibold text-ink-600">มีผลตั้งแต่</span>' +
-                '<input type="date" class="ed-effective h-10 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800" />' +
+                '<input type="date" class="ed-effective h-11 w-full rounded-lg border border-ink-200 bg-white px-2 text-sm text-ink-800 md:h-10" />' +
               '</label>' +
               '<div class="flex items-center gap-2">' +
-                '<button type="button" class="ed-save h-10 rounded-lg border border-brand-200 bg-brand-50 px-4 text-sm font-semibold text-brand-700 hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50">บันทึก</button>' +
-                '<span class="ed-status text-xs text-ink-400"></span>' +
+                '<button type="button" class="ed-save btn-primary h-11 md:h-10">บันทึกกะ</button>' +
+                '<span class="ed-status text-xs text-ink-500"></span>' +
               '</div>' +
             '</div>' +
           '</div>' +
@@ -642,9 +1002,7 @@
           '</div>' +
         '</div>';
 
-      async function buildEditor(emp) {
-        const refs = rowRefs[emp.badge_number];
-        const panel = refs.panel;
+      async function buildEditorPanel(emp, panel) {
         panel.innerHTML =
           '<div class="flex items-center gap-2 py-3 text-sm text-ink-500">' +
             '<span class="h-4 w-4 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></span>' +
@@ -658,7 +1016,8 @@
             await refreshSchedule(emp);
           } catch (err) {
             panel.innerHTML =
-              '<div class="rounded-lg border border-bad-100 bg-bad-50 px-3 py-2 text-sm text-bad-700">โหลดประวัติกะไม่สำเร็จ</div>';
+              '<div class="rounded-lg border border-bad-100 bg-bad-50 px-3 py-2 text-sm text-bad-700">' +
+              'โหลดประวัติกะไม่สำเร็จ (' + V2.escapeHtml(String(err.status || "เครือข่าย")) + ')</div>';
             return;
           }
         }
@@ -740,7 +1099,7 @@
           saveBtn.disabled = !ok;
         }
         function setStatus(text, kind) {
-          const cls = { good: "text-good-700", bad: "text-bad-700", muted: "text-ink-400" }[kind] || "text-ink-400";
+          const cls = { good: "text-good-700", bad: "text-bad-700", muted: "text-ink-500" }[kind] || "text-ink-500";
           statusEl.className = "ed-status text-xs " + cls;
           statusEl.textContent = text;
           if (kind === "good") {
@@ -753,7 +1112,7 @@
           historyList.innerHTML = "";
           if (list.length === 0) {
             historyList.innerHTML =
-              '<li class="rounded-lg border border-ink-100 bg-ink-50/50 px-2.5 py-2 text-xs text-ink-400">ยังไม่มีประวัติกะ</li>';
+              '<li class="rounded-lg border border-ink-100 bg-ink-50/50 px-2.5 py-2 text-xs text-ink-500">ยังไม่มีประวัติกะ</li>';
             return;
           }
           list.forEach(s => {
@@ -772,8 +1131,9 @@
               '</div>';
             const del = document.createElement("button");
             del.type = "button";
-            del.className = "shrink-0 rounded-md px-1.5 text-ink-400 hover:bg-bad-50 hover:text-bad-600";
-            del.textContent = "✕";
+            del.className = "shrink-0 rounded-md px-1.5 text-ink-500 hover:bg-bad-50 hover:text-bad-600";
+            del.setAttribute("aria-label", "ลบ");
+            del.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
             del.title = "ลบเวอร์ชันนี้";
             del.addEventListener("click", async () => {
               del.disabled = true;
@@ -790,7 +1150,7 @@
                 setStatus("ลบแล้ว", "good");
               } catch (err) {
                 del.disabled = false;
-                setStatus("ลบไม่สำเร็จ", "bad");
+                setStatus("ลบไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")", "bad");
               }
             });
             li.appendChild(del);
@@ -855,6 +1215,11 @@
       // ---------- Roster tab ----------
       const rosterLoading = document.getElementById("rosterLoading");
       const rosterError = document.getElementById("rosterError");
+      const rosterErrorText = document.getElementById("rosterErrorText");
+      const rosterRetry = document.getElementById("rosterRetry");
+      const rosterSaveError = document.getElementById("rosterSaveError");
+      const rosterSaveErrorText = document.getElementById("rosterSaveErrorText");
+      const rosterSaveErrorDismiss = document.getElementById("rosterSaveErrorDismiss");
       const rosterEmpty = document.getElementById("rosterEmpty");
       const rosterTableWrap = document.getElementById("rosterTableWrap");
       const rosterHead = document.getElementById("rosterHead");
@@ -862,18 +1227,11 @@
       const rosterPeriodLabel = document.getElementById("rosterPeriodLabel");
       const rosterPrev = document.getElementById("rosterPrev");
       const rosterNext = document.getElementById("rosterNext");
-      const rosterThisWeek = document.getElementById("rosterThisWeek");
 
       // The roster always shows one full calendar month. rosterStart is
       // the 1st of that month (YYYY-MM-01). Navigation is by ±1 month.
       // The label is rendered in Thai with the Buddhist year (พ.ศ.) —
       // e.g. May 2026 → "พฤษภาคม 2569".
-      const THAI_MONTHS = [
-        'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน',
-        'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม',
-        'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม',
-      ];
-
       function startOfMonth(iso) {
         return iso.slice(0, 7) + "-01";
       }
@@ -884,31 +1242,21 @@
         return new Date(year, month1, 0).getDate();
       }
 
-      function thaiPeriodLabel(iso) {
-        const [y, m] = iso.split("-").map(Number);
-        return THAI_MONTHS[m - 1] + " " + (y + 543);  // Buddhist year
+      // Thai month + Buddhist year ("พฤษภาคม 2569") and month/day arithmetic
+      // all come from theme.js — one implementation for every v2 page.
+      const thaiPeriodLabel = V2.monthLabelTH;
+      // dd/mm/พ.ศ. for user-facing single dates (error copy, cell tooltips).
+      function thaiDayLabel(ymd) {
+        const [y, m, d] = String(ymd).split("-");
+        return d + "/" + m + "/" + (Number(y) + 543);
       }
-
-      function addMonths(iso, delta) {
-        const [y, m] = iso.split("-").map(Number);
-        const dt = new Date(Date.UTC(y, m - 1 + delta, 1));
-        return [dt.getUTCFullYear(),
-                String(dt.getUTCMonth() + 1).padStart(2, "0"),
-                "01"].join("-");
-      }
+      const addMonths = V2.addMonths;
 
       let rosterStart = startOfMonth(V2.bangkokDate());
       let rosterLocation = "all";
       let rosterAssignments = {};  // { "badge|date": shift_code or "" for off, null when no row }
 
-      function addDays(iso, delta) {
-        const [y, m, d] = iso.split("-").map(Number);
-        const dt = new Date(Date.UTC(y, m - 1, d));
-        dt.setUTCDate(dt.getUTCDate() + delta);
-        return [dt.getUTCFullYear(),
-                String(dt.getUTCMonth() + 1).padStart(2, "0"),
-                String(dt.getUTCDate()).padStart(2, "0")].join("-");
-      }
+      const addDays = V2.addDays;
 
       function setRosterStart(iso) {
         rosterStart = startOfMonth(iso);  // enforce month boundary
@@ -932,13 +1280,23 @@
       document.getElementById("rosterThisMonth")
         .addEventListener("click", () => setRosterStart(startOfMonth(V2.bangkokDate())));
 
+      // LOAD failure: the grid has nothing to show, so replace it.
       function showRosterError(msg) {
         rosterLoading.classList.add("hidden");
         rosterTableWrap.classList.add("hidden");
         rosterEmpty.classList.add("hidden");
-        rosterError.textContent = msg;
+        rosterErrorText.textContent = msg;
         rosterError.classList.remove("hidden");
       }
+      // MUTATION failure: the grid is still valid — keep it on screen and
+      // report above it. The cell itself is reverted + ringed by the caller.
+      function showRosterSaveError(msg) {
+        rosterSaveErrorText.textContent = msg;
+        rosterSaveError.classList.remove("hidden");
+      }
+      rosterRetry.addEventListener("click", loadRoster);
+      rosterSaveErrorDismiss.addEventListener("click",
+        () => rosterSaveError.classList.add("hidden"));
 
       async function loadRoster() {
         // Make sure employees + shifts are loaded.
@@ -1006,17 +1364,15 @@
         // below). Hand-rolled weekday map because Intl's th-TH "long"
         // form prefixes "วัน" which doesn't match how the staff
         // labels columns in their spreadsheet (e.g. ศุกร์, not วันศุกร์).
-        const WEEKDAY_TH = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ',
-                            'พฤหัส', 'ศุกร์', 'เสาร์'];
         const [yy, mm] = fromDate.split("-").map(Number);
         const totalDays = daysInMonth(yy, mm);
         const days = [];
         for (let i = 0; i < totalDays; i++) days.push(addDays(fromDate, i));
-        const headRow = '<tr class="text-left text-xs tracking-wider text-ink-500">' +
-          '<th scope="col" class="px-3 py-2 font-semibold sticky left-0 bg-ink-50/60 z-10">พนักงาน</th>' +
+        const headRow = '<tr class="text-left text-xs tracking-wide text-ink-600">' +
+          '<th scope="col" class="px-3 py-2 font-semibold sticky left-0 bg-ink-100 z-10">พนักงาน</th>' +
           days.map(d => {
             const dt = new Date(d + "T12:00:00Z");
-            const weekday = WEEKDAY_TH[dt.getUTCDay()];
+            const weekday = V2.WEEKDAY_TH_SHORT[dt.getUTCDay()];
             const dayNum = String(dt.getUTCDate()).padStart(2, "0");
             return '<th scope="col" class="px-1.5 py-2 font-semibold whitespace-nowrap text-center leading-tight">' +
                      '<div>' + V2.escapeHtml(weekday) + '</div>' +
@@ -1081,7 +1437,7 @@
             if (holiday) {
               const meta = LEAVE_TYPES.public_holiday;
               const badge = document.createElement("div");
-              badge.className = "h-8 w-12 rounded border border-ink-200 text-xs font-semibold flex items-center justify-center";
+              badge.className = "h-8 w-12 rounded-md border border-ink-200 text-xs font-semibold flex items-center justify-center";
               badge.style.backgroundColor = meta.color;
               badge.textContent = "นข";  // นักขัตฤกษ์
               badge.title = "วันหยุดนักขัตฤกษ์: " + holiday.name;
@@ -1092,7 +1448,7 @@
 
             const sel = document.createElement("select");
             // Narrower cells in the monthly grid; show A/B/C/D not full names.
-            sel.className = "h-8 w-14 rounded border border-ink-200 text-xs font-semibold text-center";
+            sel.className = "h-8 w-14 rounded-md border border-ink-200 text-xs font-semibold text-center";
 
             // Background color reflects the currently-selected option's
             // color so the grid is scannable at a glance. Leaves use
@@ -1101,17 +1457,14 @@
             const applyCellBg = (val) => {
               if (val && val.startsWith("L_")) {
                 const opt = LEAVE_OPTIONS.find(o => o.value === val);
-                const meta = opt && LEAVE_TYPES[opt.type];
-                sel.style.backgroundColor = (meta && meta.color) || "#e5e7eb";
+                sel.style.backgroundColor = opt ? leaveFill(opt.type) : FILL_FALLBACK;
                 return;
               }
               if (val === "__off__" || val === "" || val == null) {
-                const offShift = SHIFT_BY_CODE["OFF"];
-                sel.style.backgroundColor = (offShift && offShift.color) || "white";
+                sel.style.backgroundColor = shiftFill("OFF");
                 return;
               }
-              const sh = SHIFT_BY_CODE[val];
-              sel.style.backgroundColor = (sh && sh.color) ? sh.color : "white";
+              sel.style.backgroundColor = shiftFill(val);
             };
 
             // Compute the initial selected value, then add options.
@@ -1155,8 +1508,10 @@
             });
             sel.appendChild(lvGroup);
 
+            let lastGood = initial;
             sel.addEventListener("change", async () => {
               sel.disabled = true;
+              sel.classList.remove("ring-2", "ring-bad-500");
               const next = sel.value;
               const wasLeave = !!leave;  // captured at render time
               try {
@@ -1217,8 +1572,17 @@
                   rosterAssignments[key] = code || "";
                 }
                 applyCellBg(next);
+                lastGood = next;
+                rosterSaveError.classList.add("hidden");
               } catch (err) {
-                showRosterError("บันทึกไม่สำเร็จ — โหลดใหม่");
+                // Put the cell back to the last value the server accepted so
+                // the grid never shows an unsaved edit as if it were stored.
+                sel.value = lastGood;
+                applyCellBg(lastGood);
+                sel.classList.add("ring-2", "ring-bad-500");
+                showRosterSaveError(
+                  "บันทึกกะของ " + (emp.display_name || emp.badge_number) +
+                  " วันที่ " + thaiDayLabel(d) + " ไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")");
               } finally {
                 sel.disabled = false;
               }
@@ -1247,10 +1611,12 @@
         public_holiday: "วันหยุด",
       };
       function leaveTypeMeta(code) {
-        const lt = LEAVE_TYPES_BY_CODE[code];
         return {
           label: LEAVE_TYPE_LABELS[code] || code,
-          color: (lt && lt.color) || "#e5e7eb",
+          // Never the raw stored hex: leaveFill() snaps a non-token seed
+          // (the migrations seed Tailwind green-200/orange-300/pink-200/…)
+          // onto this page's HF token fill for that leave code.
+          color: leaveFill(code),
         };
       }
       // Convenience proxy with the legacy `LEAVE_TYPES.vacation.color`
@@ -1270,38 +1636,65 @@
       // mix shift colors (PATCH /shifts/{code}/color) and leave-type
       // colors (PATCH /leaves/types/{code}/color) without duplicating
       // the debounce + roster-refresh boilerplate.
+      // A <select> of NAMED HF tokens, not a free <input type="color">: the
+      // colour picked here is persisted, so a free picker let anyone put an
+      // off-palette colour permanently on the roster grid. The select paints
+      // itself with the chosen fill, so it doubles as the legend swatch.
       function makeColorSwatch({ initialColor, label, sublabel, patchUrl, onSaved }) {
         const wrap = document.createElement("div");
         wrap.className = "inline-flex items-center gap-2 text-xs";
-        const swatch = document.createElement("input");
-        swatch.type = "color";
-        swatch.value = initialColor || "#e5e7eb";
-        swatch.className = "h-7 w-9 cursor-pointer rounded border border-ink-200";
-        swatch.title = "เปลี่ยนสี " + label;
 
-        // Debounce: <input type="color"> fires on every drag tick.
-        // Wait 350ms after the last change before PATCHing.
-        let timer = null;
-        swatch.addEventListener("input", () => {
-          if (timer) clearTimeout(timer);
-          timer = setTimeout(async () => {
-            try {
-              const updated = await V2.apiFetch(patchUrl, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ color: swatch.value }),
-              });
-              if (onSaved) onSaved(updated);
-              if (!panes.roster.classList.contains("hidden")) {
-                renderRoster(rosterStart);
-              }
-              if (!panes.leaveboard.classList.contains("hidden")) {
-                renderLeaveBoard();
-              }
-            } catch (e) {
-              console.warn("color update failed", e);
+        const swatch = document.createElement("select");
+        swatch.className =
+          "color-swatch-select h-7 w-24 cursor-pointer rounded-md border border-ink-300 px-1 text-xs text-ink-800";
+        swatch.setAttribute("aria-label", "สีของ " + label);
+        swatch.title = "เปลี่ยนสี " + label;
+        const start = normHex(initialColor) || FILL_FALLBACK;
+        FILL_TOKENS.forEach(t => {
+          const o = document.createElement("option");
+          o.value = t.hex;
+          o.textContent = t.name;
+          o.style.backgroundColor = t.hex;
+          if (t.hex === start) o.selected = true;
+          swatch.appendChild(o);
+        });
+        swatch.style.backgroundColor = start;
+
+        let status = null;   // inline per-control status (contract: no toasts)
+        function setStatus(text, kind) {
+          if (!status) return;
+          status.className = "text-[11px] " +
+            ({ good: "text-good-700", bad: "text-bad-700" }[kind] || "text-ink-500");
+          status.textContent = text;
+          if (kind === "good") {
+            setTimeout(() => { if (status.textContent === text) status.textContent = ""; }, 1800);
+          }
+        }
+
+        swatch.addEventListener("change", async () => {
+          const next = swatch.value;
+          swatch.disabled = true;
+          swatch.style.backgroundColor = next;
+          setStatus("กำลังบันทึก…", "muted");
+          try {
+            const updated = await V2.apiFetch(patchUrl, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ color: next }),
+            });
+            if (onSaved) onSaved(updated);
+            if (!panes.roster.classList.contains("hidden")) {
+              renderRoster(rosterStart);
             }
-          }, 350);
+            if (!panes.leaveboard.classList.contains("hidden")) {
+              renderLeaveBoard();
+            }
+            setStatus("บันทึกแล้ว", "good");
+          } catch (err) {
+            setStatus("บันทึกไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")", "bad");
+          } finally {
+            swatch.disabled = false;
+          }
         });
 
         const lbl = document.createElement("span");
@@ -1315,6 +1708,9 @@
           meta.textContent = sublabel;
           wrap.appendChild(meta);
         }
+        status = document.createElement("span");
+        status.className = "text-[11px] text-ink-500";
+        wrap.appendChild(status);
         return wrap;
       }
 
@@ -1332,7 +1728,7 @@
             ? "หยุด"
             : s.name_th + " (" + s.start_time + "–" + s.end_time + ")";
           shiftColorLegend.appendChild(makeColorSwatch({
-            initialColor: s.color,
+            initialColor: shiftFill(s.code),
             label: s.letter,
             sublabel,
             patchUrl: "/api/private/shifts/" + encodeURIComponent(s.code) + "/color",
@@ -1346,7 +1742,7 @@
           const lt = LEAVE_TYPES_BY_CODE[code];
           if (!lt) return;
           shiftColorLegend.appendChild(makeColorSwatch({
-            initialColor: lt.color,
+            initialColor: leaveFill(code),
             label: LEAVE_TYPE_LABELS[code] || code,
             sublabel: null,
             patchUrl: "/api/private/leaves/types/" + encodeURIComponent(code) + "/color",
@@ -1403,6 +1799,8 @@
       const lbBoard = document.getElementById("lbBoard");
       const lbPeriodLabel = document.getElementById("lbPeriodLabel");
       const lbError = document.getElementById("lbError");
+      const lbErrorText = document.getElementById("lbErrorText");
+      document.getElementById("lbRetry").addEventListener("click", loadLeaveBoard);
       let lbStart = null;   // "YYYY-MM-01"
       let lbLeaves = [];    // EmployeeLeave rows in the current month
 
@@ -1427,15 +1825,21 @@
 
       function lbDateLabel(iso) {
         const dt = new Date(iso + "T12:00:00Z");
-        const wd = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'][dt.getUTCDay()];
+        const wd = V2.WEEKDAY_TH_SHORT[dt.getUTCDay()];
         const [, m, d] = iso.split("-").map(Number);
         return wd + " " + String(d).padStart(2, "0") + "/" + String(m).padStart(2, "0");
       }
 
-      function lbFlash(msg) {
-        lbError.textContent = msg;
-        lbError.classList.remove("hidden");
-        setTimeout(() => lbError.classList.add("hidden"), 2500);
+      // Inline per-control status for the add form (contract §3: mutations
+      // never use the pane-level error trio, and never a toast).
+      function lbSetStatus(node, text, kind) {
+        if (!node) return;
+        node.className = "block text-[11px] " +
+          ({ good: "text-good-700", bad: "text-bad-700" }[kind] || "text-ink-500");
+        node.textContent = text;
+        if (kind === "good") {
+          setTimeout(() => { if (node.textContent === text) node.textContent = ""; }, 1800);
+        }
       }
 
       async function loadLeaveBoard() {
@@ -1449,7 +1853,7 @@
           lbLeaves = (await V2.apiFetch("/api/private/leaves/employee?from=" + from + "&to=" + to)) || [];
         } catch (err) {
           lbLeaves = [];
-          lbError.textContent = "โหลดข้อมูลไม่สำเร็จ";
+          lbErrorText.textContent = "โหลดวันลาไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")";
           lbError.classList.remove("hidden");
         }
         renderLeaveBoard();
@@ -1468,13 +1872,13 @@
 
         lbBoard.innerHTML = "";
         LB_COLUMNS.forEach(col => {
-          const color = (LEAVE_TYPES[col.type] && LEAVE_TYPES[col.type].color) || "#e5e7eb";
+          const color = leaveFill(col.type);
           const items = (byType[col.type] || []).slice().sort((a, b) =>
             a.date.localeCompare(b.date) ||
             a.employee_badge_number.localeCompare(b.employee_badge_number));
 
           const card = document.createElement("div");
-          card.className = "flex flex-col rounded-2xl border border-ink-200 bg-white shadow-card";
+          card.className = "flex flex-col rounded-xl border border-ink-200 bg-white shadow-card";
 
           const head = document.createElement("div");
           head.className = "flex items-center gap-2 border-b border-ink-100 px-3 py-2";
@@ -1487,7 +1891,7 @@
           const body = document.createElement("div");
           body.className = "flex-1 space-y-1.5 p-2 min-h-[3rem]";
           if (items.length === 0) {
-            body.innerHTML = '<p class="px-1 py-4 text-center text-xs text-ink-300">ยังไม่มีรายการ</p>';
+            body.innerHTML = '<p class="px-1 py-4 text-center text-xs text-ink-500">ยังไม่มีรายการ</p>';
           } else {
             items.forEach(l => {
               const emp = empByBadge[l.employee_badge_number];
@@ -1498,47 +1902,60 @@
               row.innerHTML =
                 '<div class="min-w-0">' +
                 '<div class="truncate text-sm text-ink-800">' + V2.escapeHtml(name) + '</div>' +
-                '<div class="text-[11px] tabular-nums text-ink-400">' + V2.escapeHtml(lbDateLabel(l.date)) +
+                '<div class="text-[11px] tabular-nums text-ink-500">' + V2.escapeHtml(lbDateLabel(l.date)) +
                 (l.note ? ' · ' + V2.escapeHtml(l.note) : '') + '</div></div>';
               const del = document.createElement("button");
-              del.className = "shrink-0 rounded px-1.5 text-ink-300 hover:text-bad-600";
-              del.textContent = "✕";
+              del.className = "shrink-0 rounded px-1.5 text-ink-500 hover:text-bad-600";
+              del.setAttribute("aria-label", "ลบ");
+              del.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
               del.title = "ลบ";
-              del.addEventListener("click", () => lbDelete(l, del));
+              const rowStatus = document.createElement("span");
+              rowStatus.className = "block text-[11px] text-ink-500";
+              del.addEventListener("click", () => lbDelete(l, del, rowStatus));
               row.appendChild(del);
               body.appendChild(row);
+              body.appendChild(rowStatus);
             });
           }
           card.appendChild(body);
 
           const foot = document.createElement("div");
-          foot.className = "space-y-1.5 border-t border-ink-100 p-2";
+          foot.className = "flex flex-col gap-1.5 border-t border-ink-100 p-2";
           const sel = document.createElement("select");
-          sel.className = "h-9 w-full rounded-lg border border-ink-200 bg-white px-2 text-xs";
+          sel.className = "lb-emp-select h-9 w-full rounded-lg border border-ink-200 bg-white px-2 text-xs";
           sel.innerHTML = lbEmployeeOptionsHtml();
           const dateInput = document.createElement("input");
           dateInput.type = "date";
           dateInput.value = lbStart;
           dateInput.min = lbStart;
           dateInput.max = monthEnd;
-          dateInput.className = "h-9 w-full rounded-lg border border-ink-200 bg-white px-2 text-xs";
+          dateInput.className = "lb-date-input h-9 w-full rounded-lg border border-ink-300 bg-white px-2 text-xs";
           const addBtn = document.createElement("button");
-          addBtn.className = "h-9 w-full rounded-lg border border-brand-200 bg-brand-50 text-xs font-semibold text-brand-700 hover:bg-brand-100";
-          addBtn.textContent = "+ เพิ่ม";
-          addBtn.addEventListener("click", () => lbAdd(col.type, sel, dateInput, addBtn));
+          addBtn.type = "button";
+          // Auto-width, not w-full: four columns of full-bleed burgundy read
+          // as a wall rather than as one primary per add form.
+          addBtn.className = "btn-primary h-9 self-start text-xs";
+          // Button copy says what happens, never a bare "+ เพิ่ม".
+          addBtn.textContent = "เพิ่ม" + col.label;
+          const addStatus = document.createElement("span");
+          addStatus.className = "block text-[11px] text-ink-500";
+          addBtn.addEventListener("click",
+            () => lbAdd(col.type, sel, dateInput, addBtn, addStatus));
           foot.appendChild(sel);
           foot.appendChild(dateInput);
           foot.appendChild(addBtn);
+          foot.appendChild(addStatus);
           card.appendChild(foot);
 
           lbBoard.appendChild(card);
         });
       }
 
-      async function lbAdd(type, sel, dateInput, btn) {
-        if (!sel.value) { lbFlash("เลือกพนักงาน"); return; }
-        if (!dateInput.value) { lbFlash("เลือกวันที่"); return; }
+      async function lbAdd(type, sel, dateInput, btn, statusEl) {
+        if (!sel.value) { lbSetStatus(statusEl, "เลือกพนักงานก่อน", "bad"); return; }
+        if (!dateInput.value) { lbSetStatus(statusEl, "เลือกวันที่ก่อน", "bad"); return; }
         btn.disabled = true;
+        lbSetStatus(statusEl, "กำลังบันทึก…", "muted");
         try {
           const created = await V2.apiFetch("/api/private/leaves/employee", {
             method: "POST",
@@ -1556,15 +1973,19 @@
               !(l.employee_badge_number === n.employee_badge_number && l.date === n.date));
             lbLeaves.push(n);
           });
+          // renderLeaveBoard() rebuilds the column (and this button), so
+          // the success note goes on the fresh DOM, not the discarded one.
           renderLeaveBoard();
         } catch (err) {
-          lbFlash("เพิ่มไม่สำเร็จ");
+          lbSetStatus(statusEl, "เพิ่มไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")", "bad");
+        } finally {
           btn.disabled = false;
         }
       }
 
-      async function lbDelete(l, btn) {
+      async function lbDelete(l, btn, statusEl) {
         btn.disabled = true;
+        lbSetStatus(statusEl, "กำลังลบ…", "muted");
         try {
           await V2.apiFetch("/api/private/leaves/employee/" +
             encodeURIComponent(l.employee_badge_number) + "/" + l.date, { method: "DELETE" });
@@ -1572,7 +1993,8 @@
             !(x.employee_badge_number === l.employee_badge_number && x.date === l.date));
           renderLeaveBoard();
         } catch (err) {
-          lbFlash("ลบไม่สำเร็จ");
+          lbSetStatus(statusEl, "ลบไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")", "bad");
+        } finally {
           btn.disabled = false;
         }
       }
@@ -1590,22 +2012,27 @@
       //      shift_code=<their shift> (work). effective_shift() resolves
       //      overrides above the schedule, so the monthly report follows.
       // ===================================================================
-      const FULL_DAY_TH = ["จันทร์","อังคาร","พุธ","พฤหัสบดี","ศุกร์","เสาร์","อาทิตย์"];
+      // Mon-first FULL weekday names, derived from theme.js's Sun-first array.
+      const FULL_DAY_TH = [0, 1, 2, 3, 4, 5, 6].map(i => V2.WEEKDAY_TH[(i + 1) % 7]);
       const hkLoading  = document.getElementById("hkLoading");
       const hkError    = document.getElementById("hkError");
+      const hkErrorText = document.getElementById("hkErrorText");
+      const hkSaveError = document.getElementById("hkSaveError");
+      const hkSaveErrorText = document.getElementById("hkSaveErrorText");
+      document.getElementById("hkRetry").addEventListener("click", loadHkoff);
+      document.getElementById("hkSaveErrorDismiss").addEventListener("click",
+        () => hkSaveError.classList.add("hidden"));
       const hkEmpty    = document.getElementById("hkEmpty");
       const hkContent  = document.getElementById("hkContent");
       const hkStandingBody = document.getElementById("hkStandingBody");
+      const hkStandingCards = document.getElementById("hkStandingCards");
       // Day-grid state (section B).
       let hkRosterStart = null;          // "YYYY-MM-01"
       let hkLoc = "all";
       let hkRosterAssignments = {};      // "badge|date" → shift_code | "" (off)
 
       // Python weekday from a YYYY-MM-DD string: Mon=0 … Sun=6 (no TZ drift).
-      function isoWeekday(iso) {
-        const [y, m, d] = iso.split("-").map(Number);
-        return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
-      }
+      const isoWeekday = V2.isoWeekday;
 
       function housekeepingEmployees() {
         return EMPLOYEES
@@ -1684,65 +2111,115 @@
           await loadHkGrid();
         } catch (err) {
           hkLoading.classList.add("hidden");
-          hkError.textContent = "โหลดข้อมูลไม่สำเร็จ";
+          hkErrorText.textContent = "โหลดข้อมูลแม่บ้านไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")";
           hkError.classList.remove("hidden");
         }
       }
 
       // ---- A. Standing weekly day off ----
+      // Populates the same option list into either surface's <select>
+      // (table cell or card), so the two stay identical without copying
+      // the markup twice.
+      function hkStandingSelectOptions(sel, off) {
+        const ph = document.createElement("option");
+        ph.value = ""; ph.textContent = "— เลือก —";
+        sel.appendChild(ph);
+        for (let i = 0; i < 7; i++) {
+          const o = document.createElement("option");
+          o.value = String(i);
+          o.textContent = "หยุด" + FULL_DAY_TH[i];
+          sel.appendChild(o);
+        }
+        const everyday = document.createElement("option");
+        everyday.value = "none";
+        everyday.textContent = "ทำงานทุกวัน (ไม่มีวันหยุดประจำ)";
+        sel.appendChild(everyday);
+        sel.value = off === -1 ? "none" : (off === null ? "" : String(off));
+      }
+
+      // Table row (md+) and card (below md, STYLE.md §5b Option B — a
+      // 3-field RECORD list) rendered from the SAME emp/schedules data in
+      // one pass. Each surface has its own <select> (the table's stays
+      // h-9/dense per the grid-density exemption; the card's is a full
+      // 44px touch target), wired to the same save path so a change on
+      // either one is reflected on both without a resize-triggered refetch.
       function renderHkStanding(maids) {
         hkStandingBody.innerHTML = "";
+        hkStandingCards.innerHTML = "";
         maids.forEach(emp => {
           const schedules = SCHEDULE_CACHE[emp.badge_number] || [];
           const off = standingDayOff(schedules);
+          const name = V2.escapeHtml(emp.display_name || ("บัตร " + emp.badge_number));
+          const badge = V2.escapeHtml(emp.badge_number);
+          const locLabel = LOCATION_LABEL[emp.location] || "—";
 
+          // ---- table row ----
           const tr = document.createElement("tr");
           tr.className = "hover:bg-ink-50/50";
 
           const nameTd = document.createElement("td");
           nameTd.className = "px-5 py-3";
           nameTd.innerHTML =
-            '<div class="font-medium text-ink-800">' +
-            V2.escapeHtml(emp.display_name || ("บัตร " + emp.badge_number)) + '</div>' +
-            '<div class="text-xs text-ink-400">#' + V2.escapeHtml(emp.badge_number) + '</div>';
+            '<div class="font-medium text-ink-800">' + name + '</div>' +
+            '<div class="text-xs text-ink-500">#' + badge + '</div>';
           tr.appendChild(nameTd);
 
           const locTd = document.createElement("td");
           locTd.className = "px-5 py-3 text-ink-600";
-          locTd.textContent = LOCATION_LABEL[emp.location] || "—";
+          locTd.textContent = locLabel;
           tr.appendChild(locTd);
 
           const offTd = document.createElement("td");
           offTd.className = "px-5 py-3";
-          const sel = document.createElement("select");
-          sel.className = "h-9 rounded-lg border border-ink-200 bg-white px-2 text-sm";
-          const ph = document.createElement("option");
-          ph.value = ""; ph.textContent = "— เลือก —";
-          sel.appendChild(ph);
-          for (let i = 0; i < 7; i++) {
-            const o = document.createElement("option");
-            o.value = String(i);
-            o.textContent = "หยุด" + FULL_DAY_TH[i];
-            sel.appendChild(o);
+          const tableSel = document.createElement("select");
+          tableSel.className = "h-9 rounded-lg border border-ink-200 bg-white px-2 text-sm";
+          hkStandingSelectOptions(tableSel, off);
+          const tableStatus = document.createElement("span");
+          tableStatus.className = "ml-2 text-xs text-ink-500";
+          offTd.appendChild(tableSel);
+          offTd.appendChild(tableStatus);
+          tr.appendChild(offTd);
+          hkStandingBody.appendChild(tr);
+
+          // ---- card ----
+          const li = document.createElement("li");
+          li.className = "p-3";
+          li.innerHTML =
+            '<p class="font-medium text-ink-800">' + name + '</p>' +
+            '<p class="text-xs text-ink-500">#' + badge + ' · ' + V2.escapeHtml(locLabel) + '</p>';
+          const cardField = document.createElement("div");
+          cardField.className = "mt-2";
+          const cardLabel = document.createElement("label");
+          cardLabel.className = "mb-1 block text-xs font-medium text-ink-600";
+          cardLabel.textContent = "วันหยุดประจำ";
+          const cardSel = document.createElement("select");
+          cardSel.className = "h-11 w-full rounded-lg border border-ink-300 bg-white px-2 text-sm";
+          hkStandingSelectOptions(cardSel, off);
+          const cardStatus = document.createElement("p");
+          cardStatus.className = "mt-1 min-h-[1rem] text-xs text-ink-500";
+          cardField.appendChild(cardLabel);
+          cardField.appendChild(cardSel);
+          cardField.appendChild(cardStatus);
+          li.appendChild(cardField);
+          hkStandingCards.appendChild(li);
+
+          // ---- shared save path ----
+          function setStatus(kind, text) {
+            const cls = "ml-2 text-xs " + ({ good: "text-good-600", bad: "text-bad-600" }[kind] || "text-ink-500");
+            tableStatus.className = cls;
+            tableStatus.textContent = text;
+            cardStatus.className = "mt-1 min-h-[1rem] text-xs " + ({ good: "text-good-700", bad: "text-bad-700" }[kind] || "text-ink-500");
+            cardStatus.textContent = text;
           }
-          const everyday = document.createElement("option");
-          everyday.value = "none";
-          everyday.textContent = "ทำงานทุกวัน (ไม่มีวันหยุดประจำ)";
-          sel.appendChild(everyday);
-          sel.value = off === -1 ? "none" : (off === null ? "" : String(off));
-
-          const status = document.createElement("span");
-          status.className = "ml-2 text-xs text-ink-400";
-
-          sel.addEventListener("change", async () => {
-            if (sel.value === "") return;
-            sel.disabled = true;
-            status.className = "ml-2 text-xs text-ink-400";
-            status.textContent = "กำลังบันทึก…";
+          async function saveStandingOff(value, source) {
+            if (value === "") return;
+            tableSel.disabled = true;
+            cardSel.disabled = true;
+            setStatus("muted", "กำลังบันทึก…");
             const [ws, we] = hoursForEmployee(schedules);
             let work_days;
-            if (sel.value === "none") work_days = [0, 1, 2, 3, 4, 5, 6];
-            else { const o = Number(sel.value); work_days = [0, 1, 2, 3, 4, 5, 6].filter(d => d !== o); }
+            if (value === "none") work_days = [0, 1, 2, 3, 4, 5, 6];
+            else { const o = Number(value); work_days = [0, 1, 2, 3, 4, 5, 6].filter(d => d !== o); }
             try {
               await V2.apiFetch(
                 "/api/private/employees/" + encodeURIComponent(emp.badge_number) + "/schedule",
@@ -1759,22 +2236,23 @@
                 }
               );
               await refreshSchedule(emp);
-              status.className = "ml-2 text-xs text-good-600";
-              status.textContent = "บันทึกแล้ว";
+              // Keep the surface the admin DIDN'T touch in sync so it isn't
+              // stale on the next resize (same pattern as employees.html's
+              // nickname-input mirror).
+              if (source !== tableSel) tableSel.value = value;
+              if (source !== cardSel) cardSel.value = value;
+              setStatus("good", "บันทึกแล้ว");
               // The standing change shifts the grid's baseline (OFF days).
               await loadHkGrid();
             } catch (err) {
-              status.className = "ml-2 text-xs text-bad-600";
-              status.textContent = "ไม่สำเร็จ";
+              setStatus("bad", "บันทึกไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")");
             } finally {
-              sel.disabled = false;
+              tableSel.disabled = false;
+              cardSel.disabled = false;
             }
-          });
-
-          offTd.appendChild(sel);
-          offTd.appendChild(status);
-          tr.appendChild(offTd);
-          hkStandingBody.appendChild(tr);
+          }
+          tableSel.addEventListener("change", () => saveStandingOff(tableSel.value, tableSel));
+          cardSel.addEventListener("change", () => saveStandingOff(cardSel.value, cardSel));
         });
       }
 
@@ -1783,7 +2261,6 @@
       // days, OFF on her standing day off. Changing a cell back to that
       // schedule value deletes the override; anything else writes a per-day
       // ShiftAssignment (or a leave) — exactly like the reception roster.
-      const WEEKDAY_TH_SHORT = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์'];
       const HK_LEAVE_OPTIONS = [
         { value: "L_vacation",       name: "พักร้อน", type: "vacation" },
         { value: "L_personal",       name: "ลากิจ",   type: "personal" },
@@ -1824,13 +2301,13 @@
         const byCode = hkShiftByCode();
         const work = byCode["HK_WORK"], off = byCode["OFF"];
         el.appendChild(makeColorSwatch({
-          initialColor: (work && work.color) || "#86efac",
+          initialColor: shiftFill("HK_WORK"),
           label: "ปกติ", sublabel: "ทำงาน",
           patchUrl: "/api/private/shifts/HK_WORK/color",
           onSaved: (u) => { if (work) work.color = u.color; renderHkGrid(); },
         }));
         el.appendChild(makeColorSwatch({
-          initialColor: (off && off.color) || "#e9d5ff",
+          initialColor: shiftFill("OFF"),
           label: "OFF", sublabel: "หยุด",
           patchUrl: "/api/private/shifts/OFF/color",
           onSaved: (u) => { if (off) off.color = u.color; renderHkGrid(); },
@@ -1838,7 +2315,7 @@
         HK_LEAVE_OPTIONS.forEach(lo => {
           const lt = LEAVE_TYPES_BY_CODE[lo.type];
           el.appendChild(makeColorSwatch({
-            initialColor: (lt && lt.color) || "#e5e7eb",
+            initialColor: leaveFill(lo.type),
             label: lo.name, sublabel: null,
             patchUrl: "/api/private/leaves/types/" + encodeURIComponent(lo.type) + "/color",
             onSaved: (u) => { if (lt) lt.color = u.color; renderHkGrid(); },
@@ -1862,7 +2339,7 @@
           hkRenderLegend();
           renderHkGrid();
         } catch (err) {
-          hkError.textContent = "โหลดตารางไม่สำเร็จ";
+          hkErrorText.textContent = "โหลดตารางวันหยุดไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")";
           hkError.classList.remove("hidden");
         }
       }
@@ -1885,12 +2362,12 @@
         const days = [];
         for (let i = 0; i < totalDays; i++) days.push(addDays(hkRosterStart, i));
 
-        hkGridHead.innerHTML = '<tr class="text-left text-xs tracking-wider text-ink-500">' +
-          '<th class="px-3 py-2 font-semibold sticky left-0 bg-ink-50/60 z-10">พนักงาน</th>' +
+        hkGridHead.innerHTML = '<tr class="text-left text-xs tracking-wide text-ink-600">' +
+          '<th class="px-3 py-2 font-semibold sticky left-0 bg-ink-100 z-10">พนักงาน</th>' +
           days.map(d => {
             const dt = new Date(d + "T12:00:00Z");
             return '<th class="px-1.5 py-2 font-semibold whitespace-nowrap text-center leading-tight">' +
-              '<div>' + V2.escapeHtml(WEEKDAY_TH_SHORT[dt.getUTCDay()]) + '</div>' +
+              '<div>' + V2.escapeHtml(V2.WEEKDAY_TH_SHORT[dt.getUTCDay()]) + '</div>' +
               '<div class="tabular-nums">' + String(dt.getUTCDate()).padStart(2, "0") + '</div></th>';
           }).join("") + '</tr>';
 
@@ -1918,7 +2395,7 @@
             if (holiday) {
               const meta = LEAVE_TYPES.public_holiday;
               const badge = document.createElement("div");
-              badge.className = "h-8 w-12 rounded border border-ink-200 text-xs font-semibold flex items-center justify-center";
+              badge.className = "h-8 w-12 rounded-md border border-ink-200 text-xs font-semibold flex items-center justify-center";
               badge.style.backgroundColor = meta.color;
               badge.textContent = "นข";
               badge.title = "วันหยุดนักขัตฤกษ์: " + holiday.name;
@@ -1927,17 +2404,17 @@
 
             const baseline = hkBaselineCode(schedules, d);  // "" off | code
             const sel = document.createElement("select");
-            sel.className = "h-8 w-20 rounded border border-ink-200 text-xs font-semibold text-center";
+            sel.className = "h-8 w-20 rounded-md border border-ink-200 text-xs font-semibold text-center";
             const applyBg = (val) => {
               if (val && val.startsWith("L_")) {
                 const o = HK_LEAVE_OPTIONS.find(x => x.value === val);
-                sel.style.backgroundColor = (o && LEAVE_TYPES[o.type] && LEAVE_TYPES[o.type].color) || "#e5e7eb"; return;
+                sel.style.backgroundColor = o ? leaveFill(o.type) : FILL_FALLBACK; return;
               }
-              if (val === "__off__") { sel.style.backgroundColor = (byCode["OFF"] && byCode["OFF"].color) || "#e9d5ff"; return; }
+              if (val === "__off__") { sel.style.backgroundColor = shiftFill("OFF"); return; }
               // ปกติ = ONE independent "work" color (the HK_WORK pseudo-shift),
               // regardless of the maid's exact hours; her cell still SAVES her
               // own shift code.
-              sel.style.backgroundColor = (byCode["HK_WORK"] && byCode["HK_WORK"].color) || "#86efac";
+              sel.style.backgroundColor = shiftFill("HK_WORK");
             };
 
             let initial;
@@ -1960,8 +2437,10 @@
               if (initial === lo.value) opt.selected = true; sel.appendChild(opt);
             });
 
+            let hkLastGood = initial;
             sel.addEventListener("change", async () => {
               sel.disabled = true;
+              sel.classList.remove("ring-2", "ring-bad-500");
               const next = sel.value;
               const wasLeave = !!leave;
               const assignUrl = "/api/private/shifts/assignments/" + encodeURIComponent(emp.badge_number) + "/" + d;
@@ -1999,9 +2478,16 @@
                   }
                 }
                 applyBg(next);
+                hkLastGood = next;
+                hkSaveError.classList.add("hidden");
               } catch (err) {
-                hkError.textContent = "บันทึกไม่สำเร็จ — โหลดใหม่";
-                hkError.classList.remove("hidden");
+                sel.value = hkLastGood;
+                applyBg(hkLastGood);
+                sel.classList.add("ring-2", "ring-bad-500");
+                hkSaveErrorText.textContent =
+                  "บันทึกวันหยุดของ " + (emp.display_name || emp.badge_number) +
+                  " วันที่ " + thaiDayLabel(d) + " ไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")";
+                hkSaveError.classList.remove("hidden");
               } finally { sel.disabled = false; }
             });
 
@@ -2012,6 +2498,7 @@
       }
     })();
   </script>
+
   <script defer src="https://erp.thehfhotel.org/shell/hf-bar.js" data-app="Attendance" data-module="people"></script>
 </body>
 </html>
