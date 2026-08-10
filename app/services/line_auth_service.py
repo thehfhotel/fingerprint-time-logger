@@ -117,7 +117,23 @@ class LineAuthService:
             "client_id": self.channel_id,
             "redirect_uri": self.callback_url,
             "state": state,
-            "scope": "profile openid email"  # Request profile and optional email
+            "scope": "profile openid email",  # Request profile and optional email
+            # Show "Log in with QR code" first instead of the email/password
+            # form. Staff LINE accounts are created on a phone and usually have
+            # no email or password set, so the default screen is one most of
+            # them simply cannot complete — they hit "unable to login" with no
+            # way forward. The QR screen is scanned with the LINE app they
+            # already have.
+            #
+            # switch_amr is deliberately left at its default (true) so the
+            # "Log in with email address" link stays on screen for anyone who
+            # does have a password — this changes which method is offered
+            # FIRST, and takes nothing away.
+            #
+            # Auto login needs no parameter: disable_auto_login defaults to
+            # false, so a phone with an active LINE session skips this screen
+            # entirely.
+            "initial_amr_display": "lineqr",
         }
 
         auth_url = f"{self.line_auth_url}?{urlencode(params)}"
