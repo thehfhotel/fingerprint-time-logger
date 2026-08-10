@@ -55,26 +55,33 @@ class TestAuthorizationURL:
         assert f"state={test_state}" in result["auth_url"]
         assert "response_type=code" in result["auth_url"]
 
-    def test_auth_url_opens_on_qr_login(self, line_auth_service):
-        """QR login is offered first, because staff LINE accounts usually have
-        no email/password and cannot complete the default login screen."""
+    def test_auth_url_disables_auto_login(self, line_auth_service):
+        """Auto login hands off to the LINE app, which finishes the callback in
+        its own LIFF browser; the Cloudflare session lives in the browser that
+        started the flow and never sees it ("Invalid session"). Keeping login
+        in-browser is the whole fix, so this parameter must always be sent."""
         result = line_auth_service.generate_authorization_url(state="s")
 
+        assert "disable_auto_login=true" in result["auth_url"]
+
+    def test_auth_url_offers_qr_on_desktop(self, line_auth_service):
+        """Desktop: QR first, since staff accounts usually have no password."""
+        result = line_auth_service.generate_authorization_url(state="s", prefer_qr=True)
+
         assert "initial_amr_display=lineqr" in result["auth_url"]
+
+    def test_auth_url_omits_qr_on_mobile(self, line_auth_service):
+        """Mobile: no QR — a phone cannot scan a code shown on its own screen."""
+        result = line_auth_service.generate_authorization_url(state="s", prefer_qr=False)
+
+        assert "initial_amr_display" not in result["auth_url"]
 
     def test_auth_url_keeps_email_login_available(self, line_auth_service):
         """switch_amr must stay unset (defaults true) so the "log in with email"
         link remains — this reorders the options, it does not remove one."""
-        result = line_auth_service.generate_authorization_url(state="s")
+        result = line_auth_service.generate_authorization_url(state="s", prefer_qr=True)
 
         assert "switch_amr" not in result["auth_url"]
-
-    def test_auth_url_leaves_auto_login_enabled(self, line_auth_service):
-        """disable_auto_login defaults to false at LINE; sending it would be the
-        only way to break auto login, so it must never appear."""
-        result = line_auth_service.generate_authorization_url(state="s")
-
-        assert "disable_auto_login" not in result["auth_url"]
 
     def test_generate_auth_url_without_state(self, line_auth_service):
         """Test authorization URL generation with auto-generated state"""

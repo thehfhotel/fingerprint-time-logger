@@ -271,8 +271,20 @@ async def line_login(
         if qr_context and redirect:
             redirect_hint = f"{redirect}|{qr_context}"
 
+        # QR login is a desktop affordance: the code is scanned with the phone.
+        # On a phone it would be a code the user cannot scan from their own
+        # screen, so mobile keeps LINE's normal in-browser form.
+        user_agent = (request.headers.get("user-agent") or "").lower()
+        is_mobile = any(
+            token in user_agent
+            for token in ("iphone", "ipad", "ipod", "android", "mobile")
+        )
+
         # Store redirect parameter in state for callback
-        auth_data = line_auth_service.generate_authorization_url(redirect_hint=redirect_hint)
+        auth_data = line_auth_service.generate_authorization_url(
+            redirect_hint=redirect_hint,
+            prefer_qr=not is_mobile,
+        )
         auth_url = auth_data["auth_url"]
 
         # Mobile Safari compatible redirect using HTML meta refresh

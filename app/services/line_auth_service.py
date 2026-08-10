@@ -84,7 +84,8 @@ class LineAuthService:
     def generate_authorization_url(
         self,
         state: Optional[str] = None,
-        redirect_hint: Optional[str] = None
+        redirect_hint: Optional[str] = None,
+        prefer_qr: bool = False
     ) -> Dict[str, str]:
         """
         Generate LINE OAuth authorization URL
@@ -92,6 +93,9 @@ class LineAuthService:
         Args:
             state: Optional CSRF state token (generated if not provided)
             redirect_hint: Optional redirect destination hint (e.g., 'qr-scan-callback', 'mobile-checkin')
+            prefer_qr: Open on the QR-code login screen. Only useful on a desktop
+                browser, where the QR is scanned with the phone; on a phone it
+                shows a code the user cannot scan from their own screen.
 
         Returns:
             Dict with 'auth_url' and 'state' keys
@@ -118,23 +122,31 @@ class LineAuthService:
             "redirect_uri": self.callback_url,
             "state": state,
             "scope": "profile openid email",  # Request profile and optional email
-            # Show "Log in with QR code" first instead of the email/password
-            # form. Staff LINE accounts are created on a phone and usually have
-            # no email or password set, so the default screen is one most of
-            # them simply cannot complete — they hit "unable to login" with no
-            # way forward. The QR screen is scanned with the LINE app they
-            # already have.
+            # Keep the entire login inside the browser that started it.
             #
-            # switch_amr is deliberately left at its default (true) so the
-            # "Log in with email address" link stays on screen for anyone who
-            # does have a password — this changes which method is offered
-            # FIRST, and takes nothing away.
+            # With auto login enabled (LINE's default), iOS hands off to the
+            # LINE app, which completes the callback in its own LIFF in-app
+            # browser — a separate cookie jar. The Cloudflare Access session was
+            # created in Safari and never sees that callback, so returning to
+            # Safari lands on "Invalid session. Please try logging in again."
+            # Observed directly: the callback arrived carrying liffClientId and
+            # liffRedirectUri, i.e. from inside the LINE app.
             #
-            # Auto login needs no parameter: disable_auto_login defaults to
-            # false, so a phone with an active LINE session skips this screen
-            # entirely.
-            "initial_amr_display": "lineqr",
+            # Email/password login always worked precisely because it never
+            # leaves the browser. This makes every method behave that way.
+            "disable_auto_login": "true",
         }
+
+        # switch_amr is deliberately never sent. It defaults to true, which
+        # keeps the "Log in with email address" link on screen — this chooses
+        # which method is offered FIRST and takes nothing away from anyone who
+        # does have a password.
+        if prefer_qr:
+            # Staff LINE accounts are created on a phone and usually have no
+            # email or password set, so the default form is one they cannot
+            # complete ("unable to login", no way forward). On a desktop the QR
+            # is scanned with the LINE app they already carry.
+            params["initial_amr_display"] = "lineqr"
 
         auth_url = f"{self.line_auth_url}?{urlencode(params)}"
 
