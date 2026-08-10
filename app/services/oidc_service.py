@@ -488,10 +488,15 @@ def verify_pkce_s256(
 ) -> bool:
     """Verify ``BASE64URL(SHA256(code_verifier)) == code_challenge`` (S256).
 
-    Fails closed on every degenerate input: a missing verifier, a missing
-    challenge (never verify against nothing), or a verifier outside the
+    Fails closed on the degenerate inputs it sees: a missing verifier, a
+    missing challenge (never verify against nothing), or a verifier outside the
     RFC 7636 ASCII character set — the latter used to raise UnicodeEncodeError
     and surface as a 500 from the token endpoint.
+
+    Not a complete guarantee: a non-ASCII code_challenge is not validated at
+    /oidc/authorize, so it can still reach this comparison and is simply never
+    matched. That is pre-existing and gated behind client authentication;
+    validating the challenge at the authorize step is the real fix.
     """
     if not code_verifier or not code_challenge:
         return False

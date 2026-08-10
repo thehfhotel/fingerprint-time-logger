@@ -372,10 +372,18 @@ async def token(
     #
     # PKCE (RFC 7636) defends PUBLIC clients that cannot hold a secret against
     # authorization-code interception. For a confidential client, client
-    # authentication above is the equivalent defence: an intercepted code is
-    # useless without the client_secret. Nothing else here is relaxed —
-    # client auth, single-use redemption, code->client binding and the
-    # redirect_uri match all ran before this point and still apply.
+    # authentication above carries most of that weight: an intercepted code is
+    # useless without the client_secret. It is NOT strictly equivalent — PKCE
+    # also binds the code to the browser that started the flow, so it defends
+    # against code INJECTION (an attacker feeding a victim's code into their
+    # own session), which client auth alone does not. Here that residual risk
+    # is bounded by the 60s single-use TTL and the exact-match redirect_uri,
+    # and accepted because Cloudflare Access cannot do PKCE at all.
+    #
+    # Consequence to respect: if a PUBLIC client is ever registered on this
+    # provider, PKCE must become mandatory again for it. Nothing else here is
+    # relaxed — client auth, single-use redemption, code->client binding and
+    # the redirect_uri match all ran before this point and still apply.
     # ------------------------------------------------------------------
     challenge = record.get("code_challenge")
     if challenge:
