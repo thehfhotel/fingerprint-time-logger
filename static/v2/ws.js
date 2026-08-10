@@ -8,8 +8,14 @@
  * types v2 cares about.
  *
  *   const stop = V2WS.connectWS({
- *     onPunch:  (p) => { ... },   // type === "attendance_realtime"
- *     onStatus: (s) => { ... },   // { connected: bool, reason?: string }
+ *     // type === "attendance_realtime".
+ *     //   punch   = the TOP-LEVEL broadcast object:
+ *     //             { badge_number, display_name, timestamp, punch_type, … }
+ *     //   summary = the dashboard summary dict that rides in `.data`,
+ *     //             or null when the backend's summary refresh failed.
+ *     //             Optional — ignore the 2nd arg if you don't need it.
+ *     onPunch:  (punch, summary) => { ... },
+ *     onStatus: (s) => { ... },   // { connected: bool, code?: number }
  *   });
  *   // later: stop();
  */
@@ -80,13 +86,24 @@
         try { msg = JSON.parse(evt.data); }
         catch (_) { return; }
 
-        // The backend's ConnectionManager sometimes nests payload under .data
-        // (see legacy adapter). Normalize: prefer .data when both present.
+        // Broadcast shape — verified against app/services/zk_session.py
+        // (_broadcast_realtime, ~line 483):
+        //
+        //   { type: "attendance_realtime",
+        //     badge_number, display_name, timestamp, punch_type,   <- TOP level
+        //     data: <dashboard summary dict | null>,               <- NOT the punch
+        //     synced_records: 1, message: "บันทึกใหม่: …" }
+        //
+        // The punch fields are at the TOP level; `data` carries the dashboard
+        // summary (and is null when the summary refresh throws). An earlier
+        // version of this file unwrapped `msg.data` and handed the summary to
+        // onPunch, so `p.timestamp` was undefined and live.html silently
+        // dropped every realtime row — the feed looked connected and never
+        // updated. Pass the message itself; the summary rides second.
         const type = msg && msg.type;
-        const payload = (msg && msg.data) ? msg.data : msg;
 
         if (type === "attendance_realtime") {
-          onPunch(payload);
+          onPunch(msg, (msg && msg.data) || null);
         } else if (type === "pong") {
           // ignore
         } else {

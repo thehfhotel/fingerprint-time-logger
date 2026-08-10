@@ -74,6 +74,7 @@ jobs:
             tests/integration/ \
             tests/test_api.py \
             tests/test_app_structure.py \
+            tests/test_v2_routes.py \
             tests/test_attendance_endpoints.py \
             tests/test_device_endpoints.py \
             tests/test_employee_endpoints.py \
@@ -203,6 +204,9 @@ jobs:
           ZK_STARTUP_RETRY_MINUTES:     ${{ vars.ZK_STARTUP_RETRY_MINUTES || '3' }}
           ZK_CATCHUP_LOOKBACK_HOURS:    ${{ vars.ZK_CATCHUP_LOOKBACK_HOURS || '48' }}
           ZK_EXPECTED_UTC_OFFSET_MINUTES: ${{ vars.ZK_EXPECTED_UTC_OFFSET_MINUTES || '420' }}
+          # HF Portal manager directory endpoint (not a secret — it is a
+          # container-network address). Its bearer token rides .secrets below.
+          PORTAL_DIRECTORY_URL:         ${{ vars.PORTAL_DIRECTORY_URL || 'http://hf-erp-portal:3000/portal-api/directory/managers' }}
           # Secrets (delivered via the .secrets block — written to the same
           # .env file but grouped for documentation. Switch to file-mounted
           # secrets later if needed.)
@@ -225,6 +229,12 @@ jobs:
           # Staff LINE OA (Employee Hub rich menus). Absent → dark.
           STAFF_OA_CHANNEL_ACCESS_TOKEN: ${{ secrets.STAFF_OA_CHANNEL_ACCESS_TOKEN }}
           STAFF_OA_CHANNEL_SECRET:      ${{ secrets.STAFF_OA_CHANNEL_SECRET }}
+          # HF Portal manager directory bearer token — un-darks the live admin
+          # directory (app/services/manager_directory.py). Absent → dark, and
+          # the admin allowlist stays the in-code floor. MUST ride the payload
+          # for the same reason READER_SECRET does: the host script rewrites
+          # .env every deploy, so a hand-set host value is wiped.
+          PORTAL_DIRECTORY_TOKEN:       ${{ secrets.PORTAL_DIRECTORY_TOKEN }}
         # Payload shape consumed by /srv/run-deploy-fingerprint.sh on
         # evergreen. The script unpacks, writes .env, docker compose pull
         # + down + up -d, health-checks, and verifies the scheduler logs.
@@ -240,6 +250,7 @@ jobs:
             --arg ZK_STARTUP_RETRY_MINUTES     "$ZK_STARTUP_RETRY_MINUTES" \
             --arg ZK_CATCHUP_LOOKBACK_HOURS    "$ZK_CATCHUP_LOOKBACK_HOURS" \
             --arg ZK_EXPECTED_UTC_OFFSET_MINUTES "$ZK_EXPECTED_UTC_OFFSET_MINUTES" \
+            --arg PORTAL_DIRECTORY_URL   "$PORTAL_DIRECTORY_URL" \
             --arg JWT_SECRET             "$JWT_SECRET" \
             --arg ADMIN_PASSCODE_HASH    "$ADMIN_PASSCODE_HASH" \
             --arg LINE_CHANNEL_ID        "$LINE_CHANNEL_ID" \
@@ -253,6 +264,7 @@ jobs:
             --arg READER_RESOLVE_SECRET  "$READER_RESOLVE_SECRET" \
             --arg STAFF_OA_CHANNEL_ACCESS_TOKEN "$STAFF_OA_CHANNEL_ACCESS_TOKEN" \
             --arg STAFF_OA_CHANNEL_SECRET "$STAFF_OA_CHANNEL_SECRET" \
+            --arg PORTAL_DIRECTORY_TOKEN "$PORTAL_DIRECTORY_TOKEN" \
             '{
               commit_sha: $commit_sha,
               ghcr: { user: $ghcr_user, token: $ghcr_token },
@@ -263,6 +275,7 @@ jobs:
                 ZK_STARTUP_RETRY_MINUTES:     $ZK_STARTUP_RETRY_MINUTES,
                 ZK_CATCHUP_LOOKBACK_HOURS:    $ZK_CATCHUP_LOOKBACK_HOURS,
                 ZK_EXPECTED_UTC_OFFSET_MINUTES: $ZK_EXPECTED_UTC_OFFSET_MINUTES,
+                PORTAL_DIRECTORY_URL:         $PORTAL_DIRECTORY_URL,
               },
               secrets: {
                 JWT_SECRET:                $JWT_SECRET,
@@ -278,6 +291,7 @@ jobs:
                 READER_RESOLVE_SECRET:     $READER_RESOLVE_SECRET,
                 STAFF_OA_CHANNEL_ACCESS_TOKEN: $STAFF_OA_CHANNEL_ACCESS_TOKEN,
                 STAFF_OA_CHANNEL_SECRET:   $STAFF_OA_CHANNEL_SECRET,
+                PORTAL_DIRECTORY_TOKEN:    $PORTAL_DIRECTORY_TOKEN,
               }
             }' \
           | ssh -i ~/.ssh/deploy_key \

@@ -20,6 +20,8 @@ from typing import List, Optional
 
 import jwt
 
+from app.services import manager_directory
+
 logger = logging.getLogger(__name__)
 
 # Cloudflare Access team domain that signs these tokens, and the JWKS
@@ -42,17 +44,16 @@ _DEFAULT_ACCESS_AUDS = (
 # Admin allowlist for CF Access auto-login. The Access applications that
 # front these pages (aud tags above) also admit employee-tier accounts
 # (e.g. shared hotel mailboxes) — a verified CF Access identity is NOT by
-# itself proof of admin privilege. Only these emails get auto-login;
-# everyone else falls through to the passcode path. The 6 HF Managers —
-# not secrets. Override with CF_ADMIN_EMAILS (comma-separated).
-_DEFAULT_ADMIN_EMAILS = (
-    "admin-2@example.invalid",
-    "admin-1@example.invalid",
-    "admin-3@example.invalid",
-    "admin-4@example.invalid",
-    "admin-5@example.invalid",
-    "admin-6@example.invalid",
-)
+# itself proof of admin privilege. Only admins get auto-login; everyone
+# else falls through to the passcode path.
+#
+# WHO counts as an admin now lives in app/services/manager_directory.py: it
+# tracks the HF Portal's "HF Managers" tier (GET /portal-api/directory/managers)
+# so portal membership changes actually reach this app, and falls back to the
+# list below — the pre-directory behaviour, kept verbatim as the floor — when
+# no live directory answer has ever been obtained. Not secrets. Still
+# overridable with CF_ADMIN_EMAILS (comma-separated), which replaces the floor.
+_DEFAULT_ADMIN_EMAILS = manager_directory.STATIC_ADMIN_EMAILS
 
 # PyJWKClient caches fetched keys internally and only refetches on a
 # kid it hasn't seen, so a single module-level instance is intentional.
@@ -68,18 +69,24 @@ def _resolve_accepted_auds() -> List[str]:
 
 
 def _resolve_admin_emails() -> List[str]:
-    """Admin allowlist for CF Access auto-login, with env override.
+    """The admin allowlist FLOOR — CF_ADMIN_EMAILS if set, else the in-code list.
 
-    Comparisons are case-insensitive, so all entries are lowercased here.
+    This is what applies when the portal manager directory has never answered
+    (dormant, down, or unreachable). Comparisons are case-insensitive, so all
+    entries are lowercased here.
     """
-    raw = os.getenv("CF_ADMIN_EMAILS", "").strip()
-    emails = raw.split(",") if raw else list(_DEFAULT_ADMIN_EMAILS)
-    return [email.strip().lower() for email in emails if email.strip()]
+    return sorted(manager_directory._floor_emails())
 
 
 def _is_allowlisted_admin_email(email: str) -> bool:
-    """Whether a CF-verified email belongs to an admin (case-insensitive)."""
-    return email.strip().lower() in _resolve_admin_emails()
+    """Whether a CF-verified email belongs to an admin (case-insensitive).
+
+    Delegates to the manager directory, which resolves the live portal
+    "HF Managers" tier first and falls back to the floor above. No network I/O
+    happens here — the directory serves an in-memory snapshot refreshed on a
+    background thread.
+    """
+    return manager_directory.is_admin_email(email)
 
 
 def is_cf_auto_login_enabled() -> bool:
@@ -158,8 +165,10 @@ def get_cf_access_email(request_like) -> Optional[str]:
     IMPORTANT: a fully-verified CF Access JWT proves the request passed
     Cloudflare Access, but the Access applications fronting these pages
     also admit employee-tier accounts — so verification alone is NOT
-    sufficient to grant admin access. The email must also be on the
-    CF_ADMIN_EMAILS allowlist. A verified-but-non-admin email is treated
+    sufficient to grant admin access. The email must ALSO be an admin per
+    the manager directory (app/services/manager_directory.py: the portal's
+    live "HF Managers" tier, or the CF_ADMIN_EMAILS / in-code floor when the
+    portal has never answered). A verified-but-non-admin email is treated
     exactly like a missing/invalid token: it falls through to the
     passcode session path, never granted admin access.
     """

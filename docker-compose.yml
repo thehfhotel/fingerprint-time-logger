@@ -52,6 +52,14 @@ services:
       - HFID_REDIRECT_URIS=${HFID_REDIRECT_URIS:-}
       # Admin Console Security
       - ADMIN_PASSCODE_HASH=${ADMIN_PASSCODE_HASH}
+      # HF Portal manager directory — who counts as an admin for Cloudflare
+      # Access auto-login. Server-to-server over the shared-nginx network (no
+      # Cloudflare Access in the path, so no bypass token needed). The URL is
+      # not a secret; the bearer token is. Both empty → dormant, and the app
+      # falls back to its in-code manager floor (estate convention: empty env =
+      # feature off). See app/services/manager_directory.py.
+      - PORTAL_DIRECTORY_URL=${PORTAL_DIRECTORY_URL:-http://hf-erp-portal:3000/portal-api/directory/managers}
+      - PORTAL_DIRECTORY_TOKEN=${PORTAL_DIRECTORY_TOKEN:-}
       # Slack webhook for ZK time-sync notifications (the main app now owns
       # this — the standalone zk-time-sync container has been retired).
       - ZK_SYNC_SLACK_WEBHOOK_URL=${ZK_SYNC_SLACK_WEBHOOK_URL}

@@ -1,0 +1,1810 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#4F0E0E" />
+  <title>ทะเบียนพนักงาน — ระบบบันทึกเวลา</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/fingerprintlogs/static/v2/theme.js"></script>
+  <!-- Shared navigation — renders BOTH navs. Every page, no exceptions. -->
+  <script defer src="/fingerprintlogs/static/v2/nav.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: { extend: window.V2.THEME },
+      safelist: [
+        /* avatarColor() (theme.js) — assembled in JS, invisible to the scanner */
+        "bg-brand-100", "text-brand-700",
+        "bg-good-100",  "text-good-700",
+        "bg-warn-100",  "text-warn-700",
+        "bg-bad-100",   "text-bad-700",
+        "bg-ink-200",   "text-ink-700",
+        "bg-off-100",   "text-off-600",
+        /* source chip (DEVICE / MANUAL / QR-ONLY / PENDING) */
+        "bg-ink-100",   "text-ink-600",
+        "bg-brand-50",
+        /* status / hidden / LINE dots */
+        "bg-good-500",
+        "bg-off-500",
+        /* table zebra */
+        "odd:bg-ink-50/60",
+        /* pending-approval card border (sourceChip warn family) */
+        "border-warn-100",
+        /* info-modal generated tables (code list / linked accounts) */
+        "border-ink-100",
+        /* selectEditLocation() active-state border */
+        "border-brand-500",
+      ],
+    };
+  </script>
+
+  <style>
+    /* Belt-and-braces: the CDN applies fontFamily only after theme.js parses. */
+    html, body { font-family: 'Sarabun', 'Noto Sans Thai', system-ui, -apple-system, sans-serif; }
+    /* HF One body type: 14px / 1.6 (Thai needs the tall leading). Set on
+       BODY, never <html> — Tailwind's spacing scale is rem-based. */
+    body { font-size: 0.875rem; line-height: 1.6; }
+
+    /* ---------- Filter / branch chip (pill, JS toggles .chip-on) ---------- */
+    .chip {
+      display: inline-flex; align-items: center; gap: .375rem;
+      border-radius: 9999px;
+      padding: .3125rem .75rem;
+      font-size: .8125rem; line-height: 1.25rem; font-weight: 500;
+      border: 1px solid #E8E4DF;          /* ink-200  --hf-border */
+      background: #FFFFFF;                /* --hf-panel */
+      color: #5C554C;                     /* ink-600 */
+      cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+    }
+    .chip:hover { border-color: #CFC9C1; background: #FAF9F7; }  /* ink-300 / ink-50 */
+    .chip.chip-on {
+      border-color: #E9A3A3;              /* brand-200 */
+      background: #FBEAEA;                /* brand-50 */
+      color: #6B1212;                     /* brand-700 — 10.5:1 */
+      font-weight: 600;
+    }
+
+    /* ---------- Focus: brand-500 at 40%, never a colored glow -------------- */
+    .chip:focus-visible, .btn-primary:focus-visible, .btn-secondary:focus-visible,
+    .btn-danger:focus-visible, .nickname-input:focus-visible, .loc-btn:focus-visible {
+      outline: 2px solid rgba(139, 0, 0, .40);   /* brand-500 / 40% */
+      outline-offset: 2px;
+    }
+    .loc-btn:hover { border-color: #CFC9C1; }    /* ink-300 */
+
+    /* ---------- App-grant checkboxes: brand, never the UA blue ------------- */
+    input[type="checkbox"] { accent-color: #8B0000; }  /* brand-500 */
+
+    /* ---------- Primary / secondary / danger buttons ----------------------- */
+    .btn-primary, .btn-secondary, .btn-danger {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;                 /* --hf-radius */
+      font-size: .875rem; font-weight: 600;
+      cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease;
+      white-space: nowrap;
+    }
+    .btn-primary {
+      background: #8B0000; border: 1px solid #8B0000; color: #FFFFFF;  /* 10.0:1 */
+    }
+    .btn-primary:hover   { background: #7A0000; border-color: #7A0000; }  /* brand-600 */
+    .btn-primary:active  { background: #6B1212; border-color: #6B1212; }  /* brand-700 */
+    .btn-primary:disabled{ background: #E8E4DF; border-color: #E8E4DF; color: #7A7268; cursor: not-allowed; }
+
+    .btn-secondary {
+      background: #FFFFFF; border: 1px solid #CFC9C1; color: #332D27; font-weight: 500;
+    }
+    .btn-secondary:hover { background: #FAF9F7; border-color: #7A7268; }
+    .btn-secondary:disabled { color: #7A7268; cursor: not-allowed; }
+
+    .btn-danger {
+      background: #C53030; border: 1px solid #C53030; color: #FFFFFF;  /* bad-500, 5.5:1 */
+    }
+    .btn-danger:hover { background: #9B2626; border-color: #9B2626; }
+
+    /* Compact variant for dense table cells — sizing only, same tokens. */
+    .btn-primary.btn-sm, .btn-secondary.btn-sm, .btn-danger.btn-sm {
+      min-height: 1.875rem; padding: .3125rem .625rem; font-size: .75rem; border-radius: 6px;
+    }
+
+    /* ---------- Source-of-truth chip on the badge cell ---------------------- */
+    .source-chip {
+      display: inline-block; margin-top: .25rem;
+      border-radius: 9999px; padding: .0625rem .5rem;
+      font-size: .6875rem; font-weight: 700; letter-spacing: .02em;
+      white-space: nowrap;
+    }
+
+    /* ---------- Modal overlay (add / edit / merge / confirm / info) -------- */
+    .v2-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 40;   /* STYLE.md §2f ladder: bar 20, sheet overlay 30, sheet 40 — this element IS the sheet below md */
+      align-items: center; justify-content: center;
+      background: rgba(38, 34, 30, .5);   /* ink-900 / 50% */
+      padding: 1rem;
+    }
+    .v2-overlay.is-open { display: flex; }
+    /* A confirm dialog opened on top of an already-open modal (delete / merge
+       / regenerate confirmations) skips its own dim layer — the modal below
+       is already dimmed once; a second 50% scrim just double-darkens it and
+       partially occludes the modal's own content behind the confirm box. */
+    .v2-overlay.v2-overlay-nested { background: transparent; }
+    .v2-modal {
+      width: 100%; max-width: 34rem; max-height: 90vh; overflow-y: auto;
+      background: #FFFFFF; border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow: 0 8px 24px rgb(38 34 30 / 0.14);   /* shadow-popover */
+      display: flex; flex-direction: column;
+    }
+    .v2-modal-close {
+      color: #7A7268;   /* ink-500 */
+      flex-shrink: 0;
+    }
+    .v2-modal-close:hover { color: #26221E; }   /* ink-900 */
+
+    /* ---------- MODAL-TO-SHEET (STYLE.md §5a) below md ---------------------
+       Same shared .v2-overlay/.v2-modal component all five dialogs already
+       use — adapted in place rather than duplicating the pattern's literal
+       twin-element markup into every dialog. Below md the overlay goes
+       edge-to-edge and transparent (the sheet itself is opaque and
+       full-bleed) and the modal stretches to fill it: sticky head/foot,
+       scrolling body, one primary action always in thumb reach. */
+    @media (max-width: 767px) {
+      .v2-overlay { padding: 0; background: transparent; align-items: stretch; }
+      .v2-overlay.v2-overlay-nested { background: transparent; }
+      .v2-modal {
+        max-width: none; max-height: none; border-radius: 0; padding: 0;
+        overflow-y: hidden; box-shadow: none;
+      }
+      .v2-modal-head {
+        flex-shrink: 0; position: sticky; top: 0; z-index: 10;
+        background: #FFFFFF; border-bottom: 1px solid #E8E4DF;   /* ink-200 */
+        padding: .875rem 1rem;
+      }
+      .v2-modal-body { flex: 1 1 auto; overflow-y: auto; padding: 1rem; }
+      .v2-modal-foot {
+        flex-shrink: 0; position: sticky; bottom: 0;
+        background: #FFFFFF; border-top: 1px solid #E8E4DF;
+        padding: .75rem 1rem;
+        padding-bottom: calc(env(safe-area-inset-bottom) + .75rem);
+      }
+    }
+
+    /* ---------- Touch targets: every interactive control >=44px below md -- */
+    @media (max-width: 767px) {
+      .btn-primary, .btn-secondary, .btn-danger, .chip, .loc-btn, .nickname-input,
+      .btn-primary.btn-sm, .btn-secondary.btn-sm, .btn-danger.btn-sm, #searchInput {
+        min-height: 44px;
+      }
+      /* Short labels ("ลบ") don't clear 44px on the horizontal axis from
+         padding alone. */
+      .btn-primary.btn-sm, .btn-secondary.btn-sm, .btn-danger.btn-sm {
+        min-width: 44px;
+      }
+      /* Icon-only close (X) on every dialog head — was a 20x20 SVG hit box. */
+      .v2-modal-close {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-height: 44px; min-width: 44px;
+      }
+    }
+
+    /* ---------- Employee registry cards (below md) -------------------------
+       Desktop keeps .emp-table untouched (hidden md:block on the wrap);
+       #empCardsWrap is the md:hidden card-per-row list, built from the same
+       data pass as the table (see renderEmployees()). */
+    .emp-card-head { -webkit-tap-highlight-color: transparent; }
+  </style>
+</head>
+<body class="min-h-screen bg-ink-50 text-ink-900 antialiased">
+
+  <!-- The ONLY nav markup this page carries. See STYLE.md §2. -->
+  <nav id="v2nav" data-page="employees"></nav>
+
+  <main class="mx-auto max-w-7xl px-4 pt-5 pb-28 md:px-5 md:pt-8 md:pb-12">
+
+    <!-- HEADER -->
+    <header class="mb-5 md:mb-7">
+      <p class="text-xs font-semibold tracking-wide text-brand-600">พนักงาน</p>
+      <h1 class="mt-1 text-xl font-bold tracking-tight text-ink-900">ทะเบียนพนักงาน</h1>
+      <p class="mt-1 text-sm text-ink-500">จัดการข้อมูลพนักงาน สิทธิ์การใช้แอป บัตร NFC และการเชื่อมต่อ LINE</p>
+    </header>
+
+    <!-- PENDING APPROVALS -->
+    <section class="mb-6">
+      <div class="mb-2 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-ink-800">รออนุมัติ <span id="pendingCount" class="ml-1 text-ink-500"></span></h2>
+      </div>
+
+      <div id="pendingLoading" class="rounded-xl border border-ink-200 bg-white px-6 py-8 text-center shadow-card">
+        <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
+        <p class="mt-3 text-sm text-ink-500">กำลังโหลดรายการรออนุมัติ…</p>
+      </div>
+
+      <div id="pendingError" class="hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+        <span id="pendingErrorText">โหลดรายการรออนุมัติไม่สำเร็จ</span>
+        <button id="pendingRetry" type="button" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
+      </div>
+
+      <div id="pendingEmpty" class="hidden rounded-xl border border-ink-200 bg-white px-6 py-8 text-center shadow-card">
+        <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-50 text-brand-600">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>
+        </div>
+        <p class="text-sm font-medium text-ink-700">ไม่มีพนักงานรออนุมัติ</p>
+        <p class="mt-1 text-xs text-ink-500">คำขอสมัครใหม่ผ่าน LINE จะแสดงที่นี่</p>
+      </div>
+
+      <div id="pendingList" class="hidden space-y-3"></div>
+    </section>
+
+    <!-- EMPLOYEE REGISTRY -->
+    <section>
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-sm font-semibold text-ink-800">รายชื่อพนักงานทั้งหมด</h2>
+        <button id="adminModeBtn" type="button" class="chip">จัดการรหัสเชื่อมต่อ LINE</button>
+      </div>
+
+      <!-- Admin mode panel (LINE linking codes) -->
+      <div id="adminPanel" class="mb-4 hidden rounded-xl border border-brand-200 bg-brand-50/40 p-4">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 class="text-sm font-semibold text-brand-700">โหมดผู้ดูแล — จัดการรหัสเชื่อมต่อ LINE</h3>
+          <button id="adminModeCloseBtn" type="button" class="btn-secondary btn-sm">ออกจากโหมดผู้ดูแล</button>
+        </div>
+        <div id="adminStats" class="mb-3 rounded-lg border border-ink-200 bg-white p-3">
+          <p class="text-sm text-ink-500">กำลังโหลดสถิติ…</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button id="showPendingCodesBtn" type="button" class="btn-secondary btn-sm">รหัสที่รอเชื่อมต่อ</button>
+          <button id="showLinkedAccountsBtn" type="button" class="btn-secondary btn-sm">บัญชีที่เชื่อมต่อแล้ว</button>
+          <button id="refreshAdminBtn" type="button" class="btn-secondary btn-sm">รีเฟรชข้อมูล</button>
+        </div>
+      </div>
+
+      <!-- Search + filters — sticky under the page header so it stays
+           reachable while scrolling a long roster. -->
+      <div class="sticky top-0 z-10 -mx-4 mb-4 flex flex-wrap items-center gap-2 bg-ink-50 px-4 py-2 md:static md:mx-0 md:bg-transparent md:px-0 md:py-0">
+        <div class="relative min-w-[220px] flex-1">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="searchInput" type="text" placeholder="ค้นหาด้วยหมายเลขบัตรหรือชื่อเล่น…"
+                 class="h-10 w-full rounded-lg border border-ink-300 bg-white pl-9 pr-3 text-sm text-ink-900 focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]" />
+        </div>
+        <button id="showHiddenBtn" type="button" class="chip">แสดงที่ซ่อน</button>
+        <button id="showInactiveBtn" type="button" class="chip">แสดงไม่ใช้งาน/รออนุมัติ</button>
+        <button id="addEmployeeBtn" type="button" class="btn-primary">เพิ่มพนักงานใหม่</button>
+      </div>
+
+      <!-- STATE TRIO -->
+      <div id="empLoading" class="rounded-xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+        <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
+        <p class="mt-3 text-sm text-ink-500">กำลังโหลดข้อมูลพนักงาน…</p>
+      </div>
+
+      <div id="empError" class="hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+        <span id="empErrorText">ไม่สามารถโหลดข้อมูลพนักงานได้</span>
+        <button id="empRetry" type="button" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
+      </div>
+
+      <div id="empEmpty" class="hidden rounded-xl border border-ink-200 bg-white px-6 py-16 text-center shadow-card">
+        <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-50 text-brand-600">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </div>
+        <p id="empEmptyTitle" class="text-sm font-medium text-ink-700">ไม่พบพนักงานที่ตรงกับการค้นหา</p>
+        <p id="empEmptySubtitle" class="mt-1 text-xs text-ink-500">ลองล้างคำค้นหา หรือเปิดตัวกรอง "แสดงที่ซ่อน" / "แสดงไม่ใช้งาน"</p>
+      </div>
+
+      <div id="empListsWrap" class="hidden">
+        <!-- Desktop: unchanged table, md+ only. -->
+        <div id="empTableWrap" class="hidden overflow-x-auto rounded-xl border border-ink-200 bg-white shadow-card md:block">
+          <table class="emp-table w-full min-w-[960px] border-collapse text-[13px]">
+            <thead>
+              <tr class="bg-ink-100 text-left text-xs font-semibold text-ink-700">
+                <th class="px-3 py-2.5">หมายเลขบัตร / แหล่งที่มา</th>
+                <th class="px-3 py-2.5">ชื่อเล่น</th>
+                <th class="px-3 py-2.5">LINE</th>
+                <th class="px-3 py-2.5">สถานะ</th>
+                <th class="px-3 py-2.5">การแสดงผล</th>
+                <th class="px-3 py-2.5">การดำเนินการ</th>
+                <th id="lineCodeHeader" class="hidden px-3 py-2.5">รหัสเชื่อมต่อ LINE</th>
+              </tr>
+            </thead>
+            <tbody id="empTableBody"></tbody>
+          </table>
+        </div>
+        <!-- Mobile: card-per-row, one data pass shared with the table
+             (see renderEmployees()). Tapping a card's header opens the
+             same edit dialog as the desktop "แก้ไข" button — below md
+             that dialog is the MODAL-TO-SHEET full-screen sheet. -->
+        <ul id="empCardsWrap" class="space-y-2 md:hidden"></ul>
+      </div>
+    </section>
+  </main>
+
+  <!-- ========================= MODALS ========================= -->
+
+  <!-- Add employee -->
+  <div id="addModal" class="v2-overlay">
+    <div class="v2-modal">
+      <div class="v2-modal-head flex items-start justify-between gap-3">
+        <h3 class="text-base font-bold text-ink-900">เพิ่มพนักงานใหม่</h3>
+        <button id="addCloseBtn" type="button" class="v2-modal-close" aria-label="ปิด">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="v2-modal-body">
+        <div class="mt-4 space-y-3">
+          <div>
+            <label for="newBadgeNumber" class="mb-1 block text-sm font-medium text-ink-600">หมายเลขบัตร <span class="text-bad-600">*</span></label>
+            <input id="newBadgeNumber" type="text" placeholder="ระบุหมายเลขบัตร"
+                   class="h-10 w-full rounded-lg border border-ink-300 px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]" />
+          </div>
+          <div>
+            <label for="newNickname" class="mb-1 block text-sm font-medium text-ink-600">ชื่อเล่น <span class="text-bad-600">*</span></label>
+            <input id="newNickname" type="text" placeholder="ระบุชื่อเล่นพนักงาน"
+                   class="h-10 w-full rounded-lg border border-ink-300 px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]" />
+          </div>
+        </div>
+        <p id="addError" class="mt-3 hidden rounded-lg bg-bad-50 px-3 py-2 text-sm text-bad-700"></p>
+      </div>
+      <div class="v2-modal-foot mt-5 flex justify-end gap-2">
+        <button id="addCancelBtn" type="button" class="btn-secondary">ยกเลิก</button>
+        <button id="addConfirmBtn" type="button" class="btn-primary">สร้างพนักงาน</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit employee -->
+  <div id="editModal" class="v2-overlay">
+    <div class="v2-modal">
+      <div class="v2-modal-head flex items-start justify-between gap-3">
+        <h3 id="editModalTitle" class="text-base font-bold text-ink-900">แก้ไขพนักงาน</h3>
+        <button id="editCloseBtn" type="button" class="v2-modal-close" aria-label="ปิด">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="v2-modal-body">
+      <div class="mt-4 space-y-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label for="editThaiName" class="mb-1 block text-sm font-medium text-ink-600">ชื่อจริงภาษาไทย</label>
+            <input id="editThaiName" type="text" class="h-10 w-full rounded-lg border border-ink-300 px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]" />
+          </div>
+          <div>
+            <label for="editEnglishName" class="mb-1 block text-sm font-medium text-ink-600">ชื่อภาษาอังกฤษ</label>
+            <input id="editEnglishName" type="text" class="h-10 w-full rounded-lg border border-ink-300 px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]" />
+          </div>
+        </div>
+        <div>
+          <label for="editNickname" class="mb-1 block text-sm font-medium text-ink-600">ชื่อเล่น</label>
+          <input id="editNickname" type="text" class="h-10 w-full rounded-lg border border-ink-300 px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]" />
+        </div>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label for="editDepartment" class="mb-1 block text-sm font-medium text-ink-600">แผนก</label>
+            <input id="editDepartment" type="text" class="h-10 w-full rounded-lg border border-ink-300 px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]" />
+          </div>
+          <div>
+            <label for="editPosition" class="mb-1 block text-sm font-medium text-ink-600">ตำแหน่ง</label>
+            <input id="editPosition" type="text" class="h-10 w-full rounded-lg border border-ink-300 px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]" />
+          </div>
+        </div>
+        <div>
+          <p class="mb-1 text-sm font-medium text-ink-600">สาขา</p>
+          <div id="editLocationChoice" class="grid grid-cols-2 gap-2">
+            <button type="button" data-loc="HF" class="loc-btn rounded-lg border-2 border-ink-300 px-3 py-2.5 text-sm font-semibold text-ink-600">HF</button>
+            <button type="button" data-loc="HF_VILLE" class="loc-btn rounded-lg border-2 border-ink-300 px-3 py-2.5 text-sm font-semibold text-ink-600">HF Ville</button>
+          </div>
+        </div>
+        <div>
+          <label for="editNfcCard" class="mb-1 block text-sm font-medium text-ink-600">บัตร NFC</label>
+          <div class="flex items-center gap-2">
+            <input id="editNfcCard" type="text" placeholder="แตะบัตร/พิมพ์รหัส UID (ว่าง = ไม่มีบัตร)"
+                   class="h-10 flex-1 rounded-lg border border-ink-300 px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]" />
+            <button id="scanNfcBtn" type="button" class="btn-secondary" title="อ่านรหัสบัตรจากเครื่องอ่าน RC500">อ่านบัตร</button>
+          </div>
+          <p id="scanNfcStatus" class="mt-1 min-h-[1rem] text-xs text-ink-500"></p>
+        </div>
+        <div>
+          <p class="mb-1 text-sm font-medium text-ink-600">สิทธิ์แอป</p>
+          <div id="editGrantCheckboxes" class="flex flex-col gap-1.5"></div>
+        </div>
+      </div>
+      <p id="editError" class="mt-3 hidden rounded-lg bg-bad-50 px-3 py-2 text-sm text-bad-700"></p>
+      </div>
+      <div class="v2-modal-foot mt-5 flex justify-end gap-2">
+        <button id="editCancelBtn" type="button" class="btn-secondary">ยกเลิก</button>
+        <button id="editSaveBtn" type="button" class="btn-primary">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Merge tool (device badge <-> Q-badge) -->
+  <div id="mergeModal" class="v2-overlay">
+    <div class="v2-modal">
+      <div class="v2-modal-head flex items-start justify-between gap-3">
+        <h3 id="mergeModalTitle" class="text-base font-bold text-ink-900">รวมข้อมูลพนักงาน</h3>
+        <button id="mergeCloseBtn" type="button" class="v2-modal-close" aria-label="ปิด">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="v2-modal-body">
+      <div id="mergeFromRow" class="mt-4 hidden">
+        <label for="mergeFromSelect" class="mb-1 block text-sm font-medium text-ink-600">ย้ายข้อมูลจากพนักงาน Q…</label>
+        <select id="mergeFromSelect" class="h-10 w-full rounded-lg border border-ink-300 px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]"></select>
+      </div>
+      <div id="mergeToRow" class="mt-4 hidden">
+        <label for="mergeToInput" class="mb-1 block text-sm font-medium text-ink-600">ย้ายไปรหัสเครื่องสแกน…</label>
+        <input id="mergeToInput" type="text" list="mergeToSuggestions" placeholder="พิมพ์หรือเลือกรหัสบัตร"
+               class="h-10 w-full rounded-lg border border-ink-300 px-3 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]" />
+        <datalist id="mergeToSuggestions"></datalist>
+      </div>
+      <p class="mt-3 text-xs text-ink-500">การรวมข้อมูลไม่สามารถย้อนกลับได้ ระบบจะย้ายประวัติการลงเวลา กะ และการเชื่อมต่อ LINE ทั้งหมดไปยังรหัสปลายทาง</p>
+      <p id="mergeError" class="mt-3 hidden rounded-lg bg-bad-50 px-3 py-2 text-sm text-bad-700"></p>
+      </div>
+      <div class="v2-modal-foot mt-5 flex justify-end gap-2">
+        <button id="mergeCancelBtn" type="button" class="btn-secondary">ยกเลิก</button>
+        <button id="mergeConfirmBtn" type="button" class="btn-danger">ยืนยันย้ายข้อมูล</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generic confirm dialog (delete / reject / merge / regenerate) -->
+  <div id="confirmModal" class="v2-overlay">
+    <div class="v2-modal md:max-w-sm">
+      <div class="v2-modal-head flex items-start justify-between gap-3">
+        <h3 id="confirmTitle" class="text-base font-bold text-ink-900">ยืนยันการดำเนินการ</h3>
+        <button id="confirmCloseBtn" type="button" class="v2-modal-close" aria-label="ปิด">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="v2-modal-body">
+      <p id="confirmMessage" class="mt-2 text-sm text-ink-600"></p>
+      </div>
+      <div class="v2-modal-foot mt-5 flex justify-end gap-2">
+        <button id="confirmCancelBtn" type="button" class="btn-secondary">ยกเลิก</button>
+        <button id="confirmOkBtn" type="button" class="btn-primary">ยืนยัน</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generic info / result dialog (generated codes, lists, merge summary) -->
+  <div id="infoModal" class="v2-overlay">
+    <div class="v2-modal">
+      <div class="v2-modal-head flex items-start justify-between gap-3">
+        <h3 id="infoTitle" class="text-base font-bold text-ink-900">ผลลัพธ์</h3>
+        <button id="infoCloseXBtn" type="button" class="v2-modal-close" aria-label="ปิด">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="v2-modal-body">
+      <div id="infoBody" class="mt-3 text-sm text-ink-700"></div>
+      </div>
+      <div class="v2-modal-foot mt-5 flex justify-end">
+        <button id="infoCloseBtn" type="button" class="btn-primary">ปิด</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    "use strict";
+    const V2 = window.V2;
+
+    // ==========================================================================
+    // API paths — mirrors static/js/config.js ConfigManager.getApiUrl() exactly
+    // (verified byte-for-byte per endpoint against v1 static/employee-management.html;
+    // see the trailing-slash quirk on /status below). No backend changes here.
+    // ==========================================================================
+    const API = {
+      pendingList:  "/api/private/admin/onboarding/pending/",
+      approve:      "/api/private/admin/onboarding/approve/",
+      reject:       "/api/private/admin/onboarding/reject/",
+      employeesList: (params) => "/api/private/employees/?" + params.toString(),
+      nickname:     (b) => "/api/private/employees/" + encodeURIComponent(b) + "/nickname/",
+      // v1's getApiUrl() has a statusEndpointPattern that only skips the
+      // trailing slash for a PURELY NUMERIC badge — Q-badges still get one.
+      // Reproduced exactly so we hit the same URL shape v1 did either way.
+      status:       (b) => "/api/private/employees/" + encodeURIComponent(b) + (/^\d+$/.test(b) ? "/status" : "/status/"),
+      hidden:       (b) => "/api/private/employees/" + encodeURIComponent(b) + "/hidden/",
+      deleteEmp:    (b) => "/api/private/employees/" + encodeURIComponent(b) + "/",
+      createEmp:    "/api/private/employees/",
+      updateEmp:    (b) => "/api/private/employees/" + encodeURIComponent(b) + "/",
+      shift:        (b) => "/api/private/employees/" + encodeURIComponent(b) + "/shift/",
+      nfcCard:      (b) => "/api/private/admin/employees/" + encodeURIComponent(b) + "/nfc-card/",
+      grants:       (b) => "/api/private/admin/employees/" + encodeURIComponent(b) + "/grants/",
+      merge:        "/api/private/admin/employees/merge/",
+      lineStats:    "/api/private/admin/line-codes/stats/",
+      lineGenerate: "/api/private/admin/line-codes/generate",
+      lineRegenerate: "/api/private/admin/line-codes/regenerate",
+      lineList:     "/api/private/admin/line-codes/list?include_expired=true",
+      lineLinked:   "/api/private/admin/line-codes/linked/",
+    };
+
+    // Mirrors shifts-admin.html's LOCATION_LABEL — keep both in sync.
+    const LOCATION_LABEL = { HF: "HF", HF_VILLE: "HF Ville" };
+
+    // Mirror of app/services/app_catalog.py APP_CATALOG — keep in sync.
+    const APP_CATALOG = [
+      { app_id: "rooms", name: "Room Daily Report" },
+      { app_id: "portal", name: "HF Portal" },
+      { app_id: "payroll", name: "Payroll" },
+      { app_id: "ota", name: "OTA Desk" },
+      { app_id: "housekeeping", name: "Housekeeping" },
+    ];
+
+    let employees = [];
+    let showHidden = false;
+    let showInactive = false;
+    let adminMode = false;
+
+    // ---------------------------------------------------------------- utils --
+
+    function thaiDateTime(iso) {
+      if (!iso) return "—";
+      let s = String(iso);
+      if (!/[zZ]|[+-]\d\d:?\d\d$/.test(s)) s += "Z";
+      const d = new Date(s);
+      if (isNaN(d.getTime())) return "—";
+      const parts = new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      }).formatToParts(d);
+      const get = (t) => parts.find((p) => p.type === t).value;
+      const y = Number(get("year")) + 543;
+      const m = Number(get("month"));
+      return `${get("day")} ${V2.MONTH_TH[m - 1]} ${y} ${get("hour")}:${get("minute")} น.`;
+    }
+
+    // Only touches the color utility — never the base layout classes (each
+    // call site's <p> carries its own min-h-[1rem]/mt-1 mix; overwriting the
+    // whole className used to drop min-h-[1rem] and collapse the reserved line.
+    function setInlineStatus(el, text, kind) {
+      if (!el) return;
+      el.textContent = text || "";
+      el.classList.remove("text-bad-600", "text-good-700", "text-ink-500");
+      el.classList.add(kind === "error" ? "text-bad-600" : kind === "ok" ? "text-good-700" : "text-ink-500");
+    }
+
+    /** Source chip vocabulary: DEVICE / MANUAL / QR-ONLY / PENDING. */
+    function sourceChip(employee) {
+      if (employee.pending_approval) {
+        return `<span class="source-chip bg-warn-100 text-warn-700" title="รออนุมัติ">PENDING</span>`;
+      }
+      if (employee.join_source === "self_onboard") {
+        return `<span class="source-chip bg-good-100 text-good-700" title="สมัครด้วยตนเองผ่าน LINE">QR-ONLY</span>`;
+      }
+      if (employee.from_database_only || employee.join_source === "manual") {
+        return `<span class="source-chip bg-brand-50 text-brand-700" title="สร้างด้วยมือ — ไม่ได้มาจากเครื่อง ZK">MANUAL</span>`;
+      }
+      return `<span class="source-chip bg-ink-100 text-ink-600" title="ซิงค์จากเครื่อง ZKTeco">DEVICE</span>`;
+    }
+
+    function dotLabel(isOn, onText, offText) {
+      return isOn
+        ? `<span class="inline-flex items-center gap-1.5 text-xs font-medium text-good-700"><span class="h-1.5 w-1.5 rounded-full bg-good-500"></span>${onText}</span>`
+        : `<span class="inline-flex items-center gap-1.5 text-xs font-medium text-off-600"><span class="h-1.5 w-1.5 rounded-full bg-off-500"></span>${offText}</span>`;
+    }
+
+    // ------------------------------------------------------ overlay a11y --
+    // Counter-based scroll lock: confirmModal can open ON TOP of an
+    // already-open modal (.v2-overlay-nested), so lock/unlock must nest
+    // correctly rather than blindly setting/clearing body.style.overflow
+    // on every open/close. STYLE.md §5a.
+    let openOverlayCount = 0;
+    function lockBodyScroll() {
+      openOverlayCount++;
+      if (openOverlayCount === 1) document.body.style.overflow = "hidden";
+    }
+    function unlockBodyScroll() {
+      openOverlayCount = Math.max(0, openOverlayCount - 1);
+      if (openOverlayCount === 0) document.body.style.overflow = "";
+    }
+
+    // Same focusable-elements + Tab-trap approach as nav.js's sheet, applied
+    // to whichever dialog is topmost.
+    function focusablesIn(container) {
+      return Array.prototype.slice
+        .call(container.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+        .filter((el) => el.offsetParent !== null || el === document.activeElement);
+    }
+    function trapTabKey(e, container) {
+      const items = focusablesIn(container);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && (document.activeElement === first || !container.contains(document.activeElement))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    // ------------------------------------------------------- confirm / info --
+
+    function showConfirm({ title, message, confirmLabel = "ยืนยัน", danger = false }) {
+      return new Promise((resolve) => {
+        const modal = document.getElementById("confirmModal");
+        document.getElementById("confirmTitle").textContent = title;
+        document.getElementById("confirmMessage").textContent = message;
+        const okBtn = document.getElementById("confirmOkBtn");
+        const cancelBtn = document.getElementById("confirmCancelBtn");
+        okBtn.textContent = confirmLabel;
+        okBtn.className = danger ? "btn-danger" : "btn-primary";
+        // If another modal (e.g. the merge tool) is already open behind this
+        // confirm dialog, skip the second dim layer — see .v2-overlay-nested.
+        const alreadyOpen = document.querySelector(".v2-overlay.is-open");
+        modal.classList.toggle("v2-overlay-nested", !!alreadyOpen);
+        modal.classList.add("is-open");
+        lockBodyScroll();
+        // No field to focus in a confirm dialog — the close button per
+        // STYLE.md §5a ("the first field, or the close button").
+        document.getElementById("confirmCloseBtn").focus();
+        function cleanup(result) {
+          modal.classList.remove("is-open", "v2-overlay-nested");
+          unlockBodyScroll();
+          okBtn.removeEventListener("click", onOk);
+          cancelBtn.removeEventListener("click", onCancel);
+          resolve(result);
+        }
+        function onOk() { cleanup(true); }
+        function onCancel() { cleanup(false); }
+        okBtn.addEventListener("click", onOk);
+        cancelBtn.addEventListener("click", onCancel);
+      });
+    }
+    // Backdrop-click and the header X both just trigger the same Cancel path
+    // as the explicit button — whichever onCancel is currently attached by
+    // the open showConfirm() call above.
+    document.getElementById("confirmModal").addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) document.getElementById("confirmCancelBtn").click();
+    });
+    document.getElementById("confirmCloseBtn").addEventListener("click", () => {
+      document.getElementById("confirmCancelBtn").click();
+    });
+
+    function showInfo(title, bodyHtml) {
+      document.getElementById("infoTitle").textContent = title;
+      document.getElementById("infoBody").innerHTML = bodyHtml;
+      document.getElementById("infoModal").classList.add("is-open");
+      lockBodyScroll();
+      document.getElementById("infoCloseXBtn").focus();
+    }
+    function closeInfoModal() {
+      document.getElementById("infoModal").classList.remove("is-open");
+      unlockBodyScroll();
+    }
+    document.getElementById("infoCloseBtn").addEventListener("click", closeInfoModal);
+    document.getElementById("infoCloseXBtn").addEventListener("click", closeInfoModal);
+    document.getElementById("infoModal").addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) closeInfoModal();
+    });
+
+    // Escape closes the topmost open overlay (same DOM-order-as-z-order
+    // assumption .v2-overlay-nested relies on) via its own Cancel/Close path.
+    const OVERLAY_CANCEL_BTN = {
+      addModal: "addCancelBtn",
+      editModal: "editCancelBtn",
+      mergeModal: "mergeCancelBtn",
+      confirmModal: "confirmCancelBtn",
+      infoModal: "infoCloseBtn",
+    };
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" && e.key !== "Tab") return;
+      const open = document.querySelectorAll(".v2-overlay.is-open");
+      if (!open.length) return;
+      const top = open[open.length - 1];
+      if (e.key === "Escape") {
+        const btnId = OVERLAY_CANCEL_BTN[top.id];
+        if (btnId) document.getElementById(btnId).click();
+        return;
+      }
+      // Tab: trap focus inside the topmost open dialog (STYLE.md §5a).
+      trapTabKey(e, top.querySelector(".v2-modal") || top);
+    });
+
+    // ============================================================================
+    // PENDING APPROVALS — GET admin/onboarding/pending, POST approve/reject
+    // ============================================================================
+
+    function pendingShow(which) {
+      document.getElementById("pendingLoading").classList.toggle("hidden", which !== "loading");
+      document.getElementById("pendingError").classList.toggle("hidden", which !== "error");
+      document.getElementById("pendingEmpty").classList.toggle("hidden", which !== "empty");
+      document.getElementById("pendingList").classList.toggle("hidden", which !== "data");
+      // Don't assert a "(0)" count while loading or after a failed fetch —
+      // it hasn't been counted yet.
+      if (which === "loading" || which === "error") {
+        document.getElementById("pendingCount").textContent = "";
+      }
+    }
+
+    async function loadPendingApprovals() {
+      pendingShow("loading");
+      try {
+        const pending = await V2.apiFetch(API.pendingList);
+        renderPendingApprovals(pending || []);
+      } catch (error) {
+        console.error("Error loading pending approvals:", error);
+        document.getElementById("pendingErrorText").textContent =
+          "โหลดรายการรออนุมัติไม่สำเร็จ (" + (error.status || "เครือข่าย") + ")";
+        pendingShow("error");
+      }
+    }
+    document.getElementById("pendingRetry").addEventListener("click", loadPendingApprovals);
+
+    function renderPendingApprovals(pending) {
+      document.getElementById("pendingCount").textContent = "(" + pending.length + ")";
+      if (pending.length === 0) {
+        pendingShow("empty");
+        return;
+      }
+      const list = document.getElementById("pendingList");
+      list.innerHTML = pending.map((p) => {
+        const badge = V2.escapeHtml(p.badge_number);
+        const avatar = p.line_picture_url
+          ? `<img src="${V2.escapeHtml(p.line_picture_url)}" alt="" class="h-12 w-12 flex-shrink-0 rounded-full object-cover">`
+          : `<div class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold ${V2.avatarColor(p.badge_number)}">${V2.escapeHtml(V2.initials(p.nickname || p.thai_name || p.badge_number))}</div>`;
+        const meta = [
+          "สาขา: " + V2.escapeHtml(LOCATION_LABEL[p.location] || p.location || "-"),
+          p.department ? "แผนก: " + V2.escapeHtml(p.department) : "",
+          p.position ? "ตำแหน่ง: " + V2.escapeHtml(p.position) : "",
+        ].filter(Boolean).join(" · ");
+        return `
+          <div class="flex flex-col gap-3 rounded-xl border border-warn-100 bg-white p-4 shadow-card md:flex-row md:flex-wrap md:items-center md:gap-4">
+            <div class="flex items-center gap-4 md:contents">
+              ${avatar}
+              <div class="min-w-[200px] flex-1">
+                <div class="font-semibold text-ink-900">${V2.escapeHtml(p.nickname || "")}${p.thai_name ? " (" + V2.escapeHtml(p.thai_name) + ")" : ""}</div>
+                <div class="mt-0.5 text-xs text-ink-500">${meta}</div>
+                <div class="mt-0.5 text-xs text-ink-500">ส่งคำขอเมื่อ ${thaiDateTime(p.submitted_at)}</div>
+              </div>
+            </div>
+            <div class="flex gap-2 md:flex-shrink-0">
+              <button type="button" class="btn-primary btn-sm flex-1 md:flex-initial" data-action="approve" data-badge="${badge}">อนุมัติ</button>
+              <button type="button" class="btn-danger btn-sm flex-1 md:flex-initial" data-action="reject" data-badge="${badge}">ปฏิเสธ</button>
+            </div>
+          </div>`;
+      }).join("");
+      pendingShow("data");
+    }
+
+    document.getElementById("pendingList").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-action]");
+      if (!btn) return;
+      const badge = btn.dataset.badge;
+      if (btn.dataset.action === "approve") {
+        const ok = await showConfirm({ title: "อนุมัติพนักงาน", message: `อนุมัติพนักงานหมายเลขบัตร ${badge} ใช่หรือไม่?`, confirmLabel: "อนุมัติ" });
+        if (!ok) return;
+        try {
+          const result = await V2.apiFetch(API.approve, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ badge_number: badge }) });
+          showInfo("อนุมัติสำเร็จ", `<p>${V2.escapeHtml(result.message || "อนุมัติสำเร็จ")}</p>`);
+          await loadPendingApprovals();
+          await loadEmployees();
+        } catch (error) {
+          showInfo("อนุมัติไม่สำเร็จ", `<p>${V2.escapeHtml((error.body && safeDetail(error.body)) || "เกิดข้อผิดพลาด")} (${error.status || "เครือข่าย"})</p>`);
+        }
+      } else if (btn.dataset.action === "reject") {
+        const ok = await showConfirm({ title: "ปฏิเสธคำขอ", message: `ปฏิเสธคำขอสมัครของหมายเลขบัตร ${badge} ใช่หรือไม่?`, confirmLabel: "ปฏิเสธ", danger: true });
+        if (!ok) return;
+        try {
+          const result = await V2.apiFetch(API.reject, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ badge_number: badge }) });
+          showInfo("ปฏิเสธสำเร็จ", `<p>${V2.escapeHtml(result.message || "ปฏิเสธสำเร็จ")}</p>`);
+          await loadPendingApprovals();
+          await loadEmployees();
+        } catch (error) {
+          showInfo("ปฏิเสธไม่สำเร็จ", `<p>${V2.escapeHtml((error.body && safeDetail(error.body)) || "เกิดข้อผิดพลาด")} (${error.status || "เครือข่าย"})</p>`);
+        }
+      }
+    });
+
+    /** apiFetch's err.body is raw response text — try to pull {detail} out of it. */
+    /** FastAPI validation errors (422) return `detail` as a list of {msg, ...}
+     *  objects, not a string — stringify anything that isn't already one so
+     *  callers never render a bare "[object Object]". */
+    function safeDetail(bodyText) {
+      let detail;
+      try { detail = JSON.parse(bodyText).detail; } catch (e) { return null; }
+      if (detail == null) return null;
+      if (typeof detail === "string") return detail;
+      if (Array.isArray(detail)) {
+        return detail.map((d) => (d && typeof d === "object" && d.msg) ? d.msg : JSON.stringify(d)).join("; ");
+      }
+      try { return JSON.stringify(detail); } catch (e) { return String(detail); }
+    }
+
+    // ============================================================================
+    // EMPLOYEE LIST — merges GET employees/?from_device=true and from_device=false
+    // ============================================================================
+
+    function empShow(which) {
+      document.getElementById("empLoading").classList.toggle("hidden", which !== "loading");
+      document.getElementById("empError").classList.toggle("hidden", which !== "error");
+      document.getElementById("empEmpty").classList.toggle("hidden", which !== "empty");
+      document.getElementById("empListsWrap").classList.toggle("hidden", which !== "data");
+    }
+
+    async function loadEmployees() {
+      empShow("loading");
+      try {
+        const deviceParams = new URLSearchParams({ from_device: "true", include_hidden: String(showHidden), include_inactive: String(showInactive) });
+        const deviceData = await V2.apiFetch(API.employeesList(deviceParams));
+        const deviceEmployees = deviceData.employees || [];
+
+        const dbParams = new URLSearchParams({ from_device: "false", include_hidden: String(showHidden), include_inactive: String(showInactive) });
+        const dbData = await V2.apiFetch(API.employeesList(dbParams));
+        const dbEmployees = dbData.employees || [];
+
+        const deviceBadges = new Set(deviceEmployees.map((e) => e.badge_number));
+        const dbOnlyEmployees = dbEmployees.filter((e) => !deviceBadges.has(e.badge_number));
+        dbOnlyEmployees.forEach((e) => { e.from_database_only = true; });
+
+        employees = [...deviceEmployees, ...dbOnlyEmployees];
+        employees.sort((a, b) => {
+          const numA = parseInt(a.badge_number, 10);
+          const numB = parseInt(b.badge_number, 10);
+          if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+          return a.badge_number.localeCompare(b.badge_number);
+        });
+
+        renderFilteredEmployees();
+      } catch (error) {
+        console.error("Error loading employees:", error);
+        document.getElementById("empErrorText").textContent =
+          "โหลดข้อมูลพนักงานไม่สำเร็จ (" + (error.status || "เครือข่าย") + ")";
+        empShow("error");
+      }
+    }
+    document.getElementById("empRetry").addEventListener("click", loadEmployees);
+
+    function getFilteredEmployees() {
+      const term = document.getElementById("searchInput").value.toLowerCase();
+      if (!term) return employees;
+      return employees.filter((e) =>
+        e.badge_number.toLowerCase().includes(term) || (e.display_name || "").toLowerCase().includes(term)
+      );
+    }
+
+    function renderFilteredEmployees() {
+      const list = getFilteredEmployees();
+      if (employees.length === 0) {
+        // No employees at all under the current filters (e.g. a brand-new
+        // install, or "แสดงไม่ใช้งาน" off on a roster of only-inactive staff)
+        // — distinct from "no search match" below; the two need different
+        // next actions.
+        document.getElementById("empEmptyTitle").textContent = "ยังไม่มีพนักงานในระบบ";
+        document.getElementById("empEmptySubtitle").textContent = "กด \"เพิ่มพนักงานใหม่\" เพื่อเริ่มต้น หรือเปิดตัวกรอง \"แสดงที่ซ่อน\" / \"แสดงไม่ใช้งาน\"";
+        empShow("empty");
+        return;
+      }
+      if (list.length === 0) {
+        document.getElementById("empEmptyTitle").textContent = "ไม่พบพนักงานที่ตรงกับการค้นหา";
+        document.getElementById("empEmptySubtitle").textContent = "ลองล้างคำค้นหา หรือเปิดตัวกรอง \"แสดงที่ซ่อน\" / \"แสดงไม่ใช้งาน\"";
+        empShow("empty");
+        return;
+      }
+      renderEmployees(list);
+      empShow("data");
+    }
+
+    /** LINE-code cell content shared by the desktop <td> and the mobile card. */
+    function lineCodeCellInner(employee) {
+      const badge = V2.escapeHtml(employee.badge_number);
+      if (employee.line_user_id) {
+        return `
+          <div class="text-xs font-semibold text-good-700">เชื่อมต่อแล้ว</div>
+          <div class="mt-0.5 text-xs text-ink-500">${V2.escapeHtml(employee.line_display_name || "—")}</div>
+          <button type="button" class="btn-secondary btn-sm mt-1.5" data-action="regenerate-code" data-badge="${badge}">สร้างรหัสเชื่อมต่อใหม่</button>`;
+      }
+      if (employee.line_linking_code) {
+        return `
+          <div class="text-base font-bold tabular-nums text-brand-700">${V2.escapeHtml(employee.line_linking_code)}</div>
+          <div class="mt-0.5 text-xs text-ink-500">รอพนักงานเชื่อมต่อ</div>
+          <button type="button" class="btn-secondary btn-sm mt-1.5" data-action="regenerate-code" data-badge="${badge}">สร้างรหัสใหม่</button>`;
+      }
+      return `<button type="button" class="btn-primary btn-sm" data-action="generate-code" data-badge="${badge}">สร้างรหัสเชื่อมต่อ</button>`;
+    }
+    function lineCodeCell(employee) {
+      return `<td class="px-3 py-3" data-label="รหัสเชื่อมต่อ LINE">${lineCodeCellInner(employee)}</td>`;
+    }
+
+    /** Avatar glyph shared by the pending list and the mobile cards. */
+    function empAvatar(employee) {
+      return `<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${V2.avatarColor(employee.badge_number || employee.display_name || "")}">${V2.escapeHtml(V2.initials(employee.display_name || employee.badge_number))}</span>`;
+    }
+
+    /** Card-per-row list, below md. Same `list` + same data-action/data-badge
+        vocabulary as the table body, so the one delegated listener on
+        #empListsWrap covers both — see the "table-wide event delegation"
+        block below. Header tap = the same "edit" action as the desktop
+        table's แก้ไข button (opens the MODAL-TO-SHEET edit dialog); the
+        rest of each row's capabilities (nickname, LINE code, status,
+        visibility, merge, delete) stay as their own controls in the body. */
+    function renderEmployeesCards(list) {
+      const wrap = document.getElementById("empCardsWrap");
+      wrap.innerHTML = list.map((employee) => {
+        const badge = V2.escapeHtml(employee.badge_number);
+        const rawBadge = String(employee.badge_number);
+        const displayName = V2.escapeHtml(employee.display_name || "");
+        const isQBadge = /^Q\d+$/i.test(rawBadge);
+        const isDeviceOnly = employee.in_database === false;
+
+        let mergeBtn = "";
+        if (isDeviceOnly) {
+          mergeBtn = `<button type="button" class="btn-secondary btn-sm" data-action="merge-into-device" data-badge="${badge}">ย้ายข้อมูลจากพนักงาน Q…</button>`;
+        } else if (isQBadge) {
+          mergeBtn = `<button type="button" class="btn-secondary btn-sm" data-action="merge-from-q" data-badge="${badge}">ย้ายไปรหัสเครื่องสแกน…</button>`;
+        }
+        const deleteBtn = employee.from_database_only
+          ? `<button type="button" class="btn-danger btn-sm" data-action="delete" data-badge="${badge}" data-name="${displayName}">ลบ</button>`
+          : "";
+        const lineRow = adminMode
+          ? `<div class="border-t border-ink-100 pt-2">${lineCodeCellInner(employee)}</div>`
+          : "";
+
+        return `
+          <li class="rounded-xl border border-ink-200 bg-white p-3 shadow-card">
+            <button type="button" class="emp-card-head flex w-full items-start gap-3 text-left" data-action="edit" data-badge="${badge}">
+              ${empAvatar(employee)}
+              <span class="min-w-0 flex-1">
+                <span class="block truncate text-sm font-semibold text-ink-900">${displayName || ("บัตร " + badge)}</span>
+                <span class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-ink-500">
+                  <span class="tabular-nums">#${badge}</span>${sourceChip(employee)}
+                </span>
+              </span>
+              <span class="shrink-0 pt-0.5">${dotLabel(!!employee.is_active, "ใช้งาน", "ไม่ใช้งาน")}</span>
+            </button>
+            <div class="mt-2 space-y-2 border-t border-ink-100 pt-2">
+              <div class="flex items-center gap-2">
+                <input type="text" class="nickname-input h-10 flex-1 rounded-lg border border-ink-300 px-2 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]"
+                       data-badge="${badge}" data-original="${displayName}" value="${displayName}"
+                       placeholder="${employee.in_database ? "ใส่ชื่อเล่น" : "ใส่ชื่อเล่น (จะสร้างข้อมูลพนักงาน)"}">
+                <button type="button" class="btn-primary btn-sm" data-action="save-nickname" data-badge="${badge}" disabled>
+                  ${employee.in_database ? "บันทึก" : "สร้าง"}
+                </button>
+              </div>
+              <p class="min-h-[1rem] text-xs" data-role="nickname-status" data-for="${badge}"></p>
+              <div class="flex flex-wrap items-center gap-2 text-xs">
+                <span class="text-ink-500">LINE:</span>${dotLabel(!!employee.line_user_id, "เชื่อมต่อ", "ยังไม่เชื่อมต่อ")}
+              </div>
+              <div class="flex flex-wrap gap-1.5">
+                <button type="button" class="btn-secondary btn-sm" data-action="toggle-status" data-badge="${badge}" data-next="${employee.is_active ? "false" : "true"}">
+                  ${employee.is_active ? "ตั้งเป็นไม่ใช้งาน" : "ตั้งเป็นใช้งาน"}
+                </button>
+                <button type="button" class="btn-secondary btn-sm" data-action="toggle-hidden" data-badge="${badge}" data-next="${employee.is_hidden ? "false" : "true"}">
+                  ${employee.is_hidden ? "แสดง" : "ซ่อน"}
+                </button>
+                ${deleteBtn}
+                ${mergeBtn}
+              </div>
+              <p class="min-h-[1rem] text-xs" data-role="status-status" data-for="${badge}"></p>
+              <p class="min-h-[1rem] text-xs" data-role="hidden-status" data-for="${badge}"></p>
+              ${lineRow}
+            </div>
+          </li>`;
+      }).join("");
+    }
+
+    function renderEmployees(list) {
+      renderEmployeesCards(list);
+      const tbody = document.getElementById("empTableBody");
+      tbody.innerHTML = list.map((employee) => {
+        const badge = V2.escapeHtml(employee.badge_number);
+        const rawBadge = String(employee.badge_number);
+        const displayName = V2.escapeHtml(employee.display_name || "");
+        const isQBadge = /^Q\d+$/i.test(rawBadge);
+        const isDeviceOnly = employee.in_database === false;
+
+        let mergeBtn = "";
+        if (isDeviceOnly) {
+          mergeBtn = `<button type="button" class="btn-secondary btn-sm" data-action="merge-into-device" data-badge="${badge}">ย้ายข้อมูลจากพนักงาน Q…</button>`;
+        } else if (isQBadge) {
+          mergeBtn = `<button type="button" class="btn-secondary btn-sm" data-action="merge-from-q" data-badge="${badge}">ย้ายไปรหัสเครื่องสแกน…</button>`;
+        }
+
+        const deleteBtn = employee.from_database_only
+          ? `<button type="button" class="btn-danger btn-sm" data-action="delete" data-badge="${badge}" data-name="${displayName}">ลบ</button>`
+          : "";
+
+        return `
+          <tr class="odd:bg-ink-50/60 align-top">
+            <td class="whitespace-nowrap px-3 py-3" data-label="หมายเลขบัตร / แหล่งที่มา">
+              <div class="font-medium tabular-nums text-ink-900">${badge}</div>
+              ${sourceChip(employee)}
+            </td>
+            <td class="min-w-[200px] px-3 py-3" data-label="ชื่อเล่น">
+              <div class="flex items-center gap-2">
+                <input type="text" class="nickname-input h-10 flex-1 rounded-lg border border-ink-300 px-2 text-sm focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]"
+                       data-badge="${badge}" data-original="${displayName}" value="${displayName}"
+                       placeholder="${employee.in_database ? "ใส่ชื่อเล่น" : "ใส่ชื่อเล่น (จะสร้างข้อมูลพนักงาน)"}">
+                <button type="button" class="btn-primary btn-sm" data-action="save-nickname" data-badge="${badge}" disabled>
+                  ${employee.in_database ? "บันทึก" : "สร้าง"}
+                </button>
+              </div>
+              <p class="min-h-[1rem] text-xs" data-role="nickname-status" data-for="${badge}"></p>
+            </td>
+            <td class="px-3 py-3" data-label="LINE">${dotLabel(!!employee.line_user_id, "เชื่อมต่อ", "ยังไม่เชื่อมต่อ")}</td>
+            <td class="px-3 py-3" data-label="สถานะ">
+              <div class="flex flex-col items-start gap-1.5">
+                ${dotLabel(!!employee.is_active, "ใช้งาน", "ไม่ใช้งาน")}
+                <button type="button" class="btn-secondary btn-sm" data-action="toggle-status" data-badge="${badge}" data-next="${employee.is_active ? "false" : "true"}">
+                  ${employee.is_active ? "ตั้งเป็นไม่ใช้งาน" : "ตั้งเป็นใช้งาน"}
+                </button>
+                <p class="min-h-[1rem] text-xs" data-role="status-status" data-for="${badge}"></p>
+              </div>
+            </td>
+            <td class="px-3 py-3" data-label="การแสดงผล">
+              <div class="flex flex-col items-start gap-1.5">
+                ${dotLabel(!employee.is_hidden, "แสดง", "ซ่อน")}
+                <button type="button" class="btn-secondary btn-sm" data-action="toggle-hidden" data-badge="${badge}" data-next="${employee.is_hidden ? "false" : "true"}">
+                  ${employee.is_hidden ? "แสดง" : "ซ่อน"}
+                </button>
+                <p class="min-h-[1rem] text-xs" data-role="hidden-status" data-for="${badge}"></p>
+              </div>
+            </td>
+            <td class="px-3 py-3" data-label="การดำเนินการ">
+              <div class="flex flex-col items-start gap-1.5">
+                <button type="button" class="btn-secondary btn-sm" data-action="edit" data-badge="${badge}">แก้ไข</button>
+                ${deleteBtn}
+                ${mergeBtn}
+              </div>
+            </td>
+            ${adminMode ? lineCodeCell(employee) : ""}
+          </tr>`;
+      }).join("");
+    }
+
+    // ---- table-wide event delegation -----------------------------------------
+
+    // The table and the mobile cards both exist in the DOM at once (CSS
+    // picks which one is visible per breakpoint) and share the same
+    // data-badge vocabulary, so every lookup below is scoped to the
+    // triggering element's own row/card — a global by-badge query would
+    // silently hit whichever copy happens to be first in DOM order.
+    document.getElementById("empListsWrap").addEventListener("input", (e) => {
+      if (!e.target.classList.contains("nickname-input")) return;
+      const badge = e.target.dataset.badge;
+      const scope = e.target.closest("tr, li") || document;
+      const saveBtn = scope.querySelector(`[data-action="save-nickname"][data-badge="${cssEsc(badge)}"]`);
+      if (saveBtn) saveBtn.disabled = e.target.value === e.target.dataset.original;
+    });
+
+    function cssEsc(s) {
+      return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/["\\]/g, "\\$&");
+    }
+
+    document.getElementById("empListsWrap").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-action]");
+      if (!btn) return;
+      const badge = btn.dataset.badge;
+      const action = btn.dataset.action;
+      const scope = btn.closest("tr, li") || document;
+
+      if (action === "save-nickname") return saveNickname(badge, scope);
+      if (action === "toggle-status") return toggleStatus(badge, btn.dataset.next === "true", scope);
+      if (action === "toggle-hidden") return toggleHidden(badge, btn.dataset.next === "true", scope);
+      if (action === "edit") return showEditModal(badge);
+      if (action === "delete") return deleteEmployee(badge, btn.dataset.name || "");
+      if (action === "merge-into-device") return showMergeModal("into_device", badge);
+      if (action === "merge-from-q") return showMergeModal("from_q", badge);
+      if (action === "generate-code") return generateLinkingCode(badge);
+      if (action === "regenerate-code") return regenerateLinkingCode(badge);
+    });
+
+    async function saveNickname(badgeNumber, scope) {
+      const root = scope || document;
+      const input = root.querySelector(`.nickname-input[data-badge="${cssEsc(badgeNumber)}"]`);
+      const saveBtn = root.querySelector(`[data-action="save-nickname"][data-badge="${cssEsc(badgeNumber)}"]`);
+      const statusEl = root.querySelector(`[data-role="nickname-status"][data-for="${cssEsc(badgeNumber)}"]`);
+      if (!input || !saveBtn) return;
+
+      saveBtn.disabled = true;
+      setInlineStatus(statusEl, "กำลังบันทึก…");
+
+      try {
+        const result = await V2.apiFetch(API.nickname(badgeNumber), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nickname: input.value }),
+        });
+        input.dataset.original = input.value;
+        setInlineStatus(statusEl, "บันทึกแล้ว", "ok");
+        setTimeout(() => setInlineStatus(statusEl, ""), 1800);
+
+        // Keep the OTHER render's copy (table vs. card, whichever is
+        // currently hidden) in sync so it isn't stale on the next resize.
+        document.querySelectorAll(`.nickname-input[data-badge="${cssEsc(badgeNumber)}"]`).forEach((el) => {
+          if (el !== input) { el.value = input.value; el.dataset.original = input.value; }
+        });
+        document.querySelectorAll(`[data-action="save-nickname"][data-badge="${cssEsc(badgeNumber)}"]`).forEach((el) => {
+          if (el !== saveBtn) el.disabled = true;
+        });
+
+        const employee = employees.find((e) => e.badge_number === badgeNumber);
+        if (employee) {
+          employee.display_name = input.value;
+          employee.in_database = true;
+        }
+        if (result && result.created) renderFilteredEmployees();
+      } catch (error) {
+        console.error("Error saving nickname:", error);
+        setInlineStatus(statusEl, "บันทึกไม่สำเร็จ (" + (error.status || "เครือข่าย") + ")", "error");
+        if (input.value !== input.dataset.original) saveBtn.disabled = false;
+      }
+    }
+
+    async function toggleStatus(badgeNumber, newStatus, scope) {
+      const root = scope || document;
+      const btn = root.querySelector(`[data-action="toggle-status"][data-badge="${cssEsc(badgeNumber)}"]`);
+      const statusEl = root.querySelector(`[data-role="status-status"][data-for="${cssEsc(badgeNumber)}"]`);
+      if (btn) btn.disabled = true;
+      setInlineStatus(statusEl, "กำลังบันทึก…");
+      try {
+        await V2.apiFetch(API.status(badgeNumber), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_active: newStatus }),
+        });
+        const employee = employees.find((e) => e.badge_number === badgeNumber);
+        if (employee) employee.is_active = newStatus;
+        renderFilteredEmployees();
+      } catch (error) {
+        console.error("Error updating status:", error);
+        setInlineStatus(statusEl, "อัปเดตไม่สำเร็จ (" + (error.status || "เครือข่าย") + ")", "error");
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function toggleHidden(badgeNumber, newHiddenStatus, scope) {
+      const root = scope || document;
+      const btn = root.querySelector(`[data-action="toggle-hidden"][data-badge="${cssEsc(badgeNumber)}"]`);
+      const statusEl = root.querySelector(`[data-role="hidden-status"][data-for="${cssEsc(badgeNumber)}"]`);
+      if (btn) btn.disabled = true;
+      setInlineStatus(statusEl, "กำลังบันทึก…");
+      try {
+        await V2.apiFetch(API.hidden(badgeNumber), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_hidden: newHiddenStatus }),
+        });
+        const employee = employees.find((e) => e.badge_number === badgeNumber);
+        if (employee) employee.is_hidden = newHiddenStatus;
+        renderFilteredEmployees();
+      } catch (error) {
+        console.error("Error updating hidden status:", error);
+        setInlineStatus(statusEl, "อัปเดตไม่สำเร็จ (" + (error.status || "เครือข่าย") + ")", "error");
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function deleteEmployee(badgeNumber, displayName) {
+      const ok = await showConfirm({
+        title: "ลบพนักงาน",
+        message: `ต้องการลบพนักงาน "${displayName}" (เลขบัตร: ${badgeNumber}) ใช่หรือไม่? การลบนี้ไม่สามารถย้อนกลับได้`,
+        confirmLabel: "ลบพนักงาน",
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        const result = await V2.apiFetch(API.deleteEmp(badgeNumber), { method: "DELETE", headers: { "Content-Type": "application/json" } });
+        employees = employees.filter((e) => e.badge_number !== badgeNumber);
+        renderFilteredEmployees();
+        showInfo("ลบสำเร็จ", `<p>${V2.escapeHtml((result && result.message) || "ลบพนักงานสำเร็จแล้ว")}</p>`);
+      } catch (error) {
+        console.error("Error deleting employee:", error);
+        showInfo("ลบไม่สำเร็จ", `<p>${V2.escapeHtml((error.body && safeDetail(error.body)) || "เกิดข้อผิดพลาด")} (${error.status || "เครือข่าย"})</p>`);
+      }
+    }
+
+    document.getElementById("showHiddenBtn").addEventListener("click", () => {
+      showHidden = !showHidden;
+      const btn = document.getElementById("showHiddenBtn");
+      btn.textContent = showHidden ? "ซ่อนที่ซ่อน" : "แสดงที่ซ่อน";
+      btn.classList.toggle("chip-on", showHidden);
+      loadEmployees();
+    });
+
+    document.getElementById("showInactiveBtn").addEventListener("click", () => {
+      showInactive = !showInactive;
+      const btn = document.getElementById("showInactiveBtn");
+      btn.textContent = showInactive ? "ซ่อนไม่ใช้งาน/รออนุมัติ" : "แสดงไม่ใช้งาน/รออนุมัติ";
+      btn.classList.toggle("chip-on", showInactive);
+      loadEmployees();
+    });
+
+    document.getElementById("searchInput").addEventListener("input", renderFilteredEmployees);
+
+    // ============================================================================
+    // ADMIN MODE (LINE linking codes)
+    // ============================================================================
+
+    document.getElementById("adminModeBtn").addEventListener("click", async () => {
+      adminMode = true;
+      document.getElementById("adminPanel").classList.remove("hidden");
+      document.getElementById("lineCodeHeader").classList.remove("hidden");
+      document.getElementById("adminModeBtn").classList.add("hidden");
+      await loadAdminStats();
+      renderFilteredEmployees();
+    });
+
+    document.getElementById("adminModeCloseBtn").addEventListener("click", () => {
+      adminMode = false;
+      document.getElementById("adminPanel").classList.add("hidden");
+      document.getElementById("lineCodeHeader").classList.add("hidden");
+      document.getElementById("adminModeBtn").classList.remove("hidden");
+      renderFilteredEmployees();
+    });
+
+    const ADMIN_STATS_BOX_CLASS_OK = "mb-3 rounded-lg border border-ink-200 bg-white p-3";
+    const ADMIN_STATS_BOX_CLASS_ERROR = "mb-3 rounded-lg border border-bad-100 bg-bad-50 p-3";
+
+    async function loadAdminStats() {
+      const box = document.getElementById("adminStats");
+      box.className = ADMIN_STATS_BOX_CLASS_OK;
+      box.innerHTML = `<p class="text-sm text-ink-500">กำลังโหลดสถิติ…</p>`;
+      try {
+        const stats = await V2.apiFetch(API.lineStats);
+        box.className = ADMIN_STATS_BOX_CLASS_OK;
+        box.innerHTML = `
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div class="text-center">
+              <div class="text-xl font-bold text-ink-900">${V2.escapeHtml(String(stats.total_active_employees))}</div>
+              <div class="text-xs text-ink-500">พนักงานทั้งหมด</div>
+            </div>
+            <div class="text-center">
+              <div class="text-xl font-bold text-good-700">${V2.escapeHtml(String(stats.linked_accounts))}</div>
+              <div class="text-xs text-ink-500">เชื่อมต่อแล้ว</div>
+            </div>
+            <div class="text-center">
+              <div class="text-xl font-bold text-warn-700">${V2.escapeHtml(String(stats.pending_codes))}</div>
+              <div class="text-xs text-ink-500">รอเชื่อมต่อ</div>
+            </div>
+            <div class="text-center">
+              <div class="text-xl font-bold text-bad-700">${V2.escapeHtml(String(stats.unlinked))}</div>
+              <div class="text-xs text-ink-500">ยังไม่สร้างรหัส</div>
+            </div>
+          </div>
+          <div class="mt-2 text-center text-sm text-ink-600">เชื่อมต่อแล้ว ${V2.escapeHtml(String(stats.linking_percentage))}%</div>`;
+      } catch (error) {
+        box.className = ADMIN_STATS_BOX_CLASS_ERROR;
+        box.innerHTML = `
+          <p class="text-sm text-bad-700">โหลดสถิติไม่สำเร็จ (${error.status || "เครือข่าย"})</p>
+          <button id="adminStatsRetry" type="button" class="mt-1 text-sm font-semibold text-bad-700 underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>`;
+        document.getElementById("adminStatsRetry").addEventListener("click", loadAdminStats);
+      }
+    }
+
+    async function generateLinkingCode(badgeNumber) {
+      try {
+        const result = await V2.apiFetch(API.lineGenerate, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ badge_number: badgeNumber }),
+        });
+        const relink = result.is_relink
+          ? `<p class="mb-2 text-ink-600">ยกเลิกการเชื่อมต่อเดิม (${V2.escapeHtml(result.old_line_display_name || "")})</p>`
+          : "";
+        showInfo("รหัสเชื่อมต่อ LINE", `
+          ${relink}
+          <p class="text-ink-600">รหัสสำหรับ ${V2.escapeHtml(result.display_name)}:</p>
+          <p class="my-2 text-xl font-bold tabular-nums text-brand-700">${V2.escapeHtml(result.linking_code)}</p>
+          <p class="text-xs text-ink-500">หมดอายุใน 24 ชั่วโมง</p>`);
+        await loadAdminStats();
+        renderFilteredEmployees();
+      } catch (error) {
+        showInfo("เกิดข้อผิดพลาด", `<p>${V2.escapeHtml((error.body && safeDetail(error.body)) || "สร้างรหัสเชื่อมต่อไม่สำเร็จ")}</p>`);
+      }
+    }
+
+    async function regenerateLinkingCode(badgeNumber) {
+      const ok = await showConfirm({ title: "สร้างรหัสใหม่", message: "ต้องการสร้างรหัสใหม่ใช่หรือไม่? รหัสเก่าจะถูกลบทิ้ง", confirmLabel: "สร้างรหัสใหม่" });
+      if (!ok) return;
+      try {
+        const result = await V2.apiFetch(API.lineRegenerate, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ badge_number: badgeNumber, reason: "พนักงานทำรหัสหาย" }),
+        });
+        showInfo("สร้างรหัสใหม่สำเร็จ", `
+          <p class="text-ink-600">รหัสเก่า: <span class="line-through">${V2.escapeHtml(result.old_code)}</span></p>
+          <p class="my-2 text-xl font-bold tabular-nums text-brand-700">${V2.escapeHtml(result.new_code)}</p>
+          <p class="text-xs text-ink-500">หมดอายุใน 24 ชั่วโมง</p>`);
+        await loadAdminStats();
+        renderFilteredEmployees();
+      } catch (error) {
+        showInfo("เกิดข้อผิดพลาด", `<p>${V2.escapeHtml((error.body && safeDetail(error.body)) || "สร้างรหัสใหม่ไม่สำเร็จ")}</p>`);
+      }
+    }
+
+    document.getElementById("showPendingCodesBtn").addEventListener("click", async () => {
+      try {
+        const codes = await V2.apiFetch(API.lineList);
+        if (!codes || codes.length === 0) {
+          showInfo("รหัสที่รอเชื่อมต่อ", `<p class="text-ink-500">ไม่มีรหัสที่รอเชื่อมต่อ</p>`);
+          return;
+        }
+        const rows = codes.map((c) => `
+          <tr class="border-b border-ink-100">
+            <td class="py-1.5 pr-3 tabular-nums">${V2.escapeHtml(c.badge_number)}</td>
+            <td class="py-1.5 pr-3">${V2.escapeHtml(c.display_name)}</td>
+            <td class="py-1.5 pr-3 font-semibold tabular-nums">${V2.escapeHtml(c.linking_code)}</td>
+            <td class="py-1.5 pr-3">${c.is_expired ? '<span class="text-bad-600">หมดอายุ</span>' : '<span class="text-good-700">ใช้งานได้</span>'}</td>
+            <td class="py-1.5 text-ink-500">${thaiDateTime(c.generated_at)}</td>
+          </tr>`).join("");
+        // Below md: two-line list items (code in bold, meta on line two)
+        // instead of the five-column table — see STYLE.md §5b.
+        const items = codes.map((c) => `
+          <li class="border-b border-ink-100 py-2 last:border-b-0">
+            <p class="text-sm font-bold tabular-nums text-brand-700">${V2.escapeHtml(c.linking_code)}</p>
+            <p class="mt-0.5 text-xs text-ink-500">${V2.escapeHtml(c.badge_number)} · ${V2.escapeHtml(c.display_name)} · ${c.is_expired ? '<span class="text-bad-600">หมดอายุ</span>' : '<span class="text-good-700">ใช้งานได้</span>'} · ${thaiDateTime(c.generated_at)}</p>
+          </li>`).join("");
+        showInfo("รหัสที่รอเชื่อมต่อ", `
+          <div class="hidden overflow-x-auto md:block"><table class="w-full text-left text-xs">
+            <thead><tr class="text-ink-500"><th class="pb-1 pr-3">บัตร</th><th class="pb-1 pr-3">ชื่อ</th><th class="pb-1 pr-3">รหัส</th><th class="pb-1 pr-3">สถานะ</th><th class="pb-1">สร้างเมื่อ</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table></div>
+          <ul class="md:hidden">${items}</ul>`);
+      } catch (error) {
+        showInfo("เกิดข้อผิดพลาด", `<p>โหลดรหัสที่รอเชื่อมต่อไม่สำเร็จ (${error.status || "เครือข่าย"})</p>`);
+      }
+    });
+
+    document.getElementById("showLinkedAccountsBtn").addEventListener("click", async () => {
+      try {
+        const accounts = await V2.apiFetch(API.lineLinked);
+        if (!accounts || accounts.length === 0) {
+          showInfo("บัญชีที่เชื่อมต่อแล้ว", `<p class="text-ink-500">ยังไม่มีบัญชีที่เชื่อมต่อ</p>`);
+          return;
+        }
+        const rows = accounts.map((a) => `
+          <tr class="border-b border-ink-100">
+            <td class="py-1.5 pr-3 tabular-nums">${V2.escapeHtml(a.badge_number)}</td>
+            <td class="py-1.5 pr-3">${V2.escapeHtml(a.display_name)}</td>
+            <td class="py-1.5 pr-3">${V2.escapeHtml(a.line_display_name || "—")}</td>
+            <td class="py-1.5 text-ink-500">${thaiDateTime(a.linked_at)}</td>
+          </tr>`).join("");
+        // Below md: two-line list items instead of the four-column table.
+        const items = accounts.map((a) => `
+          <li class="border-b border-ink-100 py-2 last:border-b-0">
+            <p class="text-sm font-bold text-ink-900">${V2.escapeHtml(a.display_name)}</p>
+            <p class="mt-0.5 text-xs text-ink-500">${V2.escapeHtml(a.badge_number)} · LINE: ${V2.escapeHtml(a.line_display_name || "—")} · ${thaiDateTime(a.linked_at)}</p>
+          </li>`).join("");
+        showInfo("บัญชีที่เชื่อมต่อแล้ว", `
+          <div class="hidden overflow-x-auto md:block"><table class="w-full text-left text-xs">
+            <thead><tr class="text-ink-500"><th class="pb-1 pr-3">บัตร</th><th class="pb-1 pr-3">ชื่อ</th><th class="pb-1 pr-3">LINE</th><th class="pb-1">เชื่อมต่อเมื่อ</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table></div>
+          <ul class="md:hidden">${items}</ul>`);
+      } catch (error) {
+        showInfo("เกิดข้อผิดพลาด", `<p>โหลดบัญชีที่เชื่อมต่อไม่สำเร็จ (${error.status || "เครือข่าย"})</p>`);
+      }
+    });
+
+    document.getElementById("refreshAdminBtn").addEventListener("click", async () => {
+      await loadAdminStats();
+      renderFilteredEmployees();
+    });
+
+    // ============================================================================
+    // ADD NEW EMPLOYEE — POST employees/
+    // ============================================================================
+
+    document.getElementById("addEmployeeBtn").addEventListener("click", () => {
+      document.getElementById("newBadgeNumber").value = "";
+      document.getElementById("newNickname").value = "";
+      document.getElementById("addError").classList.add("hidden");
+      document.getElementById("addModal").classList.add("is-open");
+      lockBodyScroll();
+      document.getElementById("newBadgeNumber").focus();
+    });
+    function closeAddModal() {
+      document.getElementById("addModal").classList.remove("is-open");
+      unlockBodyScroll();
+    }
+    document.getElementById("addCancelBtn").addEventListener("click", closeAddModal);
+    document.getElementById("addCloseBtn").addEventListener("click", closeAddModal);
+    document.getElementById("addModal").addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) closeAddModal();
+    });
+
+    document.getElementById("newBadgeNumber").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); document.getElementById("newNickname").focus(); }
+    });
+    document.getElementById("newNickname").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); createNewEmployee(); }
+    });
+    document.getElementById("addConfirmBtn").addEventListener("click", createNewEmployee);
+
+    async function createNewEmployee() {
+      const badgeNumber = document.getElementById("newBadgeNumber").value.trim();
+      const nickname = document.getElementById("newNickname").value.trim();
+      const errorDiv = document.getElementById("addError");
+      const submitBtn = document.getElementById("addConfirmBtn");
+
+      if (!badgeNumber) { errorDiv.textContent = "กรุณาระบุหมายเลขบัตร"; errorDiv.classList.remove("hidden"); return; }
+      if (!nickname) { errorDiv.textContent = "กรุณาระบุชื่อเล่น"; errorDiv.classList.remove("hidden"); return; }
+
+      errorDiv.classList.add("hidden");
+      submitBtn.disabled = true;
+      submitBtn.textContent = "กำลังสร้าง…";
+
+      try {
+        const result = await V2.apiFetch(API.createEmp, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ badge_number: badgeNumber, thai_name: nickname, is_active: true, is_hidden: false }),
+        });
+        document.getElementById("addModal").classList.remove("is-open");
+        unlockBodyScroll();
+        showInfo("สร้างพนักงานสำเร็จ", `<p>หมายเลขบัตร: ${V2.escapeHtml(result.badge_number)}</p><p>ชื่อเล่น: ${V2.escapeHtml(result.display_name)}</p>`);
+        await loadEmployees();
+      } catch (error) {
+        console.error("Error creating employee:", error);
+        errorDiv.textContent = (error.body && safeDetail(error.body)) || "เกิดข้อผิดพลาดในการสร้างพนักงาน กรุณาลองใหม่อีกครั้ง";
+        errorDiv.classList.remove("hidden");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "สร้างพนักงาน";
+      }
+    }
+
+    // ============================================================================
+    // EDIT EMPLOYEE MODAL (names, department, position, location, NFC, app grants)
+    // ============================================================================
+
+    let editingBadge = null;
+    let editingLocation = null;
+
+    function selectEditLocation(loc) {
+      editingLocation = loc;
+      document.querySelectorAll("#editLocationChoice .loc-btn").forEach((btn) => {
+        const on = btn.dataset.loc === loc;
+        btn.classList.toggle("border-brand-500", on);
+        btn.classList.toggle("bg-brand-50", on);
+        btn.classList.toggle("text-brand-700", on);
+        btn.classList.toggle("border-ink-300", !on);
+        btn.classList.toggle("text-ink-600", !on);
+      });
+    }
+    document.querySelectorAll("#editLocationChoice .loc-btn").forEach((btn) => {
+      btn.addEventListener("click", () => selectEditLocation(btn.dataset.loc));
+    });
+
+    async function showEditModal(badgeNumber) {
+      const employee = employees.find((e) => e.badge_number === badgeNumber);
+      if (!employee) return;
+
+      editingBadge = badgeNumber;
+      editingLocation = employee.location || null;
+
+      document.getElementById("editModalTitle").textContent = "แก้ไขพนักงาน — " + badgeNumber;
+      document.getElementById("editThaiName").value = employee.thai_name || "";
+      document.getElementById("editEnglishName").value = employee.english_name || "";
+      document.getElementById("editNickname").value = employee.display_name || "";
+      document.getElementById("editDepartment").value = employee.department || "";
+      document.getElementById("editPosition").value = employee.position || "";
+      document.getElementById("editNfcCard").value = employee.nfc_card_uid || "";
+      document.getElementById("scanNfcStatus").textContent = "";
+      document.getElementById("editError").classList.add("hidden");
+      selectEditLocation(editingLocation);
+
+      document.getElementById("editModal").classList.add("is-open");
+      lockBodyScroll();
+      document.getElementById("editThaiName").focus();
+
+      // Load current app grants (best-effort; grid still usable if this fails).
+      const grantBox = document.getElementById("editGrantCheckboxes");
+      grantBox.innerHTML = APP_CATALOG.map((app) =>
+        `<label class="flex items-center gap-2 text-sm text-ink-800"><input type="checkbox" value="${V2.escapeHtml(app.app_id)}" class="h-4 w-4 rounded border-ink-300"> ${V2.escapeHtml(app.name)}</label>`
+      ).join("");
+      try {
+        const data = await V2.apiFetch(API.grants(badgeNumber));
+        const granted = new Set(data.granted_app_ids || []);
+        grantBox.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = granted.has(cb.value); });
+      } catch (error) {
+        console.warn("Could not load app grants (admin session required):", error);
+      }
+    }
+
+    function closeEditModal() {
+      document.getElementById("editModal").classList.remove("is-open");
+      unlockBodyScroll();
+      editingBadge = null;
+    }
+    document.getElementById("editCancelBtn").addEventListener("click", closeEditModal);
+    document.getElementById("editCloseBtn").addEventListener("click", closeEditModal);
+    document.getElementById("editModal").addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) closeEditModal();
+    });
+
+    document.getElementById("editSaveBtn").addEventListener("click", saveEditModal);
+
+    async function saveEditModal() {
+      if (!editingBadge) return;
+      const badgeNumber = editingBadge;
+      const errorDiv = document.getElementById("editError");
+      const saveBtn = document.getElementById("editSaveBtn");
+      errorDiv.classList.add("hidden");
+
+      const thaiName = document.getElementById("editThaiName").value.trim();
+      const englishName = document.getElementById("editEnglishName").value.trim();
+      const nickname = document.getElementById("editNickname").value.trim();
+      const department = document.getElementById("editDepartment").value.trim();
+      const position = document.getElementById("editPosition").value.trim();
+      const nfcUid = document.getElementById("editNfcCard").value.trim();
+      const grantedAppIds = Array.from(document.querySelectorAll("#editGrantCheckboxes input:checked")).map((cb) => cb.value);
+
+      const employee = employees.find((e) => e.badge_number === badgeNumber) || {};
+
+      saveBtn.disabled = true;
+      saveBtn.textContent = "กำลังบันทึก…";
+
+      try {
+        // 1) Names + department + position (this endpoint also recomputes
+        //    display_name from thai/english name — step 2 restores the
+        //    intended nickname afterward).
+        await V2.apiFetch(API.updateEmp(badgeNumber), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            thai_name: thaiName || null,
+            english_name: englishName || null,
+            department: department || null,
+            position: position || null,
+          }),
+        });
+
+        // 2) Nickname (display_name) — independent of thai/english name.
+        await V2.apiFetch(API.nickname(badgeNumber), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nickname: nickname }),
+        });
+
+        // 3) Location — pass through the employee's existing role/shift so
+        //    this endpoint (which also manages role+shift) doesn't clear them.
+        await V2.apiFetch(API.shift(badgeNumber), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            role: employee.role || null,
+            default_shift_code: employee.default_shift_code || null,
+            location: editingLocation || null,
+          }),
+        });
+
+        // 4) NFC card.
+        await V2.apiFetch(API.nfcCard(badgeNumber), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uid: nfcUid || null }),
+        });
+
+        // 5) App grants.
+        await V2.apiFetch(API.grants(badgeNumber), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app_ids: grantedAppIds }),
+        });
+
+        document.getElementById("editModal").classList.remove("is-open");
+        unlockBodyScroll();
+        editingBadge = null;
+        await loadEmployees();
+        showInfo("บันทึกสำเร็จ", `<p>บันทึกข้อมูลพนักงานสำเร็จ</p>`);
+      } catch (error) {
+        console.error("Error saving employee edit:", error);
+        errorDiv.textContent = (error.body && safeDetail(error.body)) || "เกิดข้อผิดพลาดในการบันทึก (" + (error.status || "เครือข่าย") + ")";
+        errorDiv.classList.remove("hidden");
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "บันทึก";
+      }
+    }
+
+    // ── NFC card scan via WebHID (RC500 encoder, VID 0x5458 PID 0x0002) ──
+    // Reads the card UID straight from the USB reader in the browser — no
+    // local bridge, no network. Requires Chrome/Edge + a one-time device
+    // permission (the button click is the required user gesture). The
+    // frame protocol mirrors app/reader/gcs_encoder.py in ~/hotel-keycard
+    // (the hardware-validated Python driver): request(0x26) → anticoll →
+    // read the 4 UID bytes. Manual entry stays available as the fallback.
+    // PORTED VERBATIM from v1 static/employee-management.html — do not
+    // change the byte-level protocol logic below.
+    const HF_RC500 = { vendorId: 0x5458, productId: 0x0002 };
+    const RC = { CMD_REQUEST: 0x41, CMD_ANTICOLL: 0x74 };
+
+    function rcBcc(bytes) {
+      let x = 0;
+      for (const b of bytes) x ^= b;
+      return (~x) & 0xff;
+    }
+    // Build the 64-byte frame: [0x00, cmd, len, ...payload, bcc, 0-pad].
+    function rcFrame(cmd, payload) {
+      const head = [0x00, cmd, payload.length, ...payload];
+      const withBcc = [...head, rcBcc(head)];
+      const f = new Uint8Array(64);
+      f.set(withBcc.slice(0, 64));
+      return f;
+    }
+    // One request/response transaction. Resolves {status, payload}.
+    function rcTxn(device, cmd, payload) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { device.oninputreport = null; reject(new Error("reader timeout")); }, 1500);
+        device.oninputreport = (event) => {
+          clearTimeout(timer);
+          device.oninputreport = null;
+          const d = new Uint8Array(event.data.buffer);
+          // WebHID strips the report id → d[0]=status, d[1]=len, d[2..]=payload.
+          const status = d[0], len = d[1];
+          resolve({ status, payload: d.slice(2, 2 + len), raw: d });
+        };
+        device.sendReport(0, rcFrame(cmd, payload)).catch((e) => { clearTimeout(timer); reject(e); });
+      });
+    }
+
+    async function scanNfcCard() {
+      const statusEl = document.getElementById("scanNfcStatus");
+      const btn = document.getElementById("scanNfcBtn");
+      if (!("hid" in navigator)) {
+        setInlineStatus(statusEl, "เบราว์เซอร์นี้ไม่รองรับการอ่านบัตร (ใช้ Chrome หรือ Edge) — พิมพ์รหัสเองได้", "error");
+        return;
+      }
+      btn.disabled = true;
+      setInlineStatus(statusEl, "กำลังเชื่อมต่อเครื่องอ่าน…");
+      let device;
+      try {
+        const existing = (await navigator.hid.getDevices()).filter(
+          (d) => d.vendorId === HF_RC500.vendorId && d.productId === HF_RC500.productId);
+        device = existing[0] || (await navigator.hid.requestDevice({ filters: [HF_RC500] }))[0];
+        if (!device) { setInlineStatus(statusEl, "ไม่ได้เลือกเครื่องอ่าน"); return; }
+        if (!device.opened) await device.open();
+
+        setInlineStatus(statusEl, "แตะบัตรบนเครื่องอ่าน…");
+        await rcTxn(device, RC.CMD_REQUEST, [0x26]);              // ISO14443A request
+        const anti = await rcTxn(device, RC.CMD_ANTICOLL, [0x93, 0x00]);
+        if (anti.status !== 0 || anti.payload.length < 4) {
+          console.warn("anticoll raw:", Array.from(anti.raw).map((b) => b.toString(16)));
+          throw new Error("อ่านบัตรไม่สำเร็จ — วางบัตรแล้วลองใหม่");
+        }
+        const uid = Array.from(anti.payload.slice(0, 4))
+          .map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+        document.getElementById("editNfcCard").value = uid;
+        setInlineStatus(statusEl, "อ่านบัตรสำเร็จ: " + uid + " (กด บันทึก เพื่อผูกกับพนักงาน)", "ok");
+      } catch (err) {
+        console.error("NFC scan error:", err);
+        setInlineStatus(statusEl, "อ่านบัตรไม่สำเร็จ: " + (err.message || err) + " — พิมพ์รหัสเองได้", "error");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+    document.getElementById("scanNfcBtn").addEventListener("click", scanNfcCard);
+
+    // ============================================================================
+    // MERGE TOOL (device badge <-> Q-badge) — POST admin/employees/merge
+    // ============================================================================
+
+    let mergeFromBadge = null;
+    let mergeToBadge = null;
+
+    /**
+     * mode 'into_device': triggered from a device-only row (no DB record yet).
+     *   toBadge is fixed to this row; admin picks the Q-badge to move FROM.
+     * mode 'from_q': triggered from a Q-badge row.
+     *   fromBadge is fixed to this row; admin picks/types the destination badge.
+     */
+    function showMergeModal(mode, badgeNumber) {
+      document.getElementById("mergeError").classList.add("hidden");
+
+      if (mode === "into_device") {
+        mergeToBadge = badgeNumber;
+        mergeFromBadge = null;
+        document.getElementById("mergeModalTitle").textContent = "ย้ายข้อมูลเข้าสู่รหัสเครื่องสแกน " + badgeNumber;
+        document.getElementById("mergeFromRow").classList.remove("hidden");
+        document.getElementById("mergeToRow").classList.add("hidden");
+        const qBadges = employees.filter((e) => /^Q\d+$/i.test(e.badge_number));
+        const select = document.getElementById("mergeFromSelect");
+        select.innerHTML = qBadges.length
+          ? qBadges.map((e) => `<option value="${V2.escapeHtml(e.badge_number)}">${V2.escapeHtml(e.badge_number)} — ${V2.escapeHtml(e.display_name || "")}</option>`).join("")
+          : `<option value="">(ไม่มีพนักงาน Q-badge)</option>`;
+      } else {
+        mergeFromBadge = badgeNumber;
+        mergeToBadge = null;
+        document.getElementById("mergeModalTitle").textContent = "ย้าย " + badgeNumber + " ไปรหัสเครื่องสแกน";
+        document.getElementById("mergeFromRow").classList.add("hidden");
+        document.getElementById("mergeToRow").classList.remove("hidden");
+        document.getElementById("mergeToInput").value = "";
+        const nonQBadges = employees.filter((e) => !/^Q\d+$/i.test(e.badge_number));
+        document.getElementById("mergeToSuggestions").innerHTML =
+          nonQBadges.map((e) => `<option value="${V2.escapeHtml(e.badge_number)}">`).join("");
+      }
+
+      document.getElementById("mergeModal").classList.add("is-open");
+      lockBodyScroll();
+      const firstField = mode === "into_device"
+        ? document.getElementById("mergeFromSelect")
+        : document.getElementById("mergeToInput");
+      if (firstField) firstField.focus();
+    }
+
+    function closeMergeModal() {
+      document.getElementById("mergeModal").classList.remove("is-open");
+      unlockBodyScroll();
+    }
+    document.getElementById("mergeCancelBtn").addEventListener("click", closeMergeModal);
+    document.getElementById("mergeCloseBtn").addEventListener("click", closeMergeModal);
+    document.getElementById("mergeModal").addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) closeMergeModal();
+    });
+    document.getElementById("mergeConfirmBtn").addEventListener("click", performMerge);
+
+    async function performMerge() {
+      const errorDiv = document.getElementById("mergeError");
+      errorDiv.classList.add("hidden");
+
+      let fromBadge = mergeFromBadge;
+      let toBadge = mergeToBadge;
+      if (!fromBadge) fromBadge = document.getElementById("mergeFromSelect").value;
+      if (!toBadge) toBadge = document.getElementById("mergeToInput").value.trim();
+
+      if (!fromBadge || !toBadge) {
+        errorDiv.textContent = "กรุณาเลือก/ระบุรหัสทั้งสองฝั่ง";
+        errorDiv.classList.remove("hidden");
+        return;
+      }
+
+      const ok = await showConfirm({
+        title: "ยืนยันการรวมข้อมูล",
+        message: `ย้ายข้อมูลจาก ${fromBadge} ไปยัง ${toBadge}? การดำเนินการนี้ไม่สามารถย้อนกลับได้`,
+        confirmLabel: "ยืนยันย้ายข้อมูล",
+        danger: true,
+      });
+      if (!ok) return;
+
+      const btn = document.getElementById("mergeConfirmBtn");
+      btn.disabled = true;
+      btn.textContent = "กำลังย้ายข้อมูล…";
+
+      try {
+        const result = await V2.apiFetch(API.merge, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ from_badge: fromBadge, to_badge: toBadge }),
+        });
+        const summaryLines = Object.entries(result.summary || {}).map(([table, counts]) =>
+          `<div>${V2.escapeHtml(table)}: ย้าย ${V2.escapeHtml(String(counts.moved))}${counts.dropped_duplicate ? ", ตัดซ้ำ " + V2.escapeHtml(String(counts.dropped_duplicate)) : ""}</div>`
+        ).join("");
+        document.getElementById("mergeModal").classList.remove("is-open");
+        unlockBodyScroll();
+        // showInfo's title is assigned via textContent (auto-escaping) — do
+        // NOT V2.escapeHtml() this one, or "&" renders literally as "&amp;".
+        showInfo("รวมข้อมูลสำเร็จ (" + (result.case || "") + ")", summaryLines || "<p>เสร็จสิ้น</p>");
+        await loadEmployees();
+      } catch (error) {
+        console.error("Error merging employees:", error);
+        errorDiv.textContent = (error.body && safeDetail(error.body)) || "ย้ายข้อมูลไม่สำเร็จ (" + (error.status || "เครือข่าย") + ")";
+        errorDiv.classList.remove("hidden");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "ยืนยันย้ายข้อมูล";
+      }
+    }
+
+    // ============================================================================
+    // INIT
+    // ============================================================================
+
+    loadEmployees();
+    loadPendingApprovals();
+  </script>
+
+  <!-- LAST element before </body>, non-negotiable -->
+  <script defer src="https://erp.thehfhotel.org/shell/hf-bar.js"
+          data-app="Attendance" data-module="people"></script>
+</body>
+</html>

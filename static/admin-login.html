@@ -58,9 +58,35 @@
             margin: 0;
         }
 
-        .lock-icon {
-            font-size: 3rem;
-            margin-bottom: 1rem;
+        .primary-path {
+            background: #F6F1EA;
+            border: 1px solid #E8E4DF;
+            border-left: 4px solid #7A0000;
+            border-radius: 8px;
+            padding: 0.875rem 1rem;
+            margin: 0 0 1rem 0;
+            text-align: left;
+            color: #26221E;
+            font-size: 0.875rem;
+            line-height: 1.6;
+        }
+
+        .primary-path a {
+            color: #7A0000;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .primary-path a:hover {
+            text-decoration: underline;
+        }
+
+        .fallback-note {
+            color: #7A7268;
+            font-size: 0.8125rem;
+            line-height: 1.6;
+            text-align: left;
+            margin: 0;
         }
 
         .form-group {
@@ -204,16 +230,24 @@
 <body>
     <div class="login-container">
         <div class="login-header">
-            <div class="lock-icon">🔒</div>
             <h1>Admin Console</h1>
-            <p>กรุณาใส่รหัสผ่านเพื่อเข้าถึงหน้าจัดการระบบ</p>
+            <p class="primary-path">
+                ผู้จัดการ: เข้าใช้งานผ่าน
+                <a href="https://erp.thehfhotel.org">erp.thehfhotel.org</a>
+                แล้วเปิดการ์ด "Attendance" ระบบจะพาเข้าหน้าจัดการให้อัตโนมัติ
+                โดยไม่ต้องใส่รหัสผ่าน
+            </p>
+            <p class="fallback-note">
+                รหัสผ่านด้านล่างเป็นทางเข้าสำรองสำหรับกรณีฉุกเฉิน
+                หรือเครื่องที่เข้าใช้งานผ่านเครือข่ายภายในเท่านั้น
+            </p>
         </div>
 
         <div id="alert" class="alert"></div>
 
         <form id="loginForm">
             <div class="form-group">
-                <label for="passcode">รหัสผ่าน Admin</label>
+                <label for="passcode">รหัสผ่านสำรอง (Admin)</label>
                 <div class="password-toggle">
                     <input
                         type="password"

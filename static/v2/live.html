@@ -3,13 +3,16 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
   <meta name="theme-color" content="#4F0E0E" />
-  <title>การบันทึกเวลาแบบสด — เวอร์ชัน 2</title>
+  <title>ดูสด — ระบบบันทึกเวลา</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="/fingerprintlogs/static/v2/theme.js"></script>
+  <!-- Shared navigation — renders BOTH navs. Every page, no exceptions. -->
+  <script defer src="/fingerprintlogs/static/v2/nav.js"></script>
   <script src="/fingerprintlogs/static/v2/ws.js"></script>
   <script>
     tailwind.config = {
@@ -27,47 +30,39 @@
     };
   </script>
   <style>
+    /* Belt-and-braces: the CDN applies fontFamily only after theme.js parses. */
     html, body { font-family: 'Sarabun', 'Noto Sans Thai', system-ui, -apple-system, sans-serif; }
+    /* HF One body type: 14px / 1.6 (Thai needs the tall leading). Set on BODY,
+       never on <html> — Tailwind's spacing scale is rem-based and rescaling the
+       root font-size shrinks every padding and gap utility on the page. */
+    body { font-size: 0.875rem; line-height: 1.6; }
+
     /* Keyframes declared here so they're available even if Tailwind CDN
-       hasn't emitted them yet (we trigger via inline style.animation). */
+       hasn't emitted them yet (we trigger via inline style.animation).
+       Values mirror theme.js's keyframes — the flash is brand-500 at 10%. */
     @keyframes slideInTop {
       0%   { opacity: 0; transform: translateY(-8px); }
       100% { opacity: 1; transform: translateY(0); }
     }
     @keyframes pulseHighlight {
-      0%   { background-color: rgba(99, 102, 241, 0.10); }
+      0%   { background-color: rgba(139, 0, 0, .10); }  /* brand-500 @ 10% */
       100% { background-color: rgba(255, 255, 255, 0); }
     }
     @media (prefers-reduced-motion: reduce) {
       .v2-row-new { animation: none !important; }
     }
+
+    /* ---------- Focus: brand-500 at 40%, never a colored glow ---------- */
+    a:focus-visible, button:focus-visible {
+      outline: 2px solid rgba(139, 0, 0, .40);   /* brand-500 / 40% */
+      outline-offset: 2px;
+    }
   </style>
 </head>
 <body class="min-h-screen bg-ink-50 text-ink-900 antialiased">
 
-  <!-- DESKTOP TOP NAV (md+) -->
-  <nav class="hidden border-b border-ink-200 bg-white md:block">
-    <div class="mx-auto flex max-w-3xl items-center justify-between px-5 py-3">
-      <a href="/fingerprintlogs/v2/" class="flex items-center gap-2 text-sm font-semibold text-ink-700 hover:text-brand-600">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><polyline points="15 18 9 12 15 6"/></svg>
-        ระบบบันทึกเวลา
-      </a>
-      <div class="flex items-center gap-1">
-        <a href="/fingerprintlogs/v2/live"
-           class="rounded-md px-3 py-1.5 text-sm font-medium bg-brand-100 text-brand-700">
-          ดูสด
-        </a>
-        <a href="/fingerprintlogs/v2/monthly"
-           class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">
-          รายงาน
-        </a>
-        <a href="/fingerprintlogs/v2/shifts-admin"
-           class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">
-          จัดกะ
-        </a>
-      </div>
-    </div>
-  </nav>
+  <!-- The ONLY nav markup this page carries. See STYLE.md section 2. -->
+  <nav id="v2nav" data-page="live"></nav>
 
   <main class="mx-auto max-w-3xl px-4 pt-5 pb-28 md:px-5 md:pt-8 md:pb-12">
 
@@ -75,8 +70,8 @@
     <header class="mb-5 md:mb-7">
       <div class="flex items-start justify-between gap-3">
         <div>
-          <p class="text-xs font-medium uppercase tracking-[0.18em] text-brand-600">สด</p>
-          <h1 class="mt-1 text-2xl font-bold tracking-tight text-ink-900 md:text-3xl">การบันทึกเวลาแบบสด</h1>
+          <p class="text-xs font-semibold tracking-wide text-brand-600">ดูสด</p>
+          <h1 class="mt-1 text-xl font-bold tracking-tight text-ink-900">การบันทึกเวลาแบบสด</h1>
         </div>
         <!-- Status pill -->
         <div id="statusPill"
@@ -85,19 +80,21 @@
           <span id="statusText" class="font-medium text-ink-600">กำลังเชื่อมต่อ…</span>
         </div>
       </div>
-      <p id="lastPushText" class="mt-2 text-sm text-ink-500">รอการลงเวลาครั้งถัดไป…</p>
+      <!-- The one deliberate gold mark on this screen: the number this page
+           exists to draw the eye to (HF One accent rule). -->
+      <p id="lastPushText" class="mt-2 border-l-2 border-gold-300 pl-2 text-sm text-ink-600">รอการลงเวลาครั้งถัดไป…</p>
     </header>
 
     <!-- FEED -->
-    <section class="rounded-2xl border border-ink-200 bg-white shadow-card overflow-hidden">
+    <section class="rounded-xl border border-ink-200 bg-white shadow-card overflow-hidden">
       <div class="flex items-center justify-between border-b border-ink-100 px-4 py-3">
         <h2 class="text-sm font-semibold text-ink-700">การลงเวลาล่าสุด</h2>
-        <span id="feedCount" class="text-xs text-ink-400">0</span>
+        <span id="feedCount" class="text-xs tabular-nums text-ink-500">0</span>
       </div>
 
       <!-- Empty state -->
       <div id="emptyState" class="px-6 py-16 text-center">
-        <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-100 text-brand-600">
+        <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-50 text-brand-600">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
             <circle cx="12" cy="12" r="9"/>
             <polyline points="12 7 12 12 15 14"/>
@@ -116,42 +113,19 @@
       <!-- Error state -->
       <div id="errorState" class="hidden border-t border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
         <span id="errorText">ไม่สามารถโหลดข้อมูลล่าสุดได้</span>
-        <button id="retryBtn" class="ml-2 underline underline-offset-2 hover:text-bad-700/80">ลองใหม่</button>
+        <button id="retryBtn" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
       </div>
 
       <!-- Feed list -->
       <ul id="feedList" class="hidden divide-y divide-ink-100"></ul>
     </section>
 
-    <p class="mt-4 text-center text-xs text-ink-400">
-      แสดง 200 รายการล่าสุด · เวลาเขตกรุงเทพ (Asia/Bangkok)
+    <!-- Feed size: the initial REST load brings the newest 20; realtime rows
+         prepend on top and the list is trimmed at 200. -->
+    <p class="mt-4 text-center text-xs text-ink-500">
+      โหลด 20 รายการล่าสุด · รายการใหม่เพิ่มขึ้นสูงสุด 200 รายการ · เวลาเขตกรุงเทพ (Asia/Bangkok)
     </p>
   </main>
-
-  <!-- MOBILE BOTTOM NAV (<md) -->
-  <nav class="fixed inset-x-0 bottom-0 z-20 border-t border-ink-200 bg-white/95 backdrop-blur md:hidden"
-       style="padding-bottom: env(safe-area-inset-bottom);">
-    <div class="mx-auto grid max-w-3xl grid-cols-2">
-      <a href="/fingerprintlogs/v2/live"
-         class="flex min-h-[56px] flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium text-brand-700"
-         aria-current="page">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">
-          <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-        </svg>
-        ดูสด
-      </a>
-      <a href="/fingerprintlogs/v2/monthly"
-         class="flex min-h-[56px] flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium text-ink-500 hover:text-ink-700">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">
-          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-          <line x1="16" y1="2" x2="16" y2="6"/>
-          <line x1="8" y1="2" x2="8" y2="6"/>
-          <line x1="3" y1="10" x2="21" y2="10"/>
-        </svg>
-        รายงาน
-      </a>
-    </div>
-  </nav>
 
   <!-- Row template -->
   <template id="rowTemplate">
@@ -346,6 +320,9 @@
       retryBtn.addEventListener("click", loadInitial);
 
       // ---------- WebSocket ----------
+      // V2WS hands over the TOP-LEVEL broadcast object as arg 1 (badge_number /
+      // display_name / timestamp / punch_type) and the dashboard summary — which
+      // this page does not use — as an optional arg 2.
       function onPunch(p) {
         // Defensive: ensure required fields.
         if (!p) return;

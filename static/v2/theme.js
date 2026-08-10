@@ -11,10 +11,22 @@
   "use strict";
 
   // ---------- Tailwind theme extension ----------
-  // Palette: HF One — warm neutrals, burgundy primary, semantic
-  // success/warning/error. Mirrors /Users/nut/HF-erp/design/HF-ONE.md;
-  // don't invent colors here, propose additions in that file first.
-  // Kept narrow on purpose — every utility class we use elsewhere can map here.
+  // Palette: HF One — warm neutrals, burgundy primary, gold accent, semantic
+  // success/warning/error. This is a MIRROR of the estate's served token file
+  // https://erp.thehfhotel.org/shell/hf.css (canonical text:
+  // /Users/nut/HF-erp/design/HF-ONE.md). Do NOT invent colors here — propose
+  // additions in HF-ONE.md first, then copy the value across byte-for-byte.
+  //
+  // Mapping to the --hf-* custom properties, so the two files can be diffed:
+  //   ink-50  = --hf-shell          ink-100 = --hf-panel-tint
+  //   ink-200 = --hf-border         ink-300 = --hf-border-strong
+  //   ink-400 = --hf-text-muted     ink-500 = --hf-text-muted
+  //   ink-900 = --hf-text           brand-* = --hf-brand-*   gold-* = --hf-gold-*
+  //   good-500 = --hf-success  warn-500 = --hf-warning  bad-500 = --hf-error
+  // (ink-600/700/800 are local interpolations between text-muted and text;
+  //  the *-50/100/600/700 tint+shade steps on good/warn/bad are likewise local
+  //  derivations of the one semantic token each — they exist so a status well
+  //  can be built without inventing raw hex inside a page.)
   const THEME = {
     colors: {
       // Surfaces (warm neutrals, not Tailwind slate/gray)
@@ -23,22 +35,41 @@
         100: "#F4F1ED",
         200: "#E8E4DF",
         300: "#CFC9C1",
-        400: "#ABA299",
+        // ink-400 was #ABA299 — 2.51:1 on white, which fails WCAG AA for the
+        // ~34 places it carries real Thai copy. It is now an ALIAS of
+        // --hf-text-muted (4.74:1 on white, 4.50:1 on the ink-50 shell) so
+        // every existing `text-ink-400` becomes legible without touching a
+        // page. New code: use ink-500 for muted text and ink-300 for hairlines
+        // that must read; there is no legitimate lighter text shade.
+        400: "#7A7268",
         500: "#7A7268",
         600: "#5C554C",
         700: "#443E37",
         800: "#332D27",
         900: "#26221E",
       },
-      // Primary (HF One burgundy)
+      // Primary (HF One burgundy) — the full hf.css ramp, byte-matched.
       brand: {
         50:  "#FBEAEA",
         100: "#F5C9C9",
-        200: "#DE9494",
-        400: "#A83535",
+        200: "#E9A3A3",
+        300: "#C76060",
+        400: "#A83030",
         500: "#8B0000",
         600: "#7A0000",
         700: "#6B1212",
+        800: "#4F0E0E",
+        900: "#3B0A0A",
+      },
+      // Accent (HF One gold) — jewellery only: hairlines, the active mark,
+      // ONE highlight per screen. Never a surface, never body text below 700.
+      gold: {
+        50:  "#FBF6E9",
+        100: "#F6EACB",
+        300: "#E7C97F",
+        500: "#D9A441",
+        600: "#B98730",
+        700: "#93691F",
       },
       // Semantic
       good: { 50: "#EAF6EF", 100: "#D3E7DC", 500: "#2F855A", 600: "#256B47", 700: "#1D5438" },
@@ -50,7 +81,11 @@
       sans: ['Sarabun', '"Noto Sans Thai"', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
     },
     boxShadow: {
-      card: "0 1px 2px rgba(38, 34, 30, 0.04), 0 1px 3px rgba(38, 34, 30, 0.06)",
+      // Contract values: --hf-shadow-card / --hf-shadow-popover.
+      card: "0 1px 2px rgb(38 34 30 / 0.06)",
+      popover: "0 8px 24px rgb(38 34 30 / 0.14)",
+      // Local extra: the lift used on hover for clickable cards. Same warm
+      // shadow base, no colored glow.
       soft: "0 4px 16px rgba(38, 34, 30, 0.06)",
     },
     keyframes: {
@@ -110,20 +145,108 @@
     return `${y}-${m}-${day}`;
   }
 
-  /** Relative-time string ("12s ago", "3m ago", "2h ago"). */
+  /**
+   * Relative-time string in THAI ("เมื่อครู่", "3 นาทีที่แล้ว").
+   * Callers concatenate it into Thai sentences (live.html: "ลงเวลาล่าสุด " +
+   * relTime(...)), so it must never return English.
+   */
   function relTime(utcIso, nowMs) {
     const d = _parseUtc(utcIso);
     if (!d) return "—";
     const now = nowMs || Date.now();
     const diff = Math.max(0, Math.round((now - d.getTime()) / 1000));
-    if (diff < 5) return "just now";
-    if (diff < 60) return `${diff}s ago`;
+    if (diff < 5) return "เมื่อครู่";
+    if (diff < 60) return `${diff} วินาทีที่แล้ว`;
     const m = Math.floor(diff / 60);
-    if (m < 60) return `${m}m ago`;
+    if (m < 60) return `${m} นาทีที่แล้ว`;
     const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
+    if (h < 24) return `${h} ชั่วโมงที่แล้ว`;
     const days = Math.floor(h / 24);
-    return `${days}d ago`;
+    return `${days} วันที่แล้ว`;
+  }
+
+  // ---------- Calendar helpers (string-in / string-out, TZ-proof) ----------
+  // Every v2 page does date maths on the "YYYY-MM-DD" string, parsed as UTC,
+  // so a browser in any timezone lands on the same day. Never use
+  // `new Date(iso)` without the Date.UTC dance, and never `toISOString()` on a
+  // local-constructed Date — that is how off-by-one-day bugs get in.
+
+  function _pad2(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  /**
+   * Shift a "YYYY-MM-DD" string by n days (n may be negative).
+   * addDays("2026-03-01", -1) -> "2026-02-28"
+   */
+  function addDays(ymd, n) {
+    const [y, m, d] = String(ymd).split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() + Number(n || 0));
+    return `${dt.getUTCFullYear()}-${_pad2(dt.getUTCMonth() + 1)}-${_pad2(dt.getUTCDate())}`;
+  }
+
+  /**
+   * Shift a month by n months. This is MONTH navigation, not date maths: the
+   * result is always anchored at the start of the month, and the input SHAPE
+   * is preserved so both call styles in v2 keep working.
+   *   addMonths("2026-05", 1)      -> "2026-06"
+   *   addMonths("2026-05-01", -1)  -> "2026-04-01"
+   *   addMonths("2026-05-31", 1)   -> "2026-06-01"   (never overflows to Jul)
+   */
+  function addMonths(ymd, n) {
+    const s = String(ymd);
+    const [y, m] = s.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1 + Number(n || 0), 1));
+    const head = `${dt.getUTCFullYear()}-${_pad2(dt.getUTCMonth() + 1)}`;
+    return s.length > 7 ? `${head}-01` : head;
+  }
+
+  // Thai month names — hand-rolled rather than Intl because the staff label
+  // periods with the Buddhist year (พ.ศ. = ค.ศ. + 543) and Intl's th-TH
+  // "numeric" year renders the Gregorian one under the default calendar.
+  const MONTH_TH = [
+    "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน",
+    "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม",
+    "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม",
+  ];
+
+  /**
+   * Thai month + Buddhist year label for a "YYYY-MM" or "YYYY-MM-DD" string.
+   * monthLabelTH("2026-05") -> "พฤษภาคม 2569"
+   */
+  function monthLabelTH(ymd) {
+    const [y, m] = String(ymd).split("-").map(Number);
+    if (!y || !m || m < 1 || m > 12) return "—";
+    return `${MONTH_TH[m - 1]} ${y + 543}`;
+  }
+
+  // Two weekday index conventions coexist in this app — mixing them silently
+  // rotates a whole calendar, so the arrays are named after their index base.
+  //
+  //   DOW_TH          Mon-first (index 0 = Monday). Matches Python's
+  //                   date.weekday() and the backend `work_days` / `dow`
+  //                   fields. Use for anything that came out of the API.
+  //   WEEKDAY_TH      Sun-first (index 0 = Sunday). Matches JS getUTCDay().
+  //   WEEKDAY_TH_SHORT  Sun-first, 1–2 character form for grid headers.
+  //
+  // Need a Mon-first FULL name? WEEKDAY_TH[(monIndex + 1) % 7].
+  const DOW_TH = ["จ", "อ", "พ", "พฤ", "ศ", "ส", "อา"];
+  const WEEKDAY_TH = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
+  const WEEKDAY_TH_SHORT = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"];
+
+  /**
+   * Convert a JS weekday (Sun=0 … Sat=6, i.e. getUTCDay()) to the backend's
+   * Python weekday (Mon=0 … Sun=6) — the index DOW_TH and `work_days` use.
+   * Also accepts a "YYYY-MM-DD" string for convenience.
+   *   isoWeekday(0) -> 6      isoWeekday("2026-05-15") -> 4 (Friday)
+   */
+  function isoWeekday(jsDay) {
+    if (typeof jsDay === "string") {
+      const [y, m, d] = jsDay.split("-").map(Number);
+      return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+    }
+    return ((Number(jsDay) % 7) + 6) % 7;
   }
 
   /**
@@ -192,9 +315,20 @@
 
   window.V2 = {
     THEME,
+    // Time
     bangkokTime,
     bangkokDate,
     relTime,
+    // Calendar
+    addDays,
+    addMonths,
+    monthLabelTH,
+    isoWeekday,
+    MONTH_TH,
+    DOW_TH,
+    WEEKDAY_TH,
+    WEEKDAY_TH_SHORT,
+    // Data + rendering
     apiFetch,
     initials,
     avatarColor,

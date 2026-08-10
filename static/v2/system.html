@@ -1,0 +1,888 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#4F0E0E" />
+  <title>ระบบ — ระบบบันทึกเวลา</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/fingerprintlogs/static/v2/theme.js"></script>
+  <!-- Shared navigation — renders BOTH navs. Every page, no exceptions. -->
+  <script defer src="/fingerprintlogs/static/v2/nav.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: { extend: window.V2.THEME },
+      safelist: [
+        "bg-brand-100", "text-brand-700",
+        "bg-good-100",  "text-good-700",
+        "bg-warn-100",  "text-warn-700",
+        "bg-bad-100",   "text-bad-700",
+        "bg-ink-200",   "text-ink-700",
+        "bg-off-100",   "text-off-600",
+        "bg-good-500",  "bg-warn-500", "bg-bad-500", "bg-ink-300",
+        "animate-pulse",
+        "text-good-600", "text-warn-600", "text-bad-600", "text-ink-500",
+        "border-good-200", "border-warn-200", "border-bad-200",
+        /* system-log rows, assembled in JS (renderLogs) */
+        "text-ink-600", "text-ink-800", "w-24", "w-16", "min-w-0", "flex-1",
+        "break-words", "odd:bg-ink-50/60",
+        /* mobile stacked log row (renderLogs) */
+        "bg-good-100", "bg-warn-100", "bg-bad-100",
+      ],
+    };
+  </script>
+
+  <style>
+    html, body { font-family: 'Sarabun', 'Noto Sans Thai', system-ui, -apple-system, sans-serif; }
+    body { font-size: 0.875rem; line-height: 1.6; }
+
+    /* ---------- Filter / branch chip (pill, JS toggles .chip-on) ---------- */
+    .chip {
+      display: inline-flex; align-items: center; gap: .375rem;
+      border-radius: 9999px;
+      padding: .3125rem .75rem;
+      font-size: .8125rem; line-height: 1.25rem; font-weight: 500;
+      border: 1px solid #E8E4DF;
+      background: #FFFFFF;
+      color: #5C554C;
+      cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+    }
+    .chip:hover { border-color: #CFC9C1; background: #FAF9F7; }
+    .chip.chip-on {
+      border-color: #E9A3A3;
+      background: #FBEAEA;
+      color: #6B1212;
+      font-weight: 600;
+    }
+
+    .seg {
+      padding: .375rem .875rem;
+      font-size: .8125rem; font-weight: 500;
+      color: #5C554C;
+      background: transparent;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .seg:hover { background: #F4F1ED; }
+    .seg.view-on {
+      background: #8B0000;
+      color: #FFFFFF;
+      font-weight: 600;
+    }
+
+    .chip:focus-visible, .seg:focus-visible,
+    .btn-primary:focus-visible, .btn-secondary:focus-visible, .btn-danger:focus-visible {
+      outline: 2px solid rgba(139, 0, 0, .40);
+      outline-offset: 2px;
+    }
+
+    .btn-primary {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;
+      font-size: .875rem; font-weight: 600;
+      background: #8B0000;
+      border: 1px solid #8B0000;
+      color: #FFFFFF;
+      cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-primary:hover   { background: #7A0000; border-color: #7A0000; }
+    .btn-primary:active  { background: #6B1212; border-color: #6B1212; }
+    .btn-primary:disabled{ background: #E8E4DF; border-color: #E8E4DF; color: #7A7268; cursor: not-allowed; }
+
+    .btn-secondary {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;
+      font-size: .875rem; font-weight: 500;
+      background: #FFFFFF;
+      border: 1px solid #CFC9C1;
+      color: #332D27;
+      cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-secondary:hover { background: #FAF9F7; border-color: #7A7268; }
+    .btn-secondary:disabled { color: #7A7268; cursor: not-allowed; }
+
+    @keyframes pulseHighlight {
+      0%   { background-color: rgba(139, 0, 0, .10); }
+      100% { background-color: rgba(255, 255, 255, 0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .v2-row-new { animation: none !important; }
+    }
+
+    /* Native checkbox: off-the-shelf browser blue is off-contract. */
+    input[type="checkbox"] { accent-color: #8B0000; }
+  </style>
+</head>
+<body class="min-h-screen bg-ink-50 text-ink-900 antialiased">
+
+  <!-- The ONLY nav markup this page carries. See STYLE.md section 2. -->
+  <nav id="v2nav" data-page="system"></nav>
+
+  <main class="mx-auto max-w-5xl px-4 pt-5 pb-28 md:px-5 md:pt-8 md:pb-12">
+    <header class="mb-5 flex flex-wrap items-start justify-between gap-3 md:mb-7">
+      <div>
+        <p class="text-xs font-semibold tracking-wide text-brand-600">ระบบ</p>
+        <h1 class="mt-1 text-xl font-bold tracking-tight text-ink-900">สถานะระบบและอุปกรณ์</h1>
+        <p class="mt-1 text-sm text-ink-500">สุขภาพระบบ การเชื่อมต่อเครื่อง การนำเข้าข้อมูล และบันทึกการทำงาน</p>
+      </div>
+      <a href="/fingerprintlogs/v2/terminals"
+         class="btn-secondary shrink-0 !min-h-[44px] md:!min-h-[2.5rem]">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+          <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
+          <circle cx="12" cy="10" r="3"/>
+        </svg>
+        ตำแหน่ง QR Terminal
+      </a>
+    </header>
+
+    <!-- ===== Overview trio (health / device / db / disk / stats / perf / sync) ===== -->
+    <div id="ovLoading" class="rounded-xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+      <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
+      <p class="mt-3 text-sm text-ink-500">กำลังโหลดสถานะระบบ…</p>
+    </div>
+
+    <div id="ovError" class="hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+      <span id="ovErrorText">ไม่สามารถโหลดสถานะระบบได้</span>
+      <button id="ovRetry" type="button"
+              class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
+    </div>
+
+    <div id="ovContent" class="hidden space-y-4">
+
+      <!-- Overall health banner -->
+      <div class="rounded-xl border border-ink-200 bg-white p-4 shadow-card md:p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <span id="healthDot" class="inline-block h-3 w-3 rounded-full bg-ink-300"></span>
+            <div>
+              <p id="healthLabel" class="text-sm font-semibold text-ink-900">กำลังตรวจสอบ…</p>
+              <p class="text-xs text-ink-500">ตรวจสอบล่าสุด <span id="healthChecked">—</span></p>
+            </div>
+          </div>
+        </div>
+        <div id="healthIssues" class="mt-3 hidden rounded-lg border border-warn-200 bg-warn-50 px-3 py-2 text-xs text-warn-700"></div>
+      </div>
+
+      <!-- Grid of operational cards. Single column below md — a 2-up grid at
+           390px mangles Thai labels/values (mid-word wraps in narrow cards).
+           md+: unchanged 2-up. -->
+      <div class="grid grid-cols-1 items-start gap-4 md:grid-cols-2 md:gap-4">
+
+        <!-- Device connection + clock -->
+        <section class="rounded-xl border border-ink-200 bg-white shadow-card">
+          <div class="border-b border-ink-200 bg-ink-50 px-4 py-2.5 text-sm font-semibold text-ink-800">การเชื่อมต่อเครื่อง</div>
+          <div class="divide-y divide-ink-100 px-4">
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">เครื่อง ZKTeco</span>
+              <span id="devStatus" class="font-semibold text-ink-900">กำลังโหลด…</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">ที่อยู่ IP</span>
+              <span id="devIp" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">เฟิร์มแวร์</span>
+              <span id="devFirmware" class="font-medium text-ink-900">—</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">เวลาเครื่อง</span>
+              <span id="devClock" title="" class="font-medium text-ink-900 tabular-nums">กำลังโหลด…</span>
+            </div>
+          </div>
+          <div class="flex flex-col items-start gap-2 border-t border-ink-100 px-4 py-3 md:flex-row md:items-center md:gap-3">
+            <button id="syncTimeBtn" type="button" class="btn-primary w-full !min-h-[44px] md:w-auto md:!min-h-[2.5rem]">ซิงค์เวลาเซิร์ฟเวอร์</button>
+            <span id="syncTimeStatus" class="text-xs text-ink-500"></span>
+          </div>
+        </section>
+
+        <!-- Sync / import status -->
+        <section class="rounded-xl border border-ink-200 bg-white shadow-card">
+          <div class="border-b border-ink-200 bg-ink-50 px-4 py-2.5 text-sm font-semibold text-ink-800">การนำเข้าข้อมูล</div>
+          <div class="divide-y divide-ink-100 px-4">
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">บริการอัตโนมัติ</span>
+              <span id="importSvcStatus" class="font-semibold text-ink-900">กำลังโหลด…</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">ช่วงเวลานำเข้า</span>
+              <span id="importInterval" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">การนำเข้าครั้งต่อไป</span>
+              <span id="importNext" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+          </div>
+          <div class="flex flex-col items-start gap-2 border-t border-ink-100 px-4 py-3 md:flex-row md:items-center md:gap-3">
+            <button id="manualImportBtn" type="button" class="btn-primary w-full !min-h-[44px] md:w-auto md:!min-h-[2.5rem]">นำเข้าทันที</button>
+            <span id="manualImportStatus" class="text-xs text-ink-500"></span>
+          </div>
+        </section>
+
+        <!-- Database health -->
+        <section class="rounded-xl border border-ink-200 bg-white shadow-card">
+          <div class="border-b border-ink-200 bg-ink-50 px-4 py-2.5 text-sm font-semibold text-ink-800">ฐานข้อมูล</div>
+          <div class="divide-y divide-ink-100 px-4">
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">การเชื่อมต่อ</span>
+              <span id="dbStatus" class="font-semibold text-ink-900">กำลังโหลด…</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">พนักงานทั้งหมด</span>
+              <span id="dbEmployees" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">บันทึกการลงเวลา</span>
+              <span id="dbRecords" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Disk / resources -->
+        <section class="rounded-xl border border-ink-200 bg-white shadow-card">
+          <div class="border-b border-ink-200 bg-ink-50 px-4 py-2.5 text-sm font-semibold text-ink-800">ทรัพยากรระบบ</div>
+          <div class="divide-y divide-ink-100 px-4">
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">การใช้ดิสก์</span>
+              <span id="diskPercent" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">ดิสก์ว่าง</span>
+              <span id="diskFree" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">ดิสก์ทั้งหมด</span>
+              <span id="diskTotal" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Application stats -->
+        <section class="rounded-xl border border-ink-200 bg-white shadow-card">
+          <div class="border-b border-ink-200 bg-ink-50 px-4 py-2.5 text-sm font-semibold text-ink-800">สถิติแอปพลิเคชัน</div>
+          <div class="divide-y divide-ink-100 px-4">
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">พนักงานที่ใช้งาน</span>
+              <span id="appActiveEmp" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">บันทึกวันนี้</span>
+              <span id="appTodayRecords" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">บันทึกล่าสุด</span>
+              <span id="appLastRecord" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Performance -->
+        <section class="rounded-xl border border-ink-200 bg-white shadow-card">
+          <div class="border-b border-ink-200 bg-ink-50 px-4 py-2.5 text-sm font-semibold text-ink-800">ประสิทธิภาพ</div>
+          <div class="divide-y divide-ink-100 px-4">
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">เวลาคิวรี่ฐานข้อมูล</span>
+              <span id="perfQueryTime" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">สถานะ API</span>
+              <span id="perfApiStatus" class="font-semibold text-ink-900">—</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 text-sm">
+              <span class="text-ink-500">กิจกรรมใน 24 ชม.</span>
+              <span id="perfActivity" class="font-medium text-ink-900 tabular-nums">—</span>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- ===== System logs ===== -->
+    <section class="mt-6 rounded-xl border border-ink-200 bg-white shadow-card">
+      <div class="flex flex-col gap-2 border-b border-ink-200 bg-ink-50 px-4 py-3 md:flex-row md:flex-wrap md:items-center md:justify-between md:gap-3">
+        <h2 class="text-sm font-semibold text-ink-800">บันทึกระบบ</h2>
+        <div class="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-2">
+          <select id="logLevel" class="h-11 w-full rounded-lg border border-ink-300 bg-white px-2 text-xs focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)] md:h-10 md:w-auto">
+            <option value="">ทุกระดับ</option>
+            <option value="ERROR">ข้อผิดพลาดเท่านั้น</option>
+            <option value="WARNING">คำเตือน</option>
+            <option value="INFO">ข้อมูล</option>
+          </select>
+          <select id="logCategory" class="h-11 w-full rounded-lg border border-ink-300 bg-white px-2 text-xs focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)] md:h-10 md:w-auto">
+            <option value="">ทุกหมวดหมู่</option>
+            <option value="sync">การซิงค์ข้อมูล</option>
+            <option value="connection">การเชื่อมต่อเครื่อง</option>
+            <option value="api">คำขอ API</option>
+            <option value="system">เหตุการณ์ระบบ</option>
+            <option value="employee">การกระทำพนักงาน</option>
+          </select>
+          <div class="flex items-center gap-2">
+            <button id="logRefreshBtn" type="button" class="btn-secondary !min-h-[44px] !py-1.5 text-xs md:!min-h-[2.25rem]">รีเฟรช</button>
+            <label class="flex min-h-[44px] items-center gap-1.5 text-xs text-ink-600 md:min-h-0">
+              <input id="logAutoRefresh" type="checkbox" checked class="h-3.5 w-3.5 rounded border-ink-300 text-brand-500 focus-visible:outline-2 focus-visible:outline-[rgba(139,0,0,.40)]" />
+              รีเฟรชอัตโนมัติ (10 นาที)
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Log stat strip -->
+      <div id="logStats" class="grid grid-cols-2 gap-3 border-b border-ink-100 bg-ink-50/60 px-4 py-3 sm:grid-cols-3 md:grid-cols-6">
+        <div class="text-center">
+          <div id="statTotal" class="text-lg font-semibold text-ink-900 tabular-nums">—</div>
+          <div class="text-[11px] text-ink-500">บันทึกทั้งหมด</div>
+        </div>
+        <div class="text-center">
+          <div id="statErrors" class="text-lg font-semibold text-bad-600 tabular-nums">—</div>
+          <div class="text-[11px] text-ink-500">ข้อผิดพลาด</div>
+        </div>
+        <div class="text-center">
+          <div id="statWarnings" class="text-lg font-semibold text-warn-600 tabular-nums">—</div>
+          <div class="text-[11px] text-ink-500">คำเตือน</div>
+        </div>
+        <div class="text-center">
+          <div id="statHealth" class="text-lg font-semibold text-ink-900">—</div>
+          <div class="text-[11px] text-ink-500">สุขภาพระบบ</div>
+        </div>
+        <div class="text-center">
+          <div id="statSync" class="text-lg font-semibold text-ink-900 tabular-nums">—</div>
+          <div class="text-[11px] text-ink-500">เหตุการณ์ซิงค์</div>
+        </div>
+        <div class="text-center">
+          <div id="statConn" class="text-lg font-semibold text-ink-900 tabular-nums">—</div>
+          <div class="text-[11px] text-ink-500">การเชื่อมต่อ</div>
+        </div>
+      </div>
+
+      <!-- Log trio -->
+      <div id="logLoading" class="px-6 py-10 text-center">
+        <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
+        <p class="mt-3 text-sm text-ink-500">กำลังโหลดบันทึก…</p>
+      </div>
+      <div id="logError" class="hidden px-4 py-3 text-sm text-bad-700">
+        <span id="logErrorText">ไม่สามารถโหลดบันทึกได้</span>
+        <button id="logRetry" type="button" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
+      </div>
+      <div id="logEmpty" class="hidden px-6 py-12 text-center">
+        <p class="text-sm font-medium text-ink-700">ไม่พบบันทึกสำหรับตัวกรองที่เลือก</p>
+        <p class="mt-1 text-xs text-ink-500">ลองเปลี่ยนระดับหรือหมวดหมู่</p>
+      </div>
+      <div id="logList" class="hidden max-h-none divide-y divide-ink-100 overflow-y-auto overscroll-contain md:max-h-[420px]"></div>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      "use strict";
+      const V2 = window.V2;
+
+      // ---------- small helpers ----------
+      function fmtDateTime(iso) {
+        if (!iso) return "—";
+        let s = String(iso);
+        if (!/[zZ]|[+-]\d\d:?\d\d$/.test(s)) s += "Z";
+        const d = new Date(s);
+        if (isNaN(d.getTime())) return "—";
+        return new Intl.DateTimeFormat("th-TH", {
+          timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit",
+          hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+        }).format(d);
+      }
+
+      // Device clock is wall-clock Bangkok time already (no offset in the
+      // ISO string) — do NOT run it through the UTC-then-Bangkok pipeline
+      // fmtDateTime uses, that would double-shift it. Same calendar
+      // (th-TH / Buddhist year) as every other timestamp on this page so
+      // เวลาเครื่อง doesn't read as a different era from ตรวจสอบล่าสุด.
+      function fmtDeviceTime(iso) {
+        if (!iso) return "—";
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return "—";
+        return new Intl.DateTimeFormat("th-TH", {
+          year: "numeric", month: "2-digit", day: "2-digit",
+          hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+        }).format(d);
+      }
+
+      // System log rows need date+seconds, not just HH:mm (V2.bangkokTime's
+      // frozen contract) — the log query spans up to 7 days, so two entries
+      // a week apart at the same minute must stay distinguishable.
+      function fmtLogTime(iso) {
+        if (!iso) return "—";
+        let s = String(iso);
+        if (!/[zZ]|[+-]\d\d:?\d\d$/.test(s)) s += "Z";
+        const d = new Date(s);
+        if (isNaN(d.getTime())) return "—";
+        return new Intl.DateTimeFormat("th-TH", {
+          timeZone: "Asia/Bangkok", month: "2-digit", day: "2-digit",
+          hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+        }).format(d);
+      }
+
+      // Per-control inline mutation status (STYLE.md section 3): disable ->
+      // "กำลังบันทึก…" -> "บันทึกแล้ว" (auto-clear 1.8s) or "…ไม่สำเร็จ (status)".
+      function setInlineStatus(el, text, cls) {
+        el.textContent = text;
+        el.className = "text-xs " + (cls || "text-ink-500");
+      }
+      // Guarded: only clears if nothing newer has overwritten this text in
+      // the meantime (a second click within the window must not have its
+      // fresh "กำลังบันทึก…" wiped by the first click's pending timer).
+      // Callers decide WHETHER to schedule a clear — only call this after a
+      // success message; a failure message should stay until the user acts.
+      function clearInlineStatusLater(el, ms) {
+        const text = el.textContent;
+        setTimeout(function () {
+          if (el.textContent === text) el.textContent = "";
+        }, ms || 1800);
+      }
+
+      // ---------- Overview pane (system/health + system/metrics) ----------
+      const ovLoading = document.getElementById("ovLoading");
+      const ovError = document.getElementById("ovError");
+      const ovErrorText = document.getElementById("ovErrorText");
+      const ovContent = document.getElementById("ovContent");
+      const ovRetry = document.getElementById("ovRetry");
+
+      function showOvLoading() {
+        ovLoading.classList.remove("hidden");
+        ovError.classList.add("hidden");
+        ovContent.classList.add("hidden");
+      }
+      function showOvError(msg) {
+        ovLoading.classList.add("hidden");
+        ovError.classList.remove("hidden");
+        ovContent.classList.add("hidden");
+        ovErrorText.textContent = msg;
+      }
+      function showOvContent() {
+        ovLoading.classList.add("hidden");
+        ovError.classList.add("hidden");
+        ovContent.classList.remove("hidden");
+      }
+
+      function renderHealth(data) {
+        const dot = document.getElementById("healthDot");
+        const label = document.getElementById("healthLabel");
+        const checked = document.getElementById("healthChecked");
+        const issuesBox = document.getElementById("healthIssues");
+
+        const status = data.overall_status || "unknown";
+        checked.textContent = fmtDateTime(data.timestamp);
+
+        dot.className = "inline-block h-3 w-3 rounded-full";
+        if (status === "healthy") {
+          dot.classList.add("bg-good-500");
+          label.textContent = "ระบบทำงานปกติ";
+          label.className = "text-sm font-semibold text-good-700";
+        } else if (status === "degraded") {
+          dot.classList.add("bg-warn-500");
+          label.textContent = "ระบบทำงานบางส่วน";
+          label.className = "text-sm font-semibold text-warn-700";
+        } else {
+          dot.classList.add("bg-bad-500");
+          label.textContent = "ระบบมีข้อผิดพลาด";
+          label.className = "text-sm font-semibold text-bad-700";
+        }
+
+        const deviceHealth = data.device_health || {};
+        const dbHealth = data.database_health || {};
+        const cacheHealth = data.cache_health || {};
+        const issues = [];
+        // Top-level health-check failure (the whole /system/health try
+        // block threw) — every sub-object above is then {} and would
+        // otherwise render as silent N/A everywhere with no reason given.
+        if (data.error) issues.push("ตรวจสอบระบบล้มเหลว: " + data.error);
+        // device_status's failure key is `error`, not `message`
+        // (app/services/zk_session.py _op_get_status / get_status()).
+        if (!deviceHealth.connected) issues.push("เครื่อง ZKTeco: " + (deviceHealth.error || "ไม่สามารถเชื่อมต่อได้"));
+        if (dbHealth.accessible === false) issues.push("ฐานข้อมูล: ไม่สามารถเข้าถึงได้");
+        if (!cacheHealth.healthy) issues.push("แคช: ระบบแคชไม่สมบูรณ์");
+
+        if (status !== "healthy" && issues.length > 0) {
+          issuesBox.classList.remove("hidden");
+          issuesBox.innerHTML = "<div class='mb-1 font-semibold'>ปัญหาที่พบ</div>" +
+            issues.map(function (i) { return "<div>• " + V2.escapeHtml(i) + "</div>"; }).join("");
+        } else {
+          issuesBox.classList.add("hidden");
+        }
+
+        // Device connection card
+        document.getElementById("devStatus").textContent = deviceHealth.connected ? "เชื่อมต่อแล้ว" : "ไม่ได้เชื่อมต่อ";
+        document.getElementById("devStatus").className = "font-semibold " + (deviceHealth.connected ? "text-good-700" : "text-bad-700");
+        // device_status has no `ip_address` key — it's `host` (+ `port`)
+        // (app/services/zk_session.py _op_get_status, written verbatim by
+        // background_scheduler.py's _refresh_status_and_time).
+        document.getElementById("devIp").textContent = deviceHealth.host
+          ? (deviceHealth.host + (deviceHealth.port ? ":" + deviceHealth.port : ""))
+          : "N/A";
+        document.getElementById("devFirmware").textContent = deviceHealth.firmware || "N/A";
+
+        // Database health
+        document.getElementById("dbStatus").textContent = dbHealth.accessible ? "เชื่อมต่อแล้ว" : "ข้อผิดพลาด";
+        document.getElementById("dbStatus").className = "font-semibold " + (dbHealth.accessible ? "text-good-700" : "text-bad-700");
+        document.getElementById("dbEmployees").textContent = dbHealth.total_employees != null ? dbHealth.total_employees : "0";
+        document.getElementById("dbRecords").textContent = (dbHealth.total_attendance_records || 0).toLocaleString("th-TH");
+
+        // Disk / resources
+        const res = data.system_resources || {};
+        document.getElementById("diskPercent").textContent = (res.disk_usage_percent != null ? res.disk_usage_percent : 0) + "%";
+        document.getElementById("diskFree").textContent = (res.disk_free_gb != null ? res.disk_free_gb : 0) + " GB";
+        document.getElementById("diskTotal").textContent = (res.disk_total_gb != null ? res.disk_total_gb : 0) + " GB";
+
+        // Application stats
+        const appStats = data.application_stats || {};
+        const employees = appStats.employees || {};
+        const attendance = appStats.attendance || {};
+        document.getElementById("appActiveEmp").textContent = (employees.active || 0) + " / " + (employees.total || 0);
+        document.getElementById("appTodayRecords").textContent = attendance.today_records != null ? attendance.today_records : "0";
+        document.getElementById("appLastRecord").textContent = attendance.last_record_time ? fmtDateTime(attendance.last_record_time) : "ไม่มีบันทึก";
+
+      }
+
+      // English -> Thai gloss for GET /api/private/auto-import/status's
+      // `next_import_estimate`, which the backend formats in English
+      // ("In 5 minutes" / "Overdue (running now)" / "Unknown", or the raw
+      // ISO next_run_time on a parse exception). Frontend-only translation
+      // — no backend change.
+      function trNextImportEstimate(raw) {
+        if (!raw || raw === "Unknown") return "ไม่ทราบ";
+        if (raw === "Overdue (running now)") return "เลยกำหนด (กำลังทำงาน)";
+        let m = raw.match(/^In (\d+) seconds$/);
+        if (m) return "ใน " + m[1] + " วินาที";
+        m = raw.match(/^In (\d+) minutes$/);
+        if (m) return "ใน " + m[1] + " นาที";
+        // Fallback: raw next_run_time ISO string.
+        const asDate = fmtDateTime(raw);
+        return asDate !== "—" ? asDate : raw;
+      }
+
+      // Auto-import status — the scheduler's own state (enabled/interval/
+      // next run), not a cache-freshness proxy. `/system/health`'s
+      // cache_health only tells us the 5-min device-status cache is warm,
+      // which is a different job than the 30-min attendance importer this
+      // card is about.
+      function renderImportStatus(data) {
+        const svcEl = document.getElementById("importSvcStatus");
+        const ok = !!(data && data.enabled);
+        svcEl.textContent = ok ? "ทำงาน" : "ไม่ทำงาน";
+        svcEl.className = "font-semibold " + (ok ? "text-good-700" : "text-bad-700");
+        document.getElementById("importInterval").textContent = data && data.interval_minutes != null
+          ? data.interval_minutes + " นาที" : "—";
+        document.getElementById("importNext").textContent = data
+          ? trNextImportEstimate(data.next_import_estimate) : "—";
+      }
+
+      function renderDeviceClock(payload) {
+        const el = document.getElementById("devClock");
+        const data = (payload && (payload.data || payload)) || {};
+        if (data.success) {
+          const timeStr = fmtDeviceTime(data.device_time);
+          const synced = !!data.synchronized;
+          // Status is never colour alone: word + time, not just a dot.
+          el.textContent = (synced ? "ตรงเวลา " : "คลาดเคลื่อน ") + timeStr + (data.auto_synced ? " (ซิงค์อัตโนมัติ)" : "");
+          el.className = "font-medium tabular-nums " + (synced ? "text-good-700" : "text-warn-700");
+          el.title = synced
+            ? "เวลาเครื่องซิงค์แล้ว"
+            : "เวลาเครื่องคลาดเคลื่อน " + Math.abs(data.time_difference_seconds || 0).toFixed(0) + " วินาที";
+        } else {
+          el.textContent = "ไม่สามารถใช้ได้";
+          el.className = "font-medium text-bad-700";
+          el.title = data.error || data.message || "ไม่สามารถเข้าถึงเวลาเครื่องได้";
+        }
+      }
+
+      function renderPerf(data) {
+        const apiPerf = data.api_performance || {};
+        const activity = data.activity_metrics || {};
+        document.getElementById("perfQueryTime").textContent = (apiPerf.db_query_time_ms != null ? apiPerf.db_query_time_ms : 0) + "ms";
+        const apiOk = apiPerf.status === "healthy";
+        const apiEl = document.getElementById("perfApiStatus");
+        apiEl.textContent = apiOk ? "เร็ว" : "ช้า";
+        apiEl.className = "font-semibold " + (apiOk ? "text-good-700" : "text-warn-700");
+        const last24h = activity.last_24_hours || {};
+        document.getElementById("perfActivity").textContent = (last24h.attendance_records || 0) + " บันทึก";
+      }
+
+      // Set once the FIRST successful load lands. After that, loadOverview()
+      // repaints the cards in place instead of blanking to the spinner —
+      // the button-triggered refresh and the 10-min auto-refresh both call
+      // this, and blanking #ovContent (which contains #manualImportStatus)
+      // was swallowing the "นำเข้าแล้ว (N รายการ)" message the moment it
+      // was written.
+      let ovLoadedOnce = false;
+
+      async function loadOverview() {
+        if (!ovLoadedOnce) showOvLoading();
+        try {
+          const health = await V2.apiFetch("/api/private/system/health");
+          renderHealth(health);
+          showOvContent();
+          ovLoadedOnce = true;
+
+          // Device clock — separate call, non-fatal if it fails.
+          V2.apiFetch("/api/private/devices/time")
+            .then(renderDeviceClock)
+            .catch(function () {
+              const el = document.getElementById("devClock");
+              el.textContent = "ข้อผิดพลาด";
+              el.className = "font-medium text-bad-700";
+            });
+
+          // Performance metrics — separate call, non-fatal if it fails.
+          V2.apiFetch("/api/private/system/metrics")
+            .then(renderPerf)
+            .catch(function () {
+              document.getElementById("perfApiStatus").textContent = "ไม่ทราบ";
+            });
+
+          // Auto-import status — separate call, non-fatal if it fails.
+          V2.apiFetch("/api/private/auto-import/status")
+            .then(renderImportStatus)
+            .catch(function () { renderImportStatus(null); });
+        } catch (err) {
+          // Only collapse to the full error pane on the very first load —
+          // a background refresh failure should leave the last-good cards
+          // on screen rather than blanking a working page.
+          if (!ovLoadedOnce) {
+            if (err.status === 404) {
+              showOvError("ยังไม่มีหน้าสถานะระบบบนเซิร์ฟเวอร์นี้");
+            } else {
+              showOvError("ไม่สามารถโหลดสถานะระบบได้ (" + (err.status || "เครือข่าย") + ")");
+            }
+          }
+        }
+      }
+
+      ovRetry.addEventListener("click", loadOverview);
+
+      // ---------- Time sync button ----------
+      document.getElementById("syncTimeBtn").addEventListener("click", async function () {
+        const btn = this;
+        const statusEl = document.getElementById("syncTimeStatus");
+        btn.disabled = true;
+        setInlineStatus(statusEl, "กำลังซิงค์…");
+        let ok = false;
+        try {
+          const result = await V2.apiFetch("/api/private/devices/time/sync", { method: "POST" });
+          if (result && result.success) {
+            // POST /devices/time/sync returns zk_session.sync_time()'s own
+            // shape — {success, old_time, new_time, target_time,
+            // time_diff_before, time_diff_after} — NOT the GET /devices/time
+            // shape (`synchronized`/`time_difference_seconds`). `success`
+            // here already means time_diff_after <= 5s
+            // (app/services/zk_session.py _op_sync_time), so derive rather
+            // than read fields that don't exist on this response.
+            renderDeviceClock({ data: {
+              success: true,
+              device_time: result.new_time,
+              synchronized: true,
+              time_difference_seconds: result.time_diff_after,
+            }});
+            setInlineStatus(statusEl, "ซิงค์แล้ว", "text-good-700");
+            ok = true;
+          } else {
+            // HTTP 200 but the sync itself failed (e.g. device unreachable).
+            // zk_session.sync_time() returns the failure reason as `error`,
+            // not `message` (confirmed by reading app/services/zk_session.py
+            // sync_time(): `{"success": False, "error": _describe_exc(exc)}`)
+            // — surface it instead of a fake network label.
+            setInlineStatus(statusEl, "ซิงค์ไม่สำเร็จ: " + ((result && (result.error || result.message)) || "ไม่ทราบสาเหตุ"), "text-bad-700");
+          }
+        } catch (err) {
+          setInlineStatus(statusEl, "ซิงค์ไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")", "text-bad-700");
+        } finally {
+          btn.disabled = false;
+          // Only auto-clear a SUCCESS message — a failure should stay
+          // visible until the operator acts, not vanish after 1.8s.
+          if (ok) clearInlineStatusLater(statusEl);
+        }
+      });
+
+      // ---------- Manual import trigger ----------
+      document.getElementById("manualImportBtn").addEventListener("click", async function () {
+        const btn = this;
+        const statusEl = document.getElementById("manualImportStatus");
+        btn.disabled = true;
+        setInlineStatus(statusEl, "กำลังนำเข้า…");
+        let ok = false;
+        try {
+          const result = await V2.apiFetch("/api/private/auto-import/trigger/", { method: "POST" });
+          if (result && result.success) {
+            setInlineStatus(statusEl, "นำเข้าแล้ว (" + (result.synced || 0) + " รายการ)", "text-good-700");
+            ok = true;
+            loadOverview();
+          } else {
+            // HTTP 200 but the import itself failed (e.g. device unreachable)
+            // — surface the backend's own reason, not a fake network label.
+            setInlineStatus(statusEl, "นำเข้าไม่สำเร็จ: " + ((result && result.message) || "ไม่ทราบสาเหตุ"), "text-bad-700");
+          }
+        } catch (err) {
+          setInlineStatus(statusEl, "นำเข้าไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")", "text-bad-700");
+        } finally {
+          btn.disabled = false;
+          // Only auto-clear a SUCCESS message.
+          if (ok) clearInlineStatusLater(statusEl, 3000);
+        }
+      });
+
+      // ---------- System logs ----------
+      const logLoading = document.getElementById("logLoading");
+      const logError = document.getElementById("logError");
+      const logErrorText = document.getElementById("logErrorText");
+      const logEmpty = document.getElementById("logEmpty");
+      const logList = document.getElementById("logList");
+      const logRetry = document.getElementById("logRetry");
+      const logRefreshBtn = document.getElementById("logRefreshBtn");
+      const logLevel = document.getElementById("logLevel");
+      const logCategory = document.getElementById("logCategory");
+      const logAutoRefresh = document.getElementById("logAutoRefresh");
+
+      function hideAllLogPanes() {
+        logLoading.classList.add("hidden");
+        logError.classList.add("hidden");
+        logEmpty.classList.add("hidden");
+        logList.classList.add("hidden");
+      }
+      function showLogLoading() { hideAllLogPanes(); logLoading.classList.remove("hidden"); }
+      function showLogError(msg) { hideAllLogPanes(); logError.classList.remove("hidden"); logErrorText.textContent = msg; }
+      function showLogEmpty() { hideAllLogPanes(); logEmpty.classList.remove("hidden"); }
+      function showLogList() { hideAllLogPanes(); logList.classList.remove("hidden"); }
+
+      const LEVEL_CLASS = { INFO: "text-good-700", WARNING: "text-warn-700", ERROR: "text-bad-700" };
+      const LEVEL_CHIP_CLASS = {
+        INFO: "bg-good-100 text-good-700",
+        WARNING: "bg-warn-100 text-warn-700",
+        ERROR: "bg-bad-100 text-bad-700",
+      };
+      const CATEGORY_TH = {
+        sync: "การซิงค์ข้อมูล",
+        connection: "การเชื่อมต่อเครื่อง",
+        api: "คำขอ API",
+        system: "เหตุการณ์ระบบ",
+        employee: "การกระทำพนักงาน",
+      };
+
+      function renderLogs(logs) {
+        if (!logs || logs.length === 0) { showLogEmpty(); return; }
+        logList.innerHTML = logs.map(function (log) {
+          const cls = LEVEL_CLASS[log.level] || "text-ink-600";
+          const chipCls = LEVEL_CHIP_CLASS[log.level] || "bg-ink-200 text-ink-700";
+          const time = fmtLogTime(log.timestamp);
+          const levelTxt = V2.escapeHtml(log.level || "");
+          const categoryTxt = log.category ? V2.escapeHtml(CATEGORY_TH[log.category] || log.category) : "";
+          const messageTxt = V2.escapeHtml(log.message || "");
+          return (
+            "<div class='odd:bg-ink-50/60'>" +
+              // Desktop (md+): unchanged single inline row — time / level / message.
+              "<div class='hidden items-start gap-3 px-4 py-2 text-xs md:flex'>" +
+                // hours_back can span up to 7 days — date+seconds (not just
+                // HH:mm) so same-minute bursts on different days don't collapse.
+                "<span class='w-24 shrink-0 text-ink-500 tabular-nums'>" + time + "</span>" +
+                "<span class='w-16 shrink-0 font-semibold " + cls + "'>" + levelTxt + "</span>" +
+                "<span class='min-w-0 flex-1 break-words text-ink-800'>" + messageTxt + "</span>" +
+              "</div>" +
+              // Mobile (below md): stacked — line 1 time + level chip + category,
+              // line 2 the message.
+              "<div class='px-4 py-2 text-xs md:hidden'>" +
+                "<div class='flex flex-wrap items-center gap-2'>" +
+                  "<span class='shrink-0 text-ink-500 tabular-nums'>" + time + "</span>" +
+                  "<span class='inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-semibold " + chipCls + "'>" + levelTxt + "</span>" +
+                  (categoryTxt ? "<span class='shrink-0 text-ink-500'>" + categoryTxt + "</span>" : "") +
+                "</div>" +
+                "<div class='mt-1 break-words text-ink-800'>" + messageTxt + "</div>" +
+              "</div>" +
+            "</div>"
+          );
+        }).join("");
+        showLogList();
+      }
+
+      const HEALTH_STATUS_TH = { good: "ปกติ", warning: "บางส่วน", critical: "ผิดปกติ" };
+
+      function renderLogStats(summary) {
+        if (!summary || summary.error) {
+          document.getElementById("statTotal").textContent = "—";
+          document.getElementById("statErrors").textContent = "—";
+          document.getElementById("statWarnings").textContent = "—";
+          document.getElementById("statHealth").textContent = "ไม่พร้อมใช้งาน";
+          document.getElementById("statSync").textContent = "—";
+          document.getElementById("statConn").textContent = "—";
+          return;
+        }
+        document.getElementById("statTotal").textContent = summary.total_logs || 0;
+        document.getElementById("statErrors").textContent = summary.recent_errors || 0;
+        document.getElementById("statWarnings").textContent = summary.recent_warnings || 0;
+        document.getElementById("statHealth").textContent = HEALTH_STATUS_TH[summary.health_status] || summary.health_status || "ไม่ทราบ";
+        const cc = summary.category_counts || {};
+        document.getElementById("statSync").textContent = cc.sync || 0;
+        document.getElementById("statConn").textContent = cc.connection || 0;
+      }
+
+      let logsLoading = false;
+      async function loadLogs() {
+        if (logsLoading) return;
+        logsLoading = true;
+        logRefreshBtn.disabled = true;
+        showLogLoading();
+        try {
+          const params = new URLSearchParams({ limit: "100", hours_back: "168" });
+          if (logLevel.value) params.set("level", logLevel.value);
+          if (logCategory.value) params.set("category", logCategory.value);
+          const data = await V2.apiFetch("/api/private/system/logs?" + params.toString());
+          renderLogStats(data.summary || {});
+          renderLogs(data.logs || []);
+        } catch (err) {
+          if (err.status === 404) {
+            showLogError("ยังไม่มีหน้าบันทึกระบบบนเซิร์ฟเวอร์นี้");
+          } else {
+            showLogError("ไม่สามารถโหลดบันทึกได้ (" + (err.status || "เครือข่าย") + ")");
+          }
+        } finally {
+          logsLoading = false;
+          logRefreshBtn.disabled = false;
+        }
+      }
+
+      logRetry.addEventListener("click", loadLogs);
+      logRefreshBtn.addEventListener("click", loadLogs);
+      logLevel.addEventListener("change", loadLogs);
+      logCategory.addEventListener("change", loadLogs);
+
+      let logAutoTimer = null;
+      function startLogAutoRefresh() {
+        stopLogAutoRefresh();
+        logAutoTimer = setInterval(function () { loadOverview(); loadLogs(); }, 600000); // 10 min, matches v1 cadence
+      }
+      function stopLogAutoRefresh() {
+        if (logAutoTimer) { clearInterval(logAutoTimer); logAutoTimer = null; }
+      }
+      logAutoRefresh.addEventListener("change", function () {
+        if (this.checked) startLogAutoRefresh(); else stopLogAutoRefresh();
+      });
+
+      // ---------- init ----------
+      loadOverview();
+      loadLogs();
+      startLogAutoRefresh();
+    })();
+  </script>
+
+  <script defer src="https://erp.thehfhotel.org/shell/hf-bar.js"
+          data-app="Attendance" data-module="people"></script>
+</body>
+</html>

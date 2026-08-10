@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
   <meta name="theme-color" content="#4F0E0E" />
   <title>ตามวันที่ — ระบบบันทึกเวลา</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -21,40 +22,85 @@
         "bg-ink-200",   "text-ink-700",
         "bg-off-100",   "text-off-600",
         "bg-ink-100",   "text-ink-600",
+        "bg-ink-50/60",
         "animate-pulse",
       ],
     };
   </script>
   <style>
+    /* Belt-and-braces: the CDN applies fontFamily only after theme.js parses. */
     html, body { font-family: 'Sarabun', 'Noto Sans Thai', system-ui, -apple-system, sans-serif; }
+    /* HF One body type: 14px / 1.6 (Thai needs the tall leading). Set on BODY,
+       never on <html> — Tailwind's spacing scale is rem-based and rescaling the
+       root font-size shrinks every padding and gap utility on the page. */
+    body { font-size: 0.875rem; line-height: 1.6; }
     /* The native date picker indicator picks up currentColor on most browsers. */
     input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.6; cursor: pointer; }
+
+    /* ---------- Filter / branch chip (pill, JS toggles .chip-on) ---------- */
+    .chip, .loc-chip {
+      display: inline-flex; align-items: center; gap: .375rem;
+      border-radius: 9999px;
+      font-size: .8125rem; line-height: 1.25rem; font-weight: 500;
+      border: 1px solid #E8E4DF;          /* ink-200  --hf-border */
+      background: #FFFFFF;                /* --hf-panel */
+      color: #5C554C;                     /* ink-600 */
+      cursor: pointer;
+      transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+    }
+    .chip:hover, .loc-chip:hover { border-color: #CFC9C1; background: #FAF9F7; }  /* ink-300 / ink-50 */
+    .chip.chip-on, .loc-chip.loc-on {
+      border-color: #E9A3A3;              /* brand-200 */
+      background: #FBEAEA;                /* brand-50 */
+      color: #6B1212;                     /* brand-700 — 10.5:1 */
+      font-weight: 600;
+    }
+
+    /* ---------- Primary / secondary buttons ---------- */
+    .btn-primary {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;                 /* --hf-radius */
+      font-size: .875rem; font-weight: 600;
+      background: #8B0000;                /* brand-500 */
+      border: 1px solid #8B0000;
+      color: #FFFFFF;                     /* 10.0:1 */
+      cursor: pointer;
+      /* Thai copy must not wrap inside a 40px-tall button — the second line's
+         tone marks get clipped. */
+      white-space: nowrap;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-primary:hover   { background: #7A0000; border-color: #7A0000; }  /* brand-600 */
+    .btn-primary:active  { background: #6B1212; border-color: #6B1212; }  /* brand-700 */
+    .btn-primary:disabled{ background: #E8E4DF; border-color: #E8E4DF; color: #7A7268; cursor: not-allowed; }
+
+    /* ---------- Focus: brand-500 at 40%, never a colored glow ---------- */
+    a:focus-visible, button:focus-visible, input:focus-visible {
+      outline: 2px solid rgba(139, 0, 0, .40);   /* brand-500 / 40% */
+      outline-offset: 2px;
+    }
   </style>
 </head>
 <body class="min-h-screen bg-ink-50 text-ink-900 antialiased">
 
-  <!-- DESKTOP TOP NAV (md+) -->
+  <!-- DESKTOP TOP NAV (md+) — the six-destination v2 nav contract.
+       This page is a sub-view of รายงาน, so รายงาน carries the active mark. -->
   <nav class="hidden border-b border-ink-200 bg-white md:block">
-    <div class="mx-auto flex max-w-5xl items-center justify-between px-5 py-3">
-      <a href="/fingerprintlogs/v2/" class="flex items-center gap-2 text-sm font-semibold text-ink-700 hover:text-brand-600">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"><polyline points="15 18 9 12 15 6"/></svg>
-        ระบบบันทึกเวลา
-      </a>
-      <div class="flex items-center gap-1">
-        <a href="/fingerprintlogs/v2/live"
-           class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">
-          ดูสด
-        </a>
-        <a href="/fingerprintlogs/v2/monthly"
-           class="rounded-md px-3 py-1.5 text-sm font-medium bg-brand-100 text-brand-700"
-           aria-current="page">
-          รายงาน
-        </a>
-        <a href="/fingerprintlogs/v2/shifts-admin"
-           class="rounded-md px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100">
-          จัดกะ
-        </a>
-      </div>
+    <div class="mx-auto flex max-w-5xl items-center gap-1 px-5 py-2">
+      <a href="/fingerprintlogs/v2/"
+         class="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100 hover:text-ink-900">หน้าหลัก</a>
+      <a href="/fingerprintlogs/v2/live"
+         class="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100 hover:text-ink-900">ดูสด</a>
+      <a href="/fingerprintlogs/v2/monthly" aria-current="page"
+         class="rounded-lg bg-brand-50 px-3 py-1.5 text-sm font-semibold text-brand-700 ring-1 ring-brand-200">รายงาน</a>
+      <a href="/fingerprintlogs/v2/shifts-admin"
+         class="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100 hover:text-ink-900">จัดกะ</a>
+      <a href="/fingerprintlogs/v2/employees"
+         class="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100 hover:text-ink-900">พนักงาน</a>
+      <a href="/fingerprintlogs/v2/system"
+         class="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-600 hover:bg-ink-100 hover:text-ink-900">ระบบ</a>
     </div>
   </nav>
 
@@ -62,52 +108,49 @@
 
     <!-- HEADER -->
     <header class="mb-5 md:mb-7">
-      <p class="text-xs font-medium uppercase tracking-[0.18em] text-brand-600">ตามวันที่</p>
-      <h1 class="mt-1 text-2xl font-bold tracking-tight text-ink-900 md:text-3xl">สรุปตามวันที่</h1>
+      <p class="text-xs font-semibold tracking-wide text-brand-600">รายงาน</p>
+      <h1 class="mt-1 text-xl font-bold tracking-tight text-ink-900">สรุปตามวันที่</h1>
       <p class="mt-1 text-sm text-ink-500">เวลาเข้าครั้งแรก ออกครั้งสุดท้าย ชั่วโมงทำงาน และสถานะตรงเวลา ของพนักงานแต่ละคน</p>
     </header>
 
     <!-- CONTROLS: date stepper -->
-    <section class="mb-4 rounded-2xl border border-ink-200 bg-white p-3 shadow-card md:p-4">
+    <section class="mb-4 rounded-xl border border-ink-200 bg-white p-3 shadow-card md:p-4">
       <div class="flex flex-wrap items-center gap-2">
         <button id="prevBtn"
-                class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
                 aria-label="วันก่อนหน้า">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
 
         <input id="datePicker" type="date"
-               class="h-11 min-w-[10rem] flex-1 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-800 shadow-card focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" />
+               class="h-11 min-w-[10rem] max-w-[14rem] flex-1 rounded-lg border border-ink-300 bg-white px-3 text-sm font-medium text-ink-800 focus:outline-none" />
 
         <button id="nextBtn"
-                class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-ink-200 bg-white text-ink-700 hover:bg-ink-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
                 aria-label="วันถัดไป">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
 
-        <button id="todayBtn"
-                class="h-11 rounded-lg border border-brand-200 bg-brand-50 px-3 text-sm font-semibold text-brand-700 hover:bg-brand-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
-          วันนี้
-        </button>
+        <button id="todayBtn" class="btn-primary h-11">วันนี้</button>
       </div>
 
       <!-- Search + filter row -->
       <div class="mt-3 flex flex-wrap items-center gap-2">
         <div class="relative flex-1 min-w-[12rem]">
           <input id="searchInput" type="search" placeholder="ค้นหาชื่อหรือรหัสบัตร…"
-                 class="h-10 w-full rounded-lg border border-ink-200 bg-white pl-9 pr-3 text-sm text-ink-800 placeholder:text-ink-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" />
+                 class="h-10 w-full rounded-lg border border-ink-300 bg-white pl-9 pr-3 text-sm text-ink-800 placeholder:text-ink-500 focus:outline-none" />
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-               class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400">
+               class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-500">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
         </div>
 
-        <div role="tablist" class="flex flex-wrap gap-1.5 text-xs">
-          <button data-filter="all"      class="chip chip-on h-10 rounded-full border px-3 font-medium">ทั้งหมด</button>
-          <button data-filter="on_time"  class="chip h-10 rounded-full border px-3 font-medium">ตรงเวลา</button>
-          <button data-filter="late"     class="chip h-10 rounded-full border px-3 font-medium">สาย</button>
-          <button data-filter="absent"   class="chip h-10 rounded-full border px-3 font-medium">ขาด</button>
-          <button data-filter="off"      class="chip h-10 rounded-full border px-3 font-medium">หยุด</button>
+        <div role="tablist" class="flex flex-wrap gap-1.5 overflow-x-auto">
+          <button data-filter="all"      class="chip chip-on h-10 px-3">ทั้งหมด</button>
+          <button data-filter="on_time"  class="chip h-10 px-3">ตรงเวลา</button>
+          <button data-filter="late"     class="chip h-10 px-3">สาย</button>
+          <button data-filter="absent"   class="chip h-10 px-3">ขาด</button>
+          <button data-filter="off"      class="chip h-10 px-3">หยุด</button>
         </div>
       </div>
 
@@ -115,31 +158,33 @@
            param so the API returns everyone, including employees with
            location=NULL. Selecting a branch issues ?location=HF|HF_VILLE
            and the API filters server-side. -->
-      <div role="tablist" class="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-        <span class="text-ink-400">สาขา:</span>
-        <button data-location="all" class="loc-chip loc-on h-10 rounded-full border px-3 font-medium">ทั้งหมด</button>
-        <button data-location="HF" class="loc-chip h-10 rounded-full border px-3 font-medium">HF</button>
-        <button data-location="HF_VILLE" class="loc-chip h-10 rounded-full border px-3 font-medium">HF Ville</button>
+      <div role="tablist" class="mt-2 flex flex-wrap items-center gap-1.5">
+        <span class="text-xs text-ink-500">สาขา:</span>
+        <button data-location="all" class="loc-chip loc-on h-10 px-3">ทั้งหมด</button>
+        <button data-location="HF" class="loc-chip h-10 px-3">HF</button>
+        <button data-location="HF_VILLE" class="loc-chip h-10 px-3">HF Ville</button>
       </div>
 
-      <p id="metaLine" class="mt-3 text-xs text-ink-500"></p>
+      <!-- The one deliberate gold mark on this screen: the day this page is
+           reporting on (HF One accent rule). -->
+      <p id="metaLine" class="mt-3 border-l-2 border-gold-300 pl-2 text-xs text-ink-600"></p>
     </section>
 
     <!-- Loading state -->
-    <div id="loadingState" class="hidden rounded-2xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
+    <div id="loadingState" class="hidden rounded-xl border border-ink-200 bg-white px-6 py-12 text-center shadow-card">
       <div class="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand-500"></div>
       <p class="mt-3 text-sm text-ink-500">กำลังโหลดสรุป…</p>
     </div>
 
     <!-- Error state -->
-    <div id="errorState" class="hidden rounded-2xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
+    <div id="errorState" class="hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-3 text-sm text-bad-700">
       <span id="errorText">ไม่สามารถโหลดสรุปได้</span>
-      <button id="retryBtn" class="ml-2 underline underline-offset-2 hover:text-bad-700/80">ลองใหม่</button>
+      <button id="retryBtn" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
     </div>
 
     <!-- Empty state -->
-    <div id="emptyState" class="hidden rounded-2xl border border-ink-200 bg-white px-6 py-16 text-center shadow-card">
-      <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-ink-100 text-ink-500">
+    <div id="emptyState" class="hidden rounded-xl border border-ink-200 bg-white px-6 py-16 text-center shadow-card">
+      <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-50 text-brand-600">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
           <circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>
         </svg>
@@ -148,12 +193,16 @@
       <p class="mt-1 text-xs text-ink-500">กำหนดกะการทำงานที่หน้า "จัดกะพนักงาน"</p>
     </div>
 
-    <!-- DESKTOP TABLE (md+) -->
-    <section id="tableWrap" class="hidden md:block">
-      <div class="overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-card">
+    <!-- DESKTOP TABLE (md+)
+         The `hidden` lives on the SECTION (showData toggles it) and the
+         breakpoint rule on the INNER div — putting both on one element made
+         showData()'s `remove("hidden")` reveal the table on phones too, on top
+         of the mobile cards. -->
+    <section id="tableWrap" class="hidden">
+      <div class="hidden overflow-x-auto rounded-xl border border-ink-200 bg-white shadow-card md:block">
         <table class="min-w-full divide-y divide-ink-100 text-sm">
-          <thead class="bg-ink-50/60">
-            <tr class="text-left text-xs uppercase tracking-wider text-ink-500">
+          <thead class="bg-ink-100">
+            <tr class="text-left text-xs tracking-wide text-ink-600">
               <th scope="col" class="px-5 py-3 font-semibold">พนักงาน</th>
               <th scope="col" class="px-5 py-3 font-semibold">กะ</th>
               <th scope="col" class="px-5 py-3 font-semibold">เข้าครั้งแรก</th>
@@ -173,56 +222,33 @@
     </section>
   </main>
 
-  <!-- MOBILE BOTTOM NAV (<md) -->
+  <!-- MOBILE BOTTOM NAV (<md) — the four contract destinations. -->
   <nav class="fixed inset-x-0 bottom-0 z-20 border-t border-ink-200 bg-white/95 backdrop-blur md:hidden"
        style="padding-bottom: env(safe-area-inset-bottom);">
-    <div class="mx-auto grid max-w-5xl grid-cols-2">
+    <div class="mx-auto grid max-w-5xl grid-cols-4">
       <a href="/fingerprintlogs/v2/live"
-         class="flex min-h-[56px] flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium text-ink-500 hover:text-ink-700">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">
-          <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-        </svg>
+         class="flex min-h-[56px] flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium text-ink-500 hover:text-ink-800">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         ดูสด
       </a>
       <a href="/fingerprintlogs/v2/monthly"
-         class="flex min-h-[56px] flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium text-brand-700"
+         class="flex min-h-[56px] flex-col items-center justify-center gap-0.5 py-2 text-xs font-semibold text-brand-700"
          aria-current="page">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5">
-          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-          <line x1="16" y1="2" x2="16" y2="6"/>
-          <line x1="8" y1="2" x2="8" y2="6"/>
-          <line x1="3" y1="10" x2="21" y2="10"/>
-        </svg>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
         รายงาน
+      </a>
+      <a href="/fingerprintlogs/v2/shifts-admin"
+         class="flex min-h-[56px] flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium text-ink-500 hover:text-ink-800">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+        จัดกะ
+      </a>
+      <a href="/fingerprintlogs/v2/employees"
+         class="flex min-h-[56px] flex-col items-center justify-center gap-0.5 py-2 text-xs font-medium text-ink-500 hover:text-ink-800">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        พนักงาน
       </a>
     </div>
   </nav>
-
-  <style>
-    /* Chip pseudo-component (mapped to Tailwind palette via CSS vars). */
-    .chip {
-      border-color: rgb(226 232 240); /* ink-200 */
-      background-color: white;
-      color: rgb(71 85 105);          /* ink-600 */
-    }
-    .chip:hover { background-color: rgb(248 250 252); /* ink-50 */ }
-    .chip.chip-on {
-      background-color: rgb(238 242 255); /* brand-50 */
-      border-color: rgb(199 210 254);    /* brand-200 */
-      color: rgb(67 56 202);              /* brand-700 */
-    }
-    .loc-chip {
-      border-color: rgb(226 232 240);
-      background-color: white;
-      color: rgb(71 85 105);
-    }
-    .loc-chip:hover { background-color: rgb(248 250 252); }
-    .loc-chip.loc-on {
-      background-color: rgb(238 242 255);
-      border-color: rgb(199 210 254);
-      color: rgb(67 56 202);
-    }
-  </style>
 
   <script>
     (function () {
@@ -266,16 +292,8 @@
       const TODAY_BKK = V2.bangkokDate();
 
       // ---------- Helpers ----------
-      function addDays(isoDate, delta) {
-        // ISO yyyy-mm-dd math without TZ pitfalls: parse as UTC, add days, re-format.
-        const [y, m, d] = isoDate.split("-").map(Number);
-        const dt = new Date(Date.UTC(y, m - 1, d));
-        dt.setUTCDate(dt.getUTCDate() + delta);
-        const yy = dt.getUTCFullYear();
-        const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
-        const dd = String(dt.getUTCDate()).padStart(2, "0");
-        return `${yy}-${mm}-${dd}`;
-      }
+      // Date maths comes from theme.js (V2.addDays) — string in, string out,
+      // parsed as UTC so no browser timezone can shift the day.
 
       function statusLabel(s) {
         switch (s) {
@@ -395,7 +413,7 @@
 
           // Table row
           const tr = document.createElement("tr");
-          tr.className = "hover:bg-ink-50/50";
+          tr.className = "odd:bg-ink-50/60 hover:bg-ink-50";
           tr.innerHTML =
             '<td class="px-5 py-3">' +
               '<div class="flex items-center gap-3">' +
@@ -418,7 +436,7 @@
 
           // Mobile card
           const li = document.createElement("li");
-          li.className = "rounded-2xl border border-ink-200 bg-white p-4 shadow-card";
+          li.className = "rounded-xl border border-ink-200 bg-white p-4 shadow-card";
           li.innerHTML =
             '<div class="flex items-start gap-3">' +
               '<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold ' + avatarKlass + '">' + initials + '</span>' +
@@ -430,9 +448,9 @@
                 '<p class="truncate text-xs text-ink-500">' + badge + ' · กะ ' + shiftText +
                   (shiftSub ? ' ' + shiftSub : '') + '</p>' +
                 '<dl class="mt-3 grid grid-cols-3 gap-2 text-xs">' +
-                  '<div><dt class="text-ink-400">เข้าครั้งแรก</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + firstIn + '</dd></div>' +
-                  '<div><dt class="text-ink-400">ออกครั้งสุดท้าย</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + lastOut + '</dd></div>' +
-                  '<div><dt class="text-ink-400">ชั่วโมง</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + hours + '</dd></div>' +
+                  '<div><dt class="text-ink-500">เข้าครั้งแรก</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + firstIn + '</dd></div>' +
+                  '<div><dt class="text-ink-500">ออกครั้งสุดท้าย</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + lastOut + '</dd></div>' +
+                  '<div><dt class="text-ink-500">ชั่วโมง</dt><dd class="mt-0.5 tabular-nums font-semibold text-ink-800">' + hours + '</dd></div>' +
                 '</dl>' +
               '</div>' +
             '</div>';
@@ -479,10 +497,10 @@
         if (datePicker.value) setDate(datePicker.value);
       });
       prevBtn.addEventListener("click", function () {
-        setDate(addDays(state.date, -1));
+        setDate(V2.addDays(state.date, -1));
       });
       nextBtn.addEventListener("click", function () {
-        if (state.date < TODAY_BKK) setDate(addDays(state.date, 1));
+        if (state.date < TODAY_BKK) setDate(V2.addDays(state.date, 1));
       });
       todayBtn.addEventListener("click", function () {
         setDate(V2.bangkokDate());
