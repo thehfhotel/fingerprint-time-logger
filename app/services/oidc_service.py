@@ -1,5 +1,5 @@
 """
-HF ID — minimal OIDC identity provider (Authorization Code + PKCE).
+HF ID — minimal OIDC identity provider (Authorization Code, optional PKCE).
 
 Cloudflare Access registers this as a generic OIDC IdP so LINE-only
 employees can sign into gated apps with one LINE tap. HF ID does not
@@ -13,6 +13,10 @@ Design notes
   disabled (endpoints 404), mirroring the ``CF_AUTO_LOGIN`` kill-switch
   precedent. Nothing secret lives in the image — the RSA private key and the
   confidential client credentials are injected via environment only.
+* PKCE is offered, not demanded. The sole client (Cloudflare Access) is
+  confidential and authenticates with a client_secret on every token call,
+  and its generic OIDC connector does not implement PKCE. A client that does
+  send a code_challenge is still held to it at the token endpoint.
 * Config is read lazily from the environment on each call (like
   cf_access_service / line_auth_service), so tests can flip it with
   monkeypatch and the parsed key is cached by its PEM content.
@@ -85,15 +89,21 @@ _key_material_cache: Dict[str, Dict[str, Any]] = {}
 
 @dataclass
 class AuthorizationRequest:
-    """A validated /oidc/authorize request, stashed in a login ticket."""
+    """A validated /oidc/authorize request, stashed in a login ticket.
+
+    ``code_challenge``/``code_challenge_method`` are None when the client did
+    not use PKCE (Cloudflare Access's generic OIDC connector does not). They
+    are normalized to None — never "" — so downstream truthiness checks are
+    unambiguous; see :func:`validate_authorization_request`.
+    """
 
     client_id: str
     redirect_uri: str
     scope: str
     state: Optional[str]
     nonce: Optional[str]
-    code_challenge: str
-    code_challenge_method: str
+    code_challenge: Optional[str]
+    code_challenge_method: Optional[str]
 
 
 class AuthorizeError(Exception):
@@ -330,15 +340,36 @@ def validate_authorization_request(
             "invalid_scope", "the openid scope is required", redirect_uri, state,
         )
 
-    if not code_challenge:
+    # ------------------------------------------------------------------
+    # PKCE is OPTIONAL here, and mandatory-if-offered at the token endpoint.
+    #
+    # WHY (do not "tighten" this back to unconditional): the only registered
+    # client is Cloudflare Access, a CONFIDENTIAL client that authenticates to
+    # /oidc/token with a real client_secret. Its generic OIDC connector does
+    # not implement PKCE — it sends no code_challenge here and no
+    # code_verifier there. Demanding a code_challenge made this endpoint
+    # bounce every real login straight back to Cloudflare with
+    # error=invalid_request, so HF ID (LINE) SSO has never worked for any app
+    # behind Cloudflare Access (reimbursement, payroll, ota, rooms,
+    # ycs-connect).
+    #
+    # PKCE (RFC 7636) exists to protect PUBLIC clients that cannot keep a
+    # secret. Client authentication (:func:`authenticate_client`) gives a
+    # confidential client the equivalent guarantee, and it is enforced on
+    # every token call. A client that DOES send a code_challenge is still held
+    # to it — see app/api/oidc.py::token.
+    # ------------------------------------------------------------------
+    if code_challenge and code_challenge_method != "S256":
         raise AuthorizeRedirectError(
-            "invalid_request", "PKCE code_challenge is required",
+            "invalid_request", "code_challenge_method must be S256",
             redirect_uri, state,
         )
 
-    if code_challenge_method != "S256":
+    # A method with no challenge is an incoherent request — fail closed rather
+    # than guess which half the client meant.
+    if code_challenge_method and not code_challenge:
         raise AuthorizeRedirectError(
-            "invalid_request", "code_challenge_method must be S256",
+            "invalid_request", "code_challenge_method requires code_challenge",
             redirect_uri, state,
         )
 
@@ -348,8 +379,9 @@ def validate_authorization_request(
         scope=scope or "openid",
         state=state,
         nonce=nonce,
-        code_challenge=code_challenge,
-        code_challenge_method=code_challenge_method,
+        # Normalize "" -> None so "did this client use PKCE?" is one check.
+        code_challenge=code_challenge or None,
+        code_challenge_method=code_challenge_method or None,
     )
 
 
@@ -405,7 +437,11 @@ def issue_authorization_code(
     name: str,
     apps: List[str],
 ) -> str:
-    """Mint a single-use authorization code bound to the request + identity."""
+    """Mint a single-use authorization code bound to the request + identity.
+
+    ``code_challenge`` is stored as-is and is None when the client did not use
+    PKCE; the token endpoint keys its PKCE enforcement off exactly that value.
+    """
     code = secrets.token_urlsafe(32)
     now = time.time()
     with _store_lock:
@@ -447,11 +483,23 @@ def consume_authorization_code(code: str) -> Optional[Dict[str, Any]]:
 # PKCE + client authentication
 # ============================================================================
 
-def verify_pkce_s256(code_verifier: Optional[str], code_challenge: str) -> bool:
-    """Verify ``BASE64URL(SHA256(code_verifier)) == code_challenge`` (S256)."""
-    if not code_verifier:
+def verify_pkce_s256(
+    code_verifier: Optional[str], code_challenge: Optional[str]
+) -> bool:
+    """Verify ``BASE64URL(SHA256(code_verifier)) == code_challenge`` (S256).
+
+    Fails closed on every degenerate input: a missing verifier, a missing
+    challenge (never verify against nothing), or a verifier outside the
+    RFC 7636 ASCII character set — the latter used to raise UnicodeEncodeError
+    and surface as a 500 from the token endpoint.
+    """
+    if not code_verifier or not code_challenge:
         return False
-    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    try:
+        verifier_bytes = code_verifier.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    digest = hashlib.sha256(verifier_bytes).digest()
     computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return hmac.compare_digest(computed, code_challenge)
 

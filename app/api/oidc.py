@@ -1,5 +1,6 @@
 """
-HF ID — OIDC provider endpoints (Authorization Code + PKCE), served at /oidc.
+HF ID — OIDC provider endpoints (Authorization Code, optional PKCE), served
+at /oidc.
 
 Cloudflare Access is the single confidential client. The employee never sees
 a password: /oidc/authorize brokers the browser into the existing LINE OAuth
@@ -303,8 +304,9 @@ async def token(
     """Exchange an authorization code for an id_token + access token.
 
     Accepts both client_secret_basic and client_secret_post. Validates client
-    auth, single-use code redemption, redirect_uri binding, and PKCE (S256)
-    before minting an RS256 id_token.
+    auth, single-use code redemption, redirect_uri binding, and — when the
+    authorization request carried a code_challenge — PKCE (S256), before
+    minting an RS256 id_token.
     """
     _require_enabled()
 
@@ -332,12 +334,6 @@ async def token(
             "invalid_request", status.HTTP_400_BAD_REQUEST, "code is required"
         )
 
-    if not code_verifier:
-        return _token_error(
-            "invalid_request", status.HTTP_400_BAD_REQUEST,
-            "code_verifier is required",
-        )
-
     record = oidc_service.consume_authorization_code(code)
     if record is None:
         return _token_error(
@@ -360,10 +356,53 @@ async def token(
             "redirect_uri does not match the authorization request",
         )
 
-    if not oidc_service.verify_pkce_s256(code_verifier, record["code_challenge"]):
+    # ------------------------------------------------------------------
+    # PKCE — enforced if and only if this client actually initiated it.
+    #
+    # DO NOT make this unconditional again. The single registered client is
+    # Cloudflare Access, a CONFIDENTIAL client: it is authenticated at the top
+    # of this handler with client_id + client_secret, and its generic OIDC
+    # connector does not implement PKCE — it sends no code_challenge to
+    # /oidc/authorize and no code_verifier here. The old unconditional
+    # "code_verifier is required" check rejected every real login at this
+    # point, so HF ID (LINE) SSO had never worked for any app behind
+    # Cloudflare Access (reimbursement, payroll, ota, rooms, ycs-connect);
+    # Cloudflare surfaced it as the misleading "Authentication error. Failed
+    # to fetch user/group information from the identity provider."
+    #
+    # PKCE (RFC 7636) defends PUBLIC clients that cannot hold a secret against
+    # authorization-code interception. For a confidential client, client
+    # authentication above is the equivalent defence: an intercepted code is
+    # useless without the client_secret. Nothing else here is relaxed —
+    # client auth, single-use redemption, code->client binding and the
+    # redirect_uri match all ran before this point and still apply.
+    # ------------------------------------------------------------------
+    challenge = record.get("code_challenge")
+    if challenge:
+        # A client that started PKCE must finish it. Missing, wrong and
+        # malformed verifiers are all fatal, and are kept as distinct errors
+        # rather than collapsed into one lenient path. The code was already
+        # burned by consume_authorization_code above, so a failure here costs
+        # the attacker the code.
+        if not code_verifier:
+            return _token_error(
+                "invalid_request", status.HTTP_400_BAD_REQUEST,
+                "code_verifier is required",
+            )
+        if not oidc_service.verify_pkce_s256(code_verifier, challenge):
+            return _token_error(
+                "invalid_grant", status.HTTP_400_BAD_REQUEST,
+                "PKCE verification failed",
+            )
+    elif code_verifier:
+        # No challenge was registered for this code, yet a verifier arrived.
+        # That front/back-channel mismatch is the shape of a PKCE downgrade
+        # attack (challenge stripped from the authorize request), so reject it
+        # instead of silently ignoring the verifier. Cloudflare Access sends
+        # neither value, so this branch cannot affect it.
         return _token_error(
             "invalid_grant", status.HTTP_400_BAD_REQUEST,
-            "PKCE verification failed",
+            "code_verifier was sent for a code issued without PKCE",
         )
 
     id_token = oidc_service.mint_id_token(
