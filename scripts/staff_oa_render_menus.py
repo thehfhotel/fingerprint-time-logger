@@ -56,11 +56,22 @@ def main() -> int:
     for key in keys:
         grants = staff_oa_menu.grants_for_menu_key(key)  # validates the key
         buttons = staff_oa_menu.buttons_for(grants)
+        try:
+            size = staff_oa_menu.menu_size(len(buttons))
+        except ValueError as exc:
+            # Theoretical grant combination past LINE's 6-button cap (e.g. an
+            # employee somehow holding payroll + ota + housekeeping at once).
+            # No employee currently holds all three grants — this variant
+            # would only ever be requested by an all-combinations preview
+            # sweep like the default here, never by staff_oa_sync.py (which
+            # only builds variants for grant sets real linked employees
+            # actually hold). Skip instead of crashing the whole sweep.
+            print(f"  {key:<40} SKIPPED — {exc}")
+            continue
         png_bytes = staff_oa_images.render_menu_image(buttons)
         path = os.path.join(args.out, f"staffhub-{key.replace('+', '-')}.png")
         with open(path, "wb") as file:
             file.write(png_bytes)
-        size = staff_oa_menu.menu_size(len(buttons))
         print(f"  {key:<40} {size[0]}x{size[1]}  {len(png_bytes):>7} bytes  {path}")
 
     return 0

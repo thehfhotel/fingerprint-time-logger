@@ -30,6 +30,22 @@ class TestMenuButtonsForGrants:
         buttons = menu.buttons_for({"housekeeping"})
         assert "https://hotel.thehfhotel.org/hk" in [b.url for b in buttons]
 
+    def test_housekeeping_grant_adds_breakage_report_button(self):
+        buttons = menu.buttons_for({"housekeeping"})
+        assert "https://housekeeping.thehfhotel.org/staff/report" in [
+            b.url for b in buttons
+        ]
+
+    def test_housekeeping_grant_adds_stock_button(self):
+        buttons = menu.buttons_for({"housekeeping"})
+        assert "https://housekeeping.thehfhotel.org/staff/stock" in [
+            b.url for b in buttons
+        ]
+
+    def test_housekeeping_grant_alone_yields_five_buttons(self):
+        # 2 base + แม่บ้าน + แจ้งซ่อม + เบิกของ (docs/housekeeping-ops-interfaces.md).
+        assert len(menu.buttons_for({"housekeeping"})) == 5
+
     def test_menu_irrelevant_grants_are_ignored(self):
         assert menu.buttons_for({"rooms", "portal"}) == menu.buttons_for(set())
 
@@ -40,7 +56,8 @@ class TestMenuButtonsForGrants:
         buttons = menu.buttons_for({"housekeeping", "ota", "payroll"})
         labels = [b.label for b in buttons]
         assert labels == [
-            "สแกนเข้างาน", "เบิกค่าใช้จ่าย", "เงินเดือน", "OTA Desk", "แม่บ้าน",
+            "สแกนเข้างาน", "เบิกค่าใช้จ่าย", "เงินเดือน", "OTA Desk",
+            "แม่บ้าน", "แจ้งซ่อม", "เบิกของ",
         ]
 
 
@@ -80,6 +97,20 @@ class TestMenuLayout:
             menu.menu_size(0)
         with pytest.raises(ValueError):
             menu.menu_size(7)
+
+    def test_all_three_grant_apps_together_exceed_the_six_button_cap(self):
+        """payroll + ota + housekeeping = 7 buttons — past LINE's 6-button
+        max per canvas, now that housekeeping alone contributes 3 (แม่บ้าน,
+        แจ้งซ่อม, เบิกของ). No employee currently holds all three grants at
+        once (maids hold housekeeping only; docs/housekeeping-ops-plan.md) —
+        staff_oa_sync.py only ever builds variants for grant combinations
+        real linked employees actually hold, so this is a documented latent
+        limit, not something hit in practice. Flagged for the team lead
+        rather than solved here (locked interface contract)."""
+        buttons = menu.buttons_for({"housekeeping", "ota", "payroll"})
+        assert len(buttons) == 7
+        with pytest.raises(ValueError):
+            menu.menu_size(len(buttons))
 
     def test_five_buttons_split_three_plus_two_with_no_dead_cell(self):
         assert menu.menu_rows(5) == (3, 2)
@@ -126,7 +157,10 @@ class TestRichMenuPayload:
         assert len(payload["areas"]) == 3
 
     def test_areas_are_uri_actions_within_canvas(self):
-        payload = menu.rich_menu_payload({"housekeeping", "ota", "payroll"})
+        # housekeeping (3 buttons) + ota (1) + 2 base = 6 — right at the
+        # LINE cap (see test_all_three_grant_apps_together_exceed_the_six_
+        # button_cap for the payroll-too combination that overflows it).
+        payload = menu.rich_menu_payload({"housekeeping", "ota"})
         width = payload["size"]["width"]
         height = payload["size"]["height"]
         for area in payload["areas"]:

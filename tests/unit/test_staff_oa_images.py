@@ -32,8 +32,17 @@ class TestRenderMenuImage:
         assert image.size == (2500, 843)
         assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
 
-    def test_five_button_menu_renders_full_height_png(self):
-        png_bytes, image = _render_and_open({"payroll", "ota", "housekeeping"})
+    def test_housekeeping_only_menu_renders_full_height_png(self):
+        # 2 base + แม่บ้าน + แจ้งซ่อม + เบิกของ = 5 buttons; exercises the new
+        # wrench/box glyphs.
+        png_bytes, image = _render_and_open({"housekeeping"})
+        assert image.format == "PNG"
+        assert image.size == (2500, 1686)
+        assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
+
+    def test_six_button_menu_renders_full_height_png(self):
+        # housekeeping (3) + ota (1) + 2 base = 6 — right at the LINE cap.
+        png_bytes, image = _render_and_open({"ota", "housekeeping"})
         assert image.format == "PNG"
         assert image.size == (2500, 1686)
         assert len(png_bytes) < LINE_IMAGE_MAX_BYTES

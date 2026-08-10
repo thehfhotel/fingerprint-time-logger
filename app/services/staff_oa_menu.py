@@ -21,7 +21,7 @@ from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
 # Bump when the rendered look changes (colors, font, glyphs, layout) so the
 # sync script re-creates menus whose image is stale even though the buttons
 # and URLs are unchanged. The version participates in the menu signature.
-IMAGE_STYLE_VERSION = 1
+IMAGE_STYLE_VERSION = 2
 
 # Rich-menu names created by the sync script start with this prefix so the
 # script can tell its own menus apart from anything else on the channel.
@@ -85,6 +85,21 @@ MENU_BUTTONS: Tuple[MenuButton, ...] = (
         label="แม่บ้าน",
         url="https://hotel.thehfhotel.org/hk",
         glyph="broom",
+    ),
+    # Housekeeping Ops (docs/housekeeping-ops-interfaces.md, 2026-08-11): the
+    # new ~/housekeeping app's maid-facing pages, same `housekeeping` grant
+    # that already reveals แม่บ้าน above — one grant, three surfaces.
+    MenuButton(
+        grant_app_id="housekeeping",
+        label="แจ้งซ่อม",
+        url="https://housekeeping.thehfhotel.org/staff/report",
+        glyph="wrench",
+    ),
+    MenuButton(
+        grant_app_id="housekeeping",
+        label="เบิกของ",
+        url="https://housekeeping.thehfhotel.org/staff/stock",
+        glyph="box",
     ),
 )
 

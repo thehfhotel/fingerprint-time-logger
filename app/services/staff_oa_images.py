@@ -154,12 +154,45 @@ def _glyph_broom(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, stroke:
                   fill=GOLD_SOFT, width=max(2, stroke // 2))
 
 
+def _glyph_wrench(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, stroke: int) -> None:
+    """Wrench — breakage report / work order (แจ้งซ่อม)."""
+    draw.line(
+        [x0 + size // 6, y0 + size * 5 // 6, x0 + size * 3 // 4, y0 + size // 6],
+        fill=GOLD, width=stroke * 2,
+    )
+    head = size * 2 // 5
+    hx0, hy0 = x0 + size - head, y0
+    draw.ellipse([hx0, hy0, hx0 + head, hy0 + head], outline=GOLD, width=stroke)
+    knob = size // 8
+    kx, ky = x0 + size // 6, y0 + size * 5 // 6
+    draw.ellipse(
+        [kx - knob, ky - knob, kx + knob, ky + knob],
+        outline=GOLD_SOFT, width=max(2, stroke // 2),
+    )
+
+
+def _glyph_box(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, stroke: int) -> None:
+    """Storage carton — stock ledger (เบิกของ)."""
+    inset = size // 8
+    left, right = x0 + inset, x0 + size - inset
+    top, bottom = y0 + size // 6, y0 + size
+    draw.rounded_rectangle(
+        [left, top, right, bottom], radius=size // 14, outline=GOLD, width=stroke,
+    )
+    mid_y = top + (bottom - top) // 3
+    draw.line([left, mid_y, right, mid_y], fill=GOLD, width=stroke)
+    cx = x0 + size // 2
+    draw.line([cx, top, cx, mid_y], fill=GOLD_SOFT, width=max(2, stroke // 2))
+
+
 _GLYPH_RENDERERS = {
     "clock": _glyph_clock,
     "receipt": _glyph_receipt,
     "baht": _glyph_baht,
     "bell": _glyph_bell,
     "broom": _glyph_broom,
+    "wrench": _glyph_wrench,
+    "box": _glyph_box,
 }
 
 
