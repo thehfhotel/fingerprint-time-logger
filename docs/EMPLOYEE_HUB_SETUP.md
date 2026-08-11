@@ -62,8 +62,15 @@ create.
    `https://erp.thehfhotel.org/api/public/staff-oa/webhook`, enable
    *Use webhook*, and disable auto-reply/greeting messages
    (the webhook handles the one onboarding reply itself).
-3. Deliver both env vars to the prod host compose `.env` (same place as
-   `HFID_*`) and restart the container.
+3. Deliver both values as **GitHub repo secrets** (`gh secret set
+   STAFF_OA_CHANNEL_ACCESS_TOKEN` / `STAFF_OA_CHANNEL_SECRET` on
+   `thehfhotel/fingerprint-time-logger`) and re-run the deploy workflow —
+   they ride the deploy payload into the host `.env` like `HFID_*`.
+   Do NOT hand-edit the host `.env`: the deploy script rewrites it on
+   every deploy, so hand-set values are silently wiped (this bit
+   new-hotel's card-login on 2026-07-09). The host compose `environment:`
+   block must also list both vars (host-owned; already done alongside the
+   `READER_*` entries).
 4. Deploy the menus and links:
    ```bash
    docker exec fingerprint-time-logger python scripts/staff_oa_sync.py           # plan
