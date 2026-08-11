@@ -533,3 +533,16 @@ When asked to analyze test results:
 3. `./scripts/test-suite-console.sh all` (comprehensive testing - recommended)
 
 **Focus**: Simple, functional single-user system optimized for reliability and ease of use.
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (thehfhotel/fingerprint-time-logger) via the `gh` CLI; external PRs are NOT a triage/request surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical defaults (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), created on first use. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one root `CONTEXT.md` (lazy-created by /grill-with-docs) + `docs/adr/`. See `docs/agents/domain.md`.
