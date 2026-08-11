@@ -122,19 +122,7 @@ class LineAuthService:
             "redirect_uri": self.callback_url,
             "state": state,
             "scope": "profile openid email",  # Request profile and optional email
-            # Keep the entire login inside the browser that started it.
-            #
-            # With auto login enabled (LINE's default), iOS hands off to the
-            # LINE app, which completes the callback in its own LIFF in-app
-            # browser — a separate cookie jar. The Cloudflare Access session was
-            # created in Safari and never sees that callback, so returning to
-            # Safari lands on "Invalid session. Please try logging in again."
-            # Observed directly: the callback arrived carrying liffClientId and
-            # liffRedirectUri, i.e. from inside the LINE app.
-            #
-            # Email/password login always worked precisely because it never
-            # leaves the browser. This makes every method behave that way.
-            "disable_auto_login": "true",
+
         }
 
         # switch_amr is deliberately never sent. It defaults to true, which
@@ -147,6 +135,23 @@ class LineAuthService:
             # complete ("unable to login", no way forward). On a desktop the QR
             # is scanned with the LINE app they already carry.
             params["initial_amr_display"] = "lineqr"
+
+        # Keep the login inside the browser that started it — but ONLY for the
+        # Cloudflare Access flow.
+        #
+        # With auto login (LINE's default) iOS hands off to the LINE app, which
+        # completes the callback in its own LIFF in-app browser: a separate
+        # cookie jar. An Access session created in Safari never sees it, so the
+        # user returns to "Invalid session. Please try logging in again."
+        #
+        # Every OTHER caller — QR clock-in, mobile check-in, onboarding,
+        # account linking, kiosk elevation — runs on the Cloudflare-BYPASSED
+        # public paths. They hold no Access session to lose, and the app
+        # hand-off is exactly the experience they want: tap, approve in LINE,
+        # done. Disabling it for them broke QR check-in, which is why this is
+        # scoped rather than global.
+        if (redirect_hint or "").startswith("oidc:"):
+            params["disable_auto_login"] = "true"
 
         auth_url = f"{self.line_auth_url}?{urlencode(params)}"
 

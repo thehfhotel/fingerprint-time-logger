@@ -55,12 +55,22 @@ class TestAuthorizationURL:
         assert f"state={test_state}" in result["auth_url"]
         assert "response_type=code" in result["auth_url"]
 
+    def test_qr_checkin_keeps_the_line_app_handoff(self, line_auth_service):
+        """QR clock-in and every other public-path caller must KEEP auto login:
+        they hold no Cloudflare session to lose, and the app hand-off is the
+        whole experience. Disabling it globally broke check-in."""
+        for hint in (None, "qr-scan-callback", "mobile-checkin", "onboard"):
+            result = line_auth_service.generate_authorization_url(state="s", redirect_hint=hint)
+            assert "disable_auto_login" not in result["auth_url"], hint
+
     def test_auth_url_disables_auto_login(self, line_auth_service):
         """Auto login hands off to the LINE app, which finishes the callback in
         its own LIFF browser; the Cloudflare session lives in the browser that
         started the flow and never sees it ("Invalid session"). Keeping login
         in-browser is the whole fix, so this parameter must always be sent."""
-        result = line_auth_service.generate_authorization_url(state="s")
+        result = line_auth_service.generate_authorization_url(
+            state="s", redirect_hint="oidc:abc123"
+        )
 
         assert "disable_auto_login=true" in result["auth_url"]
 
