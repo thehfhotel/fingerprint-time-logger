@@ -87,7 +87,7 @@ MENU_BUTTONS: Tuple[MenuButton, ...] = (
         glyph="broom",
     ),
     # Housekeeping Ops (docs/housekeeping-ops-interfaces.md, 2026-08-11): the
-    # new ~/housekeeping app's maid-facing pages, same `housekeeping` grant
+    # new ~/HF/housekeeping app's maid-facing pages, same `housekeeping` grant
     # that already reveals แม่บ้าน above — one grant, three surfaces.
     MenuButton(
         grant_app_id="housekeeping",

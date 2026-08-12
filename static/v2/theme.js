@@ -14,7 +14,7 @@
   // Palette: HF One — warm neutrals, burgundy primary, gold accent, semantic
   // success/warning/error. This is a MIRROR of the estate's served token file
   // https://erp.thehfhotel.org/shell/hf.css (canonical text:
-  // /Users/nut/HF-erp/design/HF-ONE.md). Do NOT invent colors here — propose
+  // /Users/nut/HF/HF-erp/design/HF-ONE.md). Do NOT invent colors here — propose
   // additions in HF-ONE.md first, then copy the value across byte-for-byte.
   //
   // Mapping to the --hf-* custom properties, so the two files can be diffed:

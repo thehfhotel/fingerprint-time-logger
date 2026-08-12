@@ -1142,7 +1142,7 @@
         // Reads the card UID straight from the USB reader in the browser — no
         // local bridge, no network. Requires Chrome/Edge + a one-time device
         // permission (the button click is the required user gesture). The
-        // frame protocol mirrors app/reader/gcs_encoder.py in ~/hotel-keycard
+        // frame protocol mirrors app/reader/gcs_encoder.py in ~/HF/hotel-keycard
         // (the hardware-validated Python driver): request(0x26) → anticoll →
         // read the 4 UID bytes. Manual entry stays available as the fallback.
         const HF_RC500 = { vendorId: 0x5458, productId: 0x0002 };

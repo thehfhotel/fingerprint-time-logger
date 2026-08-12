@@ -1,6 +1,6 @@
 /* Base styles for fingerprint time logger application */
 
-/* HF One color palette (see /Users/nut/HF-erp/design/HF-ONE.md) */
+/* HF One color palette (see /Users/nut/HF/HF-erp/design/HF-ONE.md) */
 :root {
     /* Structural dark-surface scale (card headers, back buttons, log
        viewer) — kept separate from the text/bg/border tokens below so a
