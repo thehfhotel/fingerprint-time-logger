@@ -15,8 +15,24 @@ import jwt
 from datetime import datetime, timezone, timedelta, timezone
 from unittest.mock import Mock, patch, MagicMock
 
-from app.services.line_auth_service import LineAuthService
+from app.services.line_auth_service import LineAuthService, is_line_in_app_browser
 from fastapi import HTTPException
+
+
+# Real-world User-Agents, kept verbatim so the token-boundary matching is
+# exercised against what phones actually send.
+UA_LINE_IOS = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Line/13.5.0"
+)
+UA_LINE_ANDROID_LIFF = (
+    "Mozilla/5.0 (Linux; Android 13; SM-A536E) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36 Line/13.19.0/IAB"
+)
+UA_MOBILE_SAFARI = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+)
 
 
 # ============================================================================
@@ -63,16 +79,47 @@ class TestAuthorizationURL:
             result = line_auth_service.generate_authorization_url(state="s", redirect_hint=hint)
             assert "disable_auto_login" not in result["auth_url"], hint
 
-    def test_auth_url_disables_auto_login(self, line_auth_service):
+    def test_auth_url_disables_auto_login_in_an_external_browser(self, line_auth_service):
         """Auto login hands off to the LINE app, which finishes the callback in
         its own LIFF browser; the Cloudflare session lives in the browser that
         started the flow and never sees it ("Invalid session"). Keeping login
-        in-browser is the whole fix, so this parameter must always be sent."""
+        in-browser is the fix, so an external browser on the Access flow must
+        still get this parameter."""
+        result = line_auth_service.generate_authorization_url(
+            state="s", redirect_hint="oidc:abc123", user_agent=UA_MOBILE_SAFARI
+        )
+
+        assert "disable_auto_login=true" in result["auth_url"]
+
+    def test_auth_url_keeps_auto_login_inside_the_line_browser(self, line_auth_service):
+        """Inside LINE's own in-app browser the Safari hand-off cannot happen —
+        there is no external session to strand — while disabling auto login
+        forces LINE's web login FORM, which password-less staff accounts (made
+        on a phone, no email set) cannot complete. So the flag is dropped."""
+        for ua in (UA_LINE_IOS, UA_LINE_ANDROID_LIFF):
+            result = line_auth_service.generate_authorization_url(
+                state="s", redirect_hint="oidc:abc123", user_agent=ua
+            )
+            assert "disable_auto_login" not in result["auth_url"], ua
+
+    def test_auth_url_disables_auto_login_when_user_agent_unknown(self, line_auth_service):
+        """Fail-safe: an absent UA must be treated as NOT-LINE. The carve-out is
+        only ever allowed to remove the login-form wall inside LINE, never to
+        hand the "Invalid session" bug back to an unknown caller."""
         result = line_auth_service.generate_authorization_url(
             state="s", redirect_hint="oidc:abc123"
         )
 
         assert "disable_auto_login=true" in result["auth_url"]
+
+    def test_line_browser_does_not_change_non_oidc_flows(self, line_auth_service):
+        """The carve-out lives inside the oidc branch, so a LINE UA on a public
+        -path flow changes nothing: the flag was never sent there anyway."""
+        for hint in (None, "qr-scan-callback", "mobile-checkin", "onboard"):
+            result = line_auth_service.generate_authorization_url(
+                state="s", redirect_hint=hint, user_agent=UA_LINE_IOS
+            )
+            assert "disable_auto_login" not in result["auth_url"], hint
 
     def test_auth_url_offers_qr_on_desktop(self, line_auth_service):
         """Desktop: QR first, since staff accounts usually have no password."""
@@ -124,6 +171,61 @@ class TestAuthorizationURL:
         entry = line_auth_service._state_storage[state]
         assert isinstance(entry, tuple)
         assert isinstance(entry[0], float)  # timestamp
+
+
+# ============================================================================
+# LINE In-App Browser Detection Tests
+# ============================================================================
+
+class TestLineInAppBrowserDetection:
+    """Test User-Agent detection for LINE's in-app browser.
+
+    This gates whether disable_auto_login is sent on the Cloudflare Access
+    flow, so both error directions are covered here — a false NEGATIVE only
+    leaves the old behaviour, but a false POSITIVE strips the flag from a real
+    external browser and brings back "Invalid session. Please try logging in
+    again."
+    """
+
+    def test_detects_line_in_app_browser(self):
+        """The `Line/<version>` product token, iOS and the Android LIFF form."""
+        assert is_line_in_app_browser(UA_LINE_IOS) is True
+        assert is_line_in_app_browser(UA_LINE_ANDROID_LIFF) is True
+
+    def test_detects_line_regardless_of_token_case(self):
+        """Case is not what keeps false positives out (the token boundary is),
+        so a differently-cased product token still counts as LINE."""
+        assert is_line_in_app_browser("Mozilla/5.0 (iPhone) LINE/13.5.0") is True
+
+    def test_ordinary_browser_is_not_line(self):
+        """Mobile Safari and desktop Chrome must read as external browsers."""
+        assert is_line_in_app_browser(UA_MOBILE_SAFARI) is False
+        assert is_line_in_app_browser(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+        ) is False
+
+    def test_does_not_match_line_inside_another_word(self):
+        """"line" is a common tail of ordinary product names. Matching one of
+        these would strip disable_auto_login from a genuine external browser."""
+        for ua in (
+            "Mozilla/5.0 (iPhone) Streamline/2.0",
+            "Mozilla/5.0 (iPhone) StreamLine/2.0",
+            "Mozilla/5.0 (iPhone) Airline/1.4",
+            "Mozilla/5.0 (iPhone) Baseline/9.0",
+        ):
+            assert is_line_in_app_browser(ua) is False, ua
+
+    def test_requires_a_version_after_the_slash(self):
+        """A bare word is not a product token; LINE always sends a version."""
+        assert is_line_in_app_browser("Mozilla/5.0 (iPhone) Line") is False
+        assert is_line_in_app_browser("Mozilla/5.0 online/offline") is False
+
+    def test_unknown_user_agent_is_not_line(self):
+        """None/empty means "unknown", which must fall on the not-LINE side so
+        the caller keeps the conservative behaviour."""
+        assert is_line_in_app_browser(None) is False
+        assert is_line_in_app_browser("") is False
 
 
 # ============================================================================

@@ -274,9 +274,9 @@ async def line_login(
         # QR login is a desktop affordance: the code is scanned with the phone.
         # On a phone it would be a code the user cannot scan from their own
         # screen, so mobile keeps LINE's normal in-browser form.
-        user_agent = (request.headers.get("user-agent") or "").lower()
+        user_agent = request.headers.get("user-agent") or ""
         is_mobile = any(
-            token in user_agent
+            token in user_agent.lower()
             for token in ("iphone", "ipad", "ipod", "android", "mobile")
         )
 
@@ -284,6 +284,13 @@ async def line_login(
         auth_data = line_auth_service.generate_authorization_url(
             redirect_hint=redirect_hint,
             prefer_qr=not is_mobile,
+            # Pass the header verbatim, NOT the lowercased copy used for the
+            # mobile sniff above: the service looks for the `Line/<version>`
+            # product token to tell LINE's own in-app browser (where the
+            # login form is a dead end for password-less staff accounts)
+            # from an external one (where auto login strands the Access
+            # session). Case and delimiters both matter to that match.
+            user_agent=user_agent,
         )
         auth_url = auth_data["auth_url"]
 

@@ -13,6 +13,7 @@ Adapted from loyalty-app OAuth service for employee account linking.
 
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -56,6 +57,43 @@ def _resolve_jwt_secret() -> str:
 JWT_SECRET = _resolve_jwt_secret()
 
 
+# LINE's in-app browser advertises itself with a `Line/<version>` product token
+# tacked onto an otherwise ordinary WebKit/Chrome User-Agent, e.g.
+#   Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) ... Line/13.5.0
+# and the LIFF variant appends a marker: `... Line/13.5.0/IAB`.
+#
+# The lookbehind is the load-bearing part. A bare "line" substring turns up
+# inside perfectly ordinary product names — Streamline/2.0, Airline/1.4,
+# Baseline/9 — and treating one of those as LINE would strip
+# disable_auto_login from a genuinely external browser, handing the user back
+# the Safari cookie-jar bug described in generate_authorization_url(). So the
+# token must be delimited on the left and followed by a version digit on the
+# right; only a real `Line/<n>` product token qualifies.
+#
+# The match is deliberately case-insensitive even though LINE ships "Line/":
+# the two failure directions are not symmetric. A missed detection merely
+# leaves today's behaviour in place (login form inside LINE), while a false
+# positive breaks the Access flow outright — and the boundary guard above,
+# not letter case, is what actually keeps Streamline/Airline out.
+_LINE_IN_APP_BROWSER_UA = re.compile(r"(?<![A-Za-z0-9])Line/\d", re.IGNORECASE)
+
+
+def is_line_in_app_browser(user_agent: Optional[str]) -> bool:
+    """
+    True when this User-Agent is LINE's own in-app browser.
+
+    Args:
+        user_agent: Raw User-Agent header value, or None when unknown.
+
+    Returns:
+        False for None/empty. "Unknown" must count as NOT-LINE so callers
+        that cannot supply a UA keep the conservative behaviour.
+    """
+    if not user_agent:
+        return False
+    return bool(_LINE_IN_APP_BROWSER_UA.search(user_agent))
+
+
 class LineAuthService:
     """LINE OAuth 2.0 authentication service"""
 
@@ -85,7 +123,8 @@ class LineAuthService:
         self,
         state: Optional[str] = None,
         redirect_hint: Optional[str] = None,
-        prefer_qr: bool = False
+        prefer_qr: bool = False,
+        user_agent: Optional[str] = None
     ) -> Dict[str, str]:
         """
         Generate LINE OAuth authorization URL
@@ -96,6 +135,9 @@ class LineAuthService:
             prefer_qr: Open on the QR-code login screen. Only useful on a desktop
                 browser, where the QR is scanned with the phone; on a phone it
                 shows a code the user cannot scan from their own screen.
+            user_agent: Raw User-Agent of the request that started the flow, used
+                only to detect LINE's in-app browser (see disable_auto_login
+                below). None means "unknown", which is treated as NOT LINE.
 
         Returns:
             Dict with 'auth_url' and 'state' keys
@@ -150,7 +192,20 @@ class LineAuthService:
         # hand-off is exactly the experience they want: tap, approve in LINE,
         # done. Disabling it for them broke QR check-in, which is why this is
         # scoped rather than global.
-        if (redirect_hint or "").startswith("oidc:"):
+        #
+        # Scoped once more, to non-LINE browsers only. Turning auto login off
+        # makes LINE fall back to its web login FORM — and per the prefer_qr
+        # note above, staff LINE accounts are made on a phone and typically
+        # have no email or password set, so that form is a dead end. The people
+        # on this path are 80+ housekeeping staff opening the app from a LINE
+        # rich-menu button, i.e. already INSIDE LINE's in-app browser, where
+        # the hand-off this flag guards against cannot happen: there is no
+        # separate external browser session left holding the Access cookie.
+        #
+        # Unknown UA (None) counts as non-LINE and still gets the flag. That is
+        # the safe direction — this carve-out can only ever remove the wall
+        # inside LINE, never reintroduce the Safari bug for an unknown caller.
+        if (redirect_hint or "").startswith("oidc:") and not is_line_in_app_browser(user_agent):
             params["disable_auto_login"] = "true"
 
         auth_url = f"{self.line_auth_url}?{urlencode(params)}"
