@@ -26,9 +26,6 @@ name: Build & Publish
 #   practice; resurrect as a separate build-only workflow if ever needed.
 # - `environment: production` — verified empty (no protection rules), pure
 #   ceremony.
-#
-# The previous version is kept alongside as build.yml.pre-estate-ci for one
-# release cycle. Delete it after the next green deploy.
 
 on:
   push:
@@ -107,7 +104,7 @@ jobs:
     name: Deploy to production
     needs: [test]
     if: github.ref == 'refs/heads/main'
-    uses: thehfhotel/estate-ci/.github/workflows/deploy-evergreen.yml@1938c3f3760f65843bc583cc99d0c643ec5a9c7e
+    uses: thehfhotel/estate-ci/.github/workflows/deploy-evergreen.yml@571d115d63ecef9c30cd73f73a38e68395ab259f
     # A called workflow's GITHUB_TOKEN scopes come from the calling job; the
     # reusable build job cannot push to GHCR without packages:write.
     permissions:

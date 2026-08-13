@@ -546,3 +546,7 @@ Canonical defaults (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 ### Domain docs
 
 Single-context: one root `CONTEXT.md` (lazy-created by /grill-with-docs) + `docs/adr/`. See `docs/agents/domain.md`.
+
+## Estate task board
+
+Cross-repo tasks live in ~/HF/hf-tasks (thehfhotel/hf-tasks). Read `tasks/INDEX.md` before cross-repo work; update task status as you work.
