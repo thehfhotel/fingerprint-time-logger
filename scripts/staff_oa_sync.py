@@ -11,7 +11,9 @@ registry, idempotently:
   2. Ensure each variant exists on the channel — rich-menu names embed a
      content signature (``staffhub:<variant>:<sig>``), so an unchanged
      variant is reused, a changed one is re-created with a freshly rendered
-     HF One image (app/services/staff_oa_images.py).
+     HF One image (app/services/staff_oa_images.py). A variant whose grant
+     combination needs more than LINE's 6-button-per-menu cap is SKIPPED
+     with a warning naming the variant and its employees — see ``sync()``.
   3. Make the ``base`` variant the channel default.
   4. Link every linked employee to their variant (bulk link API, chunked).
   5. Delete stale ``staffhub:*`` menus nothing references any more.
@@ -91,8 +93,37 @@ def sync(apply: bool, render_dir: str = "") -> int:
     # --- Ensure each needed variant exists (create when name/signature is new)
     menu_ids: Dict[str, str] = {}
     desired_names = set()
+    skipped_variants: List[str] = []
     for key in variant_keys:
         grants = staff_oa_menu.grants_for_menu_key(key)
+        button_count = len(staff_oa_menu.buttons_for(grants))
+        try:
+            staff_oa_menu.menu_size(button_count)
+        except ValueError as exc:
+            # LINE caps a rich menu at 6 buttons. A variant key here is only
+            # ever minted from grants that a real, active, linked employee
+            # actually holds (staff_oa_service.employee_menu_assignments) —
+            # unlike scripts/staff_oa_render_menus.py's all-combinations
+            # preview sweep, this is not theoretical: it fires the moment
+            # ONE employee holds every menu-relevant grant at once (payroll
+            # + ota + housekeeping = 7 buttons), most likely the owner
+            # self-granting everything to test the system. Left uncaught,
+            # staff_oa_menu.rich_menu_name() below (via menu_signature ->
+            # menu_size) raises mid-loop and blocks every other employee's
+            # menu from syncing too. Mirror the preview script's guard:
+            # skip just this variant, name it and its employees so the
+            # operator knows exactly who to fix, and keep going.
+            skipped_variants.append(key)
+            affected = assignments.get(key, [])
+            print(
+                f"  SKIP   variant {key!r} needs {button_count} buttons "
+                f"(LINE cap is 6): {exc}. Affected employee LINE user "
+                f"id(s): {affected}. Remove one of this variant's grants "
+                f"from them (or ship a >6-button layout), then re-run — "
+                f"they keep the base menu in the meantime."
+            )
+            continue
+
         name = staff_oa_menu.rich_menu_name(grants)
         desired_names.add(name)
 
@@ -129,11 +160,43 @@ def sync(apply: bool, render_dir: str = "") -> int:
     # --- Per-user Role Menu links (bulk, chunked)
     for key in sorted(assignments):
         users = assignments[key]
+        if key in skipped_variants:
+            # No menu was created for this over-sized variant (see the SKIP
+            # above), so menu_ids[key] does not exist — indexing it here
+            # would KeyError and crash the run. Explicitly (re)link these
+            # employees to `base` instead of just leaving them alone: base
+            # is a strict subset of every other variant's buttons, so this
+            # can never hand out more than the employee is entitled to, it
+            # only ever hides buttons LINE's 6-button cap won't let this
+            # particular combination show. Explicit beats "leave whatever
+            # link they already had" because a prior sync could have linked
+            # them to some other now-stale menu — this guarantees they land
+            # on the current, valid channel-default menu instead.
+            if apply:
+                staff_oa_service.bulk_link_rich_menu(users, menu_ids["base"])
+            print(
+                f"  link   {len(users)} user(s) -> {key!r} "
+                f"(fallback: base — variant exceeds LINE's 6-button cap)"
+            )
+            continue
         if apply:
             staff_oa_service.bulk_link_rich_menu(users, menu_ids[key])
         print(f"  link   {len(users)} user(s) -> {key!r}")
 
     # --- Delete stale staffhub menus (superseded signatures, unused variants)
+    # Runs AFTER per-user linking above, which matters for skipped variants:
+    # kept_ids/desired_names are built only from menu_ids, which never gained
+    # an entry for a skipped key (its create step never ran), so a skipped
+    # variant's own menu is simply never protected here. That is safe, not
+    # just harmless: every other variant's id/name was still added to
+    # menu_ids/desired_names in the loop above regardless of what got
+    # skipped, so this step keeps every menu that is genuinely in use. And
+    # if an old menu for the *skipped* key happens to still exist (e.g. a
+    # prior run created it back when that grant combination fit under 6
+    # buttons), nobody is linked to it by the time we get here — the
+    # per-user step above already moved its would-be employees onto `base`
+    # first — so reclaiming it as "stale" here deletes a menu that is truly
+    # unreferenced, not one still in use.
     kept_ids = set(menu_ids.values())
     for menu in existing_menus:
         name = menu.get("name", "")
@@ -145,7 +208,27 @@ def sync(apply: bool, render_dir: str = "") -> int:
             staff_oa_service.delete_rich_menu(menu["richMenuId"])
         print(f"  delete {name} ({menu['richMenuId']})")
 
+    if skipped_variants:
+        print(
+            f"WARNING: {len(skipped_variants)} variant(s) skipped for "
+            f"exceeding LINE's 6-button cap: {skipped_variants}. Their "
+            f"employees were linked to the base menu instead; every other "
+            f"variant and employee synced normally."
+        )
+
     print("Done." if apply else "Dry-run complete — nothing changed.")
+    # Exit 0 even when variants were skipped. A skipped variant is a data
+    # problem — an employee holding a grant combination LINE physically
+    # cannot render as one menu — not a sync failure: every other variant
+    # still deployed and every other (and this) employee still got linked
+    # to a valid menu, so nothing here needs a human to intervene on the
+    # sync itself. Per this repo's alerting guardrail (only page on
+    # confirmed/unrecoverable failures; suppress self-recoverable blips),
+    # that does not warrant turning a cron/CI run red — the WARNING line
+    # above is what should reach an operator (e.g. via log/Slack scraping),
+    # not a failed-job page. Genuine failures (missing credentials, a LINE
+    # API error) already return/raise non-zero through their own paths
+    # above and are unaffected by this.
     return 0
 
 
