@@ -1,23 +1,43 @@
 name: Build & Publish
 
+# Thin caller for the estate's shared deploy plumbing (thehfhotel/estate-ci).
+# The inline GHCR build and the cloudflared/forced-command SSH deploy used to
+# be spelled out here; that plumbing now lives once in the reusable workflow,
+# SHA-pinned below. The `test` job is unchanged and remains the deploy gate.
+#
+# What moved where:
+# - Image build+push: deploy-evergreen.yml's build job. The Dockerfile's
+#   FINAL stage is `fingerprint-logger` and `ARG BUILD_TYPE=production` is
+#   the default, so the reusable workflow's target-less build produces the
+#   same image the old `target:`+build-args build did. Deploys are now
+#   SHA-pinned (IMAGE_TAG=<sha> in the host .env) instead of re-rolling
+#   :latest while logging a SHA — fixing that long-standing mismatch.
+# - .env materialization: env_payload below, written verbatim into the
+#   tarball's .env by deploy-evergreen.yml after IMAGE_TAG and HOST_PORT.
+#   ADMIN_PASSCODE_HASH is single-quoted: compose's .env parser treats a
+#   single-quoted value as literal, which protects the bcrypt `$2b$12$...`
+#   from variable interpolation — the same job the legacy shim's $->$$
+#   escaping did (it is the only value on this app containing `$`).
+# - Host side: /srv/run-deploy-fingerprint.sh now speaks the estate tarball
+#   contract (rewritten 2026-08-13, one-time step; old shim backed up).
+#
+# Dropped surfaces, deliberate:
+# - tag (`v*`) builds and the workflow_dispatch extra-tag input — unused in
+#   practice; resurrect as a separate build-only workflow if ever needed.
+# - `environment: production` — verified empty (no protection rules), pure
+#   ceremony.
+#
+# The previous version is kept alongside as build.yml.pre-estate-ci for one
+# release cycle. Delete it after the next green deploy.
+
 on:
   push:
     branches: [main]
-    tags: ['v*']
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Additional tag to apply (besides "latest" and sha-XXXX)'
-        required: false
-        type: string
 
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: false
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   # Deploy gate. Runs the full unit + integration suites. Tests that
@@ -80,222 +100,55 @@ jobs:
             tests/test_employee_endpoints.py \
             -m "not slow"
 
-  build:
-    name: Build & push to GHCR
-    runs-on: ubuntu-latest
-    needs: test
+  deploy:
+    # LOAD-BEARING. deploy-evergreen.yml does not run this repo's tests — it
+    # cannot know what they are. Without this `needs:` a red suite would not
+    # stop a push to main from reaching production.
+    name: Deploy to production
+    needs: [test]
+    if: github.ref == 'refs/heads/main'
+    uses: thehfhotel/estate-ci/.github/workflows/deploy-evergreen.yml@1938c3f3760f65843bc583cc99d0c643ec5a9c7e
+    # A called workflow's GITHUB_TOKEN scopes come from the calling job; the
+    # reusable build job cannot push to GHCR without packages:write.
     permissions:
       contents: read
       packages: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract image metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix=sha-,format=short
-            type=ref,event=branch
-            type=ref,event=tag
-            type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
-          labels: |
-            org.opencontainers.image.title=Fingerprint Time Logger
-            org.opencontainers.image.description=ZKTeco biometric device integration
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-
-      - name: Build & push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          target: fingerprint-logger
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
-          build-args: |
-            BUILD_TYPE=production
-            CACHEBUST=${{ github.sha }}
-
-      - name: Image summary
-        run: |
-          echo "## Published image" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Tags pushed:" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-  # ===========================================================================
-  # DEPLOY — runs on a GitHub-hosted runner. Mirrors the new-hotel deploy
-  # pattern (.github/workflows/docker-build.yml `deploy` job): install
-  # cloudflared, SSH to deploy@evergreen.thehfhotel.org via the asgard
-  # tunnel using a forced-command key (authorized_keys pins
-  # /srv/run-deploy-fingerprint.sh), pipe a JSON payload over stdin with
-  # env vars + secrets + the short-lived GHCR token.
-  #
-  # GitHub-hosted (not self-hosted) so CI doesn't share a host with prod,
-  # and the deploy script — not the workflow — is the only thing that runs
-  # on the deploy host. Documented evergreen-side: the SSH key only triggers
-  # the pinned script, so a compromised workflow can't run arbitrary
-  # commands on the host.
-  # ===========================================================================
-  deploy:
-    name: Deploy to production
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    permissions:
-      contents: read
-      packages: read
-    environment:
-      name: production
-    concurrency:
-      group: deploy-prod-evergreen-fingerprint
-      cancel-in-progress: false
-    steps:
-      - name: Cache cloudflared binary
-        id: cf-cache
-        uses: actions/cache@v4
-        with:
-          path: /usr/local/bin/cloudflared
-          # Pin to a specific release so the cache key is stable. Bump in
-          # lockstep with the install URL below.
-          key: cloudflared-2026.3.0-linux-amd64
-
-      - name: Install cloudflared
-        if: steps.cf-cache.outputs.cache-hit != 'true'
-        run: |
-          curl -fsSL https://github.com/cloudflare/cloudflared/releases/download/2026.3.0/cloudflared-linux-amd64 \
-            -o /tmp/cloudflared
-          sudo install -m 755 /tmp/cloudflared /usr/local/bin/cloudflared
-
-      - name: Install SSH key + known_hosts
-        env:
-          SSH_KEY:  ${{ secrets.EVERGREEN_DEPLOY_SSH_KEY }}
-          HOST_KEY: ${{ secrets.EVERGREEN_HOST_KEY }}
-        run: |
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_KEY"  > ~/.ssh/deploy_key  && chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$HOST_KEY" > ~/.ssh/known_hosts && chmod 600 ~/.ssh/known_hosts
-
-      - name: Deploy via SSH to evergreen
-        env:
-          GHCR_USER:                    ${{ github.actor }}
-          GHCR_TOKEN:                   ${{ secrets.GITHUB_TOKEN }}
-          # Non-secret app config (env)
-          CORS_ALLOWED_ORIGINS:         ${{ secrets.CORS_ALLOWED_ORIGINS }}
-          AUTO_IMPORT_INTERVAL_MINUTES: ${{ vars.AUTO_IMPORT_INTERVAL_MINUTES || '30' }}
-          ZK_DRIFT_TOLERANCE_SECONDS:   ${{ vars.ZK_DRIFT_TOLERANCE_SECONDS || '5' }}
-          ZK_STARTUP_RETRY_MINUTES:     ${{ vars.ZK_STARTUP_RETRY_MINUTES || '3' }}
-          ZK_CATCHUP_LOOKBACK_HOURS:    ${{ vars.ZK_CATCHUP_LOOKBACK_HOURS || '48' }}
-          ZK_EXPECTED_UTC_OFFSET_MINUTES: ${{ vars.ZK_EXPECTED_UTC_OFFSET_MINUTES || '420' }}
-          # HF Portal manager directory endpoint (not a secret — it is a
-          # container-network address). Its bearer token rides .secrets below.
-          PORTAL_DIRECTORY_URL:         ${{ vars.PORTAL_DIRECTORY_URL || 'http://hf-erp-portal:3000/portal-api/directory/managers' }}
-          # Secrets (delivered via the .secrets block — written to the same
-          # .env file but grouped for documentation. Switch to file-mounted
-          # secrets later if needed.)
-          JWT_SECRET:                   ${{ secrets.JWT_SECRET }}
-          ADMIN_PASSCODE_HASH:          ${{ secrets.ADMIN_PASSCODE_HASH }}
-          LINE_CHANNEL_ID:              ${{ secrets.LINE_CHANNEL_ID }}
-          LINE_CHANNEL_SECRET:          ${{ secrets.LINE_CHANNEL_SECRET }}
-          LINE_CALLBACK_URL:            ${{ secrets.LINE_CALLBACK_URL }}
-          ZK_SYNC_SLACK_WEBHOOK_URL:    ${{ secrets.ZK_SYNC_SLACK_WEBHOOK_URL }}
-          # HF ID OIDC provider — un-darks the /oidc surface. Absent → dark.
-          HFID_SIGNING_KEY:             ${{ secrets.HFID_SIGNING_KEY }}
-          HFID_CLIENT_ID:               ${{ secrets.HFID_CLIENT_ID }}
-          HFID_CLIENT_SECRET:           ${{ secrets.HFID_CLIENT_SECRET }}
-          # Central card-login (reader↔central + app↔central). Absent → dark.
-          # MUST ride the payload: the host script rewrites .env every deploy,
-          # so hand-set host values are wiped (observed live on new-hotel
-          # 2026-07-09).
-          READER_SECRET:                ${{ secrets.READER_SECRET }}
-          READER_RESOLVE_SECRET:        ${{ secrets.READER_RESOLVE_SECRET }}
-          # Staff LINE OA (Employee Hub rich menus). Absent → dark.
-          STAFF_OA_CHANNEL_ACCESS_TOKEN: ${{ secrets.STAFF_OA_CHANNEL_ACCESS_TOKEN }}
-          STAFF_OA_CHANNEL_SECRET:      ${{ secrets.STAFF_OA_CHANNEL_SECRET }}
-          # HF Portal manager directory bearer token — un-darks the live admin
-          # directory (app/services/manager_directory.py). Absent → dark, and
-          # the admin allowlist stays the in-code floor. MUST ride the payload
-          # for the same reason READER_SECRET does: the host script rewrites
-          # .env every deploy, so a hand-set host value is wiped.
-          PORTAL_DIRECTORY_TOKEN:       ${{ secrets.PORTAL_DIRECTORY_TOKEN }}
-        # Payload shape consumed by /srv/run-deploy-fingerprint.sh on
-        # evergreen. The script unpacks, writes .env, docker compose pull
-        # + down + up -d, health-checks, and verifies the scheduler logs.
-        run: |
-          set -euo pipefail
-          jq -n \
-            --arg commit_sha             "$GITHUB_SHA" \
-            --arg ghcr_user              "$GHCR_USER" \
-            --arg ghcr_token             "$GHCR_TOKEN" \
-            --arg CORS_ALLOWED_ORIGINS   "$CORS_ALLOWED_ORIGINS" \
-            --arg AUTO_IMPORT_INTERVAL_MINUTES "$AUTO_IMPORT_INTERVAL_MINUTES" \
-            --arg ZK_DRIFT_TOLERANCE_SECONDS   "$ZK_DRIFT_TOLERANCE_SECONDS" \
-            --arg ZK_STARTUP_RETRY_MINUTES     "$ZK_STARTUP_RETRY_MINUTES" \
-            --arg ZK_CATCHUP_LOOKBACK_HOURS    "$ZK_CATCHUP_LOOKBACK_HOURS" \
-            --arg ZK_EXPECTED_UTC_OFFSET_MINUTES "$ZK_EXPECTED_UTC_OFFSET_MINUTES" \
-            --arg PORTAL_DIRECTORY_URL   "$PORTAL_DIRECTORY_URL" \
-            --arg JWT_SECRET             "$JWT_SECRET" \
-            --arg ADMIN_PASSCODE_HASH    "$ADMIN_PASSCODE_HASH" \
-            --arg LINE_CHANNEL_ID        "$LINE_CHANNEL_ID" \
-            --arg LINE_CHANNEL_SECRET    "$LINE_CHANNEL_SECRET" \
-            --arg LINE_CALLBACK_URL      "$LINE_CALLBACK_URL" \
-            --arg ZK_SYNC_SLACK_WEBHOOK_URL "$ZK_SYNC_SLACK_WEBHOOK_URL" \
-            --arg HFID_SIGNING_KEY       "$HFID_SIGNING_KEY" \
-            --arg HFID_CLIENT_ID         "$HFID_CLIENT_ID" \
-            --arg HFID_CLIENT_SECRET     "$HFID_CLIENT_SECRET" \
-            --arg READER_SECRET          "$READER_SECRET" \
-            --arg READER_RESOLVE_SECRET  "$READER_RESOLVE_SECRET" \
-            --arg STAFF_OA_CHANNEL_ACCESS_TOKEN "$STAFF_OA_CHANNEL_ACCESS_TOKEN" \
-            --arg STAFF_OA_CHANNEL_SECRET "$STAFF_OA_CHANNEL_SECRET" \
-            --arg PORTAL_DIRECTORY_TOKEN "$PORTAL_DIRECTORY_TOKEN" \
-            '{
-              commit_sha: $commit_sha,
-              ghcr: { user: $ghcr_user, token: $ghcr_token },
-              env: {
-                CORS_ALLOWED_ORIGINS:         $CORS_ALLOWED_ORIGINS,
-                AUTO_IMPORT_INTERVAL_MINUTES: $AUTO_IMPORT_INTERVAL_MINUTES,
-                ZK_DRIFT_TOLERANCE_SECONDS:   $ZK_DRIFT_TOLERANCE_SECONDS,
-                ZK_STARTUP_RETRY_MINUTES:     $ZK_STARTUP_RETRY_MINUTES,
-                ZK_CATCHUP_LOOKBACK_HOURS:    $ZK_CATCHUP_LOOKBACK_HOURS,
-                ZK_EXPECTED_UTC_OFFSET_MINUTES: $ZK_EXPECTED_UTC_OFFSET_MINUTES,
-                PORTAL_DIRECTORY_URL:         $PORTAL_DIRECTORY_URL,
-              },
-              secrets: {
-                JWT_SECRET:                $JWT_SECRET,
-                ADMIN_PASSCODE_HASH:       $ADMIN_PASSCODE_HASH,
-                LINE_CHANNEL_ID:           $LINE_CHANNEL_ID,
-                LINE_CHANNEL_SECRET:       $LINE_CHANNEL_SECRET,
-                LINE_CALLBACK_URL:         $LINE_CALLBACK_URL,
-                ZK_SYNC_SLACK_WEBHOOK_URL: $ZK_SYNC_SLACK_WEBHOOK_URL,
-                HFID_SIGNING_KEY:          $HFID_SIGNING_KEY,
-                HFID_CLIENT_ID:            $HFID_CLIENT_ID,
-                HFID_CLIENT_SECRET:        $HFID_CLIENT_SECRET,
-                READER_SECRET:             $READER_SECRET,
-                READER_RESOLVE_SECRET:     $READER_RESOLVE_SECRET,
-                STAFF_OA_CHANNEL_ACCESS_TOKEN: $STAFF_OA_CHANNEL_ACCESS_TOKEN,
-                STAFF_OA_CHANNEL_SECRET:   $STAFF_OA_CHANNEL_SECRET,
-                PORTAL_DIRECTORY_TOKEN:    $PORTAL_DIRECTORY_TOKEN,
-              }
-            }' \
-          | ssh -i ~/.ssh/deploy_key \
-              -o StrictHostKeyChecking=yes \
-              -o UserKnownHostsFile=~/.ssh/known_hosts \
-              -o ProxyCommand="cloudflared --edge-ip-version 4 access ssh --hostname %h" \
-              deploy@evergreen.thehfhotel.org
+    with:
+      app_name: fingerprint # -> /srv/run-deploy-fingerprint.sh on the host
+      image: ghcr.io/thehfhotel/fingerprint-time-logger
+      host_port: "5000"
+    secrets:
+      ssh_key: ${{ secrets.EVERGREEN_DEPLOY_SSH_KEY }}
+      host_key: ${{ secrets.EVERGREEN_HOST_KEY }}
+      # The exact key set the legacy shim's static block + env{} + secrets{}
+      # payload produced, one KEY=VALUE per line, empty values written
+      # deliberately (estate convention: a rotated-then-cleared secret must
+      # not leave a stale value behind; empty = feature dark, fail-closed).
+      # ADMIN_PASSCODE_HASH single-quoted — see header.
+      env_payload: |
+        DATABASE_URL=sqlite:///./database/attendance.db
+        ENV=production
+        BEHIND_PROXY=true
+        ZKTECO_HOST=192.168.100.209
+        ZKTECO_PORT=4370
+        CORS_ALLOWED_ORIGINS=${{ secrets.CORS_ALLOWED_ORIGINS }}
+        AUTO_IMPORT_INTERVAL_MINUTES=${{ vars.AUTO_IMPORT_INTERVAL_MINUTES || '30' }}
+        ZK_DRIFT_TOLERANCE_SECONDS=${{ vars.ZK_DRIFT_TOLERANCE_SECONDS || '5' }}
+        ZK_STARTUP_RETRY_MINUTES=${{ vars.ZK_STARTUP_RETRY_MINUTES || '3' }}
+        ZK_CATCHUP_LOOKBACK_HOURS=${{ vars.ZK_CATCHUP_LOOKBACK_HOURS || '48' }}
+        ZK_EXPECTED_UTC_OFFSET_MINUTES=${{ vars.ZK_EXPECTED_UTC_OFFSET_MINUTES || '420' }}
+        PORTAL_DIRECTORY_URL=${{ vars.PORTAL_DIRECTORY_URL || 'http://hf-erp-portal:3000/portal-api/directory/managers' }}
+        JWT_SECRET=${{ secrets.JWT_SECRET }}
+        ADMIN_PASSCODE_HASH='${{ secrets.ADMIN_PASSCODE_HASH }}'
+        LINE_CHANNEL_ID=${{ secrets.LINE_CHANNEL_ID }}
+        LINE_CHANNEL_SECRET=${{ secrets.LINE_CHANNEL_SECRET }}
+        LINE_CALLBACK_URL=${{ secrets.LINE_CALLBACK_URL }}
+        ZK_SYNC_SLACK_WEBHOOK_URL=${{ secrets.ZK_SYNC_SLACK_WEBHOOK_URL }}
+        HFID_SIGNING_KEY=${{ secrets.HFID_SIGNING_KEY }}
+        HFID_CLIENT_ID=${{ secrets.HFID_CLIENT_ID }}
+        HFID_CLIENT_SECRET=${{ secrets.HFID_CLIENT_SECRET }}
+        READER_SECRET=${{ secrets.READER_SECRET }}
+        READER_RESOLVE_SECRET=${{ secrets.READER_RESOLVE_SECRET }}
+        STAFF_OA_CHANNEL_ACCESS_TOKEN=${{ secrets.STAFF_OA_CHANNEL_ACCESS_TOKEN }}
+        STAFF_OA_CHANNEL_SECRET=${{ secrets.STAFF_OA_CHANNEL_SECRET }}
+        PORTAL_DIRECTORY_TOKEN=${{ secrets.PORTAL_DIRECTORY_TOKEN }}
