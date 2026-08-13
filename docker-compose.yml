@@ -11,7 +11,9 @@ services:
     pull_policy: always
     container_name: fingerprint-time-logger
     ports:
-      - "${APP_PORT:-5000}:5000"  # Configurable port, default 5000
+      # HOST_PORT (not APP_PORT): the estate deploy writes HOST_PORT into
+      # .env (deploy-evergreen.yml contract); default matches production.
+      - "${HOST_PORT:-5000}:5000"
     volumes:
       # Bind-mount the SQLite file ONLY, not the whole database/ dir.
       # The previous whole-directory mount silently shadowed the image's
@@ -52,6 +54,16 @@ services:
       - HFID_REDIRECT_URIS=${HFID_REDIRECT_URIS:-}
       # Admin Console Security
       - ADMIN_PASSCODE_HASH=${ADMIN_PASSCODE_HASH}
+      # Central card-login — un-darks /api/private/reader/* when set. These
+      # were present in the LIVE host compose but missing here (drift found
+      # 2026-08-13): shipping this file without them silently darkens the
+      # feature, because empty env = feature off by estate convention.
+      - READER_SECRET=${READER_SECRET}
+      - READER_RESOLVE_SECRET=${READER_RESOLVE_SECRET}
+      # Staff LINE OA (Employee Hub) — dark when unset. Same drift story as
+      # READER_* above.
+      - STAFF_OA_CHANNEL_ACCESS_TOKEN=${STAFF_OA_CHANNEL_ACCESS_TOKEN}
+      - STAFF_OA_CHANNEL_SECRET=${STAFF_OA_CHANNEL_SECRET}
       # HF Portal manager directory — who counts as an admin for Cloudflare
       # Access auto-login. Server-to-server over the shared-nginx network (no
       # Cloudflare Access in the path, so no bypass token needed). The URL is
@@ -65,6 +77,13 @@ services:
       - ZK_SYNC_SLACK_WEBHOOK_URL=${ZK_SYNC_SLACK_WEBHOOK_URL}
       - AUTO_IMPORT_INTERVAL_MINUTES=${AUTO_IMPORT_INTERVAL_MINUTES:-30}
       - ZK_DRIFT_TOLERANCE_SECONDS=${ZK_DRIFT_TOLERANCE_SECONDS:-5}
+      # ZK tuning trio: written to the host .env by every deploy since May
+      # but passed into the container by NEITHER compose file until
+      # 2026-08-13 — the app had only ever seen its in-code defaults.
+      # Fallbacks match those defaults (and the workflow's vars defaults).
+      - ZK_STARTUP_RETRY_MINUTES=${ZK_STARTUP_RETRY_MINUTES:-3}
+      - ZK_CATCHUP_LOOKBACK_HOURS=${ZK_CATCHUP_LOOKBACK_HOURS:-48}
+      - ZK_EXPECTED_UTC_OFFSET_MINUTES=${ZK_EXPECTED_UTC_OFFSET_MINUTES:-420}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/fingerprintlogs/health"]
