@@ -11,24 +11,28 @@ Endpoints for LINE OAuth integration with QR check-in:
 Mobile Safari compatible with HTML meta refresh redirects.
 """
 
+import asyncio
+import json
 import logging
 import os
 import threading
 import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import (
     APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status,
 )
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.core.database import get_db
 from app.models.models import Employee
+from app.services import line_handoff_store
 from app.services.line_auth_service import is_line_in_app_browser, line_auth_service
 from app.services.staff_oa_provision import provision_for_badge
 
@@ -332,6 +336,217 @@ def _line_app_guidance_page(auth_url: str) -> HTMLResponse:
     return HTMLResponse(content=html_content)
 
 
+# ============================================================================
+# Same-browser completion hand-off
+# ============================================================================
+#
+# THE PROBLEM, in one line: on the Cloudflare Access flow from a phone's
+# non-LINE browser, the Access session lives in Safari and the LINE login can
+# only complete in LINE's in-app browser, which is a different cookie jar. See
+# the long block comment inside :func:`line_login` for why neither of the two
+# obvious OAuth-parameter fixes can close that gap.
+#
+# THE FIX: stop trying to keep the LINE login in one browser. Let auto login
+# do what it does — app-switch to LINE, finish there — and keep the ORIGINAL
+# tab alive, polling a server-side ticket. When the LINE side resolves, the
+# ORIGINAL tab (which holds the Access session) is the one that navigates to
+# the Cloudflare Access callback. The cookie jar split stops mattering because
+# nothing that matters crosses it any more.
+#
+# Shape copied from the kiosk elevation this repo already runs
+# (app/api/reader.py: /elevate/start mints a ticket, /elevate/wait long-polls
+# it, continue_elevate_after_line resolves it from the LINE callback). Same
+# store conventions, same 25s/0.5s long-poll budget, same 204-and-re-poll
+# contract, same deliver-once pop. Two stores, one pattern — do not invent a
+# third.
+#
+# SECURITY. The whole design rests on one invariant:
+#
+#     completing a LINE login must only ever yield a session to the browser
+#     that STARTED that specific flow.
+#
+# It is enforced by splitting the flow's two secrets across the two legs:
+#
+#   * the ticket id travels the LINE leg, but ONLY inside line_auth_service's
+#     server-side state store (as the ``handoff:<id>`` redirect hint keyed by
+#     LINE's random ``state``). It is never in a URL, a page, a Referer or a
+#     log line.
+#   * the holder secret never leaves the originating browser. It rides in an
+#     HttpOnly, SameSite=Strict cookie set on the response below, and it is the
+#     only thing that can release the finished login.
+#
+# The HttpOnly cookie is the right binder for exactly the reason the bug exists:
+# LINE's in-app browser is a separate cookie jar, so the LINE leg structurally
+# CANNOT present it, and script on the LINE-side page cannot read it out of
+# ours to relay it. Possession of the cookie is therefore proof of "I am the
+# tab that started this" — which is precisely the tab the Access redirect has
+# to happen in.
+#
+# The full threat analysis (observe / guess / fixation / race), including the
+# one property that is mitigated rather than closed, lives in the module
+# docstring of app/services/line_handoff_store.py. Read it before changing the
+# cookie attributes, the IP check, or the pop-under-lock in take_resolved.
+
+# Where the polling page long-polls. Absolute because the page may be served
+# under either the /api/public mount or the legacy /fingerprintlogs alias, and
+# the wait endpoint only exists on the former. Same convention as reader.py's
+# _LINE_LOGIN_PATH.
+_HANDOFF_WAIT_PATH = "/api/public/auth/line/handoff/wait"
+
+# The polling page itself. Kept as a real file under static/ rather than an
+# f-string like the pages above it: it carries a state machine and a poll loop,
+# and Thai copy aimed at 80+ year old housekeeping staff is edited far more
+# often than the code around it.
+_HANDOFF_PAGE_FILE = (
+    Path(__file__).resolve().parents[2] / "static" / "line-handoff.html"
+)
+_HANDOFF_CONFIG_PLACEHOLDER = "__HANDOFF_CONFIG__"
+
+# Read once and memoised: the page is a deploy-time asset, and re-reading it
+# from disk on every login would put a blocking filesystem call on the single
+# uvicorn event loop for no benefit. None means "not readable" — see
+# :func:`_handoff_page`.
+_handoff_template_cache: Optional[str] = None
+_handoff_template_lock = threading.Lock()
+
+
+def _is_behind_proxy() -> bool:
+    """Whether the app runs behind a TLS-terminating proxy.
+
+    Local copy of the same helper in app/api/admin_auth.py and
+    app/main_unified.py (importing either from here would be a circular
+    import). Drives the cookie ``Secure`` flag, exactly as it does for the
+    admin session cookie.
+    """
+    return os.getenv("BEHIND_PROXY", "false").lower() == "true"
+
+
+def _load_handoff_template() -> Optional[str]:
+    """The polling page markup, or None when the asset is missing.
+
+    A missing file is treated as "the hand-off is unavailable" rather than an
+    error: the caller falls back to the guidance interstitial, so a deployment
+    that somehow shipped without static/ degrades to today's behaviour instead
+    of taking the login path down.
+    """
+    global _handoff_template_cache
+    if _handoff_template_cache is not None:
+        return _handoff_template_cache
+    with _handoff_template_lock:
+        if _handoff_template_cache is not None:
+            return _handoff_template_cache
+        try:
+            _handoff_template_cache = _HANDOFF_PAGE_FILE.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.error(
+                "LINE hand-off page missing at %s (%s) — falling back to the "
+                "guidance interstitial",
+                _HANDOFF_PAGE_FILE,
+                exc,
+            )
+            return None
+        return _handoff_template_cache
+
+
+def _handoff_page(
+    *, auth_url: str, retry_url: str, cookie_value: str
+) -> Optional[HTMLResponse]:
+    """Render the polling page and attach the browser-binding cookie.
+
+    ``auth_url`` is the ordinary LINE authorization URL — auto login ON, no
+    ``initial_amr_display`` — that the page's single green button opens in a
+    SECOND tab. It must be a second tab: navigating this one into LINE would
+    destroy the tab that has to finish the Access redirect.
+
+    ``retry_url`` is this same /login request, so the retry button restarts the
+    whole hand-off cleanly (a fresh ticket, a fresh cookie) while reusing the
+    still-valid inner OIDC login ticket underneath.
+
+    Returns None when the page asset is unavailable, so the caller can fall
+    back to the guidance interstitial.
+    """
+    template = _load_handoff_template()
+    if template is None:
+        return None
+
+    config = {
+        "authUrl": auth_url,
+        "waitUrl": _HANDOFF_WAIT_PATH,
+        "retryUrl": retry_url,
+        # The page's own overall deadline. Kept slightly under the server-side
+        # ticket TTL so the user sees the Thai retry panel rather than racing
+        # the server into a 404 at the same instant.
+        "budgetMs": int(max(1.0, line_handoff_store.ticket_ttl_seconds() - 5) * 1000),
+    }
+    # ``</script>`` inside a JSON string would end the block early. Every value
+    # here is app-built, but escaping the three characters that can break out
+    # costs nothing and removes the question entirely.
+    serialized = (
+        json.dumps(config, ensure_ascii=True)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+    response = HTMLResponse(content=template.replace(
+        _HANDOFF_CONFIG_PLACEHOLDER, serialized
+    ))
+
+    # The browser binding. Every attribute is load-bearing:
+    #   httponly  — script cannot read it, so a hostile page (or the LINE-side
+    #               page) cannot relay it to another browser.
+    #   samesite  — Strict, matching the admin session cookie. The only request
+    #               that must carry it is a same-origin fetch from this page.
+    #   secure    — on behind the proxy, same rule as every other cookie here.
+    #   path      — narrowed to the LINE auth surface; nothing else in the app
+    #               has any business seeing it.
+    #   max_age   — dies with the ticket, so an abandoned phone stops carrying
+    #               a usable binder around.
+    response.set_cookie(
+        key=line_handoff_store.COOKIE_NAME,
+        value=cookie_value,
+        httponly=True,
+        samesite="strict",
+        secure=_is_behind_proxy(),
+        path=line_handoff_store.COOKIE_PATH,
+        max_age=int(line_handoff_store.ticket_ttl_seconds()),
+    )
+    # The ticket cookie must never be cached by a shared cache, and neither
+    # must a page that is one tap away from a session.
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _handoff_applies(
+    *, redirect_hint: Optional[str], is_mobile: bool, user_agent: str
+) -> bool:
+    """Whether this /login call is the password-less mobile dead end.
+
+    Deliberately the SAME three-part condition the guidance interstitial
+    already uses — Access flow, mobile UA, non-LINE browser — so the hand-off
+    replaces that page on exactly its scope and nothing else. The four working
+    paths are untouched by construction:
+
+      * rich menu inside LINE  -> is_line_in_app_browser is True
+      * desktop                -> is_mobile is False
+      * every public-path flow -> the hint does not start with "oidc:"
+      * kiosk elevate          -> its hint is "elevate:", not "oidc:"
+
+    Plus the feature gate, so the whole thing is one environment variable away
+    from today's behaviour.
+
+    The page asset is checked HERE, before a ticket exists and before the
+    authorization URL is built, so an unrenderable hand-off never gets as far
+    as changing which OAuth parameters are sent.
+    """
+    if not line_handoff_store.is_enabled():
+        return False
+    if not (redirect_hint or "").startswith("oidc:"):
+        return False
+    if not is_mobile or is_line_in_app_browser(user_agent):
+        return False
+    return _load_handoff_template() is not None
+
+
 @router.get("/login")
 async def line_login(
     request: Request,
@@ -349,9 +564,16 @@ async def line_login(
         HTML response with meta refresh redirect for Mobile Safari compatibility.
 
         One exception: on the Cloudflare Access flow from a mobile NON-LINE
-        browser the response is a guidance interstitial instead of an
-        auto-redirect, because LINE has no login screen a password-less staff
-        account can complete there. See the block comment below.
+        browser the response is NOT an auto-redirect, because LINE has no login
+        screen a password-less staff account can complete there. See the block
+        comment below. That combination gets one of two pages:
+
+        * the same-browser hand-off polling page, when
+          ``LINE_SAME_BROWSER_HANDOFF`` is on — this tab keeps the Cloudflare
+          Access session and waits for LINE to finish in its own browser;
+        * the guidance interstitial otherwise, which is the interim and also
+          the standing fallback (feature off, ticket store full, page asset
+          missing).
     """
     try:
         # Build redirect hint that includes both redirect page and qr_context
@@ -359,6 +581,27 @@ async def line_login(
         redirect_hint = redirect
         if qr_context and redirect:
             redirect_hint = f"{redirect}|{qr_context}"
+
+        # A "handoff:" hint is ALWAYS synthesized below, never supplied by a
+        # caller, so one arriving in the query string is forged by definition.
+        #
+        # Refused rather than ignored. Honouring it would let anyone aim a LINE
+        # login at a hand-off ticket id of their choosing, and the LINE callback
+        # would then park THEIR identity against SOMEONE ELSE'S waiting tab —
+        # fixation run backwards, ending with a victim signed in as the
+        # attacker. The IP binding and the 192-bit unguessable ticket id both
+        # already stand in the way, but a request that has no legitimate form
+        # should not be reaching those defences at all.
+        #
+        # Deliberately scoped to this one prefix: "oidc:" and "elevate:" hints
+        # do legitimately arrive through the browser (our own /oidc/authorize
+        # and kiosk QR redirects put them there), and they are guarded by their
+        # own unguessable, single-use ticket ids.
+        if (redirect_hint or "").startswith("handoff:"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid redirect hint",
+            )
 
         # QR login is a desktop affordance: the code is scanned with the phone.
         # On a phone it would be a code the user cannot scan from their own
@@ -369,9 +612,39 @@ async def line_login(
             for token in ("iphone", "ipad", "ipod", "android", "mobile")
         )
 
+        # ------------------------------------------------------------------
+        # Same-browser completion hand-off (see the section above this handler).
+        #
+        # On the one combination that has no completable LINE screen, wrap the
+        # real redirect hint in a hand-off ticket and hand LINE ``handoff:<id>``
+        # instead of ``oidc:<id>``. Changing the prefix is what turns auto login
+        # back ON, because line_auth_service.generate_authorization_url keys
+        # disable_auto_login off the ``oidc:`` prefix — and that is the point:
+        # the hand-off WANTS the app-switch to LINE, because the original tab
+        # is now waiting to finish the Access redirect itself.
+        #
+        # Ordered before generate_authorization_url so the state that LINE
+        # echoes back is bound to the hand-off hint, and so the ticket id never
+        # has to appear anywhere the browser can see.
+        #
+        # Every branch that is not this exact combination leaves redirect_hint
+        # untouched and reaches the identical code below that ran before the
+        # hand-off existed.
+        # ------------------------------------------------------------------
+        handoff = None
+        if _handoff_applies(
+            redirect_hint=redirect_hint, is_mobile=is_mobile, user_agent=user_agent
+        ):
+            handoff = line_handoff_store.create_ticket(
+                inner_hint=redirect_hint,
+                client_ip=_client_ip(request),
+            )
+
+        effective_hint = f"handoff:{handoff.ticket_id}" if handoff else redirect_hint
+
         # Store redirect parameter in state for callback
         auth_data = line_auth_service.generate_authorization_url(
-            redirect_hint=redirect_hint,
+            redirect_hint=effective_hint,
             prefer_qr=not is_mobile,
             # Pass the header verbatim, NOT the lowercased copy used for the
             # mobile sniff above: the service looks for the `Line/<version>`
@@ -382,6 +655,34 @@ async def line_login(
             user_agent=user_agent,
         )
         auth_url = auth_data["auth_url"]
+
+        # The hand-off page replaces the guidance interstitial on that same
+        # narrow combination.
+        if handoff is not None:
+            retry_url = request.url.path
+            if request.url.query:
+                retry_url = f"{retry_url}?{request.url.query}"
+            handoff_response = _handoff_page(
+                auth_url=auth_url,
+                retry_url=retry_url,
+                cookie_value=handoff.cookie_value,
+            )
+            if handoff_response is not None:
+                return handoff_response
+
+            # Belt and braces: _handoff_applies already refused to mint a
+            # ticket without a readable page asset, so this is unreachable in
+            # practice. If it ever is reached, the auth_url in hand was built
+            # for the hand-off — auto login ON — and handing THAT to the
+            # guidance page's button would drop the Safari cookie-jar guard for
+            # anyone who taps it. Rebuild the URL against the original hint so
+            # the fallback really is today's behaviour and not a half-migrated
+            # one.
+            auth_url = line_auth_service.generate_authorization_url(
+                redirect_hint=redirect_hint,
+                prefer_qr=not is_mobile,
+                user_agent=user_agent,
+            )["auth_url"]
 
         # ------------------------------------------------------------------
         # The password-less mobile dead end (Cloudflare Access / "oidc:" flow
@@ -510,8 +811,275 @@ async def line_login(
         )
 
 
+# ============================================================================
+# Same-browser hand-off — the LINE side, and the original tab's long-poll
+# ============================================================================
+
+def _handoff_line_side_page(
+    heading: str, message: str, *, status_code: int = 200
+) -> HTMLResponse:
+    """A page for LINE's in-app browser at the end of the LINE leg.
+
+    Chromeless card, same shape as the OIDC and kiosk-elevate status pages.
+    Its whole job is to tell the person the browser they came from is
+    finishing the job — the equivalent of the kiosk flow's "look up at the
+    screen". Nothing here is an action; the action is switching back.
+    """
+    safe_heading = _escape_attribute(heading)
+    safe_message = _escape_attribute(message)
+    content = f"""<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>เข้าสู่ระบบด้วย LINE</title>
+    <style>
+        body {{
+            font-family: 'Sarabun', 'Prompt', sans-serif;
+            display: flex; justify-content: center; align-items: center;
+            min-height: 100vh; margin: 0; background: #f5f5f5; color: #2b2b2b;
+            font-size: 20px; line-height: 1.7;
+        }}
+        .card {{
+            background: #fff; padding: 32px 24px; border-radius: 16px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+            text-align: center; max-width: 460px; margin: 16px;
+        }}
+        h1 {{ font-size: 26px; margin: 0 0 16px; color: #6b1f2a; line-height: 1.5; }}
+        p {{ color: #5c5c5c; margin: 0; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>{safe_heading}</h1>
+        <p>{safe_message}</p>
+    </div>
+</body>
+</html>"""
+    return HTMLResponse(content=content, status_code=status_code)
+
+
+def continue_handoff_after_line(
+    *,
+    ticket_id: str,
+    line_user_id: str,
+    client_ip: str,
+    display_name: Optional[str] = None,
+    picture_url: Optional[str] = None,
+):
+    """Resume a same-browser hand-off after LINE resolves ``line_user_id``.
+
+    Called from the LINE OAuth callback via an additive hook, the exact shape
+    of :func:`app.api.oidc.continue_oidc_after_line` and
+    :func:`app.api.reader.continue_elevate_after_line`.
+
+    This runs in LINE'S IN-APP BROWSER — the wrong cookie jar, by design — so
+    it deliberately does the LEAST it possibly can. It parks a resolved LINE
+    identity against the ticket and renders a "go back to your browser" page.
+    It mints no token, issues no code, sets no cookie, and returns nothing a
+    session could be assembled from. Everything with authority happens later in
+    :func:`line_handoff_wait`, behind the holder-secret cookie that only the
+    originating browser has.
+
+    That split is the point. Even a caller who somehow knows a ticket id — the
+    shoulder-surf / leaked-log threat — gains nothing by driving this function:
+    the only observable result is a Thai page telling them to go back to a
+    browser they do not control.
+
+    The authorization code is NOT minted here for a second, practical reason:
+    oidc_service burns codes 60 seconds after issue. Minting on the LINE leg
+    would start that clock while the user is still switching apps, so a slow
+    return would hand Cloudflare Access an expired code and an error page
+    nobody can act on. Minting at claim time means the code is always seconds
+    old when it is used.
+    """
+    outcome = line_handoff_store.resolve_ticket(
+        ticket_id,
+        line_user_id=line_user_id,
+        display_name=display_name,
+        picture_url=picture_url,
+        client_ip=client_ip,
+    )
+
+    if outcome == line_handoff_store.RESOLVE_OK:
+        return _handoff_line_side_page(
+            "ยืนยันตัวตนสำเร็จ",
+            "กลับไปที่หน้าเว็บเดิมในเบราว์เซอร์ของคุณได้เลย "
+            "ระบบกำลังพาเข้าใช้งานต่อให้ที่นั่น "
+            "(Signed in — switch back to the browser tab you started from.)",
+        )
+
+    if outcome == line_handoff_store.RESOLVE_IP_MISMATCH:
+        # Login fixation, or a genuine network change mid-flow. Both get the
+        # same answer, and the ticket stays pending either way:
+        #
+        #  * If this was an attack — a ticket planted on the attacker's device
+        #    and a LINE login phished onto it — the victim's identity is simply
+        #    discarded here. Nothing is parked, so the attacker's polling tab
+        #    waits out its budget and gets the retry page. No session, anywhere.
+        #  * If this was the real user whose phone flipped wifi to cellular
+        #    between starting and finishing, they are told to start again in
+        #    their own browser, which works on the retry.
+        #
+        # Refusing to say WHICH of the two happened is deliberate: an attacker
+        # must not be able to use this page to confirm that a ticket exists.
+        return _handoff_line_side_page(
+            "กรุณาเริ่มใหม่จากเบราว์เซอร์ของคุณ",
+            "ไม่สามารถยืนยันได้ว่าคำขอนี้มาจากเครื่องเดียวกัน "
+            "กรุณากลับไปเปิดหน้าเข้าสู่ระบบใหม่อีกครั้ง "
+            "(Could not confirm this request came from the same device — "
+            "please start the login again.)",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Unknown, expired, or already completed. One answer for all three, for the
+    # same no-oracle reason as above.
+    return _handoff_line_side_page(
+        "คำขอหมดอายุ",
+        "การเข้าสู่ระบบครั้งนี้หมดอายุหรือถูกใช้ไปแล้ว "
+        "กรุณาเริ่มใหม่จากเบราว์เซอร์ของคุณ "
+        "(This login has expired or was already used — start again.)",
+        status_code=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _complete_handoff(record: Dict[str, Any], db: Session) -> JSONResponse:
+    """Turn a claimed hand-off ticket into the URL the original tab navigates to.
+
+    Reached only from :func:`line_handoff_wait`, i.e. only after the holder
+    secret has been proved and the ticket popped once. Resumes the wrapped
+    ``oidc:<login-ticket>`` continuation exactly as the ordinary LINE callback
+    would have, so HF ID's admission rules (registered, active, not pending
+    approval) are the SAME rules on this path — no second copy of them lives
+    here.
+
+    The continuation's own return value is the answer:
+
+    * a redirect -> the completion URL, either the Cloudflare Access callback
+      carrying a fresh authorization code, or the onboarding hand-off for a
+      LINE user with no employee row. Both belong in the original tab: the
+      first because that tab holds the Access session, the second because the
+      onboarding URL carries a bearer JWT that must not be handed to any other
+      browser.
+    * anything else -> a Thai failure the polling page renders, keyed off the
+      continuation's own status code so "waiting for approval" stays
+      distinguishable from "expired".
+    """
+    inner_hint = record.get("inner_hint") or ""
+    if not inner_hint.startswith("oidc:"):
+        # Unreachable today (only oidc: hints are wrapped), and fails closed if
+        # a future caller ever wraps something else without thinking it through.
+        logger.error("LINE hand-off ticket carried an unsupported inner hint")
+        return JSONResponse(
+            {"status": "failed", "reason": "expired"},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    from app.api.oidc import continue_oidc_after_line
+
+    result = continue_oidc_after_line(
+        ticket_id=inner_hint[len("oidc:"):],
+        line_user_id=record["line_user_id"],
+        db=db,
+        display_name=record.get("display_name"),
+        picture_url=record.get("picture_url"),
+    )
+
+    location = result.headers.get("location")
+    if 300 <= result.status_code < 400 and location:
+        return JSONResponse(
+            {"status": "ready", "completion_url": location},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    reason = "not_ready" if result.status_code == status.HTTP_403_FORBIDDEN else "expired"
+    return JSONResponse(
+        {"status": "failed", "reason": reason},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/handoff/wait")
+async def line_handoff_wait(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Long-poll from the ORIGINAL browser tab for its LINE completion.
+
+    Authentication is the HttpOnly cookie set when the polling page was served,
+    and nothing else. There is no ticket parameter to pass, guess or leak: the
+    ticket id lives in that cookie and in the server's state store, never in a
+    URL, a page or a log line. A caller without the cookie — an unrelated
+    poller, a shared-device snooper, someone replaying a ticket id out of a log
+    — is answered exactly as if the ticket did not exist.
+
+    Answers, matching the /elevate/wait contract this repo already runs:
+
+    * resolved -> 200 ``{"status": "ready", "completion_url": "..."}``, the
+      ticket consumed (deliver-once), or ``{"status": "failed", "reason": ...}``
+      when the employee is not admissible.
+    * still pending when the slice elapses -> 204, and the page re-polls.
+    * unknown / expired / not ours -> 404.
+    * at the concurrent-waiter ceiling -> 503 + Retry-After, which the page
+      treats as "poll again shortly", not as a failure.
+
+    EVENT LOOP. This is a single-process uvicorn deployment that was bitten
+    today by a blocking call parking /oidc/token, so the loop discipline here
+    is copied from reader.py's /wait rather than improvised: no blocking call
+    anywhere in the body, ``await asyncio.sleep(tick)`` between checks so the
+    loop runs everything else while this request waits, a bounded slice (~25s)
+    after which the connection is handed back instead of held open, and a hard
+    ceiling on how many of these may be parked at once. The DB session from
+    Depends is created but untouched until a ticket actually resolves, and
+    SQLAlchemy does not acquire a connection for an unused session, so a parked
+    waiter holds no database connection either.
+    """
+    if not line_handoff_store.is_enabled():
+        # Dark until configured — indistinguishable from a route that is not
+        # deployed, the same posture as the reader and OIDC surfaces.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    cookie_value = request.cookies.get(line_handoff_store.COOKIE_NAME)
+
+    # Answer a bad/absent/foreign cookie immediately rather than parking a
+    # connection for 25 seconds on its behalf. That is both the honest answer
+    # and the thing that stops the long-poll being used as a connection sink.
+    if line_handoff_store.peek(cookie_value) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Unknown or expired login",
+        )
+
+    if not line_handoff_store.try_acquire_waiter():
+        return JSONResponse(
+            {"status": "busy"},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={"Retry-After": "2", "Cache-Control": "no-store"},
+        )
+
+    try:
+        timeout = line_handoff_store.wait_timeout_seconds()
+        tick = line_handoff_store.wait_tick_seconds()
+        deadline = time.monotonic() + timeout
+
+        while True:
+            record = line_handoff_store.take_resolved(cookie_value)
+            if record is not None:
+                return _complete_handoff(record, db)
+
+            if time.monotonic() >= deadline:
+                return Response(
+                    status_code=status.HTTP_204_NO_CONTENT,
+                    headers={"Cache-Control": "no-store"},
+                )
+            await asyncio.sleep(tick)
+    finally:
+        line_handoff_store.release_waiter()
+
+
 @router.get("/callback")
 async def line_callback(
+    request: Request,
     code: Optional[str] = Query(None),
     state: Optional[str] = Query(None),
     error: Optional[str] = Query(None),
@@ -521,6 +1089,10 @@ async def line_callback(
 ):
     """
     Handle LINE OAuth callback
+
+    ``request`` is injected only so the same-browser hand-off continuation can
+    see the client IP of the LINE leg (see continue_handoff_after_line). No
+    other branch reads it, and no existing behaviour depends on it.
 
     Query Parameters:
         code: Authorization code from LINE
@@ -656,6 +1228,27 @@ async def line_callback(
         line_user_id = profile.get("userId", "")
         display_name = profile.get("displayName", "ผู้ใช้ LINE")
         picture_url = profile.get("pictureUrl", "")
+
+        # Same-browser hand-off continuation — additive hook, the exact shape
+        # of the two continuations below it. When this LINE login was started
+        # from the password-less mobile dead end, the redirect hint carries a
+        # hand-off ticket ("handoff:<id>") that WRAPS the real "oidc:<ticket>"
+        # hint. Park the resolved identity for the original browser tab to
+        # collect and stop here — this request is running in LINE's in-app
+        # browser, the cookie jar that must not be given a session. No existing
+        # redirect hint uses the "handoff:" prefix, so nothing else changes.
+        #
+        # Ordered before the "oidc:" branch because a hand-off is an oidc flow
+        # in a wrapper; the wrapper has to come off in the browser that started
+        # it, not here.
+        if redirect and redirect.startswith("handoff:"):
+            return continue_handoff_after_line(
+                ticket_id=redirect[len("handoff:"):],
+                line_user_id=line_user_id,
+                client_ip=_client_ip(request),
+                display_name=display_name,
+                picture_url=picture_url,
+            )
 
         # HF ID (OIDC) continuation — additive hook. When this LINE login was
         # initiated by /oidc/authorize, the redirect hint carries an OIDC login

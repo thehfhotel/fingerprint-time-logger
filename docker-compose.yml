@@ -43,6 +43,14 @@ services:
       - LINE_CHANNEL_ID=${LINE_CHANNEL_ID}
       - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
       - LINE_CALLBACK_URL=${LINE_CALLBACK_URL}
+      # Same-browser LINE completion hand-off — off unless explicitly true.
+      # Without this line the flag cannot reach the container at all, so the
+      # feature would be un-flippable in production (the same drift that
+      # darkened central card-login, noted below). Empty is safe: the reader
+      # treats "set but empty" exactly like "false", so the estate's
+      # empty-env-variable trap (HFID_ISSUER, LINE_CALLBACK_URL) fails closed
+      # here instead of open. See app/services/line_handoff_store.py.
+      - LINE_SAME_BROWSER_HANDOFF=${LINE_SAME_BROWSER_HANDOFF:-false}
       - JWT_SECRET=${JWT_SECRET}
       # HF ID — OIDC identity provider (LINE-brokered employee SSO for
       # Cloudflare Access). All optional: the /oidc surface ships DARK (404)

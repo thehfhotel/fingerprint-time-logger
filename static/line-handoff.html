@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>เข้าสู่ระบบด้วย LINE</title>
+    <!--
+      Same-browser LINE completion hand-off — the ORIGINAL tab.
+
+      This page is served by GET /api/public/auth/line/login (see
+      app/api/line_auth.py) on exactly one combination: the Cloudflare Access
+      flow, on a phone, in a browser that is NOT LINE's. It is the tab that
+      holds the Cloudflare Access session, so it is the tab that must finish
+      the Access redirect. It stays open while LINE completes in its own
+      in-app browser and polls until the server says the identity is ready.
+
+      Audience: 80+ year old housekeeping staff. Every rule below is for them.
+        * Thai first, one idea per line, no jargon, no emoji, no icons.
+        * One primary action on screen at a time, at least 64px tall.
+        * Body text 20px and up; the waiting state says what to DO, not what
+          the system is doing internally.
+        * Nothing on this page ever dead-ends: every failure state carries a
+          large restart button plus the rich-menu route that always works.
+
+      Configuration is injected server-side in place of __HANDOFF_CONFIG__.
+      No secret is in it — the ticket identifier and its holder secret live in
+      an HttpOnly cookie the script cannot read, which is precisely what makes
+      this tab, and only this tab, able to collect the finished login.
+    -->
+    <style>
+        :root {
+            --ink: #2b2b2b;
+            --muted: #5c5c5c;
+            --line-green: #06C755;
+            --line-green-dark: #04a445;
+            --maroon: #6b1f2a;
+            --page: #f5f5f5;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Sarabun', 'Prompt', sans-serif;
+            margin: 0;
+            padding: 24px 16px 48px;
+            background: var(--page);
+            color: var(--ink);
+            font-size: 20px;
+            line-height: 1.7;
+            display: flex;
+            justify-content: center;
+        }
+        .card {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+            padding: 28px 24px 32px;
+            max-width: 480px;
+            width: 100%;
+        }
+        h1 {
+            font-size: 26px;
+            line-height: 1.5;
+            margin: 0 0 16px;
+            color: var(--maroon);
+        }
+        p { margin: 0 0 18px; }
+        .muted { color: var(--muted); font-size: 18px; }
+        ol { margin: 0 0 20px; padding-left: 26px; }
+        ol li { margin-bottom: 10px; }
+        .btn {
+            display: block;
+            width: 100%;
+            min-height: 68px;
+            padding: 18px 20px;
+            border: none;
+            border-radius: 12px;
+            background: var(--line-green);
+            color: #fff;
+            font-family: inherit;
+            font-size: 22px;
+            font-weight: 700;
+            text-align: center;
+            text-decoration: none;
+            cursor: pointer;
+            margin-bottom: 16px;
+        }
+        .btn:active { background: var(--line-green-dark); }
+        .btn-plain {
+            background: #fff;
+            color: var(--maroon);
+            border: 2px solid var(--maroon);
+        }
+        .waiting-mark {
+            width: 52px;
+            height: 52px;
+            margin: 4px auto 20px;
+            border: 6px solid #dcdcdc;
+            border-top-color: var(--line-green);
+            border-radius: 50%;
+            animation: spin 1.1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) {
+            .waiting-mark { animation: none; border-top-color: #dcdcdc; }
+        }
+        .panel { display: none; }
+        .panel.is-shown { display: block; }
+        .divider {
+            border: 0;
+            border-top: 1px solid #e6e6e6;
+            margin: 26px 0 22px;
+        }
+        .en { font-size: 15px; color: #7A7268; }
+    </style>
+</head>
+<body>
+<div class="card">
+
+    <!-- 1. Start: the only tap the user has to make. -->
+    <section id="panel-start" class="panel is-shown">
+        <h1>เข้าสู่ระบบด้วย LINE</h1>
+        <p>กดปุ่มสีเขียวด้านล่าง แอป LINE จะเปิดขึ้นมาให้ยืนยันตัวตน</p>
+        <p>เมื่อยืนยันใน LINE เสร็จแล้ว <strong>ให้กลับมาที่หน้านี้</strong> ระบบจะพาเข้าใช้งานต่อให้เอง</p>
+        <a id="line-button" class="btn" href="#" target="_blank" rel="noopener">เปิด LINE เพื่อยืนยันตัวตน</a>
+        <p class="muted">ไม่ต้องใช้อีเมลหรือรหัสผ่าน</p>
+    </section>
+
+    <!-- 2. Waiting: the tab is polling. Tells the user what to DO. -->
+    <section id="panel-waiting" class="panel">
+        <div class="waiting-mark" aria-hidden="true"></div>
+        <h1>รอการยืนยันจาก LINE</h1>
+        <p>ยืนยันตัวตนในแอป LINE ให้เสร็จ แล้วกลับมาที่หน้านี้</p>
+        <p>อย่าปิดหน้านี้ ระบบจะพาเข้าใช้งานต่อให้เองทันทีที่ยืนยันเสร็จ</p>
+        <hr class="divider">
+        <p class="muted">ถ้าแอป LINE ยังไม่เปิดขึ้นมา</p>
+        <a id="line-button-again" class="btn btn-plain" href="#" target="_blank" rel="noopener">เปิด LINE อีกครั้ง</a>
+    </section>
+
+    <!-- 3. Done: navigating. Shown for the instant before the redirect. -->
+    <section id="panel-done" class="panel">
+        <h1>ยืนยันตัวตนสำเร็จ</h1>
+        <p>กำลังพาเข้าใช้งาน กรุณารอสักครู่</p>
+    </section>
+
+    <!-- 4. Timed out / failed. Never a dead end: restart, or the rich menu. -->
+    <section id="panel-retry" class="panel">
+        <h1 id="retry-heading">หมดเวลารอ</h1>
+        <p id="retry-message">ยังไม่ได้รับการยืนยันจาก LINE กรุณาลองใหม่อีกครั้ง</p>
+        <a id="retry-button" class="btn" href="#">ลองใหม่อีกครั้ง</a>
+        <hr class="divider">
+        <p><strong>อีกวิธีที่ใช้ได้เสมอ</strong> เปิดเครื่องมือนี้จากแอป LINE โดยตรง</p>
+        <ol>
+            <li>เปิดแอป LINE</li>
+            <li>เข้าห้องแชทของโรงแรม แล้วกดเมนูด้านล่าง</li>
+            <li>เข้าสู่ระบบจากตรงนั้นได้เลย</li>
+        </ol>
+        <p class="en">
+            If this keeps failing, open the tool from the LINE app menu instead.
+        </p>
+    </section>
+
+</div>
+
+<script>
+(function () {
+    "use strict";
+
+    var CFG = __HANDOFF_CONFIG__;
+
+    var panels = {
+        start: document.getElementById("panel-start"),
+        waiting: document.getElementById("panel-waiting"),
+        done: document.getElementById("panel-done"),
+        retry: document.getElementById("panel-retry")
+    };
+
+    function show(name) {
+        for (var key in panels) {
+            if (Object.prototype.hasOwnProperty.call(panels, key)) {
+                panels[key].classList.toggle("is-shown", key === name);
+            }
+        }
+        window.scrollTo(0, 0);
+    }
+
+    function showRetry(heading, message) {
+        document.getElementById("retry-heading").textContent = heading;
+        document.getElementById("retry-message").textContent = message;
+        show("retry");
+    }
+
+    document.getElementById("line-button").href = CFG.authUrl;
+    document.getElementById("line-button-again").href = CFG.authUrl;
+    document.getElementById("retry-button").href = CFG.retryUrl;
+
+    var polling = false;
+    var inFlight = false;
+    var deadline = 0;
+
+    // The tap is required, not decorative: a phone browser will not let a page
+    // open the LINE app-switch on its own (popup blocking), and navigating
+    // THIS tab into LINE would destroy the very tab that has to finish the
+    // Cloudflare Access redirect. So LINE opens in a second tab and this one
+    // stays alive and waits.
+    function startWaiting() {
+        if (polling) { return; }
+        polling = true;
+        deadline = Date.now() + CFG.budgetMs;
+        show("waiting");
+        poll();
+    }
+
+    document.getElementById("line-button").addEventListener("click", function () {
+        // Let the browser handle the navigation to LINE, then flip this tab
+        // into its waiting state.
+        window.setTimeout(startWaiting, 0);
+    });
+
+    function scheduleRetry(delayMs) {
+        if (Date.now() >= deadline) {
+            timedOut();
+            return;
+        }
+        window.setTimeout(poll, delayMs);
+    }
+
+    function timedOut() {
+        polling = false;
+        showRetry(
+            "หมดเวลารอ",
+            "ยังไม่ได้รับการยืนยันจาก LINE กรุณาลองใหม่อีกครั้ง"
+        );
+    }
+
+    function failed(reason) {
+        polling = false;
+        if (reason === "not_ready") {
+            showRetry(
+                "บัญชียังไม่พร้อมใช้งาน",
+                "บัญชีของคุณกำลังรอการอนุมัติ หรือถูกปิดการใช้งาน กรุณาติดต่อผู้ดูแลระบบ"
+            );
+        } else {
+            showRetry(
+                "เข้าสู่ระบบไม่สำเร็จ",
+                "การเข้าสู่ระบบครั้งนี้หมดอายุแล้ว กรุณาลองใหม่อีกครั้ง"
+            );
+        }
+    }
+
+    function poll() {
+        if (!polling || inFlight) { return; }
+        if (Date.now() >= deadline) {
+            timedOut();
+            return;
+        }
+        inFlight = true;
+        // same-origin credentials: the HttpOnly cookie set when this page was
+        // served is the ONLY thing that proves this is the browser that
+        // started the flow. Without it the server answers as if the ticket did
+        // not exist.
+        fetch(CFG.waitUrl, {
+            method: "GET",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { "Accept": "application/json" }
+        }).then(function (response) {
+            inFlight = false;
+            if (!polling) { return; }
+            if (response.status === 204) {
+                // Long-poll slice elapsed with nothing yet. Poll again.
+                poll();
+                return;
+            }
+            if (response.status === 503) {
+                // Server is at its long-poll ceiling. Not a failure.
+                scheduleRetry(2000);
+                return;
+            }
+            if (response.status === 404 || response.status === 410) {
+                failed("expired");
+                return;
+            }
+            if (!response.ok) {
+                scheduleRetry(2000);
+                return;
+            }
+            return response.json().then(function (body) {
+                if (body && body.status === "ready" && body.completion_url) {
+                    polling = false;
+                    show("done");
+                    window.location.replace(body.completion_url);
+                    return;
+                }
+                if (body && body.status === "failed") {
+                    failed(body.reason);
+                    return;
+                }
+                scheduleRetry(1000);
+            });
+        }).catch(function () {
+            inFlight = false;
+            if (!polling) { return; }
+            // A phone that was backgrounded while the user was in LINE often
+            // drops the parked request. That is expected, not an error: try
+            // again shortly.
+            scheduleRetry(2000);
+        });
+    }
+
+    // Coming back from the LINE app is the moment the answer is usually ready,
+    // and it is also the moment a suspended request wakes up. Kick a poll
+    // immediately instead of waiting out a timer.
+    document.addEventListener("visibilitychange", function () {
+        if (!document.hidden && polling && !inFlight) {
+            poll();
+        }
+    });
+})();
+</script>
+</body>
+</html>

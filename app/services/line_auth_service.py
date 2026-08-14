@@ -226,6 +226,18 @@ class LineAuthService:
         # Unknown UA (None) counts as non-LINE and still gets the flag. That is
         # the safe direction — this carve-out can only ever remove the wall
         # inside LINE, never reintroduce the Safari bug for an unknown caller.
+        #
+        # DO NOT widen this to the ``handoff:`` prefix. A hand-off hint is an
+        # ``oidc:`` request wrapped by the same-browser completion hand-off
+        # (app/api/line_auth.py + app/services/line_handoff_store.py), and it
+        # WANTS auto login: the whole design is to let iOS app-switch into
+        # LINE, complete there, and have the ORIGINAL tab collect the result
+        # and finish the Access redirect itself. The cookie-jar bug this flag
+        # guards against cannot bite that flow, because the Access session is
+        # never asked to survive the trip through LINE's browser. Adding
+        # "handoff:" here would silently put the password/email form back in
+        # front of the password-less staff accounts the hand-off exists for —
+        # the exact dead end it was built to remove.
         if (redirect_hint or "").startswith("oidc:") and not is_line_in_app_browser(user_agent):
             params["disable_auto_login"] = "true"
 
