@@ -9,7 +9,10 @@ Tests complete LINE OAuth authentication flow:
 - JWT token verification
 """
 
+import asyncio
 import os
+import time
+
 import pytest
 from datetime import datetime, timezone, timedelta, timezone
 
@@ -52,6 +55,73 @@ class TestLineOAuthFlow:
         response = test_client.get("/api/public/auth/line/callback")
 
         assert response.status_code == 400
+
+
+class TestCallbackDoesNotBlockTheEventLoop:
+    """The two LINE round-trips in the callback are blocking ``requests`` calls
+    with a 10s timeout each. This is a single-process uvicorn deployment, so
+    running them on the event loop parks EVERYTHING for up to ~20s per
+    callback: /oidc/token and /oidc/jwks (which Cloudflare Access fetches
+    synchronously while a user waits), the kiosk /wait and /elevate/wait
+    long-polls, and every QR check-in API. They must run on a worker thread.
+
+    The probe is ``asyncio.get_running_loop()``, which only succeeds on a
+    thread that is actually running the loop — so a raised RuntimeError inside
+    the call is proof it was handed off.
+    """
+
+    def _drive_callback(self, test_client, monkeypatch, recorder):
+        state = "state-offloop-probe"
+        line_auth_service._state_storage[state] = (time.time(), None)
+
+        def fake_exchange(code):
+            recorder("exchange")
+            return {"access_token": "line-access-token"}
+
+        def fake_profile(access_token):
+            recorder("profile")
+            return {
+                "userId": "U-offloop-probe",
+                "displayName": "LINE User",
+                "pictureUrl": "",
+            }
+
+        monkeypatch.setattr(
+            line_auth_service, "exchange_code_for_token", fake_exchange
+        )
+        monkeypatch.setattr(line_auth_service, "get_user_profile", fake_profile)
+
+        return test_client.get(
+            f"/api/public/auth/line/callback?code=line-code&state={state}"
+        )
+
+    def test_both_line_calls_run_off_the_event_loop(self, test_client, monkeypatch):
+        on_loop = {}
+
+        def recorder(which):
+            try:
+                asyncio.get_running_loop()
+                on_loop[which] = True
+            except RuntimeError:
+                on_loop[which] = False
+
+        response = self._drive_callback(test_client, monkeypatch, recorder)
+
+        assert response.status_code == 200
+        assert on_loop == {"exchange": False, "profile": False}
+
+    def test_callback_behaviour_is_unchanged_by_the_offload(
+        self, test_client, monkeypatch
+    ):
+        """Only WHERE the calls run changed — an unlinked LINE user still lands
+        on the link-account page carrying their fresh JWT."""
+        response = self._drive_callback(
+            test_client, monkeypatch, lambda which: None
+        )
+
+        assert response.status_code == 200
+        assert "/qr-checkin/link-account?jwt=" in response.text
+        assert "U-offloop-probe" in response.text
 
 
 # ============================================================================
@@ -202,6 +272,126 @@ class TestAccountUnlinking:
             json={"reason": "Testing"},
         )
         assert response.status_code == 404
+
+
+# ============================================================================
+# Password-less mobile dead-end guidance (Cloudflare Access / "oidc:" flow)
+# ============================================================================
+
+class TestPasswordlessMobileGuidance:
+    """The interstitial on the one combination LINE has no usable screen for.
+
+    Staff LINE accounts are made on a phone and normally have no email or
+    password. On the Access flow we must send disable_auto_login (otherwise iOS
+    hands off to the LINE app, the callback completes in a different cookie jar
+    and the Access session started in the browser is stranded), and that makes
+    LINE render its email/password FORM. The desktop escape hatch,
+    initial_amr_display=lineqr, is useless on a phone — the user cannot scan a
+    code shown on the screen they are holding.
+
+    So on Access + mobile + non-LINE browser the user is told, before LINE ever
+    renders, to open the tool from the LINE app rich menu (their primary path,
+    where auto login works). It stays a page with a "continue" link rather than
+    a block, because managers with a LINE password hit the same combination and
+    the form works fine for them.
+
+    Everything else must keep auto-redirecting exactly as before — these tests
+    pin the scope, since a too-wide guidance page would put an extra tap in
+    front of 80+ housekeeping staff on the path that already works.
+    """
+
+    UA_MOBILE_SAFARI = (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+    )
+    UA_LINE_IOS = (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Line/13.5.0"
+    )
+    UA_DESKTOP_CHROME = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+    )
+
+    @pytest.fixture(autouse=True)
+    def _line_configured(self, monkeypatch):
+        """LINE creds are unset in tests; /login 500s without a channel id."""
+        monkeypatch.setattr(line_auth_service, "channel_id", "test_channel_id")
+
+    def _login(self, test_client, *, redirect, user_agent):
+        return test_client.get(
+            f"/api/public/auth/line/login?redirect={redirect}",
+            headers={"User-Agent": user_agent},
+        )
+
+    def test_mobile_external_browser_on_access_flow_gets_guidance(self, test_client):
+        response = self._login(
+            test_client, redirect="oidc%3Aticket123",
+            user_agent=self.UA_MOBILE_SAFARI,
+        )
+
+        assert response.status_code == 200
+        # Told what to do, and NOT auto-shipped to a form they cannot complete.
+        assert "เปิดจากแอป LINE" in response.text
+        assert "http-equiv=\"refresh\"" not in response.text
+        assert "window.location.href" not in response.text
+
+    def test_guidance_still_offers_the_real_login_url(self, test_client):
+        """Not a dead end for anyone who does hold a LINE password: the button
+        carries the identical URL the auto-redirect would have used."""
+        response = self._login(
+            test_client, redirect="oidc%3Aticket123",
+            user_agent=self.UA_MOBILE_SAFARI,
+        )
+
+        assert "access.line.me/oauth2/v2.1/authorize" in response.text
+        # The Safari cookie-jar guard is untouched by this page.
+        assert "disable_auto_login=true" in response.text
+
+    def test_line_in_app_browser_is_not_interrupted(self, test_client):
+        """The maid's primary path — the rich menu inside LINE — keeps auto
+        login and must keep auto-redirecting. Regressing this would put a wall
+        in front of the flow that works today."""
+        response = self._login(
+            test_client, redirect="oidc%3Aticket123", user_agent=self.UA_LINE_IOS,
+        )
+
+        assert response.status_code == 200
+        assert "http-equiv=\"refresh\"" in response.text
+        assert "เปิดจากแอป LINE" not in response.text
+
+    def test_desktop_access_flow_is_not_interrupted(self, test_client):
+        """Desktop already has a working escape (the QR is scanned with the
+        phone), so it must not see the guidance page."""
+        response = self._login(
+            test_client, redirect="oidc%3Aticket123",
+            user_agent=self.UA_DESKTOP_CHROME,
+        )
+
+        assert "http-equiv=\"refresh\"" in response.text
+        assert "initial_amr_display=lineqr" in response.text
+        assert "เปิดจากแอป LINE" not in response.text
+
+    def test_public_path_mobile_flows_are_not_interrupted(self, test_client):
+        """QR clock-in, mobile check-in and onboarding hold no Access session,
+        never get disable_auto_login, and so never hit the dead end."""
+        for redirect in ("qr-scan-callback", "mobile-checkin", "onboard"):
+            response = self._login(
+                test_client, redirect=redirect, user_agent=self.UA_MOBILE_SAFARI,
+            )
+            assert "เปิดจากแอป LINE" not in response.text, redirect
+            assert "http-equiv=\"refresh\"" in response.text, redirect
+
+    def test_mobile_qr_login_is_never_forced(self, test_client):
+        """The other tempting "fix" for this dead end, pinned as forbidden: a
+        QR on a phone is a code the user is asked to scan with the device
+        showing it."""
+        response = self._login(
+            test_client, redirect="oidc%3Aticket123",
+            user_agent=self.UA_MOBILE_SAFARI,
+        )
+
+        assert "initial_amr_display" not in response.text
 
 
 # ============================================================================

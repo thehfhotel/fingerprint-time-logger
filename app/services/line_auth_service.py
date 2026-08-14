@@ -78,6 +78,14 @@ JWT_SECRET = _resolve_jwt_secret()
 _LINE_IN_APP_BROWSER_UA = re.compile(r"(?<![A-Za-z0-9])Line/\d", re.IGNORECASE)
 
 
+# The redirect_uri registered on the LINE Login channel. Kept as a module
+# constant so the fallback below has exactly one definition (and so tests can
+# assert against it rather than re-typing the literal).
+DEFAULT_LINE_CALLBACK_URL = (
+    "http://localhost:5000/fingerprintlogs/api/auth/line/callback"
+)
+
+
 def is_line_in_app_browser(user_agent: Optional[str]) -> bool:
     """
     True when this User-Agent is LINE's own in-app browser.
@@ -100,9 +108,22 @@ class LineAuthService:
     def __init__(self):
         self.channel_id = os.getenv("LINE_CHANNEL_ID", "")
         self.channel_secret = os.getenv("LINE_CHANNEL_SECRET", "")
-        self.callback_url = os.getenv(
-            "LINE_CALLBACK_URL",
-            "http://localhost:5000/fingerprintlogs/api/auth/line/callback"
+        # ``getenv(name, default)`` fires its default only when the variable is
+        # UNSET — and docker-compose.yml passes this one through as
+        # ``LINE_CALLBACK_URL=${LINE_CALLBACK_URL}``, which SETS it to the empty
+        # string whenever the host/CI secret is missing. The variable then
+        # exists, the default never fires, and redirect_uri goes out empty:
+        # every LINE authorize/token call 400s with invalid_request and the
+        # whole estate loses LINE login. That is exactly how the empty-issuer
+        # outage happened (HFID_ISSUER, fixed in d4e89f5f); this is the same
+        # canonical shape — read raw, strip, and fall back on anything falsy,
+        # so "unset" and "set but empty" resolve identically.
+        #
+        # No rstrip("/") here, unlike the issuer fix: a LINE redirect_uri must
+        # match the value registered on the channel byte for byte, so trailing
+        # punctuation is content, not noise, and must not be normalised away.
+        self.callback_url = (
+            os.getenv("LINE_CALLBACK_URL", "").strip() or DEFAULT_LINE_CALLBACK_URL
         )
         self.jwt_secret = JWT_SECRET
         self.jwt_expiry_hours = 24
@@ -322,6 +343,43 @@ class LineAuthService:
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Failed to get LINE profile: {str(e)}"
             )
+
+    def onboarding_continuation_query(
+        self,
+        line_user_id: str,
+        display_name: Optional[str] = None,
+        picture_url: Optional[str] = None,
+    ) -> str:
+        """Query string for a hand-off INTO the self-onboarding page.
+
+        Every route that sends a freshly-authenticated LINE user to
+        /qr-checkin/onboard goes through here, because two things have to be
+        true together and neither is safe alone:
+
+        1. ``jwt`` — the identity we just resolved. Without it the page has no
+           identity of its own and the user is asked to log into LINE a second
+           time (the normal LINE path at app/api/line_auth.py already attaches
+           it; the OIDC and kiosk-elevate continuations used to forget).
+        2. ``src=line`` — a marker saying "this navigation IS a LINE
+           continuation". static/onboard.html keys its stale-token refusal off
+           this: on a marked arrival the query ``jwt`` is the ONLY acceptable
+           identity, so a shared/kiosk browser can never silently fall back to
+           the PREVIOUS person's cached ``line_jwt_token``. The marker must be
+           attached even on paths that always carry a jwt — a guard that is
+           only present when it happens to be needed is a guard nobody can
+           reason about.
+
+        display_name/picture_url ride along inside the JWT so the onboarding
+        form can prefill from the LINE profile (public_onboarding.py reads them
+        straight out of the token, no DB lookup).
+        """
+        token = self.create_jwt_token(
+            line_user_id=line_user_id,
+            employee_badge=None,
+            display_name=display_name,
+            picture_url=picture_url,
+        )
+        return urlencode({"src": "line", "jwt": token})
 
     def create_jwt_token(
         self,

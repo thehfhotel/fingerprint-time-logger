@@ -186,18 +186,53 @@
         }
 
         /**
-         * Resolve the LINE JWT: query param first (fresh OAuth redirect),
-         * persisted to localStorage and stripped from the URL, else fall
-         * back to whatever's already stored. Mirrors link-line.js.
+         * Resolve the LINE JWT for this page.
+         *
+         * Query param first (a fresh LINE redirect): store it, strip it from
+         * the URL, use it. Otherwise fall back to the cached token — EXCEPT on
+         * a LINE continuation, where falling back is a wrong-identity bug
+         * rather than a convenience.
+         *
+         * Why the exception. Every server route that hands a freshly
+         * authenticated LINE user to this page marks the arrival with
+         * `src=line` (app/services/line_auth_service.py ->
+         * onboarding_continuation_query). A marked arrival is someone who just
+         * proved who they are, so their identity is the one in the URL and
+         * nothing else. On a shared device — a front-desk PC, a kiosk, any
+         * phone passed around a housekeeping team — localStorage still holds
+         * the PREVIOUS person's `line_jwt_token`, and the onboarding API keys
+         * /status and /submit purely off the line_user_id inside whatever
+         * token it is given. Silently reaching for the cached one would show
+         * the new arrival someone else's application and write their form
+         * answers onto that other person's LINE account. So: marked arrival
+         * with no `jwt` means NO identity, and the stale token is dropped, not
+         * reused.
+         *
+         * An unmarked visit — the user opening /qr-checkin/onboard directly to
+         * check on an application they already submitted — keeps the cached
+         * token. That is the legitimate case this page was built for, and it
+         * is untouched.
          */
         function getJWTToken() {
             const urlParams = new URLSearchParams(window.location.search);
             const urlToken = urlParams.get('jwt');
+            const isLineContinuation = urlParams.get('src') === 'line';
+
             if (urlToken) {
                 localStorage.setItem('line_jwt_token', urlToken);
                 window.history.replaceState({}, document.title, window.location.pathname);
                 return urlToken;
             }
+
+            if (isLineContinuation) {
+                // Arrived from a LINE continuation that carried no identity.
+                // Drop the cached token so nothing later in the page (e.g.
+                // submitOnboarding's second read) can pick it up either.
+                localStorage.removeItem('line_jwt_token');
+                window.history.replaceState({}, document.title, window.location.pathname);
+                return null;
+            }
+
             return localStorage.getItem('line_jwt_token');
         }
 

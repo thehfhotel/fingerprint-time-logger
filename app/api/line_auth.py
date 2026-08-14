@@ -23,10 +23,11 @@ from fastapi import APIRouter, HTTPException, status, Query, Request, Depends, H
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.core.database import get_db
 from app.models.models import Employee
-from app.services.line_auth_service import line_auth_service
+from app.services.line_auth_service import is_line_in_app_browser, line_auth_service
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +249,86 @@ class VerifyTokenRequest(BaseModel):
 # OAuth Flow Endpoints
 # ============================================================================
 
+def _escape_attribute(value: str) -> str:
+    """Escape an app-built URL for interpolation into an HTML attribute."""
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _line_app_guidance_page(auth_url: str) -> HTMLResponse:
+    """The interstitial for the password-less mobile dead end.
+
+    Rendered INSTEAD of the usual auto-redirect on one narrow combination
+    (Cloudflare Access flow + mobile + non-LINE browser); see the long comment
+    at the call site in :func:`line_login` for why that combination has no
+    working LINE login screen and why no OAuth parameter can fix it.
+
+    Deliberately NOT an error page: it explains the way through (open the tool
+    from the LINE app, where auto login works) and still offers the LINE login
+    for the office staff and managers who do hold a LINE email/password. The
+    ``auth_url`` handed to the button is the identical URL the auto-redirect
+    would have used — this page changes what the user is told, never what is
+    requested from LINE.
+    """
+    safe_auth_url = _escape_attribute(auth_url)
+    html_content = f"""<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>เข้าสู่ระบบด้วย LINE</title>
+    <style>
+        body {{
+            font-family: 'Sarabun', 'Prompt', sans-serif;
+            display: flex; justify-content: center; align-items: center;
+            min-height: 100vh; margin: 0; background: #f5f5f5; color: #333;
+        }}
+        .card {{
+            background: #fff; padding: 32px; border-radius: 12px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+            max-width: 420px; margin: 16px;
+        }}
+        h1 {{ font-size: 20px; margin: 0 0 12px; color: #6b1f2a; text-align: center; }}
+        p {{ color: #555; line-height: 1.7; margin: 0 0 16px; }}
+        .steps {{ color: #555; line-height: 1.7; margin: 0 0 20px; padding-left: 20px; }}
+        .secondary {{
+            display: block; text-align: center; padding: 14px 24px;
+            background: #06C755; color: #fff; text-decoration: none;
+            border-radius: 8px; font-size: 15px; font-weight: 600;
+        }}
+        .note {{ font-size: 13px; color: #7A7268; margin: 16px 0 0; text-align: center; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>กรุณาเปิดจากแอป LINE</h1>
+        <p>
+            บัญชี LINE ของพนักงานส่วนใหญ่ไม่ได้ตั้งอีเมลและรหัสผ่านไว้
+            หากเปิดลิงก์นี้จากเบราว์เซอร์บนมือถือ หน้าเข้าสู่ระบบของ LINE
+            จะขอ<strong>อีเมลและรหัสผ่าน</strong> ซึ่งจะไปต่อไม่ได้
+        </p>
+        <ol class="steps">
+            <li>เปิดแอป LINE</li>
+            <li>เข้าห้องแชทของโรงแรม แล้วกดเมนูด้านล่าง (ริชเมนู)</li>
+            <li>เข้าสู่ระบบจากตรงนั้นได้เลย ไม่ต้องใช้รหัสผ่าน</li>
+        </ol>
+        <a class="secondary" href="{safe_auth_url}">
+            ฉันมีอีเมลและรหัสผ่าน LINE — เข้าสู่ระบบต่อ
+        </a>
+        <p class="note">
+            Open this tool from the LINE app menu. The button above only works
+            if your LINE account has an email and password set.
+        </p>
+    </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html_content)
+
+
 @router.get("/login")
 async def line_login(
     request: Request,
@@ -262,7 +343,12 @@ async def line_login(
         qr_context: Optional QR scan context (JSON-encoded token and terminal info) for cross-browser preservation
 
     Returns:
-        HTML response with meta refresh redirect for Mobile Safari compatibility
+        HTML response with meta refresh redirect for Mobile Safari compatibility.
+
+        One exception: on the Cloudflare Access flow from a mobile NON-LINE
+        browser the response is a guidance interstitial instead of an
+        auto-redirect, because LINE has no login screen a password-less staff
+        account can complete there. See the block comment below.
     """
     try:
         # Build redirect hint that includes both redirect page and qr_context
@@ -293,6 +379,75 @@ async def line_login(
             user_agent=user_agent,
         )
         auth_url = auth_data["auth_url"]
+
+        # ------------------------------------------------------------------
+        # The password-less mobile dead end (Cloudflare Access / "oidc:" flow
+        # only, external browser only).
+        #
+        # Three facts collide on exactly one combination:
+        #   1. Staff LINE accounts are created on a phone from the LINE app.
+        #      They typically have NO email and NO password set.
+        #   2. On the Access flow in an external browser we must send
+        #      disable_auto_login (line_auth_service.generate_authorization_url
+        #      explains why: without it iOS app-switches to LINE, the callback
+        #      completes in LINE's in-app browser — a different cookie jar —
+        #      and the Access session started in Safari is stranded on
+        #      "Invalid session"). Disabling auto login makes LINE render its
+        #      email/password web FORM.
+        #   3. initial_amr_display=lineqr, the desktop escape from that form,
+        #      is useless on a phone: it shows a QR the user is being asked to
+        #      scan with the very device displaying it.
+        # So a password-less employee who reaches a gated app from Safari or
+        # Chrome on their phone — a scanned QR, a link opened outside LINE,
+        # a bookmark — lands on a form they cannot complete and has no way
+        # forward. Nothing on the LINE side of that page can help them.
+        #
+        # What this page does about it: it does NOT change a single OAuth
+        # parameter. Both of the obvious parameter fixes make things worse —
+        # dropping disable_auto_login hands back the Safari cookie-jar bug for
+        # everyone on this path, and forcing lineqr on mobile replaces an
+        # unusable form with an unusable QR. Instead the user is TOLD, before
+        # LINE ever renders, that the way through is to open the tool from the
+        # LINE app's rich menu, which is their primary path anyway and where
+        # auto login works (fact 2 does not apply inside LINE's own browser).
+        #
+        # It stays an interstitial rather than a hard block because the same
+        # combination is also hit by office staff and managers who DO have a
+        # LINE email/password; for them the form works fine and one tap on
+        # "continue" is the whole cost. Blocking them to help the maids would
+        # trade one dead end for another.
+        #
+        # Scope is deliberately narrow — Access flow, mobile UA, non-LINE
+        # browser. The desktop path (QR, works), the rich-menu-inside-LINE path
+        # (auto login, works), and every public-path flow (QR clock-in, mobile
+        # check-in, onboarding, kiosk elevate — all keep auto login and work)
+        # are untouched and still auto-redirect exactly as before.
+        #
+        # THE REAL FIX, for whoever picks this up: a same-browser completion
+        # hand-off, i.e. keep auto login ON for mobile, let LINE finish in its
+        # in-app browser, and have the ORIGINAL browser tab poll a server-side
+        # ticket until the LINE side resolves, then finish the Access redirect
+        # in the tab that holds the Access session. That removes the cookie-jar
+        # problem instead of routing around it, and this repo already runs that
+        # exact pattern for the kiosk (reader.py /elevate/start + /elevate/wait
+        # long-poll, resolved by continue_elevate_after_line). The cost is a
+        # new stateful flow on the login path — a ticket store, a polling page,
+        # a timeout/abandonment story, and a careful look at what an attacker
+        # can do by polling someone else's ticket — which is why it is a piece
+        # of work rather than a line of code, and why the guidance page is the
+        # interim.
+        # ------------------------------------------------------------------
+        #
+        # The check runs AFTER generate_authorization_url so the button below
+        # carries a live, state-backed URL. A user who takes the LINE-app route
+        # instead simply leaves that CSRF state unused, and it is pruned by the
+        # existing 10-minute TTL sweep.
+        if (
+            (redirect_hint or "").startswith("oidc:")
+            and is_mobile
+            and not is_line_in_app_browser(user_agent)
+        ):
+            return _line_app_guidance_page(auth_url)
 
         # Mobile Safari compatible redirect using HTML meta refresh
         html_content = f"""
@@ -462,12 +617,37 @@ async def line_callback(
         else:
             redirect = stored_redirect_hint or redirect
 
-        # Exchange code for access token
-        token_data = line_auth_service.exchange_code_for_token(code)
+        # Both LINE round-trips below are BLOCKING `requests` calls with a
+        # 10-second timeout each (line_auth_service.exchange_code_for_token /
+        # get_user_profile). This handler is `async def`, so calling them
+        # directly parks the single uvicorn event loop for up to ~20s per
+        # callback — and while it is parked NOTHING else in the process runs:
+        # not /oidc/token, not /oidc/jwks (Cloudflare Access fetches both
+        # synchronously, with its own timeout), not the kiosk /wait and
+        # /elevate/wait long-polls, not the QR check-in APIs. One slow LINE
+        # response therefore reads as an estate-wide stall.
+        #
+        # run_in_threadpool moves them onto Starlette's worker threads, which
+        # is where a sync def handler's body would have run anyway. Nothing
+        # about the calls themselves changes — same functions, same arguments,
+        # same timeouts, and HTTPException raised inside the thread still
+        # propagates to the `except HTTPException` below unchanged. The
+        # awaits keep this handler async so the two continuations further down
+        # (OIDC / kiosk elevate) stay ordinary in-loop calls.
+        #
+        # Kept as an async handler rather than converted to `def` on purpose:
+        # `def` would move the ENTIRE body — including the SQLAlchemy session
+        # from Depends(get_db) and both continuations — onto a worker thread,
+        # a far larger behavioural change than this bug warrants.
+        token_data = await run_in_threadpool(
+            line_auth_service.exchange_code_for_token, code
+        )
         access_token = token_data["access_token"]
 
         # Get LINE user profile
-        profile = line_auth_service.get_user_profile(access_token)
+        profile = await run_in_threadpool(
+            line_auth_service.get_user_profile, access_token
+        )
 
         # Extract profile data
         line_user_id = profile.get("userId", "")
@@ -487,6 +667,10 @@ async def line_callback(
                 ticket_id=redirect[len("oidc:"):],
                 line_user_id=line_user_id,
                 db=db,
+                # Forwarded so an unregistered LINE user's onboarding hand-off
+                # carries the same prefilled profile the normal path gives it.
+                display_name=display_name,
+                picture_url=picture_url,
             )
 
         # Kiosk LINE-scan elevation continuation — additive hook, the exact
@@ -505,6 +689,9 @@ async def line_callback(
                 ticket_id=redirect[len("elevate:"):],
                 line_user_id=line_user_id,
                 db=db,
+                # Same reason as the OIDC continuation above.
+                display_name=display_name,
+                picture_url=picture_url,
             )
 
         # Check if this LINE user is already linked to an employee
@@ -533,13 +720,21 @@ async def line_callback(
             # (/qr-checkin/onboard) — send them straight back there instead
             # of the admin-code link-account page; a brand-new self-onboarder
             # has no 6-digit admin code to enter.
-            jwt_token = line_auth_service.create_jwt_token(
-                line_user_id=line_user_id,
-                employee_badge=None,
-                display_name=display_name,
-                picture_url=picture_url
+            #
+            # Built by the shared helper so this path carries the ``src=line``
+            # marker too. It has always attached a jwt, so the marker changes
+            # nothing here today — but onboard.html's stale-token refusal keys
+            # off "did this arrival come from a LINE continuation", and that
+            # question has to be answerable on EVERY continuation, not only the
+            # ones we currently expect to need it.
+            redirect_url = (
+                "/qr-checkin/onboard?"
+                + line_auth_service.onboarding_continuation_query(
+                    line_user_id,
+                    display_name=display_name,
+                    picture_url=picture_url,
+                )
             )
-            redirect_url = f"/qr-checkin/onboard?jwt={jwt_token}"
         else:
             # Not yet linked - redirect to link account page with redirect hint and qr_context
             jwt_token = line_auth_service.create_jwt_token(

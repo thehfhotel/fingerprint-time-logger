@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.models import Employee, EmployeeAppGrant
 from app.services import oidc_service
+from app.services.line_auth_service import line_auth_service
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,12 @@ async def authorize(
 
 
 def continue_oidc_after_line(
-    *, ticket_id: str, line_user_id: str, db: Session
+    *,
+    ticket_id: str,
+    line_user_id: str,
+    db: Session,
+    display_name: Optional[str] = None,
+    picture_url: Optional[str] = None,
 ):
     """Resume an OIDC login after LINE resolves ``line_user_id``.
 
@@ -189,6 +195,10 @@ def continue_oidc_after_line(
     hook. Only an employee that is active, not pending approval, and matched by
     line_user_id may proceed; everyone else is routed to onboarding or an
     "awaiting approval / access disabled" page — never issued a code.
+
+    ``display_name``/``picture_url`` are the LINE profile fields the callback
+    already holds. They are optional so an older caller still works, and they
+    exist only to ride along in the onboarding hand-off token below.
     """
     oidc_request = oidc_service.consume_login_ticket(ticket_id)
     if oidc_request is None:
@@ -206,9 +216,30 @@ def continue_oidc_after_line(
     )
 
     # A valid LINE user with no employee row is a prospective new hire.
+    #
+    # The hand-off MUST carry the identity we just resolved (see
+    # line_auth_service.onboarding_continuation_query). Sending a bare
+    # /qr-checkin/onboard was wrong twice over:
+    #
+    #   * the user had just authenticated with LINE and was immediately asked
+    #     to do it again, because the page had no token in the URL;
+    #   * worse, on a SHARED browser — a front-desk PC, a kiosk, any device
+    #     more than one person signs in from — onboard.html's fallback would
+    #     read the PREVIOUS person's ``line_jwt_token`` out of localStorage and
+    #     adopt it. public_onboarding.py keys both /status and /submit purely
+    #     off the line_user_id inside that token, so the new arrival would see
+    #     someone else's onboarding record and, on submit, write their own form
+    #     data onto the other person's LINE identity. A wrong-identity write is
+    #     not a UX bug; that is why this attaches the token instead of relying
+    #     on whatever the browser happens to remember.
     if employee is None:
+        query = line_auth_service.onboarding_continuation_query(
+            line_user_id,
+            display_name=display_name,
+            picture_url=picture_url,
+        )
         return RedirectResponse(
-            url=_ONBOARD_PATH, status_code=status.HTTP_302_FOUND
+            url=f"{_ONBOARD_PATH}?{query}", status_code=status.HTTP_302_FOUND
         )
 
     # Registered but not yet cleared for access.
@@ -221,9 +252,24 @@ def continue_oidc_after_line(
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    email = employee.email or oidc_service.synthetic_email_for_badge(
-        employee.badge_number
-    )
+    # ALWAYS the synthetic badge address — never employees.email, even when a
+    # row happens to carry one.
+    #
+    # An employee reaches a downstream app through two different
+    # Authenticators: this LINE/CF-Access path, and the card/QR path (the two
+    # oidc_service.mint_id_token call sites in app/api/reader.py — the /wait
+    # card-tap path and continue_elevate_after_line), which mints
+    # synthetic_email_for_badge unconditionally. Consumers key their user rows
+    # off the email claim, so honouring employees.email here would make ONE
+    # employee present TWO identities depending on how they signed in, landing
+    # them on two separate user rows — split history, split permissions, and a
+    # duplicate nobody can merge after the fact. One badge, one address, one
+    # row, whichever door they came through.
+    #
+    # This costs nothing in production: HF ID's only writer of employees.email
+    # is admin_onboarding.py, which always writes the synthetic form (the admin
+    # UI has no email field at all), so no human row holds a real address.
+    email = oidc_service.synthetic_email_for_badge(employee.badge_number)
     name = employee.display_name or ""
     apps = [
         grant.app_id

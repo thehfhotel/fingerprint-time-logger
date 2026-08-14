@@ -70,6 +70,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.models import Employee, EmployeeAppGrant
 from app.services import oidc_service
+from app.services.line_auth_service import line_auth_service
 
 logger = logging.getLogger(__name__)
 
@@ -971,7 +972,14 @@ async def elevate_confirm_page(ticket: str):
     )
 
 
-def continue_elevate_after_line(*, ticket_id: str, line_user_id: str, db: Session):
+def continue_elevate_after_line(
+    *,
+    ticket_id: str,
+    line_user_id: str,
+    db: Session,
+    display_name: Optional[str] = None,
+    picture_url: Optional[str] = None,
+):
     """Resume a kiosk elevation after LINE resolves ``line_user_id``.
 
     Called from the LINE OAuth callback (app/api/line_auth.py) via an additive
@@ -988,6 +996,10 @@ def continue_elevate_after_line(*, ticket_id: str, line_user_id: str, db: Sessio
       "account not ready" page. In both cases the ticket STAYS pending (a card
       path parallel: /scan rejects those taps and the kiosk keeps waiting), so
       the right person can still scan the same QR.
+
+    ``display_name``/``picture_url`` are the LINE profile fields the callback
+    already holds; optional so an older caller still works, and used only to
+    ride along in the onboarding hand-off token below.
     """
     ticket = lookup_elevate_ticket(ticket_id)
     if ticket is None or ticket["status"] != "pending":
@@ -998,8 +1010,25 @@ def continue_elevate_after_line(*, ticket_id: str, line_user_id: str, db: Sessio
     )
 
     # A valid LINE user with no employee row is a prospective new hire.
+    #
+    # Carries the resolved identity, exactly like oidc.py's continuation and
+    # for the same two reasons: without ``jwt`` the page makes the user log
+    # into LINE a second time, and without it onboard.html's localStorage
+    # fallback would adopt whatever ``line_jwt_token`` the last person left
+    # behind. That fallback matters most HERE — the kiosk elevate QR is aimed
+    # at whatever browser is to hand, so "the last person on this device" is
+    # the normal case, not the edge case. See
+    # line_auth_service.onboarding_continuation_query for the ``src=line``
+    # half of the guard.
     if employee is None:
-        return RedirectResponse(url=_ONBOARD_PATH, status_code=status.HTTP_302_FOUND)
+        query = line_auth_service.onboarding_continuation_query(
+            line_user_id,
+            display_name=display_name,
+            picture_url=picture_url,
+        )
+        return RedirectResponse(
+            url=f"{_ONBOARD_PATH}?{query}", status_code=status.HTTP_302_FOUND
+        )
 
     # Registered but not yet cleared for access.
     if employee.pending_approval or not employee.is_active:

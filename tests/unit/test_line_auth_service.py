@@ -11,11 +11,17 @@ Tests all LINE OAuth authentication service functionality:
 
 import pytest
 import time
+import urllib.parse
+
 import jwt
 from datetime import datetime, timezone, timedelta, timezone
 from unittest.mock import Mock, patch, MagicMock
 
-from app.services.line_auth_service import LineAuthService, is_line_in_app_browser
+from app.services.line_auth_service import (
+    DEFAULT_LINE_CALLBACK_URL,
+    LineAuthService,
+    is_line_in_app_browser,
+)
 from fastapi import HTTPException
 
 
@@ -49,6 +55,73 @@ def line_auth_service():
     service.callback_url = "http://localhost:5000/api/auth/line/callback"
     service.jwt_secret = "test_jwt_secret"
     return service
+
+
+# ============================================================================
+# Callback URL Configuration Tests
+# ============================================================================
+
+class TestCallbackURLConfiguration:
+    """How LINE_CALLBACK_URL is read out of the environment.
+
+    The empty case is the one that matters. docker-compose.yml passes this
+    variable as ``LINE_CALLBACK_URL=${LINE_CALLBACK_URL}``, so a missing
+    host/CI secret arrives SET-AND-EMPTY rather than unset — and
+    ``os.getenv(name, default)`` only falls back when the name is absent.
+    That is precisely how the empty-issuer outage shipped: its tests only ever
+    deleted the variable, so the deleted case passed while production was
+    handed an empty string. Both cases are covered here on purpose.
+    """
+
+    def test_empty_env_var_falls_back_to_default(self, monkeypatch):
+        """SET-BUT-EMPTY is what docker-compose actually delivers."""
+        monkeypatch.setenv("LINE_CALLBACK_URL", "")
+
+        assert LineAuthService().callback_url == DEFAULT_LINE_CALLBACK_URL
+
+    def test_whitespace_only_env_var_falls_back_to_default(self, monkeypatch):
+        """A stray newline in a secret store is still "no value"."""
+        monkeypatch.setenv("LINE_CALLBACK_URL", "   \n\t ")
+
+        assert LineAuthService().callback_url == DEFAULT_LINE_CALLBACK_URL
+
+    def test_unset_env_var_falls_back_to_default(self, monkeypatch):
+        monkeypatch.delenv("LINE_CALLBACK_URL", raising=False)
+
+        assert LineAuthService().callback_url == DEFAULT_LINE_CALLBACK_URL
+
+    def test_configured_env_var_is_used_verbatim(self, monkeypatch):
+        """A real value wins, surrounding whitespace trimmed."""
+        monkeypatch.setenv(
+            "LINE_CALLBACK_URL",
+            "  https://id.thehfhotel.org/api/public/auth/line/callback  ",
+        )
+
+        assert LineAuthService().callback_url == (
+            "https://id.thehfhotel.org/api/public/auth/line/callback"
+        )
+
+    def test_trailing_slash_is_preserved(self, monkeypatch):
+        """Unlike the issuer fix, no rstrip("/") here: LINE matches
+        redirect_uri against the channel registration byte for byte, so a
+        trailing slash is content and must survive."""
+        monkeypatch.setenv("LINE_CALLBACK_URL", "https://id.thehfhotel.org/cb/")
+
+        assert LineAuthService().callback_url == "https://id.thehfhotel.org/cb/"
+
+    def test_empty_callback_never_reaches_the_authorize_url(self, monkeypatch):
+        """The user-visible consequence of the bug: an empty redirect_uri makes
+        LINE reject the authorize call outright (invalid_request), which is a
+        total LINE-login outage across all five surfaces."""
+        monkeypatch.setenv("LINE_CALLBACK_URL", "")
+        service = LineAuthService()
+        service.channel_id = "test_channel_id"
+
+        auth_url = service.generate_authorization_url(state="s")["auth_url"]
+
+        assert "redirect_uri=&" not in auth_url
+        assert not auth_url.endswith("redirect_uri=")
+        assert urllib.parse.quote(DEFAULT_LINE_CALLBACK_URL, safe="") in auth_url
 
 
 # ============================================================================
@@ -416,6 +489,64 @@ class TestUserProfile:
         call_args = mock_get.call_args
         user_agent = call_args[1]["headers"]["User-Agent"]
         assert "iPhone" in user_agent or "Safari" in user_agent
+
+
+# ============================================================================
+# Onboarding Continuation Tests
+# ============================================================================
+
+class TestOnboardingContinuationQuery:
+    """The hand-off query every route uses to send a freshly authenticated
+    LINE user into /qr-checkin/onboard.
+
+    Both halves are load-bearing: ``jwt`` so the page has an identity of its
+    own, and ``src=line`` so static/onboard.html knows this arrival must NOT
+    fall back to a cached token belonging to whoever used the browser last.
+    """
+
+    def test_query_carries_marker_and_identity(self, line_auth_service):
+        query = line_auth_service.onboarding_continuation_query("U-abc123")
+        params = urllib.parse.parse_qs(query)
+
+        assert params["src"] == ["line"]
+        claims = line_auth_service.verify_jwt_token(params["jwt"][0])
+        assert claims["line_user_id"] == "U-abc123"
+
+    def test_token_is_not_linked_to_an_employee(self, line_auth_service):
+        """This hand-off exists precisely because there is no employee row
+        yet — the token must not claim a badge."""
+        query = line_auth_service.onboarding_continuation_query("U-abc123")
+        token = urllib.parse.parse_qs(query)["jwt"][0]
+
+        assert line_auth_service.verify_jwt_token(token)["employee_badge"] is None
+
+    def test_line_profile_rides_along_for_prefill(self, line_auth_service):
+        query = line_auth_service.onboarding_continuation_query(
+            "U-abc123",
+            display_name="สมชาย",
+            picture_url="https://profile.line-scdn.net/abc",
+        )
+        claims = line_auth_service.verify_jwt_token(
+            urllib.parse.parse_qs(query)["jwt"][0]
+        )
+
+        assert claims["display_name"] == "สมชาย"
+        assert claims["picture_url"] == "https://profile.line-scdn.net/abc"
+
+    def test_query_is_url_encoded(self, line_auth_service):
+        """The result is concatenated straight after "?" by every caller, so it
+        has to be encoded here — a raw display name would otherwise break the
+        redirect."""
+        query = line_auth_service.onboarding_continuation_query(
+            "U-abc123", display_name="สมชาย ใจดี & co"
+        )
+
+        assert " " not in query
+        assert query.count("?") == 0
+        claims = line_auth_service.verify_jwt_token(
+            urllib.parse.parse_qs(query)["jwt"][0]
+        )
+        assert claims["display_name"] == "สมชาย ใจดี & co"
 
 
 # ============================================================================

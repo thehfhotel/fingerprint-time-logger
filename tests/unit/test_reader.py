@@ -8,6 +8,8 @@ Covers HF ID as the central card-login authority:
                one-time card assertion (an RS256 OIDC id_token).
 All server-to-server, guarded by the ``X-Reader-Secret`` shared secret.
 """
+import urllib.parse
+
 import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -845,10 +847,45 @@ class TestElevateContinue:
 
         page = _continue_elevate(ticket, "U-never-seen", test_db)
         assert page.status_code == 302
-        assert page.headers["location"] == "/qr-checkin/onboard"
+
+        location = page.headers["location"]
+        path, _, query = location.partition("?")
+        assert path == "/qr-checkin/onboard"
+
+        # The hand-off must CARRY the identity LINE just proved. A bare
+        # /qr-checkin/onboard made the phone log into LINE a second time and,
+        # on a device more than one person uses, let onboard.html adopt the
+        # previous person's cached line_jwt_token — a wrong-identity write.
+        params = urllib.parse.parse_qs(query)
+        assert params["src"] == ["line"]
+        claims = line_auth_service.verify_jwt_token(params["jwt"][0])
+        assert claims["line_user_id"] == "U-never-seen"
+        assert claims["employee_badge"] is None  # not an employee yet
 
         # Ticket stays pending — the QR is still usable by a real employee.
         assert _elevate_wait(test_client, ticket).status_code == 204
+
+    def test_onboarding_handoff_carries_the_line_profile(
+        self, test_client, test_db, elevate_env
+    ):
+        """The LINE display name/picture the callback already holds ride along
+        in the hand-off token, so the onboarding form can prefill without a
+        second LINE round-trip (public_onboarding reads them from the JWT)."""
+        ticket = _elevate_start(test_client).json()["elevate_token"]
+
+        page = reader_module.continue_elevate_after_line(
+            ticket_id=ticket,
+            line_user_id="U-never-seen",
+            db=test_db,
+            display_name="สมหญิง",
+            picture_url="https://profile.line-scdn.net/abc",
+        )
+        query = page.headers["location"].partition("?")[2]
+        token = urllib.parse.parse_qs(query)["jwt"][0]
+
+        claims = line_auth_service.verify_jwt_token(token)
+        assert claims["display_name"] == "สมหญิง"
+        assert claims["picture_url"] == "https://profile.line-scdn.net/abc"
 
     def test_completion_is_one_time(self, test_client, test_db, elevate_env):
         _make_employee(test_db, "1001", line_user_id="U-line-1001")

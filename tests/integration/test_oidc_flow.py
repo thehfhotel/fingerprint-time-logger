@@ -287,6 +287,66 @@ class TestHappyPath:
         assert info["email"] == "q001@emp.thehfhotel.org"
         assert set(info["apps"]) == {"rooms", "portal"}
 
+    def test_email_claim_is_always_the_synthetic_badge_address(
+        self, test_client, test_db, hfid_enabled, monkeypatch
+    ):
+        """A real employees.email must NOT be honoured here.
+
+        The card/QR Authenticator (the two oidc_service.mint_id_token call
+        sites in app/api/reader.py) mints synthetic_email_for_badge
+        unconditionally. If this path preferred a
+        stored address, one employee would present two different identities
+        depending on which door they came through, and every consumer that
+        keys its user rows off the email claim would split them across two
+        rows. One badge, one address — whatever the Authenticator.
+        """
+        _seed_employee(test_db, email="admin-8@example.invalid")
+
+        callback, verifier = _run_flow_to_code(test_client, monkeypatch)
+        code, _ = _extract_code_and_state(callback)
+        body = _exchange(test_client, code, verifier).json()
+
+        claims = jwt.decode(
+            body["id_token"], _PUBLIC_PEM, algorithms=["RS256"],
+            audience=_CLIENT_ID, issuer=_ISSUER,
+        )
+        assert claims["email"] == "q001@emp.thehfhotel.org"
+        assert claims["email"] == oidc_service.synthetic_email_for_badge("Q001")
+
+        userinfo = test_client.get(
+            "/oidc/userinfo",
+            headers={"Authorization": f"Bearer {body['access_token']}"},
+        )
+        assert userinfo.json()["email"] == "q001@emp.thehfhotel.org"
+
+    def test_email_claim_matches_the_card_path_for_the_same_badge(
+        self, test_client, test_db, hfid_enabled, monkeypatch
+    ):
+        """The invariant stated directly: both Authenticators, one address."""
+        _seed_employee(test_db, email="admin-8@example.invalid")
+
+        callback, verifier = _run_flow_to_code(test_client, monkeypatch)
+        code, _ = _extract_code_and_state(callback)
+        claims = jwt.decode(
+            _exchange(test_client, code, verifier).json()["id_token"],
+            _PUBLIC_PEM, algorithms=["RS256"],
+            audience=_CLIENT_ID, issuer=_ISSUER,
+        )
+
+        card_assertion = oidc_service.mint_id_token(
+            badge="Q001",
+            email=oidc_service.synthetic_email_for_badge("Q001"),
+            name="พนักงาน สมชาย",
+            apps=["rooms", "portal"],
+            nonce=None,
+            audience="portal",
+        )
+        card_claims = jwt.decode(
+            card_assertion, _PUBLIC_PEM, algorithms=["RS256"],
+            audience="portal", issuer=_ISSUER,
+        )
+        assert claims["email"] == card_claims["email"]
+
     def test_client_secret_basic_is_accepted(self, test_client, test_db, hfid_enabled, monkeypatch):
         _seed_employee(test_db)
         callback, verifier = _run_flow_to_code(test_client, monkeypatch)
@@ -406,7 +466,23 @@ class TestEmployeeEligibility:
             test_client, monkeypatch, line_user_id="Ustranger999"
         )
         assert callback.status_code == 302
-        assert callback.headers["location"] == "/qr-checkin/onboard"
+
+        location = callback.headers["location"]
+        path, _, query = location.partition("?")
+        assert path == "/qr-checkin/onboard"
+
+        # The hand-off carries the identity LINE just proved, as the normal
+        # LINE path always has. Without it the user is asked to log into LINE
+        # a second time, and on a shared browser onboard.html would fall back
+        # to the PREVIOUS person's cached line_jwt_token and show/submit their
+        # onboarding record instead.
+        params = urllib.parse.parse_qs(query)
+        assert params["src"] == ["line"]
+        claims = line_auth_service.verify_jwt_token(params["jwt"][0])
+        assert claims["line_user_id"] == "Ustranger999"
+        assert claims["employee_badge"] is None
+        # The LINE profile the callback already had rides along for prefill.
+        assert claims["display_name"] == "LINE Name"
 
     def test_expired_login_ticket_is_rejected(self, test_client, test_db, hfid_enabled, monkeypatch):
         _seed_employee(test_db)
