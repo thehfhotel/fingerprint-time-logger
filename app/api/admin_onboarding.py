@@ -7,7 +7,7 @@ same posture as admin_line_codes.py.
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.models.models import AttendanceRecord, Employee, EmployeeAppGrant
 from app.services.admin_identity import admin_actor_label
 from app.services.app_catalog import DEFAULT_GRANTED_APP_IDS
+from app.services.staff_oa_provision import provision_for_badge
 
 router = APIRouter()
 
@@ -82,6 +83,7 @@ async def list_pending_onboardings(
 @router.post("/approve")
 async def approve_onboarding(
     request: ApproveOnboardingRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     identity: str = Depends(require_admin_auth),
 ):
@@ -112,6 +114,15 @@ async def approve_onboarding(
 
     db.commit()
     db.refresh(employee)
+
+    # A self-onboarded row already carries the submitter's line_user_id (they
+    # authenticated with LINE to reach the form), but it was is_active=False
+    # until this moment — so every provisioning attempt before now returned
+    # early on the inactive check. Approval is when the LINE link becomes
+    # effective, which makes it the third trigger site alongside the grants
+    # endpoint and the 6-digit link-account flow. Background + never-raises,
+    # same posture: the approval is committed and must not depend on LINE.
+    background_tasks.add_task(provision_for_badge, employee.badge_number)
 
     return {
         "success": True,

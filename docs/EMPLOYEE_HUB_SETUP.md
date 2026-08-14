@@ -11,6 +11,7 @@ tools from grant-driven **Role Menus**; this repo hosts the machinery:
 | Menu image renderer (PIL, HF One palette, bundled Thai font) | `app/services/staff_oa_images.py` |
 | Credentials, webhook signature, LINE API client, relink helper | `app/services/staff_oa_service.py` |
 | Follow-event webhook | `app/api/staff_oa.py` → `POST /api/public/staff-oa/webhook` |
+| **Automatic per-employee provisioning (create menu + link/unlink)** | `app/services/staff_oa_provision.py` |
 | Idempotent menu/link sync (dry-run by default) | `scripts/staff_oa_sync.py` |
 | Offline image preview | `scripts/staff_oa_render_menus.py` |
 
@@ -149,9 +150,55 @@ create.
    docker exec fingerprint-time-logger python scripts/staff_oa_sync.py           # plan
    docker exec fingerprint-time-logger python scripts/staff_oa_sync.py --apply   # execute
    ```
-5. Re-run `--apply` whenever grants change (or call
-   `staff_oa_service.link_role_menu_for_line_user()` for one user).
-   Employees who follow the OA are linked automatically by the webhook.
+5. That is the last time anyone needs to run it for a grant change — see
+   **Automatic provisioning** below. Re-run `--apply` only for the
+   channel-wide operations that stay manual (channel default, deleting
+   stale menus, a bulk relink after an artwork change).
+
+## Automatic provisioning (no commands)
+
+Owner directive, 2026-08-14: *"make it auto when housekeeping or new menu
+is granted then maids or users see new LINE OA menu. should be seamless
+from admin perspective. no need to run commands."*
+
+`app/services/staff_oa_provision.py` — `provision_for_badge(badge)` — does
+for ONE employee what the sync script does for the channel: computes their
+variant from `employee_app_grants`, **creates the rich menu if that variant
+is not deployed yet** (render PNG → `create_rich_menu` →
+`upload_rich_menu_image`), then links them to it. No buttons (the empty
+`base` case, i.e. no `housekeeping` grant) ⇒ it **unlinks** instead, so a
+revocation is as automatic as a grant.
+
+It fires from three places, always via FastAPI `BackgroundTasks` (after the
+response, in a threadpool — the blocking LINE/PIL work never touches the
+event loop):
+
+| Trigger | Where |
+|---|---|
+| Admin saves app grants | `PUT /api/private/admin/employees/{badge}/grants` |
+| Employee links LINE with a 6-digit code | `POST /api/public/auth/line/link-account` |
+| Admin approves a self-onboarding | `POST /api/private/admin/onboarding/approve` |
+
+The last two matter because **grant-then-link** is a real onboarding order:
+the grant fires while `line_user_id` is still `NULL` and returns early, so
+the link is what completes it.
+
+A safety net runs **hourly** in the background scheduler
+(`reconcile_staff_oa_menus`, interval overridable with
+`STAFF_OA_RECONCILE_INTERVAL_MINUTES`): every active, LINE-linked employee
+goes through the same path, converging anything the events missed (LINE
+down at grant time, a grant written straight into the DB, a menu deleted by
+hand in the LINE console).
+
+Both paths are **strictly additive and per-user**: they never delete a rich
+menu and never touch the channel default. Those are destructive
+cross-employee operations and stay in `scripts/staff_oa_sync.py`.
+Provisioning also **never raises** — a LINE outage must never fail or roll
+back the admin's save (the grant is committed before the task is scheduled;
+the hourly reconcile is what retries). Everything no-ops while the feature
+is dark.
+
+Employees who follow the OA are still linked by the webhook as well.
 
 ## Webhook behavior
 

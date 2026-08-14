@@ -24,6 +24,19 @@ Jobs:
                                   `zk_session.catch_up_now()` — per-device
                                   watermark + lookback-window backfill, not
                                   a plain "since last import" pull.
+  * `reconcile_staff_oa_menus`   — hourly, no device contact. Safety net for
+                                  the event-driven Employee Hub Role Menu
+                                  provisioning (see
+                                  `app/services/staff_oa_provision.py`):
+                                  re-runs every active, LINE-linked employee
+                                  through the same per-user path so a grant
+                                  written directly in the DB, a menu deleted
+                                  by hand, or a LINE outage at grant time all
+                                  converge on their own. Strictly ADDITIVE —
+                                  it never deletes a rich menu and never
+                                  touches the channel default; those stay in
+                                  scripts/staff_oa_sync.py. No-ops entirely
+                                  while the feature is dark.
 
 Serialization of device access is owned by `zk_session`'s single daemon
 thread + op queue, not by APScheduler — APScheduler's `max_instances=1`
@@ -44,7 +57,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 from apscheduler.jobstores.base import ConflictingIdError
 
-from app.services import zk_session
+from app.services import staff_oa_provision, staff_oa_service, zk_session
 from app.services.device_cache_service import device_cache_service
 from app.services.slack_notifier import slack_notifier
 
@@ -60,6 +73,23 @@ _DRIFT_TOLERANCE_SECONDS = float(os.getenv("ZK_DRIFT_TOLERANCE_SECONDS", "5"))
 # reschedules itself for this many minutes from now (instead of waiting
 # for the regular 30-min interval).
 _STARTUP_RETRY_MINUTES = float(os.getenv("ZK_STARTUP_RETRY_MINUTES", "3"))
+
+# How often to sweep every LINE-linked employee's Employee Hub Role Menu.
+#
+# HOURLY, deliberately. This is a safety net, not the delivery mechanism:
+# the three event triggers (grant change, LINE link, onboarding approval)
+# are what make a grant seamless in seconds, and this job only exists to
+# converge what they missed. That makes the interval a cost/latency trade
+# with nothing riding on it being tight — an hour bounds the worst case
+# "LINE was down exactly when the admin saved" to something a maid would
+# experience as "it showed up later that shift", while keeping the LINE API
+# traffic trivial (a rich-menu list + a link per linked employee per hour;
+# the estate is dozens of employees, not thousands, and LINE's limits are
+# per-minute). Faster buys nothing the event path does not already give;
+# much slower would leave a maid without her tool for most of a working day.
+_STAFF_OA_RECONCILE_MINUTES = float(
+    os.getenv("STAFF_OA_RECONCILE_INTERVAL_MINUTES", "60")
+)
 
 
 class BackgroundSchedulerService:
@@ -216,6 +246,53 @@ class BackgroundSchedulerService:
             # scheduler lag before APScheduler gives up on the run.
             misfire_grace_time=300,
         )
+        # Employee Hub Role Menu safety net. No device contact — DB reads plus
+        # LINE Messaging API calls — so it does not contend with anything
+        # above for the ZK device. The first run is deliberately NOT at
+        # startup: a container restart is the least likely moment for menus to
+        # have drifted, and firing a LINE sweep while the app is still warming
+        # up buys nothing. Two minutes in is soon enough to catch a restart
+        # that followed a failed grant save.
+        self.scheduler.add_job(
+            self._reconcile_staff_oa_menus,
+            IntervalTrigger(minutes=_STAFF_OA_RECONCILE_MINUTES),
+            id="reconcile_staff_oa_menus",
+            name="Reconcile Employee Hub Role Menus (staff LINE OA)",
+            replace_existing=True,
+            next_run_time=datetime.now() + timedelta(minutes=2),
+        )
+
+    async def _reconcile_staff_oa_menus(self) -> None:
+        """Converge every active, LINE-linked employee's Role Menu.
+
+        Guarded twice over, because this job's whole reason for existing is
+        that the event-driven path can fail:
+
+          * the dark check short-circuits before any work when
+            STAFF_OA_CHANNEL_* are unset — which is the state on every dev
+            machine, in CI, and in production until the staff OA secrets are
+            delivered, so it must cost nothing there;
+          * `reconcile_all()` already swallows per-employee and whole-sweep
+            failures, and the try/except here is belt-and-braces so a LINE
+            outage can never surface as an APScheduler job error (which the
+            `_on_error` listener logs at ERROR and would otherwise make look
+            like a device fault).
+
+        The blocking LINE/PIL work runs in a thread — never on the event loop.
+        This service shares its loop with the whole FastAPI app, and blocking
+        LINE calls made on the loop are what stalled /oidc/token earlier
+        today.
+        """
+        try:
+            if not staff_oa_service.is_enabled():
+                logger.debug(
+                    "[scheduler.reconcile_staff_oa_menus] staff OA is dark — skipped"
+                )
+                return
+            await asyncio.to_thread(staff_oa_provision.reconcile_all)
+            logger.info("[scheduler.reconcile_staff_oa_menus] reconcile complete")
+        except Exception as exc:
+            logger.warning(f"[scheduler.reconcile_staff_oa_menus] failed: {exc}")
 
     async def _refresh_attendance_summary(self) -> None:
         """Recompute the attendance summary from the DB and refresh its cache

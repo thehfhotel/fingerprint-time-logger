@@ -19,7 +19,9 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException, status, Query, Request, Depends, Header
+from fastapi import (
+    APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status,
+)
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -28,6 +30,7 @@ from starlette.concurrency import run_in_threadpool
 from app.core.database import get_db
 from app.models.models import Employee
 from app.services.line_auth_service import is_line_in_app_browser, line_auth_service
+from app.services.staff_oa_provision import provision_for_badge
 
 logger = logging.getLogger(__name__)
 
@@ -835,6 +838,7 @@ async def line_callback(
 async def link_account(
     request: LinkAccountRequest,
     http_request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
@@ -945,6 +949,17 @@ async def link_account(
         # Successful link: clear failure counters for this client and the code.
         _clear_link_failures(client_ip, line_user_id)
         _clear_code_failures(request.linking_code)
+
+        # The employee now HAS a LINE identity, so their Employee Hub Role
+        # Menu can finally be provisioned. Grant-then-link is a real
+        # onboarding order — an admin ticks "Housekeeping" days before the
+        # maid ever scans her Q-badge, and that grant-change trigger returned
+        # early because line_user_id was still None. Without this second
+        # trigger she would hold the grant and see no menu until someone ran
+        # the sync script. Background + never-raises for the same reasons as
+        # the grants endpoint: the link itself is committed above and must
+        # not be undone by a LINE hiccup.
+        background_tasks.add_task(provision_for_badge, employee.badge_number)
 
         # Create new JWT token with employee badge for authenticated session
         new_token = line_auth_service.create_jwt_token(

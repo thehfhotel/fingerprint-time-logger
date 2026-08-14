@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -27,6 +27,7 @@ from app.models.models import (
 )
 from app.services.admin_identity import admin_actor_label
 from app.services.app_catalog import APP_CATALOG
+from app.services.staff_oa_provision import provision_for_badge
 
 logger = logging.getLogger(__name__)
 
@@ -98,11 +99,17 @@ async def get_employee_grants(
 async def update_employee_grants(
     badge_number: str,
     body: GrantsUpdateRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     identity: str = Depends(require_admin_auth),
 ):
     """Full-set replace: the employee ends up granted exactly the app_ids
-    in the request body (existing grants not listed are revoked)."""
+    in the request body (existing grants not listed are revoked).
+
+    Also (re)provisions the employee's Employee Hub Role Menu on the staff
+    LINE OA in the background, so ticking "Housekeeping" here is all it
+    takes for the maid to see the menu — no ``staff_oa_sync.py --apply``
+    run on the host. See app/services/staff_oa_provision.py."""
     employee = db.query(Employee).filter(Employee.badge_number == badge_number).first()
     if not employee:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -136,6 +143,21 @@ async def update_employee_grants(
             ))
 
     db.commit()
+
+    # The grant write is DONE and durable at this point. Everything below is
+    # best-effort decoration on top of it.
+    #
+    # Scheduled as a FastAPI BackgroundTask, which means two things that both
+    # matter here: it runs AFTER the response is sent (so the admin's save
+    # stays fast even when LINE is slow — the LINE client's per-call timeout
+    # alone is 15s), and because provision_for_badge is a SYNC function
+    # FastAPI runs it in a threadpool, so the blocking requests/PIL work
+    # never occupies the event loop. This repo was bitten by exactly that
+    # today: blocking LINE calls made on the loop stalled /oidc/token for
+    # every other caller. provision_for_badge additionally swallows all of
+    # its own exceptions, so a LINE outage cannot turn this 200 into a 500 or
+    # roll back the commit above.
+    background_tasks.add_task(provision_for_badge, badge_number)
 
     granted = (
         db.query(EmployeeAppGrant)
