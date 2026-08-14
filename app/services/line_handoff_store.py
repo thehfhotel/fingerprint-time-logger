@@ -172,6 +172,37 @@ _HOLDER_SECRET_BYTES = 32  # 256 bits
 def is_enabled() -> bool:
     """Whether the same-browser hand-off is live.
 
+    DO NOT TURN THIS ON WITHOUT READING THIS. Owner decision 2026-08-14:
+    stays OFF indefinitely, and the reason is not "not finished yet".
+
+    Enabling it lets a colleague on the same WiFi take over another
+    employee's Cloudflare Access session — which reaches payroll and
+    reimbursement, not just the maid tools. The attack: start a hand-off in
+    your own browser, send the victim the LINE link, they log in on their
+    phone (same egress IP, so :func:`resolve_ticket`'s check passes), and
+    your tab collects their session. Everyone at the hotel shares one NAT,
+    so the IP binding stops strangers and not colleagues.
+
+    Note this risk is NEW, not inherited — the "already exposed via
+    /oidc/authorize" argument in this module's header does NOT hold, because
+    ``oidc_service.validate_authorization_request`` exact-match allowlists
+    redirect_uri to Cloudflare's own callback (oidc_service.py:343). Without
+    this module a phished login lands a session in the VICTIM's browser and
+    the attacker gains nothing. Parking a completed login for another tab to
+    collect is the primitive this module adds.
+
+    What it buys, against that: a maid who arrives OFF her normal path
+    (Safari, a scanned QR, a link opened outside LINE) skips one step. Her
+    normal path is the LINE rich menu, where auto login already works. With
+    the flag off she gets the Thai guidance page telling her to open it from
+    the menu — a step, not a dead end.
+
+    So it protects a rare case and exposes every HF ID user. Revisit only if
+    a real maid actually gets stuck on the off-path route; that has not
+    happened. If it ever does, close the fixation hole FIRST — the disclosed
+    route is an RFC 8628 §5.4 style short code shown in the originating tab
+    and confirmed on the LINE leg — and re-run the review before flipping.
+
     Ships DARK — off unless ``LINE_SAME_BROWSER_HANDOFF`` is explicitly truthy.
     That is this repo's posture for every new authority surface (reader.py and
     oidc_service both 404 until their secret is configured), and it is worth
