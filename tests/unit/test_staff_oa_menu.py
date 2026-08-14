@@ -140,16 +140,21 @@ class TestMenuButtonsForGrants:
             b.url for b in menu.MENU_BUTTONS
         ]
 
-    def test_deferred_cleaning_board_is_not_on_any_menu(self):
-        # Was test_housekeeping_grant_adds_housekeeping_button. แม่บ้าน
-        # (hotel.thehfhotel.org/hk) is DEFERRED, not deleted (owner,
-        # 2026-08-14: "report clean rooms defer") until reception is actually
-        # notified and hkFetch stops defaulting to Branch::Hfhotel — a HF Ville
-        # maid would otherwise see and MUTATE HF Hotel rooms. This test goes
-        # red when the tile is re-added, which is the moment to re-check both.
-        every_grant = menu.buttons_for(menu.MENU_GRANT_APP_IDS)
+    def test_housekeeping_grant_adds_the_cleaning_board_button(self):
+        # Was test_deferred_cleaning_board_is_not_on_any_menu, an absence
+        # assertion whose whole job was to go red the moment the tile came
+        # back — which it did. แม่บ้าน (hotel.thehfhotel.org/hk) was RE-ADDED
+        # 2026-08-14 on the owner's explicit go, once wave-4 made `?branch=`
+        # required on /hk instead of defaulting to Branch::Hfhotel.
+        #
+        # It is behind the `housekeeping` grant, so it must NOT appear for an
+        # employee who lacks it — that half is still worth pinning, because
+        # /hk is a write surface onto real room state.
+        assert "https://hotel.thehfhotel.org/hk" in [
+            b.url for b in menu.buttons_for({"housekeeping"})
+        ]
         assert "https://hotel.thehfhotel.org/hk" not in [
-            b.url for b in every_grant
+            b.url for b in menu.buttons_for(set())
         ]
 
     def test_housekeeping_grant_adds_breakage_report_button(self):
@@ -164,15 +169,15 @@ class TestMenuButtonsForGrants:
             b.url for b in buttons
         ]
 
-    def test_housekeeping_grant_alone_yields_two_buttons(self):
-        # Was ..._yields_three_buttons (สแกนเข้างาน + แจ้งซ่อม + เบิกของ), and
-        # ..._four_ before that (แม่บ้าน). Now แจ้งซ่อม + เบิกของ = 2, because
-        # แม่บ้าน is deferred and clock-in was removed on 2026-08-14. This is
-        # the LARGEST variant a real employee can get — and the ONLY variant
-        # with any buttons at all.
+    def test_housekeeping_grant_alone_yields_three_buttons(self):
+        # The count has tracked every scope change this menu has had: 4 with
+        # clock-in + แม่บ้าน, 3 after clock-in went, 2 while แม่บ้าน was
+        # deferred, and 3 again now that it is back (2026-08-14). Still the
+        # LARGEST variant a real employee can get, and still the ONLY variant
+        # with any buttons at all — `base` is deliberately empty.
         buttons = menu.buttons_for({"housekeeping"})
-        assert len(buttons) == 2
-        assert [b.label for b in buttons] == ["แจ้งซ่อม", "เบิกของ"]
+        assert len(buttons) == 3
+        assert [b.label for b in buttons] == ["แม่บ้าน", "แจ้งซ่อม", "เบิกของ"]
         assert len(buttons) == len(menu.MENU_BUTTONS)
 
     def test_menu_irrelevant_grants_are_ignored(self):
@@ -185,7 +190,7 @@ class TestMenuButtonsForGrants:
         # MENU_BUTTONS order — never the order the grants happened to arrive,
         # and never set-iteration order. (Base buttons would come first if
         # any still existed; none do since 2026-08-14.)
-        expected = ["แจ้งซ่อม", "เบิกของ"]
+        expected = ["แม่บ้าน", "แจ้งซ่อม", "เบิกของ"]
         assert [b.label for b in menu.buttons_for(
             ["housekeeping", "payroll", "rooms"]
         )] == expected
@@ -389,25 +394,25 @@ class TestMenuSignatureAndName:
 
 class TestRichMenuPayload:
     def test_payload_matches_line_richmenu_schema(self):
-        # Was built on {"payroll"} (2 buttons, half canvas). The maximal —
-        # and only — real variant is now base+housekeeping at 2 buttons,
-        # still one row.
+        # The maximal — and only — real variant is base+housekeeping, now 3
+        # buttons after แม่บ้าน came back (2026-08-14). Still one row: the
+        # half canvas holds up to 3.
         payload = menu.rich_menu_payload({"housekeeping"})
         assert payload["size"] == {"width": 2500, "height": 843}
         assert payload["selected"] is True
         assert payload["name"] == menu.rich_menu_name({"housekeeping"})
         assert len(payload["chatBarText"]) <= 14  # LINE cap
-        assert len(payload["areas"]) == 2
+        assert len(payload["areas"]) == 3
 
     def test_areas_are_uri_actions_within_canvas(self):
         # ota is menu-irrelevant since 2026-08-14, so this is the same
-        # 2-button base+housekeeping menu — the only menu a real employee can
+        # 3-button base+housekeeping menu — the only menu a real employee can
         # be assigned (see
         # test_every_real_variant_is_either_renderable_or_the_empty_base).
         payload = menu.rich_menu_payload({"housekeeping", "ota"})
         width = payload["size"]["width"]
         height = payload["size"]["height"]
-        assert len(payload["areas"]) == 2
+        assert len(payload["areas"]) == 3
         for area in payload["areas"]:
             bounds = area["bounds"]
             assert bounds["x"] + bounds["width"] <= width
@@ -425,6 +430,7 @@ class TestRichMenuPayload:
             for area in menu.rich_menu_payload({"housekeeping"})["areas"]
         ]
         assert hk_uris == [
+            "https://hotel.thehfhotel.org/hk",
             "https://housekeeping.thehfhotel.org/staff/report",
             "https://housekeeping.thehfhotel.org/staff/stock",
         ]

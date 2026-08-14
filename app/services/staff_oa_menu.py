@@ -119,20 +119,42 @@ MENU_BUTTONS: Tuple[MenuButton, ...] = (
     # launcher — the grants still open both from a real browser, where they
     # work better. Nobody held the `ota` grant at all.
     #
-    # แม่บ้าน (hotel.thehfhotel.org/hk) is DEFERRED, not deleted (owner,
-    # 2026-08-14: "report clean rooms defer"). It is the only cleaning-progress
-    # surface in the estate and its Access app is LINE-only, so it is safe to
-    # put back — but two things should land first: (1) nothing notifies
-    # reception of anything, so a maid's report reaches a 30s-poll board and
-    # no human (ht_hk_cleaning_events is read by nothing outside routes/hk.rs;
-    # `started` has zero reception visibility); and (2) hkFetch never sends
-    # ?branch=, so the backend defaults to Branch::Hfhotel — a HF Ville maid
-    # would see and MUTATE HF Hotel rooms. Re-add as one MenuButton with
-    # grant_app_id="housekeeping", glyph="broom", once those are addressed.
+    # แม่บ้าน (hotel.thehfhotel.org/hk) — RE-ADDED 2026-08-14 on the owner's
+    # explicit go, after being deferred earlier the same day ("report clean
+    # rooms defer"). Both conditions recorded at deferral were addressed by the
+    # wave-4 stream in new-hotel: `?branch=` is now REQUIRED on every /hk room
+    # endpoint (400 absent, 403 outside the HK_BRANCHES allowlist) instead of
+    # silently defaulting to Branch::Hfhotel, and a maid mark-dirty verb now
+    # exists. The immediate reason for the re-add is that V11 — a maid walking
+    # start -> done on a real room — is meant to be exercised FROM this tile
+    # rather than by typing the URL.
+    #
+    # TWO CAVEATS THAT ARE STILL OPEN, and they matter before other maids get
+    # the `housekeeping` grant:
+    #   1. The branch is PICKED BY THE MAID (a per-device picker whose options
+    #      come from the global HK_BRANCHES env), not derived from her identity.
+    #      A HF Ville maid can still choose HF Hotel and file against the wrong
+    #      property. A per-employee guard keyed on HF ID's Employee.location is
+    #      being built to close this; until it lands, the picker is the only
+    #      thing standing between a mis-tap and a wrong-property write.
+    #   2. Nothing notifies reception of anything. A maid's report reaches a
+    #      30-second-poll board and no human — ht_hk_cleaning_events is read by
+    #      nothing outside routes/hk.rs, so `started` has zero reception
+    #      visibility, and only `done` lands, as a silent room_clean flip.
+    #
+    # Today the exposure of both is bounded: badge 421 (the owner) is the sole
+    # `housekeeping` grant holder, so this tile reaches exactly one person who
+    # knows the caveats. Re-check both before granting a real maid.
     #
     # Housekeeping Ops (docs/housekeeping-ops-interfaces.md, 2026-08-11): the
     # ~/HF/housekeeping app's maid-facing pages, revealed by the same
     # `housekeeping` grant. These two work end-to-end today.
+    MenuButton(
+        grant_app_id="housekeeping",
+        label="แม่บ้าน",
+        url="https://hotel.thehfhotel.org/hk",
+        glyph="broom",
+    ),
     MenuButton(
         grant_app_id="housekeeping",
         label="แจ้งซ่อม",
