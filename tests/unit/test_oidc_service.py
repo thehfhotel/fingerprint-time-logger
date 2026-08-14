@@ -151,6 +151,70 @@ class TestDiscovery:
         assert set(doc["scopes_supported"]) == {"openid", "email", "profile"}
 
 
+class TestIssuerResolution:
+    """The issuer must survive being SET TO EMPTY, not just being unset.
+
+    Production only ever presents the empty case: docker-compose.yml passes
+    ``HFID_ISSUER=${HFID_ISSUER:-}`` and no HFID_ISSUER secret is defined, so
+    the container gets the variable set to "". Every test above uses the
+    ``enabled_provider`` fixture, which does ``monkeypatch.delenv`` — it
+    models UNSET, the one state production never has, which is how this
+    reached production unnoticed.
+
+    The consequence when it regresses: every minted id_token carries
+    ``"iss": ""`` and the discovery document advertises relative endpoints,
+    so any consumer that pins the issuer rejects every assertion. That took
+    out both the card tap and the LINE QR scan on the reimbursement kiosk,
+    which share one admission step, behind a UI message about the card.
+    """
+
+    def test_empty_issuer_falls_back_to_the_default(self, enabled_provider, monkeypatch):
+        monkeypatch.setenv("HFID_ISSUER", "")
+        assert oidc_service.get_issuer() == "https://id.thehfhotel.org/oidc"
+
+    def test_whitespace_only_issuer_falls_back_to_the_default(
+        self, enabled_provider, monkeypatch
+    ):
+        monkeypatch.setenv("HFID_ISSUER", "   ")
+        assert oidc_service.get_issuer() == "https://id.thehfhotel.org/oidc"
+
+    def test_unset_issuer_uses_the_default(self, enabled_provider):
+        assert oidc_service.get_issuer() == "https://id.thehfhotel.org/oidc"
+
+    def test_an_explicit_issuer_still_wins(self, enabled_provider, monkeypatch):
+        monkeypatch.setenv("HFID_ISSUER", "https://id.example.test/oidc/")
+        assert oidc_service.get_issuer() == "https://id.example.test/oidc"
+
+    def test_discovery_endpoints_stay_absolute_when_the_env_is_empty(
+        self, enabled_provider, monkeypatch
+    ):
+        # The live symptom: {"issuer": "", "jwks_uri": "/jwks", ...}. Relative
+        # endpoints are unusable to every OIDC client, so pin absoluteness.
+        monkeypatch.setenv("HFID_ISSUER", "")
+        doc = oidc_service.build_discovery_document()
+        assert doc["issuer"] == "https://id.thehfhotel.org/oidc"
+        for field in ("authorization_endpoint", "token_endpoint", "jwks_uri",
+                      "userinfo_endpoint"):
+            assert doc[field].startswith("https://"), field
+
+    def test_minted_id_token_carries_the_absolute_issuer_when_env_is_empty(
+        self, enabled_provider, monkeypatch
+    ):
+        # The actual failure: consumers pin `iss`, so an empty one is a 401
+        # at their end, not an error at ours.
+        monkeypatch.setenv("HFID_ISSUER", "")
+        token = oidc_service.mint_id_token(
+            badge="1001",
+            email="somsri@emp.thehfhotel.org",
+            name="สมศรี",
+            audience="reimbursement",
+            apps=["reimbursement"],
+            nonce=None,
+        )
+        claims = jwt.decode(token, options={"verify_signature": False})
+        assert claims["iss"] == "https://id.thehfhotel.org/oidc"
+
+
 # ============================================================================
 # PKCE
 # ============================================================================

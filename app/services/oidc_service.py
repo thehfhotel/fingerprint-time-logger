@@ -149,8 +149,25 @@ def is_enabled() -> bool:
 
 
 def get_issuer() -> str:
-    """OIDC issuer identifier (also the base for every endpoint URL)."""
-    return os.getenv("HFID_ISSUER", DEFAULT_ISSUER).strip().rstrip("/")
+    """OIDC issuer identifier (also the base for every endpoint URL).
+
+    An EMPTY value falls back to the default, which a plain
+    ``os.getenv(name, default)`` does not do: getenv's default fires only
+    when the variable is UNSET, and docker-compose.yml passes
+    ``HFID_ISSUER=${HFID_ISSUER:-}``, so with no HFID_ISSUER secret defined
+    the container receives the variable SET TO EMPTY. That made get_issuer()
+    return "", so every minted id_token carried ``"iss": ""`` and the
+    discovery document advertised relative endpoints ("/jwks").
+
+    Consumers that pin the issuer then reject every assertion: the
+    reimbursement kiosk's jwtVerify pins
+    ``https://id.thehfhotel.org/oidc``, so both the card tap AND the LINE QR
+    scan failed at their shared admission step with a 401 the UI renders as
+    "บัตรไม่ถูกต้อง" — a message that points at the card and hid the real
+    cause for both. Same bug class as bf80746 (empty KIOSK_EMAILS emptying
+    the kiosk map instead of falling back).
+    """
+    return os.getenv("HFID_ISSUER", "").strip().rstrip("/") or DEFAULT_ISSUER
 
 
 def get_client_id() -> str:
