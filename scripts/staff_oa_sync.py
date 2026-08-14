@@ -7,15 +7,22 @@ registry, idempotently:
   1. Compute the menu variants actually needed: ``base`` (the channel
      default) plus every distinct grant-combination held by active
      employees with a linked LINE account (``employee_app_grants`` filtered
-     to the menu-relevant grants in app/services/staff_oa_menu.py).
+     to the menu-relevant grants in app/services/staff_oa_menu.py). When
+     ``base`` has no buttons — its state since the Hub became a maid-only
+     tool on 2026-08-14 — it is not a variant at all: no menu is created
+     for it, the channel default is CLEARED instead of set, and the
+     employees who resolve to it are UNLINKED (see ``base_has_buttons`` in
+     ``sync()``). That is a deliberate configuration, not a failure.
   2. Ensure each variant exists on the channel — rich-menu names embed a
      content signature (``staffhub:<variant>:<sig>``), so an unchanged
      variant is reused, a changed one is re-created with a freshly rendered
      HF One image (app/services/staff_oa_images.py). A variant whose grant
      combination needs more than LINE's 6-button-per-menu cap is SKIPPED
      with a warning naming the variant and its employees — see ``sync()``.
-  3. Make the ``base`` variant the channel default.
-  4. Link every linked employee to their variant (bulk link API, chunked).
+  3. Make the ``base`` variant the channel default (or clear the default
+     when base is empty).
+  4. Link every linked employee to their variant (bulk link API, chunked);
+     unlink the ones whose variant has no menu.
   5. Delete stale ``staffhub:*`` menus nothing references any more.
 
 DRY-RUN by default: prints the reconciliation plan (read-only GETs against
@@ -45,9 +52,23 @@ from app.core.database import SessionLocal  # noqa: E402
 from app.services import staff_oa_images, staff_oa_menu, staff_oa_service  # noqa: E402
 
 
-def _plan_variants(assignments: Dict[str, List[str]]) -> List[str]:
-    """Variant keys to deploy: base first, then the observed combinations."""
-    keys = set(assignments) | {"base"}
+def _plan_variants(
+    assignments: Dict[str, List[str]], base_has_buttons: bool = True
+) -> List[str]:
+    """Variant keys to deploy: base first, then the observed combinations.
+
+    ``base`` is normally unconditional — it is the channel default, so it
+    must exist even when no employee resolves to it. When the button table
+    leaves base EMPTY (``base_has_buttons=False``; see ``sync()``), it is
+    dropped instead — and dropped even if employees DID resolve to it,
+    because a 0-button variant has no rich menu to deploy and no channel
+    default to be. Those employees are unlinked further down in ``sync()``.
+    """
+    keys = set(assignments)
+    if base_has_buttons:
+        keys |= {"base"}
+    else:
+        keys -= {"base"}
     return sorted(keys, key=lambda key: (key != "base", key))
 
 
@@ -83,9 +104,32 @@ def sync(apply: bool, render_dir: str = "") -> int:
     finally:
         db.close()
 
-    variant_keys = _plan_variants(assignments)
+    # Is `base` — the variant an employee with no menu-relevant grant
+    # resolves to — a menu at all? Since the Hub became a maid-only tool
+    # (owner, 2026-08-14: "remove the clock-in button too") every remaining
+    # button is gated on the `housekeeping` grant, so base has ZERO buttons
+    # and there is no base menu to deploy. That is a DELIBERATE state, not a
+    # breakage, and it is computed once here so every step below can branch
+    # on it explicitly instead of discovering it as a side effect of the
+    # >6-button guard (which would skip base for the wrong reason, print a
+    # scary SKIP for a configuration that is working as intended, and then
+    # KeyError on menu_ids["base"] three steps later).
+    #
+    # A future MENU_BUTTONS row with grant_app_id=None flips this back to
+    # True and restores the original behaviour exactly — both paths are
+    # tested (tests/unit/test_staff_oa_sync.py).
+    base_has_buttons = bool(staff_oa_menu.buttons_for(frozenset()))
+
+    variant_keys = _plan_variants(assignments, base_has_buttons)
     linked_count = sum(len(users) for users in assignments.values())
     print(f"Linked employees: {linked_count}; menu variants needed: {variant_keys}")
+    if not base_has_buttons:
+        print(
+            "  base has no buttons — empty by design (the Hub is a maid-only "
+            "tool): no base menu will be created and no channel default will "
+            "be set. Employees without a menu-relevant grant get no Employee "
+            "Hub menu at all."
+        )
 
     existing_menus = staff_oa_service.get_rich_menu_list()
     existing_by_name = {menu.get("name", ""): menu["richMenuId"] for menu in existing_menus}
@@ -100,27 +144,47 @@ def sync(apply: bool, render_dir: str = "") -> int:
         try:
             staff_oa_menu.menu_size(button_count)
         except ValueError as exc:
-            # LINE caps a rich menu at 6 buttons. A variant key here is only
-            # ever minted from grants that a real, active, linked employee
-            # actually holds (staff_oa_service.employee_menu_assignments) —
-            # unlike scripts/staff_oa_render_menus.py's all-combinations
-            # preview sweep, this is not theoretical: it fires the moment
-            # ONE employee holds every menu-relevant grant at once (payroll
-            # + ota + housekeeping = 7 buttons), most likely the owner
-            # self-granting everything to test the system. Left uncaught,
-            # staff_oa_menu.rich_menu_name() below (via menu_signature ->
-            # menu_size) raises mid-loop and blocks every other employee's
-            # menu from syncing too. Mirror the preview script's guard:
-            # skip just this variant, name it and its employees so the
-            # operator knows exactly who to fix, and keep going.
+            # LINE caps a rich menu at 6 buttons. This guard is forward-
+            # looking insurance: since the 2026-08-14 re-scope to a maid-only
+            # Hub, `housekeeping` is the ONLY menu-relevant grant and the
+            # largest real variant is base+housekeeping at 3 buttons, so no
+            # grant combination an employee can actually hold overflows today.
+            # It earned its place before that: with payroll + ota + a
+            # 3-button housekeeping grant, one employee holding all three
+            # minted a 7-button variant, and the most likely person to do
+            # that was the owner self-granting everything to test the system.
+            # Any future MENU_BUTTONS addition can put us back there, which
+            # is why this stays.
+            #
+            # Left uncaught, staff_oa_menu.rich_menu_name() below (via
+            # menu_signature -> menu_size) raises mid-loop and blocks every
+            # other employee's menu from syncing too. Mirror the preview
+            # script's guard (scripts/staff_oa_render_menus.py): skip just
+            # this variant, name it and its employees so the operator knows
+            # exactly who to fix, and keep going.
+            #
+            # Note this branch can no longer be reached by an EMPTY variant:
+            # menu_size(0) raises too, but base is filtered out of
+            # variant_keys before the loop when it has no buttons (see
+            # base_has_buttons), so a 0-button variant never lands here and
+            # is never reported as a SKIP. Over-cap and empty-by-design are
+            # different states and read differently in the output.
             skipped_variants.append(key)
             affected = assignments.get(key, [])
+            # What happens to those employees below depends on whether there
+            # is a base menu left to fall back to — say the true one.
+            fallback_note = (
+                "they keep the base menu in the meantime."
+                if base_has_buttons
+                else "they get no menu at all in the meantime — base is empty "
+                     "by design, so there is nothing to fall back to."
+            )
             print(
                 f"  SKIP   variant {key!r} needs {button_count} buttons "
                 f"(LINE cap is 6): {exc}. Affected employee LINE user "
                 f"id(s): {affected}. Remove one of this variant's grants "
                 f"from them (or ship a >6-button layout), then re-run — "
-                f"they keep the base menu in the meantime."
+                f"{fallback_note}"
             )
             continue
 
@@ -147,9 +211,27 @@ def sync(apply: bool, render_dir: str = "") -> int:
             menu_ids[key] = f"<new:{key}>"
             print(f"  create {name} (image {len(png_bytes)} bytes)")
 
-    # --- Channel default = base variant
+    # --- Channel default = base variant (or none at all, when base is empty)
     current_default = staff_oa_service.get_default_rich_menu_id()
-    if current_default == menu_ids["base"]:
+    if not base_has_buttons:
+        # No base menu exists, so nothing can be the channel default. Clear
+        # whatever is there instead of leaving it: the stale-menu sweep at
+        # the bottom of this run is about to delete the old base menu (it is
+        # a staffhub:* menu that nothing wants any more), and a channel
+        # default pointing at a deleted rich menu is precisely the
+        # half-synced state this script exists to avoid. Order matters —
+        # clear BEFORE the delete, never after.
+        if current_default is None:
+            print("  default already unset (base is empty by design)")
+        elif apply:
+            staff_oa_service.clear_default_rich_menu()
+            print(f"  default cleared (was {current_default}) — base is empty by design")
+        else:
+            print(
+                f"  default -> cleared (was {current_default}) — "
+                f"base is empty by design"
+            )
+    elif current_default == menu_ids["base"]:
         print(f"  default already {menu_ids['base']}")
     elif apply:
         staff_oa_service.set_default_rich_menu(menu_ids["base"])
@@ -172,11 +254,42 @@ def sync(apply: bool, render_dir: str = "") -> int:
             # link they already had" because a prior sync could have linked
             # them to some other now-stale menu — this guarantees they land
             # on the current, valid channel-default menu instead.
+            #
+            # ...unless there IS no base menu (base is empty by design, see
+            # base_has_buttons above). Then the fallback is to UNLINK them:
+            # menu_ids["base"] does not exist to fall back to, and leaving
+            # their existing link alone would point them at a menu the stale
+            # sweep below is about to delete. Unlinked is the honest state —
+            # LINE shows them no rich menu, which is exactly what an
+            # employee whose buttons cannot be rendered should see, and it
+            # still beats a link to another variant's menu.
             if apply:
-                staff_oa_service.bulk_link_rich_menu(users, menu_ids["base"])
+                if base_has_buttons:
+                    staff_oa_service.bulk_link_rich_menu(users, menu_ids["base"])
+                else:
+                    staff_oa_service.bulk_unlink_rich_menu(users)
+            if base_has_buttons:
+                print(
+                    f"  link   {len(users)} user(s) -> {key!r} "
+                    f"(fallback: base — variant exceeds LINE's 6-button cap)"
+                )
+            else:
+                print(
+                    f"  unlink {len(users)} user(s) <- {key!r} "
+                    f"(fallback: none — variant exceeds LINE's 6-button cap "
+                    f"and base is empty by design)"
+                )
+            continue
+        if key == "base" and not base_has_buttons:
+            # Employees whose whole variant is the empty base. There is no
+            # menu for them, by design — unlink so they hold no rich menu at
+            # all rather than a stale link to the base menu the sweep below
+            # deletes. Deliberate, not a skip: printed plainly, no WARNING.
+            if apply:
+                staff_oa_service.bulk_unlink_rich_menu(users)
             print(
-                f"  link   {len(users)} user(s) -> {key!r} "
-                f"(fallback: base — variant exceeds LINE's 6-button cap)"
+                f"  unlink {len(users)} user(s) <- {key!r} "
+                f"(base is empty by design — no menu for them)"
             )
             continue
         if apply:
@@ -197,6 +310,12 @@ def sync(apply: bool, render_dir: str = "") -> int:
     # per-user step above already moved its would-be employees onto `base`
     # first — so reclaiming it as "stale" here deletes a menu that is truly
     # unreferenced, not one still in use.
+    #
+    # The same ordering argument carries the empty-base case, which leans on
+    # it harder: the old base menu is not in desired_names (base was never
+    # planned), so this sweep DELETES it — and by now the channel default no
+    # longer points at it (cleared above) and its employees no longer link
+    # to it (unlinked above). Deleting last is what makes both true.
     kept_ids = set(menu_ids.values())
     for menu in existing_menus:
         name = menu.get("name", "")
@@ -209,11 +328,17 @@ def sync(apply: bool, render_dir: str = "") -> int:
         print(f"  delete {name} ({menu['richMenuId']})")
 
     if skipped_variants:
+        disposition = (
+            "employees were linked to the base menu instead"
+            if base_has_buttons
+            else "employees were unlinked instead (base is empty by design, "
+                 "so there is no menu to fall back to)"
+        )
         print(
             f"WARNING: {len(skipped_variants)} variant(s) skipped for "
             f"exceeding LINE's 6-button cap: {skipped_variants}. Their "
-            f"employees were linked to the base menu instead; every other "
-            f"variant and employee synced normally."
+            f"{disposition}; every other variant and employee synced "
+            f"normally."
         )
 
     print("Done." if apply else "Dry-run complete — nothing changed.")

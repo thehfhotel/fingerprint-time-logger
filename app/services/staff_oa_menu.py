@@ -2,11 +2,14 @@
 
 The Employee Hub is the rich menu on the dedicated staff LINE Official
 Account (ADR: HF-erp docs/adr/0001-employee-hub-is-line-rich-menu.md).
-Every employee sees the base buttons; extra buttons appear per app grant
-(``employee_app_grants``). This module is the single source of truth for
-which buttons exist, which grant reveals each one, and how a grant set
-maps to a rich-menu layout — everything else (image rendering, the LINE
-Messaging API sync, the follow-event webhook) derives from it.
+Buttons appear per app grant (``employee_app_grants``); since the Hub was
+narrowed to a pure MAID tool (owner, 2026-08-14) there are no ungated base
+buttons left at all, so the ``base`` variant is EMPTY and an employee
+without the ``housekeeping`` grant gets no menu — see the comment at the
+top of MENU_BUTTONS. This module is the single source of truth for which
+buttons exist, which grant reveals each one, and how a grant set maps to a
+rich-menu layout — everything else (image rendering, the LINE Messaging
+API sync, the follow-event webhook) derives from it.
 
 Pure functions only — no I/O, no LINE calls, no database. That keeps the
 menu-computation logic trivially testable and reusable by both the sync
@@ -56,12 +59,47 @@ class MenuButton:
 # grant extras in table order). Add a row to add a tool to the Hub.
 # ---------------------------------------------------------------------------
 MENU_BUTTONS: Tuple[MenuButton, ...] = (
-    MenuButton(
-        grant_app_id=None,
-        label="สแกนเข้างาน",
-        url="https://erp.thehfhotel.org/qr-checkin",
-        glyph="clock",
-    ),
+    # BASE IS DELIBERATELY EMPTY (owner directive 2026-08-14: "remove the
+    # clock-in button too"). No MenuButton carries grant_app_id=None any
+    # more, so `base` — the variant an employee with no menu-relevant grant
+    # resolves to — has ZERO buttons, and that is the intended end state of
+    # narrowing the Hub to a pure MAID tool: the only buttons left are the
+    # two `housekeeping` ones below, so an employee WITHOUT that grant sees
+    # no Employee Hub menu at all. Not a degraded menu, not a launcher with
+    # one dead tile — nothing. That is the point: the Hub is for maids.
+    #
+    # This supersedes the old "keep สแกนเข้างาน because base must never be
+    # empty" reasoning that lived here. The clock-in tile (glyph "clock") was
+    # the last base button and it was kept partly to dodge a footgun rather
+    # than on its own merits. Note what it actually SHIPPED as: the bare
+    # https://erp.thehfhotel.org/qr-checkin, which 301s to http:// and then
+    # 404s — dead on every linked employee's phone from the menu's first
+    # commit (a816c86b, 2026-07-09) until it was removed on 2026-08-14. If a
+    # clock-in tile ever returns, the correct target is
+    # https://erp.thehfhotel.org/qr-checkin/mobile; see the "If a clock-in
+    # button ever comes back" section of docs/EMPLOYEE_HUB_SETUP.md. The footgun is now handled head-on instead of
+    # papered over with a button: scripts/staff_oa_sync.py computes
+    # `base_has_buttons` once, up front, and branches on it — see sync() in
+    # that file. When base is empty the sync deploys NO base menu, CLEARS
+    # the channel default (rather than leaving it pointed at a menu the
+    # stale-menu sweep is about to delete), and UNLINKS the employees whose
+    # variant is `base` instead of linking them to a menu that no longer
+    # exists. app/services/staff_oa_service.link_role_menu_for_line_user()
+    # (the follow-webhook path) degrades the same way: no buttons ⇒ no menu
+    # ⇒ return None, never a link to someone else's variant.
+    #
+    # Consequence to keep in mind before re-adding a base button: with base
+    # empty, menu_size(0) still raises, so menu_signature / rich_menu_name /
+    # rich_menu_payload cannot be called for the empty grant set at all.
+    # That is deliberate — there is no LINE menu to name or render — and the
+    # sync never calls them for base because it never plans that variant.
+    #
+    # Re-adding clock-in (or any other base tile) is a one-line change here;
+    # the empty-base handling downstream is written to survive both states,
+    # and tests pin both (tests/unit/test_staff_oa_sync.py runs the whole
+    # sync against a synthetic base button as well as against the real,
+    # empty base).
+    #
     # Reimbursement is deliberately NOT on the menu (owner directive
     # 2026-08-14). The button opened reimbursement.thehfhotel.org inside
     # LINE's in-app browser, where Google refuses OAuth entirely
@@ -69,27 +107,32 @@ MENU_BUTTONS: Tuple[MenuButton, ...] = (
     # picker were dead-ended, which read as "reimbursement is LINE-only".
     # Reimbursement is a web app used from real browsers (desktop included);
     # don't re-add it here without solving the external-browser handoff.
-    MenuButton(
-        grant_app_id="payroll",
-        label="เงินเดือน",
-        url="https://payroll.thehfhotel.org",
-        glyph="baht",
-    ),
-    MenuButton(
-        grant_app_id="ota",
-        label="OTA Desk",
-        url="https://ota.thehfhotel.org",
-        glyph="bell",
-    ),
-    MenuButton(
-        grant_app_id="housekeeping",
-        label="แม่บ้าน",
-        url="https://hotel.thehfhotel.org/hk",
-        glyph="broom",
-    ),
+    #
+    # เงินเดือน (payroll) and OTA Desk were removed the same day, for scope
+    # rather than breakage: the owner set the Hub's purpose as a MAID tool
+    # ("notify reception of cleaning progress and maid inventory"), and
+    # neither is a maid tool. Both are also dual-IdP with a Cloudflare picker,
+    # so they render a Google button inside LINE — the same shape that
+    # dead-ended Reimbursement. It bites less there because both are
+    # grant-gated to HF ID (LINE) employees, who pick HF ID and get through;
+    # it is a footgun, not a live outage. Removing the tiles removes only the
+    # launcher — the grants still open both from a real browser, where they
+    # work better. Nobody held the `ota` grant at all.
+    #
+    # แม่บ้าน (hotel.thehfhotel.org/hk) is DEFERRED, not deleted (owner,
+    # 2026-08-14: "report clean rooms defer"). It is the only cleaning-progress
+    # surface in the estate and its Access app is LINE-only, so it is safe to
+    # put back — but two things should land first: (1) nothing notifies
+    # reception of anything, so a maid's report reaches a 30s-poll board and
+    # no human (ht_hk_cleaning_events is read by nothing outside routes/hk.rs;
+    # `started` has zero reception visibility); and (2) hkFetch never sends
+    # ?branch=, so the backend defaults to Branch::Hfhotel — a HF Ville maid
+    # would see and MUTATE HF Hotel rooms. Re-add as one MenuButton with
+    # grant_app_id="housekeeping", glyph="broom", once those are addressed.
+    #
     # Housekeeping Ops (docs/housekeeping-ops-interfaces.md, 2026-08-11): the
-    # new ~/HF/housekeeping app's maid-facing pages, same `housekeeping` grant
-    # that already reveals แม่บ้าน above — one grant, three surfaces.
+    # ~/HF/housekeeping app's maid-facing pages, revealed by the same
+    # `housekeeping` grant. These two work end-to-end today.
     MenuButton(
         grant_app_id="housekeeping",
         label="แจ้งซ่อม",
@@ -117,13 +160,13 @@ def menu_grants(granted_app_ids: Iterable[str]) -> FrozenSet[str]:
 
 
 def menu_key(granted_app_ids: Iterable[str]) -> str:
-    """Stable human-readable variant key, e.g. ``base`` or ``base+ota+payroll``."""
+    """Stable human-readable variant key, e.g. ``base`` or ``base+housekeeping``."""
     relevant = sorted(menu_grants(granted_app_ids))
     return "+".join(["base"] + relevant) if relevant else "base"
 
 
 def grants_for_menu_key(key: str) -> FrozenSet[str]:
-    """Inverse of :func:`menu_key` — ``base+ota+payroll`` -> {ota, payroll}.
+    """Inverse of :func:`menu_key` — ``base+housekeeping`` -> {housekeeping}.
 
     Raises ValueError for keys this module could not have minted, so a
     corrupted rich-menu name can never silently map to the wrong menu.

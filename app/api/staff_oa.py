@@ -5,10 +5,14 @@ the dedicated staff Official Account. We only act on ``follow`` events
 (employee adds/re-adds the OA as a friend):
 
   * LINE userId matches an active employee's ``line_user_id`` → link that
-    employee's Role Menu (grant-driven rich menu, per-user link API).
-  * unknown userId → link the channel's base/default menu and reply once
-    with a short Thai pointer to the Q-badge onboarding flow that links
-    LINE accounts to the employee registry.
+    employee's Role Menu (grant-driven rich menu, per-user link API). An
+    employee whose variant has no buttons at all — since 2026-08-14 that is
+    anyone without the ``housekeeping`` grant, see the MENU_BUTTONS comment
+    in app/services/staff_oa_menu.py — is linked to nothing, deliberately.
+  * unknown userId → link the channel's base/default menu if one exists
+    (with an empty base there is none) and reply once with a short Thai
+    pointer to the Q-badge onboarding flow that links LINE accounts to the
+    employee registry.
 
 FAIL CLOSED: the endpoint answers 503 until both STAFF_OA_* secrets are
 configured (see app/core/config.py), and every request must carry a valid
@@ -26,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.models import Employee
-from app.services import staff_oa_service
+from app.services import staff_oa_menu, staff_oa_service
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +75,29 @@ def _handle_follow_event(db: Session, event: dict) -> None:
         staff_oa_service.link_role_menu_for_line_user(db, line_user_id)
         return
 
-    # Unknown follower: pin the base menu explicitly and point them at the
-    # Q-badge onboarding flow so their LINE account gets linked.
+    # Unknown follower: pin the base menu explicitly (when there is one) and
+    # point them at the Q-badge onboarding flow so their LINE account gets
+    # linked.
+    #
+    # Since the 2026-08-14 maid-only re-scope there IS no base menu: every
+    # remaining button is gated on the `housekeeping` grant, so the `base`
+    # variant has zero buttons and the sync deliberately deploys nothing for
+    # it (see base_has_buttons in scripts/staff_oa_sync.py). A stranger
+    # therefore gets no rich menu — correct, they are not staff — and the
+    # reply below is the whole of what they get, which is why it must still
+    # be sent on this path. Distinguish the two reasons the menu is missing:
+    # "the variant has no buttons" is the designed state and only worth an
+    # info line, while "base has buttons but nothing is deployed" really does
+    # mean the sync has not run and an operator should act.
     deployed = staff_oa_service.deployed_menu_ids_by_key()
     base_menu_id = deployed.get("base")
     if base_menu_id:
         staff_oa_service.link_rich_menu_to_user(line_user_id, base_menu_id)
+    elif not staff_oa_menu.buttons_for(frozenset()):
+        logger.info(
+            "Unknown follower gets no rich menu: the base variant is empty "
+            "by design (maid-only Hub). Sending the onboarding reply only."
+        )
     else:
         logger.warning(
             "No deployed base staff-hub menu to link for unknown follower — "

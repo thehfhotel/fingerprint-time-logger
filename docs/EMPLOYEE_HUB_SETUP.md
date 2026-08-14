@@ -28,15 +28,85 @@ touching anything. These are a **different channel** from `LINE_CHANNEL_*`
 
 ## Role Menus
 
-Everyone gets the base buttons; grants in `employee_app_grants`
-(Employee Management) reveal extras:
+**The Hub is a MAID tool**, not a general employee launcher (owner
+directive 2026-08-14: "for maid to notify reception of cleaning progress
+and maid inventory"). **Every button is behind the `housekeeping` grant** —
+there are no base buttons:
 
 | Button | URL | Needs grant |
 |---|---|---|
-| สแกนเข้างาน (QR clock-in) | https://erp.thehfhotel.org/qr-checkin | — |
-| เงินเดือน (Payroll) | https://payroll.thehfhotel.org | `payroll` |
-| OTA Desk | https://ota.thehfhotel.org | `ota` |
-| แม่บ้าน (Housekeeping) | https://hotel.thehfhotel.org/hk | `housekeeping` |
+| แจ้งซ่อม (breakage report) | https://housekeeping.thehfhotel.org/staff/report | `housekeeping` |
+| เบิกของ (stock) | https://housekeeping.thehfhotel.org/staff/stock | `housekeeping` |
+
+Two variants exist: `base` (**0 buttons**) and `base+housekeeping` (2).
+
+### `base` is deliberately empty — no-menu semantics
+
+An employee without the `housekeeping` grant gets **no rich menu at all**.
+That is the intended meaning of a maid-only Hub, and the sync handles it
+explicitly rather than by accident:
+
+- no `base` rich menu is created;
+- the **channel default is cleared** (`clear_default_rich_menu`), so it
+  never dangles at a menu that stale-deletion is about to remove;
+- employees on the `base` variant are **unlinked**
+  (`bulk_unlink_rich_menu`), not left pointing at a doomed menu;
+- the follow webhook still replies to an unknown follower with the
+  onboarding pointer even though it links no menu — that reply is the only
+  onboarding route a new follower gets.
+
+Ordering matters: clearing the default happens **before** stale-menu
+deletion. Reversing it opens a window where the channel default names a
+deleted menu.
+
+The `>6-button` guard in `staff_oa_sync.py` is unrelated to this and stays.
+It is insurance: nothing a real employee can hold overflows LINE's 6-button
+cap today (max variant is 2 buttons), but any future button can put us back
+there.
+
+**Consequence when applying:** issuing `housekeeping` grants and running
+`staff_oa_sync.py --apply` should happen in ONE operation. Applying the
+sync first leaves every linked employee with no menu until the grants land.
+
+### If a clock-in button ever comes back
+
+`สแกนเข้างาน` was on the Hub until 2026-08-14. If it or any
+`erp.thehfhotel.org/qr-checkin` link returns on any surface, it **must**
+carry a path suffix — `/qr-checkin/mobile` for a phone. The bare
+`/qr-checkin` has no route: it 301s to `http://` (protocol downgrade) and
+then 404s. It shipped that way from the menu's first commit (`a816c86b`,
+2026-07-09) until 2026-08-14 — five weeks in which every linked employee
+had a dead clock-in tile and nobody reported it. Registered pages are
+`/qr-checkin/{terminal,mobile,link-account,onboard}`.
+
+### Deliberately absent
+
+**แม่บ้าน / cleaning progress (`hotel.thehfhotel.org/hk`) is DEFERRED**
+(owner, 2026-08-14), not deleted. It is the only cleaning-progress surface
+in the estate and its Access app is HF ID (LINE) only, so it is safe to put
+back — but two things should land first:
+
+1. **Nothing notifies reception of anything.** There is no LINE push, no
+   Slack, no toast on any reception screen. `ht_hk_cleaning_events` is read
+   by nothing outside `routes/hk.rs`, so `started` has zero reception
+   visibility; only `done` reaches reception, as a silent `room_clean` flip
+   picked up by a 30-second poll.
+2. **`hkFetch` never sends `?branch=`**, so the backend defaults to
+   `Branch::Hfhotel` — a HF Ville maid would see and *mutate* HF Hotel
+   rooms.
+
+Also wanted before re-adding (owner): a **mark dirty** verb alongside mark
+clean. Mark clean already writes through to both PMS and iHOTEL; mark dirty
+does not exist — `/hk` has only `started` and `done`, pinned by a DB CHECK
+constraint.
+
+**เงินเดือน (Payroll) and OTA Desk were removed 2026-08-14** for scope, not
+breakage: neither is a maid tool. Both are also dual-IdP with a Cloudflare
+picker, so they render a Google button inside LINE — the same shape that
+dead-ended Reimbursement. It bites less there because both are grant-gated
+to HF ID (LINE) employees who pick HF ID and get through; it is a footgun,
+not an outage. Removing the tiles removed only the launcher — the grants
+still open both from a real browser, where they work better.
 
 **Reimbursement is deliberately NOT on the menu** (owner directive
 2026-08-14, removed same day it went live). The button opened

@@ -11,8 +11,9 @@ The Employee Hub lives on a dedicated staff LINE Official Account
     exists and its secrets are delivered.
   * webhook signature verification (HMAC-SHA256 of the raw body with the
     channel secret, base64, constant-time compare — LINE's scheme).
-  * a thin LINE Messaging API client (rich-menu CRUD, per-user linking,
-    bulk linking, reply messages) used by the webhook and the sync script.
+  * a thin LINE Messaging API client (rich-menu CRUD, the channel default,
+    per-user linking, bulk link/unlink, reply messages) used by the webhook
+    and the sync script.
   * :func:`link_role_menu_for_line_user` — the one-user relink helper the
     follow-event webhook uses today and grant-change hooks can call later.
 """
@@ -150,12 +151,55 @@ def get_default_rich_menu_id() -> Optional[str]:
     return response.json().get("richMenuId")
 
 
+def clear_default_rich_menu() -> None:
+    """Unset the channel default (DELETE /v2/bot/user/all/richmenu).
+
+    The mirror image of :func:`get_default_rich_menu_id` — same path, same
+    resource, opposite verb — and it treats 404 the same way that GET does,
+    for the same reason: "there is no channel default" is the state this
+    call exists to reach, so finding it already reached is success, not an
+    error. Clearing an absent default must therefore never raise
+    StaffOaApiError; a sync that aborted on it would leave the channel
+    half-synced over a no-op.
+
+    Called by scripts/staff_oa_sync.py when the ``base`` variant has no
+    buttons (see the MENU_BUTTONS comment in staff_oa_menu): there is no
+    base menu to be the default, and leaving the default pointed at the old
+    one is worse than useless once the stale-menu sweep deletes it.
+    """
+    response = requests.delete(
+        f"{LINE_API_BASE}/v2/bot/user/all/richmenu",
+        headers=_auth_headers(), timeout=_REQUEST_TIMEOUT_SECONDS,
+    )
+    if response.status_code == 404:
+        return
+    _check("clear default rich menu", response)
+
+
 def link_rich_menu_to_user(line_user_id: str, rich_menu_id: str) -> None:
     """Link one user to a rich menu (per-user Role Menu)."""
     _check("link rich menu to user", requests.post(
         f"{LINE_API_BASE}/v2/bot/user/{line_user_id}/richmenu/{rich_menu_id}",
         headers=_auth_headers(), timeout=_REQUEST_TIMEOUT_SECONDS,
     ))
+
+
+def unlink_rich_menu_from_user(line_user_id: str) -> None:
+    """Drop one user's per-user Role Menu link, so they fall back to the
+    channel default (or to no menu at all, which is the state since the
+    Hub became maid-only — see the MENU_BUTTONS comment in staff_oa_menu).
+
+    A 404 means there was no link to remove, which is the outcome we
+    wanted; treat it as success rather than an error, the same way
+    get_default_rich_menu_id() treats an absent default as None.
+    """
+    response = requests.delete(
+        f"{LINE_API_BASE}/v2/bot/user/{line_user_id}/richmenu",
+        headers=_auth_headers(), timeout=_REQUEST_TIMEOUT_SECONDS,
+    )
+    if response.status_code == 404:
+        return
+    _check("unlink rich menu from user", response)
 
 
 def bulk_link_rich_menu(line_user_ids: Sequence[str], rich_menu_id: str) -> None:
@@ -166,6 +210,31 @@ def bulk_link_rich_menu(line_user_ids: Sequence[str], rich_menu_id: str) -> None
             f"{LINE_API_BASE}/v2/bot/richmenu/bulk/link",
             headers={**_auth_headers(), "Content-Type": "application/json"},
             json={"richMenuId": rich_menu_id, "userIds": chunk},
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+        ))
+
+
+def bulk_unlink_rich_menu(line_user_ids: Sequence[str]) -> None:
+    """Unlink many users from whatever menu they hold, chunked like the link.
+
+    POST /v2/bot/richmenu/bulk/unlink takes ONLY ``userIds`` — there is no
+    richMenuId in the body, unlike :func:`bulk_link_rich_menu`, because the
+    operation is "this user should have no per-user menu" rather than
+    "detach this specific menu". The chunking is identical (LINE caps
+    userIds per request the same way on both endpoints), so the two stay
+    side by side and change together.
+
+    Empty input is a no-op by construction: ``range(0, 0, chunk)`` is empty,
+    so no request fires. That matters — LINE rejects an empty userIds array,
+    and the caller (scripts/staff_oa_sync.py) reaches this with whatever the
+    ``base`` variant happened to hold, which is routinely nobody.
+    """
+    for start in range(0, len(line_user_ids), BULK_LINK_CHUNK_SIZE):
+        chunk = list(line_user_ids[start:start + BULK_LINK_CHUNK_SIZE])
+        _check("bulk unlink rich menu", requests.post(
+            f"{LINE_API_BASE}/v2/bot/richmenu/bulk/unlink",
+            headers={**_auth_headers(), "Content-Type": "application/json"},
+            json={"userIds": chunk},
             timeout=_REQUEST_TIMEOUT_SECONDS,
         ))
 
@@ -245,9 +314,10 @@ def link_role_menu_for_line_user(db: Session, line_user_id: str) -> Optional[str
     (re)adds the staff OA, and future grant-change hooks can call it so a
     changed grant set takes effect without a full sync. Returns the linked
     menu-variant key, or None when nothing could be linked (feature dark,
-    unknown user, or that variant's menu not deployed yet — run the sync
-    script). Never raises for "user not found": unknown followers simply
-    keep the channel-default menu.
+    unknown user, that employee's variant has no buttons at all, or that
+    variant's menu is not deployed yet — run the sync script). Never raises
+    for "user not found": unknown followers simply keep whatever the channel
+    default is.
     """
     if not is_enabled():
         return None
@@ -262,6 +332,37 @@ def link_role_menu_for_line_user(db: Session, line_user_id: str) -> Optional[str
 
     grants = grants_for_badge(db, employee.badge_number)
     key = staff_oa_menu.menu_key(grants)
+
+    # A variant with NO buttons has no rich menu to link, and must not be
+    # quietly handed some OTHER variant's menu — that would show an employee
+    # tools their grants do not cover. Since the 2026-08-14 maid-only
+    # re-scope, `base` is exactly that variant: every remaining button needs
+    # the `housekeeping` grant, so a non-maid follower legitimately gets no
+    # Employee Hub menu at all (see the MENU_BUTTONS comment in
+    # staff_oa_menu). Degrade to None, quietly and without raising — this
+    # runs inside the follow webhook, where an exception is caught and
+    # logged as a failure per event, and this is not a failure. Deliberately
+    # NOT the warning below: nothing is missing, nothing needs an operator,
+    # and a "run the sync script" line here would fire for every non-maid
+    # who ever adds the OA.
+    if not staff_oa_menu.buttons_for(grants):
+        # ACTIVELY unlink rather than merely declining to link. Returning
+        # early would leave a PREVIOUS link in place, and the case that
+        # matters is a demoted maid: her `housekeeping` grant is revoked,
+        # she re-adds the OA before anyone runs the sync, and she would keep
+        # a menu of maid tiles her grants no longer cover. The targets stay
+        # Access-gated so this is not privilege escalation — it is worse in
+        # the way this Hub keeps getting bitten, a button that opens a
+        # Cloudflare block page. Unlinking here makes a refollow self-heal
+        # instead of waiting for the next --apply.
+        unlink_rich_menu_from_user(line_user_id)
+        logger.info(
+            "No staff-hub menu for variant %r (badge=%s) — that variant has "
+            "no buttons; unlinked this user's rich menu",
+            key, employee.badge_number,
+        )
+        return None
+
     deployed = deployed_menu_ids_by_key()
     rich_menu_id = deployed.get(key)
     if not rich_menu_id:
