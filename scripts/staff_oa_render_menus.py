@@ -9,7 +9,7 @@ same images itself when deploying — this script is only for humans.
 
 Usage:
     python scripts/staff_oa_render_menus.py --out /tmp/staffhub-previews
-    python scripts/staff_oa_render_menus.py --out previews base base+payroll
+    python scripts/staff_oa_render_menus.py --out previews base+housekeeping
 """
 import argparse
 import itertools
@@ -39,7 +39,7 @@ def main() -> int:
     parser.add_argument("--out", required=True, help="output directory")
     parser.add_argument(
         "variants", nargs="*",
-        help="variant keys to render (e.g. base base+ota+payroll); "
+        help="variant keys to render (e.g. base+housekeeping); "
              "default: all combinations",
     )
     args = parser.parse_args()
@@ -54,18 +54,31 @@ def main() -> int:
         print("WARNING: no Thai font found — labels fall back to English hosts.")
 
     for key in keys:
-        grants = staff_oa_menu.grants_for_menu_key(key)  # validates the key
+        try:
+            grants = staff_oa_menu.grants_for_menu_key(key)  # validates the key
+        except ValueError as exc:
+            # A key naming a grant that no longer has a button — e.g. the
+            # `base+payroll` this script's own usage line advertised until
+            # 2026-08-14, or a stale `staffhub:base+ota:*` name still sitting
+            # on the live channel. A human typo lands here too. Report it and
+            # keep sweeping rather than dying on an uncaught traceback: a
+            # preview tool must never be harder to use than the thing it
+            # previews.
+            print(f"  {key:<40} SKIPPED — {exc}")
+            continue
         buttons = staff_oa_menu.buttons_for(grants)
         try:
             size = staff_oa_menu.menu_size(len(buttons))
         except ValueError as exc:
-            # Theoretical grant combination past LINE's 6-button cap (e.g. an
-            # employee somehow holding payroll + ota + housekeeping at once).
-            # No employee currently holds all three grants — this variant
-            # would only ever be requested by an all-combinations preview
-            # sweep like the default here, never by staff_oa_sync.py (which
-            # only builds variants for grant sets real linked employees
-            # actually hold). Skip instead of crashing the whole sweep.
+            # Either past LINE's 6-button cap, or EMPTY. Empty is the live
+            # case since the 2026-08-14 maid-only re-scope: `base` has no
+            # buttons at all, by design, and an employee without the
+            # `housekeeping` grant is meant to see no menu (see
+            # docs/EMPLOYEE_HUB_SETUP.md). There is nothing to draw, so skip.
+            # Over-cap is now only reachable by adding buttons; staff_oa_sync
+            # carries its own guard for that, since unlike this
+            # all-combinations sweep it only builds variants real linked
+            # employees actually hold.
             print(f"  {key:<40} SKIPPED — {exc}")
             continue
         png_bytes = staff_oa_images.render_menu_image(buttons)
