@@ -10,9 +10,37 @@ from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
 
 from app.core.database import Base, get_db
+from app.api.deps import require_cf_access
 from app.main_unified import app, fingerprint_app
 from tests.fixtures.test_factories import *
 from tests.fixtures.zkteco_simulator import ZKTecoSimulatorFactory, MockZKConnection
+
+# require_cf_access (app/api/deps.py) is the defense-in-depth dependency now
+# on the consolidated /api/private/* routers (attendance/devices/employees/
+# system/shifts/leaves + the auto-import/refresh endpoints) — see
+# app/main_unified.py. It stands in for edge-side Cloudflare Access, which
+# every one of THIS suite's requests would have already passed in production
+# before ever reaching the app. The hundreds of existing router/business-logic
+# tests across the suite (including tests/integration/* files that build
+# their own local ``TestClient(app)`` fixture rather than reusing test_client
+# below) were written against that assumption — they call these routes
+# directly with no CF Access header — and are not testing auth. The autouse
+# fixture below overrides the dependency to a fixed authenticated identity
+# for every test in the suite by default, same pattern as the get_db
+# override, but applied globally (on the shared ``app`` object every one of
+# those local fixtures also wraps) rather than per-fixture, so it reaches
+# fixtures this file doesn't control too. Tests that DO need to exercise the
+# real dependency (tests/unit/test_private_router_cf_access.py) pop this
+# override back out before asserting on it.
+def _test_cf_access_identity() -> str:
+    return "test-fixture@local.invalid"
+
+
+@pytest.fixture(autouse=True)
+def default_cf_access_override():
+    app.dependency_overrides[require_cf_access] = _test_cf_access_identity
+    yield
+    app.dependency_overrides.pop(require_cf_access, None)
 
 # Test database configuration
 TEST_DATABASE_URL = "sqlite:///./test_attendance.db"
@@ -118,6 +146,8 @@ def test_client(test_engine, monkeypatch):
 
     app.dependency_overrides[get_db] = override_get_db
     fingerprint_app.dependency_overrides[get_db] = override_get_db
+    # require_cf_access is overridden globally by the autouse
+    # default_cf_access_override fixture above, not here.
 
     # Redirect module-level SessionLocal so direct ``next(get_db())`` callers
     # use the test DB, not the production sqlite file.
@@ -155,6 +185,8 @@ def mounted_test_client(test_engine, monkeypatch):
 
     app.dependency_overrides[get_db] = override_get_db
     fingerprint_app.dependency_overrides[get_db] = override_get_db
+    # require_cf_access is overridden globally by the autouse
+    # default_cf_access_override fixture above, not here.
 
     import app.core.database as _db_module
     monkeypatch.setattr(_db_module, "SessionLocal", TestingSessionLocal)

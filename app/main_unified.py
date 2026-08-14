@@ -543,6 +543,7 @@ logger.info("========== REGISTERING PROTECTED API ROUTES ==========")
 # Import system_status and admin_auth routers
 from app.api import system_status, admin_auth
 from app.api.admin_auth import require_admin_auth
+from app.api.deps import require_cf_access
 from fastapi import Depends
 
 logger.info("========== IMPORTED system_status AND admin_auth ==========")
@@ -554,28 +555,40 @@ async def test_endpoint(_: str = Depends(require_admin_auth)):
     return {"status": "success", "message": "Root app routing works!", "timestamp": datetime.now().isoformat()}
 
 # Mount protected API routers
+#
+# dependencies=[Depends(require_cf_access)] on these six (attendance,
+# devices, employees, system, shifts, leaves below): defense-in-depth
+# against a future ungated hostname pointing at this same process — see
+# app/api/deps.py's module docstring for the full rationale, and why this
+# is require_cf_access (any verified staff-tier CF Access identity), NOT
+# require_admin_auth (admin-allowlist only — would 401 the legitimate
+# non-admin staff/kiosk sessions these routers already serve).
 app.include_router(
     consolidated_attendance.router,
     prefix="/api/private/attendance",
-    tags=["attendance-protected"]
+    tags=["attendance-protected"],
+    dependencies=[Depends(require_cf_access)],
 )
 
 app.include_router(
     consolidated_devices.router,
     prefix="/api/private/devices",
-    tags=["devices-protected"]
+    tags=["devices-protected"],
+    dependencies=[Depends(require_cf_access)],
 )
 
 app.include_router(
     consolidated_employees.router,
     prefix="/api/private/employees",
-    tags=["employees-protected"]
+    tags=["employees-protected"],
+    dependencies=[Depends(require_cf_access)],
 )
 
 app.include_router(
     system_status.router,
     prefix="/api/private/system",
-    tags=["system-protected"]
+    tags=["system-protected"],
+    dependencies=[Depends(require_cf_access)],
 )
 
 app.include_router(
@@ -596,6 +609,7 @@ app.include_router(
     shifts.router,
     prefix="/api/private/shifts",
     tags=["shifts-protected"],
+    dependencies=[Depends(require_cf_access)],
 )
 
 # Leaves admin (2026-05). Public holidays + per-employee leaves; both
@@ -604,6 +618,7 @@ app.include_router(
     leaves.router,
     prefix="/api/private/leaves",
     tags=["leaves-protected"],
+    dependencies=[Depends(require_cf_access)],
 )
 
 # Employee registry admin (2026-07): app grants, NFC card slot, and the
@@ -632,8 +647,15 @@ app.include_router(
 )
 
 # Protected endpoint: Auto-import status
+#
+# Same bare-router exposure class as the six above (this and the two
+# endpoints below sit just outside the include_router block, but were an
+# equally unauthenticated /api/private/* surface) — gated with the same
+# require_cf_access for the same reason. system.html (the only caller,
+# itself admin-page-gated) already carries a valid CF Access assertion,
+# so this is strictly additive.
 @app.get("/api/private/auto-import/status")
-async def get_auto_import_status():
+async def get_auto_import_status(_: str = Depends(require_cf_access)):
     """Get background scheduler status, including the next attendance import."""
     from app.services.background_scheduler import background_scheduler
 
@@ -667,7 +689,7 @@ async def get_auto_import_status():
 
 
 @app.post("/api/private/auto-import/trigger/")
-async def trigger_manual_import(full: bool = False):
+async def trigger_manual_import(full: bool = False, _: str = Depends(require_cf_access)):
     """Manually trigger an attendance import via the scheduler."""
     try:
         from app.services.background_scheduler import background_scheduler
@@ -715,9 +737,12 @@ async def redirect_attendance_calendar():
 async def favicon():
     return {"status": "no favicon"}
 
-# Manual refresh endpoint for dashboard (protected)
+# Manual refresh endpoint for dashboard. The docstring/comment here has
+# long said "(protected)" but until this change nothing enforced that —
+# same bare-/api/private/* exposure class as the six consolidated routers
+# above; now closed with the same require_cf_access dependency.
 @app.post("/api/private/refresh")
-async def manual_refresh():
+async def manual_refresh(_: str = Depends(require_cf_access)):
     """Manual refresh: trigger an attendance import through the scheduler."""
     try:
         from app.services.background_scheduler import background_scheduler
