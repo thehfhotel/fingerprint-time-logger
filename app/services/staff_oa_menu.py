@@ -62,12 +62,13 @@ MENU_BUTTONS: Tuple[MenuButton, ...] = (
         url="https://erp.thehfhotel.org/qr-checkin",
         glyph="clock",
     ),
-    MenuButton(
-        grant_app_id=None,
-        label="เบิกค่าใช้จ่าย",
-        url="https://reimbursement.thehfhotel.org",
-        glyph="receipt",
-    ),
+    # Reimbursement is deliberately NOT on the menu (owner directive
+    # 2026-08-14). The button opened reimbursement.thehfhotel.org inside
+    # LINE's in-app browser, where Google refuses OAuth entirely
+    # (disallowed_useragent) — managers reaching the Cloudflare Access
+    # picker were dead-ended, which read as "reimbursement is LINE-only".
+    # Reimbursement is a web app used from real browsers (desktop included);
+    # don't re-add it here without solving the external-browser handoff.
     MenuButton(
         grant_app_id="payroll",
         label="เงินเดือน",

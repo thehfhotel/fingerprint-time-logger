@@ -10,17 +10,25 @@ from app.services import staff_oa_menu as menu
 
 
 class TestMenuButtonsForGrants:
-    def test_base_menu_has_exactly_clockin_and_reimbursement(self):
+    def test_base_menu_has_exactly_clockin(self):
+        # Reimbursement was removed from base 2026-08-14 (owner directive):
+        # inside LINE's in-app browser Google OAuth is refused, dead-ending
+        # managers at the Access picker. See the MENU_BUTTONS comment.
         buttons = menu.buttons_for(set())
         assert [b.url for b in buttons] == [
             "https://erp.thehfhotel.org/qr-checkin",
-            "https://reimbursement.thehfhotel.org",
+        ]
+
+    def test_reimbursement_is_not_on_any_menu(self):
+        every_grant = menu.buttons_for(menu.MENU_GRANT_APP_IDS)
+        assert "https://reimbursement.thehfhotel.org" not in [
+            b.url for b in every_grant
         ]
 
     def test_payroll_grant_adds_payroll_button(self):
         buttons = menu.buttons_for({"payroll"})
         assert "https://payroll.thehfhotel.org" in [b.url for b in buttons]
-        assert len(buttons) == 3
+        assert len(buttons) == 2
 
     def test_ota_grant_adds_ota_desk_button(self):
         buttons = menu.buttons_for({"ota"})
@@ -42,9 +50,9 @@ class TestMenuButtonsForGrants:
             b.url for b in buttons
         ]
 
-    def test_housekeeping_grant_alone_yields_five_buttons(self):
-        # 2 base + แม่บ้าน + แจ้งซ่อม + เบิกของ (docs/housekeeping-ops-interfaces.md).
-        assert len(menu.buttons_for({"housekeeping"})) == 5
+    def test_housekeeping_grant_alone_yields_four_buttons(self):
+        # 1 base + แม่บ้าน + แจ้งซ่อม + เบิกของ (docs/housekeeping-ops-interfaces.md).
+        assert len(menu.buttons_for({"housekeeping"})) == 4
 
     def test_menu_irrelevant_grants_are_ignored(self):
         assert menu.buttons_for({"rooms", "portal"}) == menu.buttons_for(set())
@@ -56,7 +64,7 @@ class TestMenuButtonsForGrants:
         buttons = menu.buttons_for({"housekeeping", "ota", "payroll"})
         labels = [b.label for b in buttons]
         assert labels == [
-            "สแกนเข้างาน", "เบิกค่าใช้จ่าย", "เงินเดือน", "OTA Desk",
+            "สแกนเข้างาน", "เงินเดือน", "OTA Desk",
             "แม่บ้าน", "แจ้งซ่อม", "เบิกของ",
         ]
 
@@ -98,19 +106,16 @@ class TestMenuLayout:
         with pytest.raises(ValueError):
             menu.menu_size(7)
 
-    def test_all_three_grant_apps_together_exceed_the_six_button_cap(self):
-        """payroll + ota + housekeeping = 7 buttons — past LINE's 6-button
-        max per canvas, now that housekeeping alone contributes 3 (แม่บ้าน,
-        แจ้งซ่อม, เบิกของ). No employee currently holds all three grants at
-        once (maids hold housekeeping only; docs/housekeeping-ops-plan.md) —
-        staff_oa_sync.py only ever builds variants for grant combinations
-        real linked employees actually hold, so this is a documented latent
-        limit, not something hit in practice. Flagged for the team lead
-        rather than solved here (locked interface contract)."""
+    def test_all_three_grant_apps_together_now_fit_the_six_button_cap(self):
+        """payroll + ota + housekeeping = 6 buttons — exactly LINE's max.
+        Dropping reimbursement from base (2026-08-14) took this combo from
+        7 (over the cap; the variant was skipped by staff_oa_sync's guard)
+        back down to a legal menu. The very next button row added to
+        MENU_BUTTONS re-overflows it — the sync guard stays, and
+        test_staff_oa_sync.py keeps it red-capable with a synthetic grant."""
         buttons = menu.buttons_for({"housekeeping", "ota", "payroll"})
-        assert len(buttons) == 7
-        with pytest.raises(ValueError):
-            menu.menu_size(len(buttons))
+        assert len(buttons) == 6
+        assert menu.menu_size(len(buttons)) == (2500, 1686)
 
     def test_five_buttons_split_three_plus_two_with_no_dead_cell(self):
         assert menu.menu_rows(5) == (3, 2)
@@ -154,12 +159,12 @@ class TestRichMenuPayload:
         assert payload["selected"] is True
         assert payload["name"] == menu.rich_menu_name({"payroll"})
         assert len(payload["chatBarText"]) <= 14  # LINE cap
-        assert len(payload["areas"]) == 3
+        assert len(payload["areas"]) == 2
 
     def test_areas_are_uri_actions_within_canvas(self):
-        # housekeeping (3 buttons) + ota (1) + 2 base = 6 — right at the
-        # LINE cap (see test_all_three_grant_apps_together_exceed_the_six_
-        # button_cap for the payroll-too combination that overflows it).
+        # housekeeping (3 buttons) + ota (1) + 1 base = 5 (the payroll-too
+        # combination sits exactly at the 6 cap; see test_all_three_grant_
+        # apps_together_now_fit_the_six_button_cap).
         payload = menu.rich_menu_payload({"housekeeping", "ota"})
         width = payload["size"]["width"]
         height = payload["size"]["height"]
@@ -175,5 +180,4 @@ class TestRichMenuPayload:
         uris = [area["action"]["uri"] for area in payload["areas"]]
         assert uris == [
             "https://erp.thehfhotel.org/qr-checkin",
-            "https://reimbursement.thehfhotel.org",
         ]

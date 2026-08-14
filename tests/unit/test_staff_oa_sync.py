@@ -1,12 +1,14 @@
 """Unit tests for scripts/staff_oa_sync.py — the >6-button variant guard.
 
-LINE rich menus cap at 6 buttons. ``app.services.staff_oa_menu`` can mint a
-variant key past that cap (``base+housekeeping+ota+payroll`` = 7 buttons)
-the moment one active, linked employee holds every menu-relevant grant at
-once — most likely the owner self-granting everything to test the system.
-Uncaught, ``staff_oa_menu.rich_menu_name()`` (via ``menu_signature`` ->
-``menu_size``) raises ``ValueError`` mid-loop in ``sync()`` and blocks every
-*other* employee's menu from syncing too.
+LINE rich menus cap at 6 buttons. Since the reimbursement base button was
+removed (2026-08-14), every REAL grant combination fits — all three grants
+together now yield exactly 6 — so these tests mint the over-sized variant
+with a synthetic fourth grant patched into the menu table (see ``sync_env``).
+The guard itself must stay: the next button row added to ``MENU_BUTTONS``
+re-overflows the all-grants combo. Uncaught, ``staff_oa_menu.
+rich_menu_name()`` (via ``menu_signature`` -> ``menu_size``) raises
+``ValueError`` mid-loop in ``sync()`` and blocks every *other* employee's
+menu from syncing too.
 
 These tests pin the guard: the over-sized variant is skipped with a warning
 that names the variant and its employees, every other variant still syncs,
@@ -33,11 +35,12 @@ from app.services import staff_oa_menu  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Fixture data: one over-granted employee (all three grants -> 7 buttons)
-# plus two ordinary ones, so the assignments map has more than one variant
-# to prove the skip is scoped to just the bad one.
+# Fixture data: one over-granted employee (all three real grants plus the
+# synthetic ``extra`` grant sync_env patches in -> 7 buttons) plus two
+# ordinary ones, so the assignments map has more than one variant to prove
+# the skip is scoped to just the bad one.
 # ---------------------------------------------------------------------------
-OVERSIZED_KEY = "base+housekeeping+ota+payroll"  # 2 + 3 + 1 + 1 = 7 buttons
+OVERSIZED_KEY = "base+extra+housekeeping+ota+payroll"  # 1 + 1 + 3 + 1 + 1 = 7
 PAYROLL_KEY = "base+payroll"
 BASE_KEY = "base"
 
@@ -78,6 +81,29 @@ def sync_env(monkeypatch):
 
     monkeypatch.setattr(staff_oa_sync.staff_oa_service, "is_enabled", lambda: True)
     monkeypatch.setattr(staff_oa_sync, "SessionLocal", lambda: _FakeDb())
+    # No real grant combination can overflow LINE's 6-button cap since the
+    # reimbursement base button was removed (all three grants = exactly 6),
+    # so the over-sized variant is minted with a synthetic fourth grant.
+    # Every staff_oa_menu function reads these module globals at call time,
+    # so patching them is enough for buttons_for/grants_for_menu_key alike.
+    monkeypatch.setattr(
+        staff_oa_menu,
+        "MENU_BUTTONS",
+        staff_oa_menu.MENU_BUTTONS
+        + (
+            staff_oa_menu.MenuButton(
+                grant_app_id="extra",
+                label="ทดสอบ",
+                url="https://extra.thehfhotel.org",
+                glyph="clock",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        staff_oa_menu,
+        "MENU_GRANT_APP_IDS",
+        staff_oa_menu.MENU_GRANT_APP_IDS | {"extra"},
+    )
     monkeypatch.setattr(
         staff_oa_sync.staff_oa_service,
         "employee_menu_assignments",
