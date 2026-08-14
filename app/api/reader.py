@@ -6,7 +6,9 @@ two distinct trust boundaries:
 * ``READER_SECRET`` (reader↔central) — only the ESP32 reader knows it. Used by
   ``POST /scan`` to ingest a tap.
 * ``READER_RESOLVE_SECRET`` (app↔central) — each consuming app's BACKEND knows
-  it. Used by ``POST /resolve`` (direct UID→identity lookup), ``POST /claim``
+  it. Used by ``POST /resolve`` (direct UID→identity lookup),
+  ``POST /resolve-badge`` (the same lookup keyed by badge, for an app that
+  already holds an identity and needs the employee's branch), ``POST /claim``
   (pair a terminal to a reader) and ``POST /wait`` (long-poll for the tap and
   receive a signed card assertion).
 
@@ -407,6 +409,26 @@ def _find_employee_by_uid(db: Session, uid: str) -> Optional[Employee]:
     )
 
 
+def _find_employee_by_badge(db: Session, badge: str) -> Optional[Employee]:
+    """Exact badge_number → employee lookup (the /resolve-badge rule).
+
+    Deliberately NOT case-folded, unlike :func:`_find_employee_by_uid`. A card
+    UID is hex whose case is an artefact of who wrote the row, so folding it is
+    a correction; a badge is the identity key ITSELF — it is what a card
+    assertion carries as ``sub``, it is stored verbatim, and it is unique
+    case-sensitively — so folding case here could quietly map two distinct
+    badges onto one employee. Surrounding whitespace IS stripped: it is never
+    part of a badge and is the easiest thing for a caller to send by accident.
+
+    A blank badge matches nothing rather than degenerating into a query that
+    could pair with an empty-string badge row.
+    """
+    normalized = badge.strip()
+    if not normalized:
+        return None
+    return db.query(Employee).filter(Employee.badge_number == normalized).first()
+
+
 def _grant_app_ids(db: Session, badge: str) -> List[str]:
     """The employee's granted app ids (the ``apps`` claim), ordered by id."""
     return [
@@ -426,6 +448,10 @@ def _grant_app_ids(db: Session, badge: str) -> List[str]:
 
 class ResolveRequest(BaseModel):
     uid: str
+
+
+class ResolveBadgeRequest(BaseModel):
+    badge: str
 
 
 class ScanRequest(BaseModel):
@@ -473,6 +499,11 @@ async def resolve_card(
 
     A UID with no matching employee is a normal answer (found=false, HTTP 200),
     not an error.
+
+    ``location`` ('HF' | 'HF_VILLE' | null) rides along for the same reason
+    /resolve-badge exists — see that endpoint's note. It is passed through
+    VERBATIM, null included; null means "HF ID has no branch on file", never a
+    default branch.
     """
     _require_secret(x_reader_secret, _resolve_secret())
 
@@ -485,6 +516,7 @@ async def resolve_card(
             "apps": [],
             "active": False,
             "pending": False,
+            "location": None,
         }
 
     return {
@@ -494,6 +526,80 @@ async def resolve_card(
         "apps": _grant_app_ids(db, employee.badge_number),
         "active": bool(employee.is_active),
         "pending": bool(employee.pending_approval),
+        "location": employee.location,
+    }
+
+
+# ============================================================================
+# POST /resolve-badge — badge → employee identity + branch (app↔central)
+# ============================================================================
+#
+# The badge-keyed sibling of /resolve: same secret, same dark-when-unset
+# posture, same not-found-is-200 contract, same payload. It exists because a
+# consuming app that ALREADY has an identity — from a card assertion's ``sub``,
+# an OIDC id_token, or its own session — holds a badge and not a card UID, so
+# /resolve is unusable to it. Nothing here is visible to a caller that could
+# not already learn it from /resolve for the same employee.
+#
+# Why (2026-08): new-hotel's maid surface (hotel.thehfhotel.org/hk) now files a
+# cleaning report against a specific branch, but its branch picker was fed by a
+# GLOBAL env allowlist (HK_BRANCHES) identical for every employee — so an HF
+# Ville maid was offered "HF Hotel" too, and could file against the WRONG
+# PROPERTY. HF ID already holds the authoritative answer in Employee.location.
+# It is in no OIDC claim, and adding a Cloudflare Access claim is impractical
+# (the IdP ``claims`` config is set at IdP-create time with no update path), so
+# the app backend asks HF ID over the LAN instead: filter the picker to the
+# maid's own branch, and refuse a mutation whose branch disagrees.
+#
+# ``location`` is passed through VERBATIM, NULL INCLUDED. Do not invent a
+# default here. The consumer must be able to tell "this employee works at HF
+# Hotel" from "HF ID does not know", because it REFUSES on unknown — coercing
+# null to "HF" would silently reintroduce the exact wrong-property bug this
+# endpoint fixes, one layer down and much harder to see.
+
+
+@router.post("/resolve-badge")
+async def resolve_badge(
+    body: ResolveBadgeRequest,
+    x_reader_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Resolve an employee badge number into an identity + branch location.
+
+    Auth: constant-time match of ``X-Reader-Secret`` against
+    ``READER_RESOLVE_SECRET``. Dark (404) when unset; 401 on mismatch —
+    identical to /resolve, and the identical app↔central caller class.
+
+    A badge with no matching employee is a normal answer (found=false, HTTP
+    200), not an error: the caller is asking a question, not asserting the row
+    exists.
+
+    ``location`` is 'HF' | 'HF_VILLE' | null, verbatim from Employee.location.
+    null means unassigned in HF ID — the caller must treat it as UNKNOWN and
+    refuse, not as a branch.
+    """
+    _require_secret(x_reader_secret, _resolve_secret())
+
+    employee = _find_employee_by_badge(db, body.badge)
+    if employee is None:
+        return {
+            "found": False,
+            "badge": None,
+            "display_name": None,
+            "apps": [],
+            "active": False,
+            "pending": False,
+            "location": None,
+        }
+
+    return {
+        "found": True,
+        "badge": employee.badge_number,
+        "display_name": employee.display_name,
+        "apps": _grant_app_ids(db, employee.badge_number),
+        "active": bool(employee.is_active),
+        "pending": bool(employee.pending_approval),
+        "location": employee.location,
     }
 
 

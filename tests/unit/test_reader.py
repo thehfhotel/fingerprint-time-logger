@@ -2,6 +2,9 @@
 
 Covers HF ID as the central card-login authority:
   * /resolve — direct UID -> employee lookup (app↔central).
+  * /resolve-badge — the same lookup keyed by badge, for an app that already
+               holds an identity and needs the employee's branch location
+               (app↔central).
   * /scan    — the ESP32 reader ingests a tap (reader↔central).
   * /claim   — an app backend pairs a terminal to a reader (app↔central).
   * /wait    — an app backend long-polls for the tap and receives a signed
@@ -117,7 +120,10 @@ class TestReaderResolveAuth:
 class TestReaderResolve:
     def test_found_returns_identity_and_apps(self, test_client, test_db, monkeypatch):
         monkeypatch.setenv("READER_RESOLVE_SECRET", SECRET)
-        _make_employee(test_db, "1001", display_name="สมชาย", nfc_card_uid="AABBCCDD")
+        _make_employee(
+            test_db, "1001", display_name="สมชาย", nfc_card_uid="AABBCCDD",
+            location="HF_VILLE",
+        )
         test_db.add(EmployeeAppGrant(employee_badge_number="1001", app_id="rooms"))
         test_db.add(EmployeeAppGrant(employee_badge_number="1001", app_id="portal"))
         test_db.commit()
@@ -135,6 +141,7 @@ class TestReaderResolve:
             "apps": ["portal", "rooms"],  # ordered by app_id
             "active": True,
             "pending": False,
+            "location": "HF_VILLE",
         }
 
     def test_unknown_uid_returns_found_false(self, test_client, test_db, monkeypatch):
@@ -152,6 +159,7 @@ class TestReaderResolve:
             "apps": [],
             "active": False,
             "pending": False,
+            "location": None,
         }
 
     def test_case_insensitive_match(self, test_client, test_db, monkeypatch):
@@ -192,6 +200,195 @@ class TestReaderResolve:
         assert data["badge"] == "1003"
         assert data["active"] is False
         assert data["pending"] is True
+
+
+# ============================================================================
+# /resolve-badge — badge -> identity + branch location (READER_RESOLVE_SECRET)
+# ============================================================================
+#
+# The badge-keyed sibling of /resolve. It must behave IDENTICALLY on the auth
+# axis (dark 404 / 401 / 200) and on the not-found axis (200 found=false), so
+# these mirror the /resolve tests above deliberately rather than testing a
+# reduced surface.
+
+
+class TestReaderResolveBadgeAuth:
+    def test_dark_returns_404_when_secret_unset(self, test_client, test_db, monkeypatch):
+        # No READER_RESOLVE_SECRET in the environment -> the surface is dark,
+        # exactly like /resolve: indistinguishable from a route that isn't there.
+        monkeypatch.delenv("READER_RESOLVE_SECRET", raising=False)
+        _make_employee(test_db, "1001", location="HF_VILLE")
+
+        response = test_client.post(
+            "/api/private/reader/resolve-badge",
+            json={"badge": "1001"},
+            headers=_headers(),
+        )
+        assert response.status_code == 404
+
+    def test_missing_header_returns_401(self, test_client, test_db, monkeypatch):
+        monkeypatch.setenv("READER_RESOLVE_SECRET", SECRET)
+        response = test_client.post(
+            "/api/private/reader/resolve-badge",
+            json={"badge": "1001"},
+        )
+        assert response.status_code == 401
+
+    def test_wrong_secret_returns_401(self, test_client, test_db, monkeypatch):
+        monkeypatch.setenv("READER_RESOLVE_SECRET", SECRET)
+        _make_employee(test_db, "1001", location="HF_VILLE")
+
+        response = test_client.post(
+            "/api/private/reader/resolve-badge",
+            json={"badge": "1001"},
+            headers=_headers("not-the-secret"),
+        )
+        assert response.status_code == 401
+
+
+class TestReaderResolveBadge:
+    def test_found_returns_identity_apps_and_location(
+        self, test_client, test_db, monkeypatch
+    ):
+        monkeypatch.setenv("READER_RESOLVE_SECRET", SECRET)
+        _make_employee(
+            test_db, "2001", display_name="สมหญิง", location="HF_VILLE"
+        )
+        _grant(test_db, "2001", "rooms", "portal")
+
+        response = test_client.post(
+            "/api/private/reader/resolve-badge",
+            json={"badge": "2001"},
+            headers=_headers(),
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "found": True,
+            "badge": "2001",
+            "display_name": "สมหญิง",
+            "apps": ["portal", "rooms"],  # ordered by app_id
+            "active": True,
+            "pending": False,
+            "location": "HF_VILLE",
+        }
+
+    def test_hf_location_passes_through(self, test_client, test_db, monkeypatch):
+        monkeypatch.setenv("READER_RESOLVE_SECRET", SECRET)
+        _make_employee(test_db, "2002", location="HF")
+
+        response = test_client.post(
+            "/api/private/reader/resolve-badge",
+            json={"badge": "2002"},
+            headers=_headers(),
+        )
+        assert response.status_code == 200
+        assert response.json()["location"] == "HF"
+
+    def test_null_location_stays_null_and_is_not_defaulted(
+        self, test_client, test_db, monkeypatch
+    ):
+        """LOAD-BEARING: an employee with no branch on file must answer null.
+
+        The consumer refuses a branch-scoped action when HF ID does not know
+        the employee's branch. If this endpoint ever coerced NULL to "HF" the
+        refusal would silently become "file it against HF Hotel" — the exact
+        wrong-property bug the endpoint exists to prevent.
+        """
+        monkeypatch.setenv("READER_RESOLVE_SECRET", SECRET)
+        _make_employee(test_db, "2003")  # location left unset -> NULL
+
+        response = test_client.post(
+            "/api/private/reader/resolve-badge",
+            json={"badge": "2003"},
+            headers=_headers(),
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["found"] is True
+        # The key is PRESENT (so the consumer can tell "unknown" from "the
+        # server is too old to answer") and its value is null, not "HF".
+        assert "location" in data
+        assert data["location"] is None
+
+    def test_unknown_badge_returns_found_false(self, test_client, test_db, monkeypatch):
+        monkeypatch.setenv("READER_RESOLVE_SECRET", SECRET)
+        response = test_client.post(
+            "/api/private/reader/resolve-badge",
+            json={"badge": "9999"},
+            headers=_headers(),
+        )
+        # Not an error: an unknown badge is a normal answer, like /resolve's
+        # unknown UID.
+        assert response.status_code == 200
+        assert response.json() == {
+            "found": False,
+            "badge": None,
+            "display_name": None,
+            "apps": [],
+            "active": False,
+            "pending": False,
+            "location": None,
+        }
+
+    def test_inactive_pending_employee_still_found_with_flags(
+        self, test_client, test_db, monkeypatch
+    ):
+        monkeypatch.setenv("READER_RESOLVE_SECRET", SECRET)
+        _make_employee(
+            test_db,
+            "2004",
+            is_active=False,
+            pending_approval=True,
+            location="HF_VILLE",
+        )
+
+        response = test_client.post(
+            "/api/private/reader/resolve-badge",
+            json={"badge": "2004"},
+            headers=_headers(),
+        )
+        assert response.status_code == 200
+        data = response.json()
+        # Reported accurately rather than hidden — the caller decides what an
+        # inactive employee may do, exactly as with /resolve.
+        assert data["found"] is True
+        assert data["badge"] == "2004"
+        assert data["active"] is False
+        assert data["pending"] is True
+        assert data["location"] == "HF_VILLE"
+
+    def test_badge_match_is_exact_but_trimmed(self, test_client, test_db, monkeypatch):
+        """Whitespace is stripped; case is NOT folded (unlike the UID lookup).
+
+        A badge is the identity key itself, unique case-sensitively, so folding
+        case could map two distinct badges onto one employee.
+        """
+        monkeypatch.setenv("READER_RESOLVE_SECRET", SECRET)
+        _make_employee(test_db, "hk1", location="HF_VILLE")
+
+        padded = test_client.post(
+            "/api/private/reader/resolve-badge",
+            json={"badge": "  hk1  "},
+            headers=_headers(),
+        )
+        assert padded.status_code == 200
+        assert padded.json()["found"] is True
+
+        wrong_case = test_client.post(
+            "/api/private/reader/resolve-badge",
+            json={"badge": "HK1"},
+            headers=_headers(),
+        )
+        assert wrong_case.status_code == 200
+        assert wrong_case.json()["found"] is False
+
+        blank = test_client.post(
+            "/api/private/reader/resolve-badge",
+            json={"badge": "   "},
+            headers=_headers(),
+        )
+        assert blank.status_code == 200
+        assert blank.json()["found"] is False
 
 
 # ============================================================================
