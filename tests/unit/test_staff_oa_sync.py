@@ -537,7 +537,8 @@ class TestOtherVariantsStillSyncNormally:
 
     def test_housekeeping_menu_carries_the_real_buttons(self, sync_env):
         # The surviving variant is a real one, so its payload is worth
-        # checking: every real button on the single-row canvas.
+        # checking: every real button on the two-row canvas (4 buttons since
+        # 2026-08-17).
         staff_oa_sync.sync(apply=True)
         housekeeping_name = staff_oa_menu.rich_menu_name(REAL_GRANTS)
         payload = next(
@@ -546,7 +547,7 @@ class TestOtherVariantsStillSyncNormally:
         assert len(payload["areas"]) == MAX_REAL_BUTTON_COUNT
         assert payload["size"] == {
             "width": staff_oa_menu.MENU_WIDTH,
-            "height": staff_oa_menu.MENU_HEIGHT_HALF,
+            "height": staff_oa_menu.MENU_HEIGHT_FULL,
         }
 
     def test_housekeeping_employees_are_linked_to_the_housekeeping_menu(self, sync_env):

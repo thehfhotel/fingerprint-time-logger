@@ -169,16 +169,25 @@ class TestMenuButtonsForGrants:
             b.url for b in buttons
         ]
 
-    def test_housekeeping_grant_alone_yields_three_buttons(self):
+    def test_housekeeping_grant_alone_yields_four_buttons(self):
         # The count has tracked every scope change this menu has had: 4 with
         # clock-in + แม่บ้าน, 3 after clock-in went, 2 while แม่บ้าน was
-        # deferred, and 3 again now that it is back (2026-08-14). Still the
-        # LARGEST variant a real employee can get, and still the ONLY variant
-        # with any buttons at all — `base` is deliberately empty.
+        # deferred, 3 again once it was back (2026-08-14), and 4 since
+        # รับของมาส่ง got its own tile (2026-08-17) — which is also the first
+        # time a REAL variant needs the two-row canvas. Still the LARGEST
+        # variant a real employee can get, and still the ONLY variant with any
+        # buttons at all — `base` is deliberately empty.
         buttons = menu.buttons_for({"housekeeping"})
-        assert len(buttons) == 3
-        assert [b.label for b in buttons] == ["แม่บ้าน", "แจ้งซ่อม", "เบิกของ"]
+        assert len(buttons) == 4
+        assert [b.label for b in buttons] == [
+            "แม่บ้าน",
+            "แจ้งซ่อม",
+            "สต๊อกของ",
+            "รับของมาส่ง",
+        ]
         assert len(buttons) == len(menu.MENU_BUTTONS)
+        assert menu.menu_size(len(buttons)) == (menu.MENU_WIDTH, menu.MENU_HEIGHT_FULL)
+        assert menu.menu_rows(len(buttons)) == (2, 2)
 
     def test_menu_irrelevant_grants_are_ignored(self):
         assert menu.buttons_for({"rooms", "portal"}) == menu.buttons_for(set())
@@ -190,7 +199,7 @@ class TestMenuButtonsForGrants:
         # MENU_BUTTONS order — never the order the grants happened to arrive,
         # and never set-iteration order. (Base buttons would come first if
         # any still existed; none do since 2026-08-14.)
-        expected = ["แม่บ้าน", "แจ้งซ่อม", "เบิกของ"]
+        expected = ["แม่บ้าน", "แจ้งซ่อม", "สต๊อกของ", "รับของมาส่ง"]
         assert [b.label for b in menu.buttons_for(
             ["housekeeping", "payroll", "rooms"]
         )] == expected
@@ -394,25 +403,29 @@ class TestMenuSignatureAndName:
 
 class TestRichMenuPayload:
     def test_payload_matches_line_richmenu_schema(self):
-        # The maximal — and only — real variant is base+housekeeping, now 3
-        # buttons after แม่บ้าน came back (2026-08-14). Still one row: the
-        # half canvas holds up to 3.
+        # The maximal — and only — real variant is base+housekeeping, 4
+        # buttons since รับของมาส่ง got its own tile (2026-08-17). That is one
+        # past what the half canvas holds, so this is the first real variant
+        # on the two-row 1686.
         payload = menu.rich_menu_payload({"housekeeping"})
-        assert payload["size"] == {"width": 2500, "height": 843}
+        assert payload["size"] == {"width": 2500, "height": 1686}
         assert payload["selected"] is True
         assert payload["name"] == menu.rich_menu_name({"housekeeping"})
         assert len(payload["chatBarText"]) <= 14  # LINE cap
-        assert len(payload["areas"]) == 3
+        assert len(payload["areas"]) == 4
 
     def test_areas_are_uri_actions_within_canvas(self):
         # ota is menu-irrelevant since 2026-08-14, so this is the same
-        # 3-button base+housekeeping menu — the only menu a real employee can
+        # 4-button base+housekeeping menu — the only menu a real employee can
         # be assigned (see
         # test_every_real_variant_is_either_renderable_or_the_empty_base).
+        # Worth more now than when it was one row: with two rows the bounds
+        # check actually exercises a non-zero y offset.
         payload = menu.rich_menu_payload({"housekeeping", "ota"})
         width = payload["size"]["width"]
         height = payload["size"]["height"]
-        assert len(payload["areas"]) == 3
+        assert len(payload["areas"]) == 4
+        assert any(area["bounds"]["y"] > 0 for area in payload["areas"])
         for area in payload["areas"]:
             bounds = area["bounds"]
             assert bounds["x"] + bounds["width"] <= width
@@ -433,4 +446,5 @@ class TestRichMenuPayload:
             "https://hotel.thehfhotel.org/hk",
             "https://housekeeping.thehfhotel.org/staff/report",
             "https://housekeeping.thehfhotel.org/staff/stock",
+            "https://housekeeping.thehfhotel.org/staff/receive",
         ]

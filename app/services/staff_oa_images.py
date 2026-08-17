@@ -172,7 +172,7 @@ def _glyph_wrench(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, stroke
 
 
 def _glyph_box(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, stroke: int) -> None:
-    """Storage carton — stock ledger (เบิกของ)."""
+    """Storage carton — stock ledger (สต๊อกของ)."""
     inset = size // 8
     left, right = x0 + inset, x0 + size - inset
     top, bottom = y0 + size // 6, y0 + size
@@ -185,8 +185,32 @@ def _glyph_box(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, stroke: i
     draw.line([cx, top, cx, mid_y], fill=GOLD_SOFT, width=max(2, stroke // 2))
 
 
+def _glyph_tray(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, stroke: int) -> None:
+    """Arrow down into a tray — a delivery arriving (รับของมาส่ง).
+
+    Deliberately the mirror of the box glyph's neighbour on the menu: box is
+    what is ON the shelf, this is what is coming IN. Matches the DownTrayIcon
+    the housekeeping app puts on the same action, so the tile and the screen
+    it opens carry the same mark.
+    """
+    inset = size // 8
+    left, right = x0 + inset, x0 + size - inset
+    cx = x0 + size // 2
+    # The tray: an open-topped U across the bottom third.
+    tray_top = y0 + size * 2 // 3
+    draw.line([left, tray_top, left, y0 + size], fill=GOLD, width=stroke)
+    draw.line([right, tray_top, right, y0 + size], fill=GOLD, width=stroke)
+    draw.line([left, y0 + size, right, y0 + size], fill=GOLD, width=stroke)
+    # The arrow dropping into it.
+    draw.line([cx, y0, cx, tray_top - stroke], fill=GOLD, width=stroke)
+    head = size // 4
+    draw.line([cx - head, tray_top - stroke - head, cx, tray_top - stroke], fill=GOLD, width=stroke)
+    draw.line([cx + head, tray_top - stroke - head, cx, tray_top - stroke], fill=GOLD, width=stroke)
+
+
 _GLYPH_RENDERERS = {
     "clock": _glyph_clock,
+    "tray": _glyph_tray,
     "receipt": _glyph_receipt,
     "baht": _glyph_baht,
     "bell": _glyph_bell,

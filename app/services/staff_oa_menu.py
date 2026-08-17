@@ -161,11 +161,27 @@ MENU_BUTTONS: Tuple[MenuButton, ...] = (
         url="https://housekeeping.thehfhotel.org/staff/report",
         glyph="wrench",
     ),
+    # Renamed from เบิกของ 2026-08-17: เบิก was switched off that day
+    # (HK_STOCK_TAKE_ENABLED, maids self-manage stock for now) and รับของ moved
+    # to its own screen, so the page behind this tile does neither of the things
+    # the old label named. It is นับสต๊อก and ขอซื้อของ now. Same URL.
     MenuButton(
         grant_app_id="housekeeping",
-        label="เบิกของ",
+        label="สต๊อกของ",
         url="https://housekeeping.thehfhotel.org/staff/stock",
         glyph="box",
+    ),
+    # A supplier drops one box covering several คำขอซื้อ; she books the whole
+    # delivery in one submit. On the menu in its own right rather than behind
+    # สต๊อกของ, because it is a distinct errand she does when the truck arrives,
+    # not something she reaches for mid-corridor. Note this takes the maid menu
+    # to FOUR buttons, so the canvas becomes the two-row 2500x1686 (rows 2+2,
+    # no dead cell) — the first variant here to use it.
+    MenuButton(
+        grant_app_id="housekeeping",
+        label="รับของมาส่ง",
+        url="https://housekeeping.thehfhotel.org/staff/receive",
+        glyph="tray",
     ),
 )
 

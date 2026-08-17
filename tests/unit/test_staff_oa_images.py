@@ -3,14 +3,14 @@
 Pins the LINE contract (exact canvas sizes, PNG, <1MB) and the bundled
 Thai font that makes rendering deterministic on any machine.
 
-WHY THE FULL-HEIGHT TESTS USE SYNTHETIC BUTTONS
------------------------------------------------
-Since the Employee Hub was re-scoped to a maid tool (2026-08-14) the real
-table is 2 buttons — แจ้งซ่อม / เบิกของ, both behind the `housekeeping`
-grant — so the only real variants are `base` (ZERO buttons, nothing to
-render at all) and `base+housekeeping` (2), and the latter fits the
-2500x843 single-row canvas: NO real variant reaches the 2500x1686 two-row
-canvas any more.
+WHY THE 5- AND 6-BUTTON TESTS USE SYNTHETIC BUTTONS
+---------------------------------------------------
+The real table is 4 buttons since รับของมาส่ง got its own tile (2026-08-17)
+— แม่บ้าน / แจ้งซ่อม / สต๊อกของ / รับของมาส่ง, all behind the `housekeeping`
+grant. So the real variants are `base` (ZERO buttons, nothing to render at
+all) and `base+housekeeping` (4), and the latter DOES reach the 2500x1686
+two-row canvas: it is covered by the real table, not by padding. Only 5 and
+6 still need synthetic buttons, being counts no grant set can produce.
 
 The empty base is why nothing here renders ``buttons_for(set())``: there is
 no image for a variant with no buttons, ``menu_size(0)`` raises, and the
@@ -125,16 +125,17 @@ class TestFixturePremise:
         with pytest.raises(ValueError):
             menu_size(0)
 
-    def test_no_real_variant_reaches_the_full_height_canvas(self):
-        # Production table, nothing patched. If this fails, MENU_BUTTONS grew
-        # past 3 and real variants use the two-row canvas again — keep the
-        # synthetic tests anyway (they pin 4/5/6 deterministically), but the
-        # module docstring needs updating.
+    def test_the_real_variant_reaches_the_full_height_canvas(self):
+        # Production table, nothing patched. This flipped on 2026-08-17: the
+        # maid menu grew to 4 real buttons, so the biggest real variant now
+        # renders on the two-row canvas rather than the single-row one. If it
+        # drops back to 3 or fewer, invert this and update the module
+        # docstring; the synthetic tests below stay either way.
         assert len(buttons_for(MENU_GRANT_APP_IDS)) == MAX_REAL_BUTTON_COUNT
-        assert MAX_REAL_BUTTON_COUNT <= 3
-        assert menu_size(MAX_REAL_BUTTON_COUNT) == HALF_HEIGHT_CANVAS
+        assert MAX_REAL_BUTTON_COUNT == 4
+        assert menu_size(MAX_REAL_BUTTON_COUNT) == FULL_HEIGHT_CANVAS
 
-    @pytest.mark.parametrize("button_count", (4, 5, 6))
+    @pytest.mark.parametrize("button_count", (5, 6))
     def test_padding_mints_counts_the_real_table_cannot(self, button_count):
         buttons = _padded_to(button_count)
         assert len(buttons) == button_count
@@ -171,21 +172,22 @@ class TestRenderMenuImage:
         with pytest.raises(ValueError):
             images.render_menu_image(buttons_for(frozenset()))
 
-    def test_housekeeping_menu_renders_half_height_png(self):
-        # Was ..._renders_full_height_png back when this variant was 5
-        # buttons (2 base + แม่บ้าน + แจ้งซ่อม + เบิกของ). Since 2026-08-14 it
-        # is แจ้งซ่อม + เบิกของ = 2, so it renders on the single-row canvas —
-        # and it is the ONLY real variant with an image at all, which is why
-        # the count is asserted against the table rather than written as 2.
-        # Still the only variant that exercises the wrench/box glyphs.
+    def test_housekeeping_menu_renders_full_height_png(self):
+        # This test has followed the maid menu up and down: full height when
+        # the variant was 5 buttons, half when the 2026-08-14 re-scope cut it
+        # to 2, and full again since รับของมาส่ง made it 4 (2026-08-17). It is
+        # the ONLY real variant with an image at all, which is why the count is
+        # asserted against the table rather than written as a literal. Still
+        # the only variant that exercises the broom/wrench/box/tray glyphs.
         png_bytes, image = _render_and_open({"housekeeping"})
         assert len(buttons_for({"housekeeping"})) == MAX_REAL_BUTTON_COUNT
         assert image.format == "PNG"
-        assert image.size == HALF_HEIGHT_CANVAS
+        assert image.size == FULL_HEIGHT_CANVAS
         assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
 
     @pytest.mark.parametrize("button_count", (4, 5, 6))
     def test_full_height_canvas_renders_png_within_lines_cap(self, button_count):
+        # 4 is the REAL maid menu since 2026-08-17; 5 and 6 stay synthetic.
         # Replaces test_six_button_menu_renders_full_height_png, whose
         # premise (housekeeping 3 + ota 1 + 2 base = 6) died with the ota and
         # reimbursement tiles. Synthetic per the module docstring: the
