@@ -19,6 +19,19 @@ APP_CATALOG: List[Tuple[str, str]] = [
     # the Employee Hub Role Menu (staff_oa_menu). The maid-facing surface
     # itself is employee-login plan Phase 4 (hotel.thehfhotel.org/hk).
     ("housekeeping", "Housekeeping"),
+    # Widens /hk to EVERY branch in HK_BRANCHES for the holder, instead of the
+    # single location derived from their Employee.location. Owner decision
+    # 2026-08-17 ("admin can pick location"): location enforcement pins each
+    # maid to her own property, which is right for maids and wrong for whoever
+    # supervises both. Grant-based on purpose — no badge is hardcoded anywhere.
+    #
+    # It carries NO Employee Hub button, and that is safe by construction:
+    # MENU_GRANT_APP_IDS is derived from MENU_BUTTONS, so staff_oa_menu treats
+    # this grant as menu-irrelevant — same variant, same menu name, same
+    # signature, no re-render, no re-link. Granted ALONE (without
+    # `housekeeping`) it resolves to the empty base, i.e. no menu at all, so it
+    # is not a back door to the maid menu.
+    ("housekeeping_admin", "Housekeeping Admin (all locations)"),
     # Every active employee submits expenses — default-granted at onboarding.
     # Cloudflare Access on reimbursement.thehfhotel.org checks the `apps`
     # claim for it ('HF ID grant: reimbursement'), and the office NFC

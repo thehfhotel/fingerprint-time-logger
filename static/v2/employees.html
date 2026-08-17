@@ -531,12 +531,20 @@
     const LOCATION_LABEL = { HF: "HF", HF_VILLE: "HF Ville" };
 
     // Mirror of app/services/app_catalog.py APP_CATALOG — keep in sync.
+    // This list, NOT the API's `catalog` field, is what the grant checkboxes
+    // render from, so an app missing here cannot be granted or revoked in this
+    // UI at all however valid it is server-side. `reimbursement` drifted out
+    // that way (added to the catalog 2026-07, never mirrored here, found
+    // 2026-08-17), so tests/unit/test_app_catalog_mirror.py now fails on any
+    // divergence.
     const APP_CATALOG = [
       { app_id: "rooms", name: "Room Daily Report" },
       { app_id: "portal", name: "HF Portal" },
       { app_id: "payroll", name: "Payroll" },
       { app_id: "ota", name: "OTA Desk" },
       { app_id: "housekeeping", name: "Housekeeping" },
+      { app_id: "housekeeping_admin", name: "Housekeeping Admin (all locations)" },
+      { app_id: "reimbursement", name: "Reimbursement" },
     ];
 
     let employees = [];
