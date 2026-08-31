@@ -157,7 +157,12 @@ def get_server_config() -> dict:
 #
 #   READER_RESOLVE_SECRET  Shared APP↔CENTRAL secret for the server-to-server
 #                      card-login surface: POST /api/private/reader/{resolve,
-#                      claim,wait}. Each consuming app's BACKEND holds it to
+#                      resolve-badge,claim,wait,hk-escalate}. The same secret
+#                      also guards the housekeeping room-check escalation
+#                      (/hk-escalate), which additionally needs
+#                      STAFF_OA_CHANNEL_ACCESS_TOKEN below to actually push —
+#                      without it the endpoint answers 503 and new-hotel
+#                      retries. Each consuming app's BACKEND holds it to
 #                      resolve a UID (/resolve), pair a terminal to a reader
 #                      (/claim) and long-poll for the tap + receive a signed
 #                      card assertion (/wait). Read directly via os.getenv() in

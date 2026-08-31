@@ -12,8 +12,9 @@ The Employee Hub lives on a dedicated staff LINE Official Account
   * webhook signature verification (HMAC-SHA256 of the raw body with the
     channel secret, base64, constant-time compare — LINE's scheme).
   * a thin LINE Messaging API client (rich-menu CRUD, the channel default,
-    per-user linking, bulk link/unlink, reply messages) used by the webhook
-    and the sync script.
+    per-user linking, bulk link/unlink, reply messages, and the one metered
+    call — ``multicast_text_message``) used by the webhook, the sync script
+    and the housekeeping escalation (app/services/hk_escalation_service.py).
   * :func:`link_role_menu_for_line_user` — the one-user relink helper the
     follow-event webhook uses today and grant-change hooks can call later.
 """
@@ -38,6 +39,8 @@ LINE_DATA_API_BASE = "https://api-data.line.me"
 _REQUEST_TIMEOUT_SECONDS = 15
 # LINE's bulk link endpoint caps userIds per request.
 BULK_LINK_CHUNK_SIZE = 500
+# LINE's multicast endpoint caps recipients per request the same way.
+MULTICAST_CHUNK_SIZE = 500
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +238,30 @@ def bulk_unlink_rich_menu(line_user_ids: Sequence[str]) -> None:
             f"{LINE_API_BASE}/v2/bot/richmenu/bulk/unlink",
             headers={**_auth_headers(), "Content-Type": "application/json"},
             json={"userIds": chunk},
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+        ))
+
+
+def multicast_text_message(line_user_ids: Sequence[str], text: str) -> None:
+    """Push ONE text message to many users (POST /v2/bot/message/multicast).
+
+    The only METERED call in this module — LINE counts a push per recipient,
+    which is precisely why the housekeeping escalation that uses it is bounded
+    on both sides (new-hotel ADR 0008: one push per signal, monthly cap; HF ID:
+    on-duty maids only, never a fallback audience). Rich-menu CRUD, linking and
+    webhook replies above all cost zero.
+
+    Chunked at LINE's per-request recipient cap, exactly like
+    :func:`bulk_link_rich_menu`. Empty input is a no-op by construction
+    (``range(0, 0, chunk)`` is empty) — LINE rejects an empty ``to`` array, and
+    "nobody to tell" must never become an API error.
+    """
+    for start in range(0, len(line_user_ids), MULTICAST_CHUNK_SIZE):
+        chunk = list(line_user_ids[start:start + MULTICAST_CHUNK_SIZE])
+        _check("multicast message", requests.post(
+            f"{LINE_API_BASE}/v2/bot/message/multicast",
+            headers={**_auth_headers(), "Content-Type": "application/json"},
+            json={"to": chunk, "messages": [{"type": "text", "text": text}]},
             timeout=_REQUEST_TIMEOUT_SECONDS,
         ))
 

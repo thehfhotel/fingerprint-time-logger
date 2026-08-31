@@ -9,8 +9,10 @@ two distinct trust boundaries:
   it. Used by ``POST /resolve`` (direct UID→identity lookup),
   ``POST /resolve-badge`` (the same lookup keyed by badge, for an app that
   already holds an identity and needs the employee's branch), ``POST /claim``
-  (pair a terminal to a reader) and ``POST /wait`` (long-poll for the tap and
-  receive a signed card assertion).
+  (pair a terminal to a reader), ``POST /wait`` (long-poll for the tap and
+  receive a signed card assertion) and ``POST /hk-escalate`` (new-hotel asks
+  HF ID to LINE-push an unacked ขอเช็คห้อง to the branch's on-duty maids —
+  attendance is HF ID's, so only HF ID can answer who is on shift).
 
 Card-login flow (no browser ever talks to HF ID directly — all app↔central
 calls are server-to-server):
@@ -57,6 +59,7 @@ import asyncio
 import hmac
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -71,7 +74,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.models import Employee, EmployeeAppGrant
-from app.services import oidc_service
+from app.services import hk_escalation_service, oidc_service, staff_oa_service
 from app.services.line_auth_service import line_auth_service
 
 logger = logging.getLogger(__name__)
@@ -473,6 +476,12 @@ class SelfLoginStartRequest(BaseModel):
     reader_id: str
 
 
+class HkEscalateRequest(BaseModel):
+    branch: str
+    roomNo: str  # noqa: N815 — camelCase on the wire (new-hotel's DTO style)
+    url: str
+
+
 class ElevateStartRequest(BaseModel):
     app: str
     label: Optional[str] = None
@@ -601,6 +610,121 @@ async def resolve_badge(
         "pending": bool(employee.pending_approval),
         "location": employee.location,
     }
+
+
+# ============================================================================
+# POST /hk-escalate — housekeeping room-check escalation (app↔central)
+# ============================================================================
+#
+# HF ID's half of new-hotel ADR 0008 ("Room signals over chat; LINE as door and
+# escalation valve, never the pipe"). new-hotel owns room signals and their
+# 2-minute unacked timer and monthly push cap; it calls here because HF ID owns
+# ATTENDANCE and is the only system that can answer "who is physically working
+# at this branch right now". Same router, same X-Reader-Secret guard, same
+# dark-when-unset posture as /resolve — one secret for the whole app↔central
+# surface (see the module docstring).
+#
+# The on-duty rule and the LINE multicast live in
+# app/services/hk_escalation_service.py; this handler is validation + the
+# status-code contract below.
+
+#: Room numbers are short and boring by construction ("104"). Anything outside
+#: this set is a caller bug, not a room — reject rather than sanitize, because
+#: a *silently altered* room number would send maids to the wrong door.
+_ROOM_NO_ALLOWED = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ./-]*$")
+
+
+@router.post("/hk-escalate")
+async def hk_escalate(
+    body: HkEscalateRequest,
+    x_reader_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Push an unacked ขอเช็คห้อง to the on-duty maids of one branch.
+
+    Auth: constant-time match of ``X-Reader-Secret`` against
+    ``READER_RESOLVE_SECRET`` — identical to /resolve, and the identical
+    app↔central caller class. Dark (404) when unset; 401 on mismatch.
+
+    Body ``{branch: 'HF'|'HF_VILLE', roomNo: str, url: str}``. Only those two
+    string fields ever reach the message; the Thai sentence itself is ours.
+
+    **The status split is the contract, because the caller marks the signal
+    escalated on ANY 2xx and retries on anything else** (new-hotel's scheduler
+    sets ``sig_escalated_at`` once, only on 2xx):
+
+    * 200 ``{"sent": true, "recipients": n}`` — multicast accepted by LINE.
+    * 200 ``{"sent": false, "recipients": 0, "reason": "nobody_on_duty"}`` — a
+      VALID, terminal outcome. No push, no fallback audience (ADR 0008: the
+      desk phones instead). 2xx on purpose: retrying next tick would not
+      conjure a maid, and would burn the monthly cap on a room nobody can be
+      told about.
+    * 400 — unknown branch, or an unusable roomNo/url. A retry cannot fix a
+      malformed body, but a 400 keeps the signal un-escalated and therefore
+      visible rather than silently marked handled.
+    * 502 — LINE rejected or could not be reached; the resolution query blew
+      up. The push did NOT happen, so the caller must retry next tick.
+    * 503 — the staff OA is not configured here (no channel access token), so
+      no push is possible at all. Non-2xx for the same reason as 502: nothing
+      was delivered, and the signal must stay un-escalated.
+    """
+    _require_secret(x_reader_secret, _resolve_secret())
+
+    branch = body.branch.strip()
+    if hk_escalation_service.branch_device_name(branch) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown branch"
+        )
+
+    room_no = body.roomNo.strip()
+    if not room_no or len(room_no) > hk_escalation_service.ROOM_NO_MAX_CHARS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid roomNo"
+        )
+    if not _ROOM_NO_ALLOWED.match(room_no):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid roomNo"
+        )
+
+    url = body.url.strip()
+    if (
+        not url
+        or len(url) > hk_escalation_service.URL_MAX_CHARS
+        or not url.startswith(("https://", "http://"))
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid url"
+        )
+
+    if not staff_oa_service.get_channel_access_token():
+        # Gated on the PUSH credential alone, not staff_oa_service.is_enabled():
+        # a multicast needs the channel access token; the channel SECRET only
+        # verifies inbound webhook signatures and is irrelevant here.
+        logger.warning(
+            "hk-escalate: staff OA channel access token unset — cannot push "
+            "room-check escalation for branch=%s", branch,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LINE staff OA not configured",
+        )
+
+    try:
+        return hk_escalation_service.escalate(
+            db, branch=branch, room_no=room_no, url=url
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        # Any failure past validation — LINE non-2xx, a network error, or a
+        # blown-up resolution query — is a NON-2xx so new-hotel retries on its
+        # next 30s tick and the signal stays un-escalated. Nothing was pushed.
+        logger.exception(
+            "hk-escalate: escalation failed for branch=%s room=%s", branch, room_no
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Escalation failed"
+        )
 
 
 # ============================================================================
