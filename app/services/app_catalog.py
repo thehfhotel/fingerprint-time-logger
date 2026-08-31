@@ -32,6 +32,19 @@ APP_CATALOG: List[Tuple[str, str]] = [
     # `housekeeping`) it resolves to the empty base, i.e. no menu at all, so it
     # is not a back door to the maid menu.
     ("housekeeping_admin", "Housekeeping Admin (all locations)"),
+    # Read-only viewer on the SAME /hk room-status board the maids write to.
+    # new-hotel's hk_access middleware admits either grant; `reception` sees
+    # the board and is refused the write verbs (403 on POST .../cleaning and
+    # POST .../linen-shortage), while `housekeeping` keeps full access and an
+    # identity holding both is full. Registration here is load-bearing, not
+    # bookkeeping: admin_employees.py rejects any app_id outside this catalog
+    # with a 400, so an unregistered grant cannot be saved at all.
+    #
+    # Unlike housekeeping_admin, this one DOES carry an Employee Hub button
+    # (สถานะห้อง, staff_oa_menu) — so granting it re-provisions the holder's
+    # rich menu, and an employee holding it alone gets a real one-tile menu
+    # rather than resolving to the empty base.
+    ("reception", "Reception (room status, read-only)"),
     # Every active employee submits expenses — default-granted at onboarding.
     # Cloudflare Access on reimbursement.thehfhotel.org checks the `apps`
     # claim for it ('HF ID grant: reimbursement'), and the office NFC

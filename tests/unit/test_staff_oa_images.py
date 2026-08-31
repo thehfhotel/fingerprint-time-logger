@@ -3,21 +3,25 @@
 Pins the LINE contract (exact canvas sizes, PNG, <1MB) and the bundled
 Thai font that makes rendering deterministic on any machine.
 
-WHY THE 5- AND 6-BUTTON TESTS USE SYNTHETIC BUTTONS
----------------------------------------------------
-The real table is 4 buttons since รับของมาส่ง got its own tile (2026-08-17)
-— แม่บ้าน / แจ้งซ่อม / สต๊อกของ / รับของมาส่ง, all behind the `housekeeping`
-grant. So the real variants are `base` (ZERO buttons, nothing to render at
-all) and `base+housekeeping` (4), and the latter DOES reach the 2500x1686
-two-row canvas: it is covered by the real table, not by padding. Only 5 and
-6 still need synthetic buttons, being counts no grant set can produce.
+WHY THE 6-BUTTON TESTS USE SYNTHETIC BUTTONS
+--------------------------------------------
+The real table is 5 buttons since สถานะห้อง arrived (2026-09-01): แม่บ้าน /
+แจ้งซ่อม / สต๊อกของ / รับของมาส่ง behind `housekeeping`, plus สถานะห้อง behind
+the new `reception` grant. So the real variants are `base` (ZERO buttons,
+nothing to render at all), `base+housekeeping` (4), `base+reception` (1) and
+`base+housekeeping+reception` (5) — and the last two mean the real table now
+covers BOTH the one-row and the two-row canvas, and both of menu_rows()'s
+multi-row shapes (2+2 and 3+2), without any padding. Only 6 still needs
+synthetic buttons, being the one count no grant set can produce.
 
 The empty base is why nothing here renders ``buttons_for(set())``: there is
 no image for a variant with no buttons, ``menu_size(0)`` raises, and the
 sync script never asks for one (``base_has_buttons`` in
-scripts/staff_oa_sync.py). The one-button cases below are therefore
-synthetic too — a count the real table can no longer produce, but live code
-the moment any button comes back.
+scripts/staff_oa_sync.py). The one-button cases below stay synthetic even
+though `base+reception` is now a real one-button variant: they drive
+particular glyphs and a particular pixel through the renderer, which a real
+variant pinned to สถานะห้อง's clipboard could not do. The real one-button
+variant is rendered on its own, next to them.
 
 That canvas is still live production code — ``menu_size()`` switches on the
 button count, ``menu_rows()`` lays 4/5/6 out as 2+2 / 3+2 / 3+3, and
@@ -54,8 +58,15 @@ FULL_HEIGHT_CANVAS = (2500, 1686)  # 4-6 buttons, two rows
 
 # Every button is either base or revealed by a grant in MENU_GRANT_APP_IDS,
 # so the whole table IS the biggest variant the real table can produce
-# (3 today: 1 base + 2 housekeeping).
+# (5 today: 4 housekeeping + 1 reception, base being empty).
 MAX_REAL_BUTTON_COUNT = len(MENU_BUTTONS)
+
+# The two real grants, and the button counts each reveals ALONE. Named rather
+# than inlined because three tests below turn on the difference between "the
+# maid menu" (4) and "the biggest menu anyone can hold" (5) — a distinction
+# that did not exist while one grant owned every button.
+HOUSEKEEPING_BUTTON_COUNT = len(buttons_for({"housekeeping"}))
+RECEPTION_BUTTON_COUNT = len(buttons_for({"reception"}))
 
 # Glyph renderers that no current MenuButton names: the tiles that used them
 # were removed or deferred on 2026-08-14 (เบิกค่าใช้จ่าย/receipt,
@@ -132,10 +143,21 @@ class TestFixturePremise:
         # drops back to 3 or fewer, invert this and update the module
         # docstring; the synthetic tests below stay either way.
         assert len(buttons_for(MENU_GRANT_APP_IDS)) == MAX_REAL_BUTTON_COUNT
-        assert MAX_REAL_BUTTON_COUNT == 4
+        assert MAX_REAL_BUTTON_COUNT == 5
         assert menu_size(MAX_REAL_BUTTON_COUNT) == FULL_HEIGHT_CANVAS
 
-    @pytest.mark.parametrize("button_count", (5, 6))
+    def test_the_real_table_now_spans_both_canvases(self):
+        # New on 2026-09-01. `reception` reveals exactly one tile, so the real
+        # table reaches the half-height canvas again — for the first time since
+        # the clock-in tile left and base went empty on 2026-08-14. That is why
+        # the module docstring no longer claims 5-button padding is needed.
+        assert RECEPTION_BUTTON_COUNT == 1
+        assert HOUSEKEEPING_BUTTON_COUNT == 4
+        assert HOUSEKEEPING_BUTTON_COUNT + RECEPTION_BUTTON_COUNT == MAX_REAL_BUTTON_COUNT
+        assert menu_size(RECEPTION_BUTTON_COUNT) == HALF_HEIGHT_CANVAS
+        assert menu_size(HOUSEKEEPING_BUTTON_COUNT) == FULL_HEIGHT_CANVAS
+
+    @pytest.mark.parametrize("button_count", (6,))
     def test_padding_mints_counts_the_real_table_cannot(self, button_count):
         buttons = _padded_to(button_count)
         assert len(buttons) == button_count
@@ -176,18 +198,44 @@ class TestRenderMenuImage:
         # This test has followed the maid menu up and down: full height when
         # the variant was 5 buttons, half when the 2026-08-14 re-scope cut it
         # to 2, and full again since รับของมาส่ง made it 4 (2026-08-17). It is
-        # the ONLY real variant with an image at all, which is why the count is
-        # asserted against the table rather than written as a literal. Still
-        # the only variant that exercises the broom/wrench/box/tray glyphs.
+        # no longer the ONLY real variant with an image — that stopped being
+        # true on 2026-09-01 — so it is pinned against the maid grant's own
+        # count rather than the whole table's. Still the only variant that
+        # exercises the broom/wrench/box/tray glyphs together.
         png_bytes, image = _render_and_open({"housekeeping"})
-        assert len(buttons_for({"housekeeping"})) == MAX_REAL_BUTTON_COUNT
+        assert len(buttons_for({"housekeeping"})) == HOUSEKEEPING_BUTTON_COUNT
+        assert image.format == "PNG"
+        assert image.size == FULL_HEIGHT_CANVAS
+        assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
+
+    def test_reception_menu_renders_half_height_png(self):
+        # The reception variant is one real tile (สถานะห้อง), so it renders on
+        # the single-row canvas — the first REAL variant to do so since base
+        # went empty. Its glyph is the new clipboard; nothing else draws it, so
+        # this is where a clipboard that raised at render time would surface as
+        # more than the registry sweep at the bottom of the file.
+        png_bytes, image = _render_and_open({"reception"})
+        assert len(buttons_for({"reception"})) == 1
+        assert image.format == "PNG"
+        assert image.size == HALF_HEIGHT_CANVAS
+        assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
+
+    def test_both_grants_render_the_five_button_menu(self):
+        # An employee holding housekeeping AND reception — the maximal real
+        # variant, and the first real use of the 3+2 row split. Five cells on
+        # the two-row canvas, still inside LINE's 1MB cap.
+        buttons = buttons_for({"housekeeping", "reception"})
+        assert len(buttons) == MAX_REAL_BUTTON_COUNT == 5
+        png_bytes, image = _render(buttons)
         assert image.format == "PNG"
         assert image.size == FULL_HEIGHT_CANVAS
         assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
 
     @pytest.mark.parametrize("button_count", (4, 5, 6))
     def test_full_height_canvas_renders_png_within_lines_cap(self, button_count):
-        # 4 is the REAL maid menu since 2026-08-17; 5 and 6 stay synthetic.
+        # 4 is the REAL maid menu since 2026-08-17 and 5 is the REAL
+        # both-grants menu since 2026-09-01, so _padded_to() adds nothing for
+        # either — only 6 is still synthetic.
         # Replaces test_six_button_menu_renders_full_height_png, whose
         # premise (housekeeping 3 + ota 1 + 2 base = 6) died with the ota and
         # reimbursement tiles. Synthetic per the module docstring: the
@@ -210,11 +258,12 @@ class TestRenderMenuImage:
 class TestGlyphRenderers:
     """Every registered glyph must still draw.
 
-    The real table names only clock/wrench/box now, so receipt, baht, bell
-    and broom lost the incidental coverage they had from the removed tiles.
-    They are still in the production registry (แม่บ้าน/broom is deferred, not
-    deleted), so cover them directly — reading the registry rather than
-    listing names, because the registry is the thing under test.
+    The real table names broom/wrench/box/tray/clipboard, so clock, receipt,
+    baht and bell have no tile giving them incidental coverage. They are still
+    in the production registry, so cover them directly — reading the registry
+    rather than listing names, because the registry is the thing under test,
+    and because that is what makes a NEW glyph (clipboard, 2026-09-01) covered
+    the moment it is registered rather than when someone remembers to add it.
     """
 
     @pytest.mark.parametrize("glyph", sorted(images._GLYPH_RENDERERS))
@@ -223,3 +272,32 @@ class TestGlyphRenderers:
         assert image.format == "PNG"
         assert image.size == HALF_HEIGHT_CANVAS
         assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
+
+    def test_the_reception_tile_glyph_actually_paints(self):
+        """Rendering without raising is NOT evidence a glyph drew anything.
+
+        ``_draw_cell`` does ``_GLYPH_RENDERERS.get(button.glyph)`` and simply
+        skips when the name is unknown — no exception, no warning, just a tile
+        with a label and no mark. A typo'd glyph name on a MenuButton would
+        therefore sail through every other test in this file. So compare
+        pixels: the real สถานะห้อง tile against the identical tile naming a
+        glyph that does not exist. If clipboard were misspelled in either
+        module, the two would be identical and this goes red.
+        """
+        reception = buttons_for({"reception"})
+        assert len(reception) == 1
+        assert reception[0].glyph == "clipboard"
+        assert "clipboard" in images._GLYPH_RENDERERS
+
+        unglyphed = (
+            MenuButton(
+                grant_app_id=reception[0].grant_app_id,
+                label=reception[0].label,
+                url=reception[0].url,
+                glyph="no-such-glyph",
+            ),
+        )
+        _, drawn = _render(reception)
+        _, undrawn = _render(unglyphed)
+        assert drawn.size == undrawn.size
+        assert drawn.tobytes() != undrawn.tobytes()

@@ -40,9 +40,13 @@ class TestAppGrants:
         assert response.status_code == 200
         data = response.json()
         assert data["granted_app_ids"] == []
+        # Spelled out rather than read back from APP_CATALOG on purpose: this
+        # endpoint is what the admin page renders its checkboxes from, so the
+        # exact set is the contract. Update it deliberately when an app is
+        # added (`reception`, 2026-09-01 — the read-only /hk viewer).
         assert {c["app_id"] for c in data["catalog"]} == {
             "rooms", "portal", "payroll", "ota", "housekeeping",
-            "housekeeping_admin", "reimbursement",
+            "housekeeping_admin", "reception", "reimbursement",
         }
 
     def test_put_grants_full_set_replace(self, test_client, test_db):

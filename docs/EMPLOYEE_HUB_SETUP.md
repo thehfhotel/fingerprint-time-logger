@@ -29,23 +29,37 @@ touching anything. These are a **different channel** from `LINE_CHANNEL_*`
 
 ## Role Menus
 
-**The Hub is a MAID tool**, not a general employee launcher (owner
-directive 2026-08-14: "for maid to notify reception of cleaning progress
-and maid inventory"). **Every button is behind the `housekeeping` grant** —
-there are no base buttons:
+**The Hub is a MAID tool** plus, since 2026-09-01, the reception half of the
+same sentence (owner directive 2026-08-14: "for maid to notify reception of
+cleaning progress and maid inventory"). It is still not a general employee
+launcher. **Every button is behind a grant** — there are no base buttons:
 
 | Button | URL | Needs grant |
 |---|---|---|
+| แม่บ้าน (cleaning board) | https://hotel.thehfhotel.org/hk | `housekeeping` |
 | แจ้งซ่อม (breakage report) | https://housekeeping.thehfhotel.org/staff/report | `housekeeping` |
-| เบิกของ (stock) | https://housekeeping.thehfhotel.org/staff/stock | `housekeeping` |
+| สต๊อกของ (stock count / purchase request) | https://housekeeping.thehfhotel.org/staff/stock | `housekeeping` |
+| รับของมาส่ง (receive a delivery) | https://housekeeping.thehfhotel.org/staff/receive | `housekeeping` |
+| สถานะห้อง (room status, read-only) | https://hotel.thehfhotel.org/hk | `reception` |
 
-Two variants exist: `base` (**0 buttons**) and `base+housekeeping` (2).
+Four variants exist: `base` (**0 buttons**), `base+housekeeping` (4),
+`base+reception` (1) and `base+housekeeping+reception` (5). LINE caps a rich
+menu at 6 buttons, so the maximal variant has one tile of headroom left.
+
+**สถานะห้อง and แม่บ้าน open the same board.** That is deliberate: `reception`
+is a READ-ONLY viewer on `/hk`. new-hotel's `hk_access` middleware admits
+either grant, but the write verbs (`POST .../cleaning`,
+`POST .../linen-shortage`) require `housekeeping` and answer a reception-only
+identity with a 403; `GET /api/hk/me` returns `canReport: false` so the UI
+hides the reporting controls. The UI hiding is UX — **the server is the
+enforcement.** An employee holding both grants is full-access and simply sees
+five tiles, the first and last pointing at the same page.
 
 ### `base` is deliberately empty — no-menu semantics
 
-An employee without the `housekeeping` grant gets **no rich menu at all**.
-That is the intended meaning of a maid-only Hub, and the sync handles it
-explicitly rather than by accident:
+An employee holding NEITHER `housekeeping` nor `reception` gets **no rich
+menu at all**. That is the intended meaning of a grant-only Hub, and the sync
+handles it explicitly rather than by accident:
 
 - no `base` rich menu is created;
 - the **channel default is cleared** (`clear_default_rich_menu`), so it

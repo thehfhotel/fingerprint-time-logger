@@ -32,8 +32,10 @@ from app.services.admin_auth_service import admin_auth_service
 TOKEN = "test-channel-access-token"
 SECRET = "test-channel-secret"
 
-# The only grant that changes the menu since the maid-only re-scope, and one
-# that deliberately does not (see tests/unit/test_staff_oa_service.py).
+# The grant these tests provision against, and one that deliberately does not
+# move the menu (see tests/unit/test_staff_oa_service.py). `housekeeping` was
+# the ONLY menu-relevant grant until `reception` joined it (2026-09-01); it is
+# still the one this file drives, so the constant keeps its meaning.
 MENU_GRANT = "housekeeping"
 MENU_IRRELEVANT_GRANT = "payroll"
 
@@ -41,11 +43,16 @@ HOUSEKEEPING_KEY = "base+housekeeping"
 
 # A synthetic grant carrying enough extra buttons to push a variant one past
 # LINE's 6-button cap. No REAL grant combination can overflow today (the
-# largest real variant is 2 buttons), so the over-cap guard has to be tested
+# largest real variant is 5 buttons), so the over-cap guard has to be tested
 # against a table that grew — exactly the fixture strategy
 # tests/unit/test_staff_oa_sync.py uses for the same guard.
 SYNTHETIC_GRANT = "extra"
-_SYNTHETIC_BUTTON_COUNT = max(1, 7 - len(staff_oa_menu.MENU_BUTTONS))
+# Derived from what MENU_GRANT ALONE reveals, which is what the over-cap tests
+# below actually grant — not from len(MENU_BUTTONS). Those were the same number
+# while `housekeeping` owned every button in the table; `reception` broke that
+# on 2026-09-01 and the fixture quietly stopped overflowing (6 buttons, not 7),
+# turning the over-cap tests green against a menu that fits.
+_SYNTHETIC_BUTTON_COUNT = max(1, 7 - len(staff_oa_menu.buttons_for({MENU_GRANT})))
 SYNTHETIC_BUTTONS = tuple(
     staff_oa_menu.MenuButton(
         grant_app_id=SYNTHETIC_GRANT,
@@ -206,8 +213,14 @@ class TestFixturePremise:
     """These fixtures encode assumptions about the menu table. Prove them,
     so the tests below cannot rot into asserting nothing."""
 
-    def test_housekeeping_is_the_only_menu_relevant_grant(self):
+    def test_housekeeping_is_the_grant_these_tests_provision_against(self):
+        # Was test_housekeeping_is_the_only_menu_relevant_grant. It is no
+        # longer the only one (`reception` joined MENU_GRANT_APP_IDS on
+        # 2026-09-01), but it is still the grant this file drives, and the key
+        # it mints ALONE must stay base+housekeeping — every expectation below
+        # is written against that variant.
         assert staff_oa_menu.menu_key({MENU_GRANT}) == HOUSEKEEPING_KEY
+        assert MENU_GRANT in staff_oa_menu.MENU_GRANT_APP_IDS
         assert MENU_IRRELEVANT_GRANT not in staff_oa_menu.MENU_GRANT_APP_IDS
 
     def test_base_is_empty_so_a_grantless_employee_gets_no_menu(self):

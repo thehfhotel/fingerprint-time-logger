@@ -208,8 +208,46 @@ def _glyph_tray(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, stroke: 
     draw.line([cx + head, tray_top - stroke - head, cx, tray_top - stroke], fill=GOLD, width=stroke)
 
 
+def _glyph_clipboard(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, stroke: int) -> None:
+    """Clipboard with ruled rows — reception's room-status board (สถานะห้อง).
+
+    A list someone READS, so the mark carries no verb: a board and its rows,
+    where the maid tiles all carry an action (a broom sweeping, an arrow
+    dropping into a tray). Geometry is deliberately the box glyph's — same
+    inset, same top offset, same corner radius — because both are rectangles
+    and inconsistent ones would read as a rendering bug at 2500px; the clip
+    straddling the top edge is the whole difference between them, and the
+    GOLD_SOFT half-stroke rows are the receipt glyph's ruling.
+
+    Not the existing `bell` glyph, even though that one is literally a
+    reception desk bell: a bell is a summons (its tile was OTA Desk, where
+    someone acts on a booking), and this tile summons nobody.
+    """
+    inset = size // 8
+    left, right = x0 + inset, x0 + size - inset
+    top, bottom = y0 + size // 6, y0 + size
+    draw.rounded_rectangle(
+        [left, top, right, bottom], radius=size // 14, outline=GOLD, width=stroke,
+    )
+    # The clip, straddling the board's top edge (drawn after, so it sits on it).
+    cx = x0 + size // 2
+    clip_half = size // 5
+    draw.rounded_rectangle(
+        [cx - clip_half, y0, cx + clip_half, top + stroke],
+        radius=size // 20, outline=GOLD, width=stroke,
+    )
+    # The rows — one room per line.
+    for i in range(1, 4):
+        y = top + i * (bottom - top) // 4
+        draw.line(
+            [left + inset, y, right - inset, y],
+            fill=GOLD_SOFT, width=max(2, stroke // 2),
+        )
+
+
 _GLYPH_RENDERERS = {
     "clock": _glyph_clock,
+    "clipboard": _glyph_clipboard,
     "tray": _glyph_tray,
     "receipt": _glyph_receipt,
     "baht": _glyph_baht,

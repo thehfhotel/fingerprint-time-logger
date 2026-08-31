@@ -183,6 +183,34 @@ MENU_BUTTONS: Tuple[MenuButton, ...] = (
         url="https://housekeeping.thehfhotel.org/staff/receive",
         glyph="tray",
     ),
+    # สถานะห้อง — the SAME /hk board the maids' แม่บ้าน tile opens, revealed by
+    # the new `reception` grant instead.
+    #
+    # WHY reception gets a tile at all: caveat 2 above ("nothing notifies
+    # reception of anything") is what this closes from the reading side. A
+    # maid's `started` reached a 30-second-poll board and no human; reception
+    # now has that board one tap away on the same phone they already carry the
+    # Hub on, instead of a URL nobody typed.
+    #
+    # WHY it is safe to point reception at a write surface: it is not one for
+    # them. new-hotel's hk_access middleware admits EITHER grant, but the
+    # `reception` grant is a READ-ONLY viewer — the write verbs (POST
+    # .../cleaning, POST .../linen-shortage) require `housekeeping` and answer
+    # a reception-only identity with a 403. The /hk UI hides the reporting
+    # controls for them (GET /api/hk/me returns canReport:false), but that is
+    # UX: the server is the enforcement, and the tile is safe even if the
+    # frontend regresses. An employee holding BOTH grants is full-access and
+    # simply sees five tiles, the first and fifth pointing at the same board.
+    #
+    # This takes the both-grants variant to FIVE buttons — the 3+2 layout,
+    # first real use of menu_rows(5). LINE's cap is 6, so exactly one tile of
+    # headroom is left; the next addition needs a rethink, not a row.
+    MenuButton(
+        grant_app_id="reception",
+        label="สถานะห้อง",
+        url="https://hotel.thehfhotel.org/hk",
+        glyph="clipboard",
+    ),
 )
 
 # Grants that actually change the menu. Any other grant (rooms, portal, …)
