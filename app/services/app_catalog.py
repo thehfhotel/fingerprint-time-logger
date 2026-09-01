@@ -40,9 +40,10 @@ APP_CATALOG: List[Tuple[str, str]] = [
     # bookkeeping: admin_employees.py rejects any app_id outside this catalog
     # with a 400, so an unregistered grant cannot be saved at all.
     #
-    # Unlike housekeeping_admin, this one DOES carry an Employee Hub button
-    # (สถานะห้อง, staff_oa_menu) — so granting it re-provisions the holder's
-    # rich menu, and an employee holding it alone gets a real one-tile menu
+    # Unlike housekeeping_admin, this one DOES carry Employee Hub buttons
+    # (สถานะห้อง, and รายงานแม่บ้าน shared with `housekeeping` since
+    # 2026-09-02 — staff_oa_menu) — so granting it re-provisions the holder's
+    # rich menu, and an employee holding it alone gets a real two-tile menu
     # rather than resolving to the empty base.
     ("reception", "Reception (room status, read-only)"),
     # Every active employee submits expenses — default-granted at onboarding.

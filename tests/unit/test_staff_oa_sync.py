@@ -31,12 +31,15 @@ variant still syncs and the run never raises.
 
 WHY THE OVER-SIZED VARIANT IS SYNTHETIC
 ---------------------------------------
-The real table is 2 buttons and the only menu-relevant grant is
-`housekeeping`, so the real variants are `base` (0 buttons) and
-`base+housekeeping` (2). No real grant combination can overflow LINE's cap
-any more. The guard is still load-bearing (the overflow actually happened,
-back when payroll + ota + housekeeping = 7 buttons), so its test mints the
-over-sized variant from a SYNTHETIC grant monkeypatched into
+The real table is 6 buttons across two menu grants (`housekeeping` and
+`reception`), so the real variants are `base` (0 buttons), `base+reception`
+(2), `base+housekeeping` (5) and `base+housekeeping+reception` (6). No real
+grant combination can overflow LINE's cap — but as of 2026-09-02 the biggest
+one SITS ON it, so the margin is a single MenuButton row rather than the
+four it used to be. The guard is load-bearing (the overflow actually
+happened, back when payroll + ota + housekeeping = 7 buttons, and one more
+tile would make it live again), so its test mints the over-sized variant
+from a SYNTHETIC grant monkeypatched into
 ``MENU_BUTTONS`` / ``MENU_GRANT_APP_IDS``. The fixture is deliberately
 unrealistic: it models "the table grew again", the state the guard exists
 for. ``TestFixturePremise`` asserts both halves of that premise so the
@@ -50,7 +53,11 @@ exists so ``TestNonEmptyBaseBehavesExactlyAsBefore`` can prove the original
 path is untouched: base menu created, channel default SET, base employees
 LINKED, over-cap employees falling back to base, nothing unlinked, nothing
 cleared. Without it the non-empty path would have no coverage at all now
-that the real table cannot produce it.
+that the real table cannot produce it. Since the real table reached LINE's
+cap (2026-09-02) that fixture also has to TRIM a real row to pay for the
+base button — see ``_real_buttons_leaving_room_for``; otherwise the maximal
+real variant would go over cap and the fixture would prove the opposite of
+what it claims.
 
 No network access: every LINE Messaging API call (``app.services.
 staff_oa_service``) and image render (``app.services.staff_oa_images``) is
@@ -94,8 +101,10 @@ from app.services import staff_oa_menu  # noqa: E402
 # ---------------------------------------------------------------------------
 SYNTHETIC_GRANT = "extra"
 
-MAX_REAL_BUTTON_COUNT = len(staff_oa_menu.MENU_BUTTONS)  # 2 today
-SYNTHETIC_BUTTON_COUNT = max(1, 7 - MAX_REAL_BUTTON_COUNT)  # 5 today
+LINE_BUTTON_CAP = 6
+
+MAX_REAL_BUTTON_COUNT = len(staff_oa_menu.MENU_BUTTONS)  # 6 today
+SYNTHETIC_BUTTON_COUNT = max(1, 7 - MAX_REAL_BUTTON_COUNT)  # 1 today
 OVERSIZED_BUTTON_COUNT = MAX_REAL_BUTTON_COUNT + SYNTHETIC_BUTTON_COUNT  # 7 today
 
 # .invalid is reserved by RFC 2606 and resolves nowhere — these URLs are
@@ -121,6 +130,24 @@ SYNTHETIC_BASE_BUTTON = staff_oa_menu.MenuButton(
     url="https://synthetic-base.invalid/",
     glyph="clock",
 )
+
+
+def _real_buttons_leaving_room_for(base_button_count):
+    """The real table, trimmed so ``base + real`` still fits LINE's cap.
+
+    The real table reached SIX buttons on 2026-09-02 (รายงานแม่บ้าน), i.e.
+    exactly the cap. Prepending a base button on top of it would push the
+    MAXIMAL REAL variant to 7 and silently move it into the over-cap branch —
+    which is the branch ``sync_env_with_base`` exists to prove is NOT taken.
+    The fixture would have gone green while testing the opposite thing, so it
+    trims instead: with a base button present, the real rows it keeps are the
+    ones that still leave the biggest real variant renderable.
+
+    Trimming the TAIL keeps `housekeeping` and `reception` both revealing at
+    least one row (they own rows 1 and 5), so MENU_GRANT_APP_IDS and the
+    variant keys stay exactly what the production module would mint.
+    """
+    return staff_oa_menu.MENU_BUTTONS[: LINE_BUTTON_CAP - base_button_count]
 
 # The keys sync() will see, built the way staff_oa_menu.menu_key() builds
 # them (base first, then grants sorted) so they always match what the module
@@ -196,10 +223,15 @@ def _install_sync_env(monkeypatch, base_buttons=()):
     # Every staff_oa_menu function reads these module globals at call time,
     # so patching them is enough for buttons_for / grants_for_menu_key /
     # menu_key alike.
+    real_buttons = (
+        staff_oa_menu.MENU_BUTTONS
+        if not base_buttons
+        else _real_buttons_leaving_room_for(len(base_buttons))
+    )
     monkeypatch.setattr(
         staff_oa_menu,
         "MENU_BUTTONS",
-        tuple(base_buttons) + staff_oa_menu.MENU_BUTTONS + SYNTHETIC_BUTTONS,
+        tuple(base_buttons) + real_buttons + SYNTHETIC_BUTTONS,
     )
     monkeypatch.setattr(
         staff_oa_menu,
@@ -321,11 +353,12 @@ class TestFixturePremise:
 
     def test_real_table_alone_cannot_overflow_lines_cap(self):
         # Also the production table. The biggest real variant is
-        # base+housekeeping (2 buttons). If this ever fails, the real table
-        # grew past 6 and the guard is live again — keep the synthetic
-        # fixture anyway (it pins the >6 path deterministically), but the
-        # docstring above needs updating.
-        assert len(staff_oa_menu.buttons_for(REAL_GRANTS)) <= 6
+        # base+housekeeping+reception, and since 2026-09-02 it is exactly AT
+        # the cap (6). If this ever fails, the real table grew past 6 and the
+        # guard is live in production — keep the synthetic fixture anyway (it
+        # pins the >6 path deterministically), but the docstring above needs
+        # updating and real employees are losing their menus.
+        assert len(staff_oa_menu.buttons_for(REAL_GRANTS)) <= LINE_BUTTON_CAP
         assert MAX_REAL_BUTTON_COUNT == len(staff_oa_menu.buttons_for(REAL_GRANTS))
 
     def test_fixture_mints_an_oversized_variant_the_real_table_cannot(self, sync_env):
@@ -349,13 +382,26 @@ class TestFixturePremise:
         assert staff_oa_menu.buttons_for(frozenset()) == ()
 
     def test_the_base_fixture_gives_base_exactly_one_button(self, sync_env_with_base):
-        # The other fixture's premise: base has buttons again, the real
-        # variants grow by one button each, and the over-sized variant is
+        # The other fixture's premise: base has buttons again, the maximal
+        # REAL variant is still renderable, and the over-sized variant is
         # still over-sized.
+        #
+        # "Still renderable" is the load-bearing half and it stopped being
+        # free on 2026-09-02: the real table now fills LINE's cap on its own,
+        # so the base button is only affordable because
+        # _real_buttons_leaving_room_for() trims a real row to pay for it.
+        # Without that trim this variant would be 7 buttons and every test in
+        # TestNonEmptyBaseBehavesExactlyAsBefore would be exercising the
+        # over-cap branch it exists to prove is not taken.
         assert len(staff_oa_menu.buttons_for(frozenset())) == 1
-        assert len(staff_oa_menu.buttons_for(REAL_GRANTS)) == MAX_REAL_BUTTON_COUNT + 1
+        assert len(staff_oa_menu.buttons_for(REAL_GRANTS)) == LINE_BUTTON_CAP
+        staff_oa_menu.menu_size(len(staff_oa_menu.buttons_for(REAL_GRANTS)))
+        # Both grants still own a row, so the variant KEYS are unchanged.
+        assert staff_oa_menu.grants_for_menu_key(HOUSEKEEPING_KEY) == REAL_GRANTS
+        for grant in REAL_GRANTS:
+            assert staff_oa_menu.buttons_for({grant}), grant
         oversized = staff_oa_menu.grants_for_menu_key(OVERSIZED_KEY)
-        assert len(staff_oa_menu.buttons_for(oversized)) > 6
+        assert len(staff_oa_menu.buttons_for(oversized)) > LINE_BUTTON_CAP
 
 
 class TestEmptyBaseIsDeliberate:
@@ -537,8 +583,8 @@ class TestOtherVariantsStillSyncNormally:
 
     def test_housekeeping_menu_carries_the_real_buttons(self, sync_env):
         # The surviving variant is a real one, so its payload is worth
-        # checking: every real button on the two-row canvas (4 buttons since
-        # 2026-08-17).
+        # checking: every real button on the two-row canvas (6 since
+        # รายงานแม่บ้าน, 2026-09-02 — the full 3+3 grid).
         staff_oa_sync.sync(apply=True)
         housekeeping_name = staff_oa_menu.rich_menu_name(REAL_GRANTS)
         payload = next(

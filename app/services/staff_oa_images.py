@@ -245,9 +245,56 @@ def _glyph_clipboard(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, str
         )
 
 
+def _glyph_photo_sheet(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, stroke: int) -> None:
+    """Ticked sheet with a camera lens — the daily room report (รายงานแม่บ้าน).
+
+    Two marks in one, because the tile is two things at once: a checklist
+    (ครบทุกรายการ, or the items she flags หาย / ชำรุด) and the photo evidence
+    both sides attach — the maid's 1-4 on submit, reception's 1-4 on verify.
+    The lens is what stops this reading as "another list".
+
+    Deliberately NOT the clipboard, which is สถานะห้อง's: the two tiles sit
+    side by side on a receptionist's menu, and a second clipboard there would
+    read as the same tile drawn twice. The clipboard is a board someone READS,
+    so it carries no verb; this one is filled in, so it carries the tick.
+
+    House geometry: the same ``size // 14`` corner radius the box and
+    clipboard use, and the receipt's GOLD_SOFT half-stroke rules. The sheet is
+    inset from the square (and stops short of its bottom) so the lens can
+    straddle the bottom-right corner without leaving the cell — the same
+    "detail drawn last, sitting on the shape" move as the clipboard's clip.
+    """
+    left, right = x0 + size // 6, x0 + size * 5 // 6
+    top, bottom = y0, y0 + size * 5 // 6
+    thin = max(2, stroke // 2)
+    draw.rounded_rectangle(
+        [left, top, right, bottom], radius=size // 14, outline=GOLD, width=stroke,
+    )
+    # Three ticked lines — an item, and the mark that says it was checked.
+    tick = size // 12
+    tick_x = left + size // 6
+    for i in range(1, 4):
+        y = top + i * (bottom - top) // 4
+        draw.line([tick_x - tick, y, tick_x - tick // 3, y + tick], fill=GOLD, width=thin)
+        draw.line([tick_x - tick // 3, y + tick, tick_x + tick, y - tick], fill=GOLD, width=thin)
+        draw.line(
+            [tick_x + size // 6, y, right - size // 12, y],
+            fill=GOLD_SOFT, width=thin,
+        )
+    # The lens, straddling the sheet's bottom-right corner (drawn after it).
+    lens = size // 3
+    lx0, ly0 = x0 + size - lens, y0 + size - lens
+    draw.ellipse([lx0, ly0, lx0 + lens, ly0 + lens], outline=GOLD, width=stroke)
+    draw.ellipse(
+        [lx0 + lens // 4, ly0 + lens // 4, lx0 + lens * 3 // 4, ly0 + lens * 3 // 4],
+        outline=GOLD_SOFT, width=thin,
+    )
+
+
 _GLYPH_RENDERERS = {
     "clock": _glyph_clock,
     "clipboard": _glyph_clipboard,
+    "photo_sheet": _glyph_photo_sheet,
     "tray": _glyph_tray,
     "receipt": _glyph_receipt,
     "baht": _glyph_baht,

@@ -41,10 +41,25 @@ launcher. **Every button is behind a grant** — there are no base buttons:
 | สต๊อกของ (stock count / purchase request) | https://housekeeping.thehfhotel.org/staff/stock | `housekeeping` |
 | รับของมาส่ง (receive a delivery) | https://housekeeping.thehfhotel.org/staff/receive | `housekeeping` |
 | สถานะห้อง (room status, read-only) | https://hotel.thehfhotel.org/hk | `reception` |
+| รายงานแม่บ้าน (daily room report) | https://hotel.thehfhotel.org/hk/report | `housekeeping` **or** `reception` |
 
-Four variants exist: `base` (**0 buttons**), `base+housekeeping` (4),
-`base+reception` (1) and `base+housekeeping+reception` (5). LINE caps a rich
-menu at 6 buttons, so the maximal variant has one tile of headroom left.
+Four variants exist: `base` (**0 buttons**), `base+reception` (2),
+`base+housekeeping` (5) and `base+housekeeping+reception` (6). LINE caps a
+rich menu at 6 buttons, so as of 2026-09-02 the maximal variant sits exactly
+ON the cap — **there is no headroom left.** A seventh tool cannot be a seventh
+tile: it needs one removed, or two merged behind one tile. Adding a row to
+`MENU_BUTTONS` anyway does not fail loudly at deploy time — the over-cap
+guards in `scripts/staff_oa_sync.py` and `app/services/staff_oa_provision.py`
+would UNLINK everyone holding both grants (the owner included) and log a
+warning.
+
+**รายงานแม่บ้าน is a SHARED tile** — one row in `MENU_BUTTONS` revealed by
+either grant (`MenuButton.also_grant_app_ids`), because a room report is
+two-sided: the maid files it (status code, equipment exceptions, 1–4 photos)
+and reception verifies it with 1–4 photos of their own, or returns it with a
+canned reason. Both halves are the same screen. An employee holding both
+grants sees it **once**, not twice — that is what the one-row model
+guarantees, and what two rows would have got wrong.
 
 **สถานะห้อง and แม่บ้าน open the same board.** That is deliberate: `reception`
 is a READ-ONLY viewer on `/hk`. new-hotel's `hk_access` middleware admits
@@ -53,7 +68,13 @@ either grant, but the write verbs (`POST .../cleaning`,
 identity with a 403; `GET /api/hk/me` returns `canReport: false` so the UI
 hides the reporting controls. The UI hiding is UX — **the server is the
 enforcement.** An employee holding both grants is full-access and simply sees
-five tiles, the first and last pointing at the same page.
+six tiles, two of which point at the same board.
+
+The same argument covers รายงานแม่บ้าน, which both grants open: new-hotel
+enforces the roles server-side per verb — submitting a report is maid-only
+(the `canReport: true` side), verify and return are reception-only, and a maid
+who also holds `reception` still cannot verify her own work. The tile is a
+launcher, never an authorization.
 
 ### `base` is deliberately empty — no-menu semantics
 

@@ -203,9 +203,12 @@ def _provision_line_user(
     #    1-6, and it is reached again (via menu_signature) from
     #    rich_menu_name() below, so catching it here is what keeps this
     #    function from raising on a grant combination LINE physically cannot
-    #    render as one menu. Insurance rather than a live case: the largest
-    #    real variant today is base+housekeeping at 2 buttons. Mirrors the
-    #    same guard in scripts/staff_oa_sync.py, with the same disposition —
+    #    render as one menu. Not a live case, but no longer comfortable
+    #    insurance either: since รายงานแม่บ้าน (2026-09-02) the largest real
+    #    variant, base+housekeeping+reception, is EXACTLY at LINE's cap of 6,
+    #    so one more MenuButton row makes this branch real for the employees
+    #    who hold both grants. Mirrors the same guard in
+    #    scripts/staff_oa_sync.py, with the same disposition —
     #    unlink, because with base empty there is no menu to fall back to.
     try:
         staff_oa_menu.menu_size(len(buttons))

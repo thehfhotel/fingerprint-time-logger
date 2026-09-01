@@ -44,14 +44,65 @@ class MenuButton:
     """One launchable tool on the Employee Hub.
 
     ``grant_app_id`` is None for base buttons (everyone gets them) or the
-    ``employee_app_grants.app_id`` that reveals the button. ``glyph`` names
-    the icon the image renderer draws (see staff_oa_images).
+    ``employee_app_grants.app_id`` that reveals the button — the tile's HOME
+    grant, the role whose job the tool primarily is. ``glyph`` names the icon
+    the image renderer draws (see staff_oa_images).
+
+    ``also_grant_app_ids`` is the minimal extension (2026-09-02) for a tool
+    that BOTH roles need: the other grants that reveal this same tile. It
+    exists because รายงานแม่บ้าน is one screen two roles work — the maid files
+    the report, reception verifies or returns it — and neither a duplicate row
+    per grant nor a whole second surface would be honest about that.
+
+    ONE ROW, NOT ONE ROW PER GRANT, is the whole design. Dedup is then
+    structural rather than a rule someone has to remember: ``buttons_for``
+    walks MENU_BUTTONS once and yields each row at most once, so an employee
+    holding housekeeping AND reception sees the shared tile exactly ONCE, in
+    its table position, with no set arithmetic to get wrong. Two rows would
+    have shown it twice on the six-cell canvas — the bug this shape makes
+    unrepresentable.
+
+    Use ``grant_app_ids`` (below), never the raw ``grant_app_id``, anywhere
+    the question is "does this grant set reveal this tile".
     """
 
     grant_app_id: Optional[str]
     label: str
     url: str
     glyph: str
+    also_grant_app_ids: FrozenSet[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        # A base button is revealed by EVERYONE, so extra grants on one are
+        # not merely redundant — they would leak into MENU_GRANT_APP_IDS and
+        # mint variant keys whose menus are byte-identical to base's, i.e.
+        # two keys with one signature. provision/sync both treat an exact
+        # signature match as "this menu already exists", so that collision
+        # would cross-link employees between variants. Refuse the row.
+        if self.grant_app_id is None and self.also_grant_app_ids:
+            raise ValueError(
+                f"Base button {self.label!r} (grant_app_id=None) is revealed by "
+                f"everyone; extra grants {sorted(self.also_grant_app_ids)} are "
+                "meaningless and would mint phantom menu variants"
+            )
+        if self.grant_app_id in self.also_grant_app_ids:
+            raise ValueError(
+                f"Button {self.label!r} repeats its home grant "
+                f"{self.grant_app_id!r} in also_grant_app_ids"
+            )
+
+    @property
+    def grant_app_ids(self) -> FrozenSet[str]:
+        """Every grant that reveals this tile; empty for a base button.
+
+        The single accessor the rest of the module reads, so "one grant" and
+        "several grants" are the same case everywhere downstream (buttons_for,
+        MENU_GRANT_APP_IDS, the signature payload) instead of each site having
+        to remember the second field exists.
+        """
+        if self.grant_app_id is None:
+            return frozenset()
+        return frozenset({self.grant_app_id}) | self.also_grant_app_ids
 
 
 # ---------------------------------------------------------------------------
@@ -200,23 +251,71 @@ MENU_BUTTONS: Tuple[MenuButton, ...] = (
     # controls for them (GET /api/hk/me returns canReport:false), but that is
     # UX: the server is the enforcement, and the tile is safe even if the
     # frontend regresses. An employee holding BOTH grants is full-access and
-    # simply sees five tiles, the first and fifth pointing at the same board.
+    # simply sees six tiles, the first and fifth pointing at the same board.
     #
     # This takes the both-grants variant to FIVE buttons — the 3+2 layout,
     # first real use of menu_rows(5). LINE's cap is 6, so exactly one tile of
-    # headroom is left; the next addition needs a rethink, not a row.
+    # headroom was left at this point; รายงานแม่บ้าน below spent it.
     MenuButton(
         grant_app_id="reception",
         label="สถานะห้อง",
         url="https://hotel.thehfhotel.org/hk",
         glyph="clipboard",
     ),
+    # รายงานแม่บ้าน — Report HK, the owner's paper room-report sheet digitized
+    # (decisions grilled 2026-09-02; vocabulary in new-hotel CONTEXT.md
+    # §Housekeeping "Room report" / "Report verification").
+    #
+    # WHY IT IS ON THE MENU AT ALL: it is the maid's daily obligation, once per
+    # room — status code, the equipment checklist, and her photos — and it
+    # replaces a paper sheet she used to carry. A tool she must reach in every
+    # room of her round is exactly what the Hub is for; the alternative is a
+    # URL nobody types, which is what the /hk board was before it got a tile.
+    #
+    # WHY BOTH GRANTS REVEAL IT — the first shared tile on this menu. A report
+    # is TWO-SIDED by design: the maid fills it (status, exceptions, 1-4
+    # photos), and any receptionist of the branch countersigns it with 1-4
+    # photos of her OWN — a verify is a walk-up, not a desk stamp — or returns
+    # it with a canned reason for the maid to file a fresh report against. Both
+    # halves live on the SAME screen (the day overview at /hk/report, the heir
+    # of the paper day-sheet and each side's work queue), so a maid-only tile
+    # would leave reception with no way in, and a second reception-only tile
+    # pointing at the same URL would be a second row here — and would then show
+    # TWICE for the owner, who holds both grants. Hence also_grant_app_ids: one
+    # row, revealed by either grant, rendered once. See the MenuButton
+    # docstring.
+    #
+    # WHY THAT IS SAFE: the tile is a launcher, not an authorization. new-hotel
+    # enforces the roles SERVER-side on every verb — POST /api/hk/rooms/{id}
+    # /report is maid-only (the can_report=true side), verify/return are
+    # reception-only, and a maid who also holds `reception` still cannot verify
+    # (she is the maid side). The /hk/report UI hides the other side's
+    # controls, but that is UX; the server is the enforcement, and this tile
+    # stays correct even if the frontend regresses. Same argument the
+    # สถานะห้อง tile above already rests on.
+    #
+    # LINE'S CAP IS NOW EXACTLY REACHED: the both-grants variant is SIX buttons
+    # (3+3, the last layout menu_rows() has). There is no headroom left. A
+    # seventh tool cannot be a seventh row — it needs a tile removed, or two
+    # tools merged behind one tile, or a launcher screen. The over-cap guards
+    # in scripts/staff_oa_sync.py and app/services/staff_oa_provision.py are no
+    # longer theoretical insurance: one more row here and the both-grants
+    # holders lose their menu entirely.
+    MenuButton(
+        grant_app_id="housekeeping",
+        also_grant_app_ids=frozenset({"reception"}),
+        label="รายงานแม่บ้าน",
+        url="https://hotel.thehfhotel.org/hk/report",
+        glyph="photo_sheet",
+    ),
 )
 
 # Grants that actually change the menu. Any other grant (rooms, portal, …)
-# is menu-irrelevant and ignored when computing variants.
+# is menu-irrelevant and ignored when computing variants. Unioned over each
+# button's FULL grant set, so a grant that only ever appears as a shared
+# tile's `also_grant_app_ids` still counts as menu-relevant.
 MENU_GRANT_APP_IDS: FrozenSet[str] = frozenset(
-    button.grant_app_id for button in MENU_BUTTONS if button.grant_app_id
+    grant for button in MENU_BUTTONS for grant in button.grant_app_ids
 )
 
 
@@ -248,12 +347,18 @@ def grants_for_menu_key(key: str) -> FrozenSet[str]:
 
 
 def buttons_for(granted_app_ids: Iterable[str]) -> Tuple[MenuButton, ...]:
-    """The buttons this grant set sees, in canonical table order."""
+    """The buttons this grant set sees, in canonical table order.
+
+    A shared tile (several grants on one row) is revealed by ANY of them and
+    appears exactly ONCE regardless of how many the employee holds — this walk
+    visits each row once, which is why the model puts several grants on one
+    row rather than one row per grant.
+    """
     relevant = menu_grants(granted_app_ids)
     return tuple(
         button
         for button in MENU_BUTTONS
-        if button.grant_app_id is None or button.grant_app_id in relevant
+        if not button.grant_app_ids or button.grant_app_ids & relevant
     )
 
 
@@ -311,8 +416,12 @@ def menu_signature(granted_app_ids: Iterable[str]) -> str:
         "style": IMAGE_STYLE_VERSION,
         "chat_bar": CHAT_BAR_TEXT,
         "size": menu_size(len(buttons)),
+        # sorted() over the button's FULL grant set, not the raw
+        # grant_app_id: JSON-safe (a frozenset is not), order-stable, and it
+        # keeps the hash covering everything about the row that decides what
+        # gets rendered — including a widened `also_grant_app_ids`.
         "buttons": [
-            [button.grant_app_id, button.label, button.url, button.glyph]
+            [sorted(button.grant_app_ids), button.label, button.url, button.glyph]
             for button in buttons
         ],
     }

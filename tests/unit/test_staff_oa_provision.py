@@ -42,8 +42,9 @@ MENU_IRRELEVANT_GRANT = "payroll"
 HOUSEKEEPING_KEY = "base+housekeeping"
 
 # A synthetic grant carrying enough extra buttons to push a variant one past
-# LINE's 6-button cap. No REAL grant combination can overflow today (the
-# largest real variant is 5 buttons), so the over-cap guard has to be tested
+# LINE's 6-button cap. No REAL grant combination can overflow today, though
+# the largest real variant (base+housekeeping+reception) has SAT ON the cap
+# at 6 buttons since 2026-09-02, so the over-cap guard has to be tested
 # against a table that grew — exactly the fixture strategy
 # tests/unit/test_staff_oa_sync.py uses for the same guard.
 SYNTHETIC_GRANT = "extra"
@@ -51,7 +52,11 @@ SYNTHETIC_GRANT = "extra"
 # below actually grant — not from len(MENU_BUTTONS). Those were the same number
 # while `housekeeping` owned every button in the table; `reception` broke that
 # on 2026-09-01 and the fixture quietly stopped overflowing (6 buttons, not 7),
-# turning the over-cap tests green against a menu that fits.
+# turning the over-cap tests green against a menu that fits. Load-bearing
+# again on 2026-09-02: the maid grant went from 4 tiles to 5 (รายงานแม่บ้าน,
+# shared with `reception`), so this now mints 2 synthetic buttons where it
+# minted 3 — and would mint too many, overflowing for the wrong reason, if it
+# were keyed on the 6-row table instead of on what MENU_GRANT reveals.
 _SYNTHETIC_BUTTON_COUNT = max(1, 7 - len(staff_oa_menu.buttons_for({MENU_GRANT})))
 SYNTHETIC_BUTTONS = tuple(
     staff_oa_menu.MenuButton(

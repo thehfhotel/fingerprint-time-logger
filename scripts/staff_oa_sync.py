@@ -144,17 +144,16 @@ def sync(apply: bool, render_dir: str = "") -> int:
         try:
             staff_oa_menu.menu_size(button_count)
         except ValueError as exc:
-            # LINE caps a rich menu at 6 buttons. This guard is forward-
-            # looking insurance: since the 2026-08-14 re-scope to a maid-only
-            # Hub, `housekeeping` is the ONLY menu-relevant grant and the
-            # largest real variant is base+housekeeping at 3 buttons, so no
-            # grant combination an employee can actually hold overflows today.
-            # It earned its place before that: with payroll + ota + a
-            # 3-button housekeeping grant, one employee holding all three
-            # minted a 7-button variant, and the most likely person to do
-            # that was the owner self-granting everything to test the system.
-            # Any future MENU_BUTTONS addition can put us back there, which
-            # is why this stays.
+            # LINE caps a rich menu at 6 buttons. No grant combination an
+            # employee can actually hold overflows today — but as of
+            # 2026-09-02 (รายงานแม่บ้าน) the largest real variant,
+            # base+housekeeping+reception, is EXACTLY 6. The margin is one
+            # MenuButton row, so this guard is a step away from live rather
+            # than the comfortable insurance it was. It earned its place
+            # before: with payroll + ota + a 3-button housekeeping grant, one
+            # employee holding all three minted a 7-button variant, and the
+            # most likely person to do that was the owner self-granting
+            # everything to test the system.
             #
             # Left uncaught, staff_oa_menu.rich_menu_name() below (via
             # menu_signature -> menu_size) raises mid-loop and blocks every
