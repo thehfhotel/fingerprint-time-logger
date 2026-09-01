@@ -64,7 +64,7 @@ import secrets
 import threading
 import time
 import urllib.parse
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -165,6 +165,46 @@ def _require_secret(header_value: Optional[str], expected: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid reader secret"
         )
+
+
+def _secret_guard(expected_secret: Callable[[], str]):
+    """Build the route-level ``dependencies=[...]`` guard for one secret.
+
+    **Why a dependency and not a call in the handler body (2026-09):** when the
+    guard was the first statement of the handler, FastAPI had already parsed
+    and validated the request body by the time it ran, so an UNAUTHENTICATED
+    caller posting a wrong-shaped body got 422 with a full pydantic error list
+    — field names, types, which keys are missing — instead of 401. That is a
+    schema disclosure: the caller learns the endpoint's contract without ever
+    proving it may call it. It affected every endpoint on this router,
+    /hk-escalate included.
+
+    FastAPI solves a route's ``dependencies`` BEFORE it validates the body and
+    before it raises ``RequestValidationError``, so raising 401/404 in here
+    preempts the 422 and the body is never described to a caller we have not
+    authenticated. ``expected_secret`` is a callable, not a value, so the
+    environment stays read per-request (the lazy-secret convention above, which
+    monkeypatching tests depend on).
+
+    Residual, and deliberate: a body that is not decodable JSON at all still
+    answers 422, because FastAPI decodes the raw payload before it solves any
+    dependency. That 422 carries no schema — only "this was not JSON" — so it
+    discloses nothing about the endpoint, and preempting it would mean
+    hand-rolling body reads on every route.
+    """
+
+    async def _guard(x_reader_secret: Optional[str] = Header(None)) -> None:
+        _require_secret(x_reader_secret, expected_secret())
+
+    return Depends(_guard)
+
+
+#: The app↔central guard (``READER_RESOLVE_SECRET``) — /resolve, /resolve-badge,
+#: /hk-escalate, /claim, /wait, /elevate/start, /elevate/wait.
+RequireResolveSecret = _secret_guard(_resolve_secret)
+#: The reader↔central guard (``READER_SECRET``) — /scan only. A separate secret
+#: on purpose: a compromised app backend must not be able to forge taps.
+RequireReaderSecret = _secret_guard(_reader_secret)
 
 
 def _wait_timeout_seconds() -> float:
@@ -495,10 +535,9 @@ class ElevateWaitRequest(BaseModel):
 # POST /resolve — direct UID → employee identity (app↔central)
 # ============================================================================
 
-@router.post("/resolve")
+@router.post("/resolve", dependencies=[RequireResolveSecret])
 async def resolve_card(
     body: ResolveRequest,
-    x_reader_secret: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Resolve a tapped NFC card UID into an employee identity.
@@ -514,8 +553,6 @@ async def resolve_card(
     VERBATIM, null included; null means "HF ID has no branch on file", never a
     default branch.
     """
-    _require_secret(x_reader_secret, _resolve_secret())
-
     employee = _find_employee_by_uid(db, body.uid)
     if employee is None:
         return {
@@ -567,10 +604,9 @@ async def resolve_card(
 # endpoint fixes, one layer down and much harder to see.
 
 
-@router.post("/resolve-badge")
+@router.post("/resolve-badge", dependencies=[RequireResolveSecret])
 async def resolve_badge(
     body: ResolveBadgeRequest,
-    x_reader_secret: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Resolve an employee badge number into an identity + branch location.
@@ -587,8 +623,6 @@ async def resolve_badge(
     null means unassigned in HF ID — the caller must treat it as UNKNOWN and
     refuse, not as a branch.
     """
-    _require_secret(x_reader_secret, _resolve_secret())
-
     employee = _find_employee_by_badge(db, body.badge)
     if employee is None:
         return {
@@ -634,10 +668,9 @@ async def resolve_badge(
 _ROOM_NO_ALLOWED = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ./-]*$")
 
 
-@router.post("/hk-escalate")
+@router.post("/hk-escalate", dependencies=[RequireResolveSecret])
 async def hk_escalate(
     body: HkEscalateRequest,
-    x_reader_secret: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Push an unacked ขอเช็คห้อง to the on-duty maids of one branch.
@@ -668,8 +701,6 @@ async def hk_escalate(
       no push is possible at all. Non-2xx for the same reason as 502: nothing
       was delivered, and the signal must stay un-escalated.
     """
-    _require_secret(x_reader_secret, _resolve_secret())
-
     branch = body.branch.strip()
     if hk_escalation_service.branch_device_name(branch) is None:
         raise HTTPException(
@@ -731,10 +762,9 @@ async def hk_escalate(
 # POST /scan — the ESP32 reader ingests a tap (reader↔central)
 # ============================================================================
 
-@router.post("/scan")
+@router.post("/scan", dependencies=[RequireReaderSecret])
 async def scan_card(
     body: ScanRequest,
-    x_reader_secret: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Ingest a physical NFC tap and buffer it for the reader.
@@ -748,8 +778,6 @@ async def scan_card(
     good tap is stashed as a pending tap for ``reader`` (TTL ~30s) and returns
     200 with the display name so the reader can show who tapped.
     """
-    _require_secret(x_reader_secret, _reader_secret())
-
     employee = _find_employee_by_uid(db, body.uid)
     if employee is None or not employee.is_active or employee.pending_approval:
         raise HTTPException(
@@ -770,10 +798,9 @@ async def scan_card(
 # POST /claim — an app backend pairs a terminal to a reader (app↔central)
 # ============================================================================
 
-@router.post("/claim")
+@router.post("/claim", dependencies=[RequireResolveSecret])
 async def claim_reader(
     body: ClaimRequest,
-    x_reader_secret: Optional[str] = Header(None),
 ):
     """Pair a terminal to a reader for a specific app grant.
 
@@ -783,8 +810,6 @@ async def claim_reader(
     Returns an opaque ``claim_token`` the app backend then long-polls with via
     /wait. ``app`` is the grant key the app requires (e.g. "payroll", "rooms").
     """
-    _require_secret(x_reader_secret, _resolve_secret())
-
     token = create_claim(reader_id=body.reader_id, app=body.app)
     return {"claim_token": token}
 
@@ -793,10 +818,9 @@ async def claim_reader(
 # POST /wait — an app backend long-polls for the tap (app↔central)
 # ============================================================================
 
-@router.post("/wait")
+@router.post("/wait", dependencies=[RequireResolveSecret])
 async def wait_for_tap(
     body: WaitRequest,
-    x_reader_secret: Optional[str] = Header(None),
 ):
     """Long-poll for a tap on the claim's reader; return a signed card assertion.
 
@@ -816,8 +840,6 @@ async def wait_for_tap(
     On timeout with no tap → 204 (the app backend re-polls with the same token).
     An unknown/expired claim → 404.
     """
-    _require_secret(x_reader_secret, _resolve_secret())
-
     claim = lookup_claim(body.claim_token)
     if claim is None:
         raise HTTPException(
@@ -860,10 +882,9 @@ async def wait_for_tap(
 # ============================================================================
 
 
-@router.post("/elevate/start")
+@router.post("/elevate/start", dependencies=[RequireResolveSecret])
 async def elevate_start(
     body: ElevateStartRequest,
-    x_reader_secret: Optional[str] = Header(None),
 ):
     """Mint a kiosk LINE-scan elevate ticket for a specific app grant.
 
@@ -877,8 +898,6 @@ async def elevate_start(
     "portal"); ``label`` (optional, length-capped) names the terminal on the
     phone-side page.
     """
-    _require_secret(x_reader_secret, _resolve_secret())
-
     app = body.app.strip()
     if not app:
         raise HTTPException(
@@ -890,10 +909,9 @@ async def elevate_start(
     return {"elevate_token": token}
 
 
-@router.post("/elevate/wait")
+@router.post("/elevate/wait", dependencies=[RequireResolveSecret])
 async def elevate_wait(
     body: ElevateWaitRequest,
-    x_reader_secret: Optional[str] = Header(None),
 ):
     """Long-poll for the LINE completion of an elevate ticket.
 
@@ -913,8 +931,6 @@ async def elevate_wait(
     On timeout with the ticket still pending → 204 (the app backend re-polls
     with the same token). An unknown/expired ticket → 404.
     """
-    _require_secret(x_reader_secret, _resolve_secret())
-
     if lookup_elevate_ticket(body.elevate_token) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Unknown or expired ticket"

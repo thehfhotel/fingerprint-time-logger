@@ -1171,3 +1171,87 @@ class TestElevateCallbackHook:
             audience="portal", issuer=_ISSUER,
         )
         assert claims["sub"] == "1001"
+
+
+# ===========================================================================
+# The secret is checked BEFORE the body — every endpoint on the surface
+# ===========================================================================
+#
+# Regression pin for the 2026-09 fix (see ``_secret_guard`` in app/api/reader.py).
+# The guard used to be the first STATEMENT of each handler, which meant FastAPI
+# had already validated the body by the time it ran: an unauthenticated caller
+# posting a wrong-shaped body got 422 with a full pydantic error list — every
+# field name, its type, and which keys were missing — instead of 401. That is a
+# schema disclosure on a server-to-server surface, and it affected ALL EIGHT
+# endpoints, /hk-escalate included (its existing
+# ``test_auth_is_checked_before_the_body`` only ever sent a structurally VALID
+# body with bad VALUES, so it never caught this).
+#
+# The guard is now a route-level ``dependencies=[...]`` entry, which FastAPI
+# solves before body validation. These tests pin that ordering per endpoint, so
+# a future endpoint added with the old in-handler pattern fails here.
+
+#: (path, the env var whose secret guards it). /scan is guarded by the distinct
+#: reader↔central READER_SECRET; everything else by READER_RESOLVE_SECRET.
+SECRET_GUARDED_ENDPOINTS = [
+    ("/api/private/reader/resolve", "READER_RESOLVE_SECRET"),
+    ("/api/private/reader/resolve-badge", "READER_RESOLVE_SECRET"),
+    ("/api/private/reader/hk-escalate", "READER_RESOLVE_SECRET"),
+    ("/api/private/reader/claim", "READER_RESOLVE_SECRET"),
+    ("/api/private/reader/wait", "READER_RESOLVE_SECRET"),
+    ("/api/private/reader/elevate/start", "READER_RESOLVE_SECRET"),
+    ("/api/private/reader/elevate/wait", "READER_RESOLVE_SECRET"),
+    ("/api/private/reader/scan", "READER_SECRET"),
+]
+
+#: Structurally valid JSON of entirely the wrong shape: no field any of these
+#: endpoints declares. Every one of them 422s on it once the caller is known.
+MALFORMED_BODY = {"not_a_field_any_endpoint_declares": "x"}
+
+
+def _correct_secret_for(env_var):
+    return READER_SECRET if env_var == "READER_SECRET" else SECRET
+
+
+@pytest.mark.parametrize("path,env_var", SECRET_GUARDED_ENDPOINTS)
+class TestSecretIsCheckedBeforeBody:
+    def test_wrong_secret_with_malformed_body_returns_401_not_422(
+        self, test_client, test_db, card_login_enabled, path, env_var
+    ):
+        """A caller with the WRONG secret learns nothing about the schema."""
+        response = test_client.post(
+            path, json=MALFORMED_BODY, headers=_headers("not-the-secret")
+        )
+        assert response.status_code == 401
+        # And the 401 body names no field of the rejected request.
+        assert "not_a_field_any_endpoint_declares" not in response.text
+
+    def test_missing_header_with_malformed_body_returns_401_not_422(
+        self, test_client, test_db, card_login_enabled, path, env_var
+    ):
+        """Same for a caller that presents no secret at all."""
+        response = test_client.post(path, json=MALFORMED_BODY)
+        assert response.status_code == 401
+        assert "not_a_field_any_endpoint_declares" not in response.text
+
+    def test_right_secret_with_malformed_body_still_returns_422(
+        self, test_client, test_db, card_login_enabled, path, env_var
+    ):
+        """Body validation is preempted, not disabled: an AUTHENTICATED caller
+        still gets the full 422 it needs to fix its request."""
+        response = test_client.post(
+            path, json=MALFORMED_BODY, headers=_headers(_correct_secret_for(env_var))
+        )
+        assert response.status_code == 422
+
+    def test_dark_beats_malformed_body_too(
+        self, test_client, test_db, monkeypatch, path, env_var
+    ):
+        """The dark-when-unset posture is unchanged and also outranks the body:
+        with the guarding secret unset the route is 404, indistinguishable from
+        one that does not exist, whatever the caller posts."""
+        monkeypatch.delenv(env_var, raising=False)
+        response = test_client.post(
+            path, json=MALFORMED_BODY, headers=_headers("anything")
+        )
+        assert response.status_code == 404
