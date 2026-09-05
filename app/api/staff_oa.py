@@ -24,6 +24,12 @@ set, and it can neither delay nor fail the response (see
 staff_oa_service.forward_group_events_in_background). No message text and
 no user/room event ever leaves this app.
 
+Since 2026-09-05 this webhook is ALSO the staff bot's front door
+(``HF ภายใน``): ``message``/``postback``/``join`` events are routed into
+app/services/staff_bot.py, which debounces them and answers with a free reply
+token. Follow handling is byte-for-byte what it was; the bot never pushes, and
+non-command chat is discarded before anything is logged.
+
 FAIL CLOSED: the endpoint answers 503 until both STAFF_OA_* secrets are
 configured (see app/core/config.py), and every request must carry a valid
 ``X-Line-Signature`` (HMAC of the raw body with the channel secret).
@@ -40,7 +46,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.models import Employee
-from app.services import staff_oa_menu, staff_oa_service
+from app.services import staff_bot, staff_oa_menu, staff_oa_service
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +54,12 @@ router = APIRouter()
 
 # One short reply for not-yet-onboarded followers. Replies are free (no
 # push quota) and only sent for this one event, so the OA stays quiet.
-ONBOARDING_REPLY_TEXT = (
-    "ยินดีต้อนรับสู่ HF Employee Hub\n"
-    "บัญชี LINE นี้ยังไม่ได้เชื่อมกับทะเบียนพนักงาน "
-    "กรุณาสแกน QR บนป้ายพนักงาน (Q-badge) ของคุณ หรือเปิด "
-    "https://erp.thehfhotel.org/qr-checkin/onboard "
-    "เพื่อเชื่อมบัญชี แล้วเมนูเครื่องมือของคุณจะปรากฏที่นี่"
-)
+#
+# The string itself moved to app/services/staff_bot.py on 2026-09-05, because
+# the bot sends the SAME text to a stranger who opens a 1:1 chat and the two
+# must never drift apart. Re-exported here under its original name: this is
+# still where the follow path reads it, and the text is unchanged.
+ONBOARDING_REPLY_TEXT = staff_bot.ONBOARDING_REPLY_TEXT
 
 
 def _require_enabled() -> None:
@@ -145,6 +150,24 @@ async def staff_oa_webhook(
     if not isinstance(events, list):
         events = []
 
+    # Staff bot (HF ภายใน) FIRST: message/postback/join events become
+    # debounced, free replies. Nothing is sent from inside this request — the
+    # bot waits for the chat to go quiet — so this loop only files intent, and
+    # a failure in it must not change the 200 LINE is waiting for. It runs
+    # before the relay below because the two compete for the same single-use
+    # reply token: an event the bot has claimed is relayed WITHOUT its token.
+    commands = 0
+    claimed: list = []
+    for event in events:
+        handled_event = staff_bot._NOT_HANDLED
+        try:
+            handled_event = staff_bot.handle_event_detail(event, db)
+        except Exception:  # noqa: BLE001 — keep the webhook green per event
+            logger.exception("staff-bot event handling failed")
+        claimed.append(handled_event.claims_reply_token)
+        if handled_event.command:
+            commands += 1
+
     # Relay group events to guest-feedback BEFORE the follow loop: they carry
     # the same short-lived reply token LINE hands us, and the loop below makes
     # blocking LINE API calls. Fire-and-forget on a daemon thread — it cannot
@@ -158,8 +181,10 @@ async def staff_oa_webhook(
         forwarded = [
             payload
             for payload in (
-                staff_oa_service.group_event_forward_payload(event)
-                for event in events
+                staff_oa_service.group_event_forward_payload(
+                    event, withhold_reply_token=claims,
+                )
+                for event, claims in zip(events, claimed)
             )
             if payload is not None
         ]
@@ -180,4 +205,5 @@ async def staff_oa_webhook(
         "status": "ok",
         "follow_events_handled": handled,
         "group_events_forwarded": len(forwarded),
+        "bot_commands": commands,
     }

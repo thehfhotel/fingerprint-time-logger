@@ -225,6 +225,28 @@ def get_server_config() -> dict:
 #                      guest-feedback compares it constant-time and answers
 #                      401 on a mismatch. Same header name as READER_SECRET
 #                      above, a DIFFERENT secret and a different app.
+#
+# STAFF BOT READ SIDE (separate again, independently dark). The staff OA is
+# also a bot (HF ภายใน): summoned in the staff LINE group or in a 1:1 chat, it
+# answers งานค้าง with the open แจ้งซ่อม digest. Those rows belong to the
+# HOUSEKEEPING app, so HF ID reads them server-to-server over the Docker
+# network — bearer token instead of Cloudflare Access, same shape as
+# PORTAL_DIRECTORY_URL/TOKEN. Read via os.getenv() in
+# app/services/housekeeping_client.py. The bot replies only with LINE reply
+# tokens (free); it never pushes.
+#
+#   HOUSEKEEPING_INTERNAL_URL
+#                      Housekeeping's internal base URL. Default (and
+#                      production) http://housekeeping:4070 — the digest
+#                      itself is GET {URL}/internal/staff-bot/digest. Not a
+#                      secret.
+#   HOUSEKEEPING_STAFF_BOT_TOKEN
+#                      Bearer token for that endpoint; the same value as
+#                      housekeeping's own STAFF_BOT_INGRESS_TOKEN.
+#                      UNSET/BLANK ⇒ the digest read is DARK: nothing is
+#                      dialed and the bot answers one fixed Thai line
+#                      ("ระบบงานซ่อมยังไม่เชื่อมต่อ ..."), never an error and
+#                      never silence.
 # ============================================================================
 
 

@@ -245,10 +245,92 @@ Employees who follow the OA are still linked by the webhook as well.
   quota) with a short Thai pointer to the Q-badge onboarding flow
   (`/qr-checkin/onboard`) that links LINE accounts.
 
-`follow` is still the only event this app ACTS on. Since 2026-09-05 group
-events are also **forwarded** (below); everything else is ignored. Per-event
-failures are logged but never fail the delivery (LINE would retry the whole
-batch).
+Since 2026-09-05 the webhook also drives the **staff bot** (below) on
+`message`, `postback` and `join`, and **forwards** group events to
+guest-feedback (further below). Everything else is ignored. Per-event failures
+are logged but never fail the delivery (LINE would retry the whole batch), and
+a delivery marked `deliveryContext.isRedelivery` is dropped by the bot so a
+LINE retry cannot double-post.
+
+## The staff bot (HF ภายใน)
+
+**Reply-token arbitration.** A LINE reply token is single-use, and this
+webhook has two consumers: the staff bot (debounced replies) and the
+guest-feedback relay (`GUEST_FEEDBACK_LINE_*`, dark until configured). The
+bot files intent first; any event whose token it has claimed — a command, or
+ordinary chat in a chat where a reply is already pending (the bot moves to the
+newer token) — is still relayed to guest-feedback, but with `replyToken:
+null`, meaning "no reply window on this one, wait for the next message". One
+consumer per token, decided in the webhook, never by a race between two
+senders. See `staff_bot.handle_event_detail` and
+`staff_oa_service.group_event_forward_payload(withhold_reply_token=...)`.
+
+
+The OA answers questions in the all-staff LINE group and in 1:1 chats.
+Design authority: hf-erp ADR *"The staff bot answers only with reply tokens;
+LINE meters pushes per recipient"*. Code: `app/services/staff_bot.py`
+(router, palette, digest, debounce) and `app/services/housekeeping_client.py`
+(the one outbound read).
+
+### Summoning it
+
+| Where | What to type | What comes back |
+|---|---|---|
+| Staff group | `น้องคะ` / `น้องค่ะ` / `น้องครับ` / `น้องคับ` (a space after น้อง is fine), or @-mention the OA | the palette bubble |
+| Staff group | the same summon followed by `งานค้าง` (also `งานซ่อมค้าง`, `แจ้งซ่อมค้าง`) | the digest |
+| 1:1 chat | `งานค้าง` on its own | the digest |
+| 1:1 chat | anything else | the palette bubble |
+| anywhere | tapping the palette's **งานค้าง แจ้งซ่อม** button (`cmd=digest`) | the digest |
+
+`น้อง` without one of the four particles is ordinary chat — "น้องเอาข้าวไหม"
+never wakes the bot. In a 1:1 chat the sender must resolve to an **active**
+employee via `line_user_id`; an unknown account gets the same Q-badge
+onboarding reply a stranger's `follow` gets, and nothing else.
+
+### Zero metered messages
+
+Every reply rides the webhook's **reply token**, which LINE does not count at
+any chat size. A *push* into the staff group would be metered **per member**
+(one send to 17 people = 17 messages) against an allowance of ~300/month — see
+"Mind the push cap" below. No push, multicast, broadcast or narrowcast exists
+anywhere in this feature, and none may be added to it.
+
+### It waits for quiet (debounce)
+
+People type in bursts, so the bot never answers the message it was summoned
+by. A command opens a pending reply; every later message in that chat hands it
+a fresher reply token and restarts the timer. It answers after **15 s of quiet
+in a group** (2 s in a 1:1) and at the latest **45 s** after the first
+trigger — reply tokens are short lived, so that cap is not optional. Two
+commands in one burst coalesce into a single reply carrying both messages.
+
+### Privacy rule
+
+The webhook sees every message in the staff group. Non-command chat is
+discarded **before any logging** — no text, no photo, no sender. A recognised
+command logs exactly three fields: event type, source type, chat id. The first
+`join` logs the group id once (`staff-bot joined group C...`), which is how
+the rollout learns it. Nothing else about a message is ever written down.
+
+### Where the งานซ่อม rows come from
+
+`GET {HOUSEKEEPING_INTERNAL_URL}/internal/staff-bot/digest` with
+`Authorization: Bearer {HOUSEKEEPING_STAFF_BOT_TOKEN}`, 5 s timeout,
+container-to-container over the shared-nginx network (no Cloudflare Access in
+the path). Housekeeping returns both properties, Thai-labelled, urgent first
+then oldest, 20 rows each plus a `truncated` count.
+
+```
+HOUSEKEEPING_INTERNAL_URL=http://housekeeping:4070   # default; not a secret
+HOUSEKEEPING_STAFF_BOT_TOKEN=<= housekeeping's STAFF_BOT_INGRESS_TOKEN>
+```
+
+**Empty token ⇒ dark**: nothing is dialed and every digest request answers
+`ระบบงานซ่อมยังไม่เชื่อมต่อ ลองใหม่อีกครั้งภายหลัง` — the same line a timeout,
+a 401 or a 503 produces. Staff never see a status code, and never silence.
+Both variables ride the deploy (`env_payload` in
+`.github/workflows/build.yml`, passthrough in `docker-compose.yml`); do not
+hand-edit the host `.env`, every deploy rewrites it.
 
 ## Group events forwarded to guest-feedback
 
