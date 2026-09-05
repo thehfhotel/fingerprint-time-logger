@@ -11,6 +11,7 @@ tools from grant-driven **Role Menus**; this repo hosts the machinery:
 | Menu image renderer (PIL, HF One palette, bundled Thai font) | `app/services/staff_oa_images.py` |
 | Credentials, webhook signature, LINE API client, relink helper | `app/services/staff_oa_service.py` |
 | Follow-event webhook | `app/api/staff_oa.py` → `POST /api/public/staff-oa/webhook` |
+| Group-event forward to guest-feedback (LINE allows 1 OA per group) | `app/services/staff_oa_service.py` → `forward_group_events*` |
 | **Automatic per-employee provisioning (create menu + link/unlink)** | `app/services/staff_oa_provision.py` |
 | Idempotent menu/link sync (dry-run by default) | `scripts/staff_oa_sync.py` |
 | Offline image preview | `scripts/staff_oa_render_menus.py` |
@@ -244,8 +245,77 @@ Employees who follow the OA are still linked by the webhook as well.
   quota) with a short Thai pointer to the Q-badge onboarding flow
   (`/qr-checkin/onboard`) that links LINE accounts.
 
-Other events are ignored. Per-event failures are logged but never fail the
-delivery (LINE would retry the whole batch).
+`follow` is still the only event this app ACTS on. Since 2026-09-05 group
+events are also **forwarded** (below); everything else is ignored. Per-event
+failures are logged but never fail the delivery (LINE would retry the whole
+batch).
+
+## Group events forwarded to guest-feedback
+
+LINE allows exactly **one Official Account per group chat**. The staff LINE
+group hosts the staff OA above, so the guest-feedback app
+(`feedback.thehfhotel.org`, repo `guest-feedback`) cannot be invited into the
+same group and cannot receive its webhook. This webhook relays the events it
+does not handle itself, and guest-feedback replies into the group using the
+**staff OA's** channel access token. Contract of record: guest-feedback
+`docs/CONTRACTS.md` §15.4.
+
+| | |
+|---|---|
+| Sender | `app/api/staff_oa.py` → `app/services/staff_oa_service.py` (`forward_group_events*`) |
+| Receiver | `POST http://feedback:4080/api/internal/line/event` over the shared-nginx Docker network |
+| Auth | `X-Reader-Secret: <GUEST_FEEDBACK_LINE_SECRET>` (constant-time compare on the far side; 401 on mismatch) |
+| Forwarded | `source.type == "group"` **and** type in `message`, `join`, `memberJoined`, `leave` |
+| Payload | `{"type", "replyToken", "timestamp", "groupId", "channel": "staff-oa"}` |
+
+Deliberate properties, each covered by a test:
+
+- **No message text, ever**, and no `userId` — staff chatter and who said it
+  never leave this app. Only the group id and the reply token cross.
+- **No user or room events.** A 1:1 chat with the OA and a multi-person room
+  are private; only group events qualify.
+- **Fire-and-forget on a daemon thread**, 2 s timeout, every failure logged
+  and swallowed. It cannot delay or fail the webhook's `200` — a delivery
+  LINE counts as failed is retried, and a wedged staff channel would cost far
+  more than a missed guest request. (A FastAPI `BackgroundTasks` would NOT do:
+  Starlette runs those inside the same ASGI call, so a slow peer would still
+  hold the response.)
+- **Follow handling is untouched**, and forwarding is a separate darkness
+  switch from the OA credentials.
+
+### Env
+
+```
+GUEST_FEEDBACK_LINE_URL=http://feedback:4080/api/internal/line/event
+GUEST_FEEDBACK_LINE_SECRET=<shared with guest-feedback's LINE_FORWARD_SECRET>
+```
+
+**Empty/unset URL ⇒ dark**: no reduction, no thread, no request. The URL is
+not a secret (container-to-container, no Cloudflare Access in the path) and
+rides the deploy as the GitHub **variable** `GUEST_FEEDBACK_LINE_URL`; the
+secret is the GitHub **secret** `GUEST_FEEDBACK_LINE_SECRET`. Both are in the
+`env_payload` of `.github/workflows/build.yml` and in `docker-compose.yml` —
+do not hand-edit the host `.env`, every deploy rewrites it. The secret is
+**not** `READER_SECRET`, despite sharing the header name.
+
+### Console prerequisites for the group
+
+The group side is console configuration, not code — the forward stays silent
+until all of this is true:
+
+1. **LINE Developers console → the staff OA's Messaging API tab**: *Allow bot
+   to join group chats* **ON**.
+2. **LINE Official Account Manager → Settings**: *Allow account to join groups
+   and multi-person chats* **ON** (the same permission, second switch — the OA
+   Manager one wins, and it defaults OFF).
+3. **Both webhook toggles ON**: *Use webhook* in the Developers console **and**
+   *Webhooks* under OA Manager → Response settings. Either one off and no group
+   event is delivered at all.
+4. **Auto-reply and greeting messages OFF** (OA Manager → Response settings) —
+   otherwise the OA answers every group message on its own and burns the reply.
+5. **A human invites the OA into the staff group.** There is no API for this.
+   guest-feedback learns the group id from the `join`/`memberJoined` event this
+   forwarder relays; nothing needs to be configured with the group id by hand.
 
 ## Images
 

@@ -17,6 +17,10 @@ The Employee Hub lives on a dedicated staff LINE Official Account
     and the housekeeping escalation (app/services/hk_escalation_service.py).
   * :func:`link_role_menu_for_line_user` — the one-user relink helper the
     follow-event webhook uses today and grant-change hooks can call later.
+  * the guest-feedback forwarder (``GUEST_FEEDBACK_LINE_*``, dark when the
+    URL is empty): the staff LINE GROUP can only host one Official Account,
+    so group events this webhook receives are relayed to the guest-feedback
+    app, which replies into the group with this same OA's token.
 """
 
 import base64
@@ -24,6 +28,7 @@ import hashlib
 import hmac
 import logging
 import os
+import threading
 from typing import Dict, Iterable, List, Optional, Sequence, Set
 
 import requests
@@ -404,3 +409,128 @@ def link_role_menu_for_line_user(db: Session, line_user_id: str) -> Optional[str
         "Linked staff-hub menu %r to badge=%s", key, employee.badge_number
     )
     return key
+
+
+# ---------------------------------------------------------------------------
+# Guest-feedback forwarder — group events out to the guest-feedback app
+# ---------------------------------------------------------------------------
+#
+# LINE allows exactly ONE Official Account per group chat. The staff group
+# already hosts THIS OA (the Employee Hub), so the guest-feedback app
+# (feedback.thehfhotel.org) cannot also be invited and cannot get its own
+# webhook for that group. Instead this webhook forwards the group events it
+# does not itself handle, and guest-feedback replies into the group with the
+# Staff OA's token. See guest-feedback docs/CONTRACTS.md §15.4.
+#
+# Deliberately narrow: only `group` sources, only the four event types below,
+# and only the reduced payload — no message text, no user ids, nothing from a
+# 1:1 chat or a multi-person room ever leaves this app.
+
+# Event types guest-feedback acts on: `join`/`memberJoined` learn the group,
+# `leave` forgets it, `message` is the free reply window for pending rows.
+FORWARDED_GROUP_EVENT_TYPES = frozenset({"message", "join", "memberJoined", "leave"})
+
+# Short on purpose: this runs off the webhook path and the only thing a slow
+# peer may cost us is a background thread, never LINE's 200.
+_FORWARD_TIMEOUT_SECONDS = 2
+
+
+def get_guest_feedback_line_url() -> str:
+    """Guest-feedback's internal LINE-event endpoint (blank = dark).
+
+    Production: ``http://feedback:4080/api/internal/line/event`` — container
+    to container over the shared-nginx Docker network, no Cloudflare Access
+    in the path. Blank/unset ⇒ nothing is ever forwarded.
+    """
+    return os.getenv("GUEST_FEEDBACK_LINE_URL", "").strip()
+
+
+def get_guest_feedback_line_secret() -> str:
+    """Shared secret for that endpoint (sent as ``X-Reader-Secret``)."""
+    return os.getenv("GUEST_FEEDBACK_LINE_SECRET", "").strip()
+
+
+def group_event_forward_payload(event: Dict) -> Optional[Dict]:
+    """Reduce ONE webhook event to what guest-feedback gets, or None.
+
+    None means "not forwardable": a user/room source, an event type
+    guest-feedback does not act on, or a group source with no groupId. The
+    returned dict is the whole contract — note what is NOT in it, above all
+    ``message.text`` and the sender's userId.
+    """
+    if not isinstance(event, dict):
+        return None
+    source = event.get("source")
+    if not isinstance(source, dict) or source.get("type") != "group":
+        return None
+    event_type = event.get("type")
+    if event_type not in FORWARDED_GROUP_EVENT_TYPES:
+        return None
+    group_id = source.get("groupId")
+    if not group_id:
+        return None
+    return {
+        "type": event_type,
+        "replyToken": event.get("replyToken"),
+        "timestamp": event.get("timestamp"),
+        "groupId": group_id,
+        "channel": "staff-oa",
+    }
+
+
+def forward_group_events(payloads: Sequence[Dict]) -> None:
+    """POST each reduced payload to guest-feedback. NEVER raises.
+
+    Dark (and silent) while ``GUEST_FEEDBACK_LINE_URL`` is empty. Every
+    failure — connect error, timeout, non-2xx — is logged and swallowed:
+    this is a best-effort side channel, and the webhook it hangs off must
+    answer LINE 200 regardless (see :func:`forward_group_events_in_background`,
+    which is how the webhook actually calls this).
+    """
+    url = get_guest_feedback_line_url()
+    if not url:
+        return
+    headers = {"X-Reader-Secret": get_guest_feedback_line_secret()}
+    for payload in payloads:
+        try:
+            response = requests.post(
+                url, json=payload, headers=headers,
+                timeout=_FORWARD_TIMEOUT_SECONDS,
+            )
+            if response.status_code // 100 != 2:
+                logger.warning(
+                    "guest-feedback rejected forwarded %s event: HTTP %s %s",
+                    payload.get("type"), response.status_code,
+                    getattr(response, "text", "")[:200],
+                )
+        except Exception as exc:  # noqa: BLE001 — best-effort side channel
+            logger.warning(
+                "Forwarding %s event to guest-feedback failed: %s",
+                payload.get("type"), exc,
+            )
+
+
+def forward_group_events_in_background(payloads: Sequence[Dict]) -> None:
+    """Fire-and-forget :func:`forward_group_events` on a daemon thread.
+
+    A plain thread rather than FastAPI ``BackgroundTasks``: Starlette runs
+    background tasks inside the same ASGI call, so a peer that is merely SLOW
+    (up to the 2 s timeout, per event) would still push out the moment LINE
+    sees its 200. LINE retries a delivery it considers failed, so the webhook
+    response must not depend on a second app being up at all. Volume is a
+    handful of events per delivery, so a thread per delivery is cheap.
+
+    Returns immediately, and never raises — even spawning the thread is
+    guarded, so an exhausted thread pool cannot fail the webhook either.
+    """
+    if not payloads or not get_guest_feedback_line_url():
+        return
+    try:
+        threading.Thread(
+            target=forward_group_events,
+            args=(list(payloads),),
+            name="staff-oa-guest-feedback-forward",
+            daemon=True,
+        ).start()
+    except Exception as exc:  # noqa: BLE001 — never fail the webhook
+        logger.warning("Could not start guest-feedback forward thread: %s", exc)

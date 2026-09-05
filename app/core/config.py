@@ -203,6 +203,28 @@ def get_server_config() -> dict:
 # EITHER unset/blank ⇒ the feature is DARK (fail closed): the webhook
 # answers 503 and scripts/staff_oa_sync.py refuses to run. Zero behavior
 # change until both are delivered to the prod host .env, like HFID_*.
+#
+# GUEST-FEEDBACK GROUP FORWARDER (separate, independently dark). LINE allows
+# only ONE Official Account per group chat, and the staff group hosts the
+# staff OA above — so the guest-feedback app cannot receive that group's
+# events itself. The webhook relays them instead, fire-and-forget, and
+# guest-feedback replies into the group with the staff OA's token. Reduced
+# payload only ({type, replyToken, timestamp, groupId, channel}) — never
+# message text, never a user/room event. See app/services/staff_oa_service.py
+# and guest-feedback docs/CONTRACTS.md §15.4.
+#
+#   GUEST_FEEDBACK_LINE_URL
+#                      Guest-feedback's internal endpoint. Production:
+#                      http://feedback:4080/api/internal/line/event —
+#                      container to container over the shared-nginx Docker
+#                      network (no Cloudflare Access in the path), like
+#                      PORTAL_DIRECTORY_URL. Not a secret.
+#                      EMPTY/UNSET ⇒ nothing is ever forwarded (dark).
+#   GUEST_FEEDBACK_LINE_SECRET
+#                      Shared secret sent as the X-Reader-Secret header;
+#                      guest-feedback compares it constant-time and answers
+#                      401 on a mismatch. Same header name as READER_SECRET
+#                      above, a DIFFERENT secret and a different app.
 # ============================================================================
 
 
