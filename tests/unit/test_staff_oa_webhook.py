@@ -320,16 +320,16 @@ class TestFollowEvents:
 
 
 class TestGroupEventForwarding:
-    """Group events relayed to guest-feedback (2026-09-05).
+    """Events relayed to guest-feedback (2026-09-05).
 
     LINE allows one Official Account per group chat and the staff group
     hosts THIS OA, so the guest-feedback app is fed second-hand from here
-    (see guest-feedback docs/CONTRACTS.md §15.4). What these tests pin is
-    the boundary, not guest-feedback's behaviour: the exact payload, that
-    nothing but a group event crosses it, and that the relay can neither
-    delay nor fail the 200 LINE is waiting for — a delivery LINE counts as
-    failed is retried, and a wedged staff channel is a far worse outcome
-    than a missed guest request.
+    (see guest-feedback docs/CONTRACTS.md §15.4, and §15.5 for the 1:1
+    preview). What these tests pin is the boundary, not guest-feedback's
+    behaviour: the exact payload of each of the two shapes, that nothing
+    else crosses it, and that the relay can neither delay nor fail the 200
+    LINE is waiting for — a delivery LINE counts as failed is retried, and a
+    wedged staff channel is a far worse outcome than a missed guest request.
     """
 
     FORWARD_URL = "http://feedback:4080/api/internal/line/event"
@@ -387,8 +387,12 @@ class TestGroupEventForwarding:
     def test_follow_events_are_never_forwarded_and_still_get_their_reply(
         self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on, forwards
     ):
-        # The one thing this feature must not disturb: a follow is a `user`
-        # source and belongs entirely to the Employee Hub.
+        # The one thing this feature must not disturb. A follow is excluded
+        # by its TYPE, not by its source — since 2026-09-05 `user`-source
+        # `message` events DO cross (below), so this is no longer implied by
+        # "only group events are forwarded" and has to be pinned on its own:
+        # the follower is linked/greeted here and guest-feedback never hears
+        # about it.
         response = _signed_post(
             test_client, {"events": [_follow_event("U-stranger", "reply-42")]}
         )
@@ -399,17 +403,105 @@ class TestGroupEventForwarding:
         assert forwards == []
         assert len(line_api["replies"]) == 1  # unchanged onboarding path
 
-    def test_a_user_source_message_is_never_forwarded(
-        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on, forwards
-    ):
-        response = _signed_post(test_client, {"events": [{
+    @pytest.fixture
+    def bot_idle(self, monkeypatch):
+        """Take the staff bot out of the reply-token arbitration.
+
+        The bot answers EVERY 1:1 text message it is sent, so with it in the
+        loop every direct message would cross with ``replyToken: None`` and
+        these tests could not see the payload the contract specifies. That
+        arbitration is real behaviour, not an accident, and is pinned by
+        ``test_a_direct_message_the_bot_answers_loses_its_reply_token``
+        below and by TestReplyTokenArbitration; this fixture isolates the
+        OTHER half — what the relay does with an event nobody claimed.
+        """
+        monkeypatch.setattr(
+            staff_bot, "handle_event_detail",
+            lambda event, db: staff_bot._NOT_HANDLED,
+        )
+
+    @staticmethod
+    def _direct_message_event(text="ขอดูรายการที่ค้าง"):
+        return {
             "type": "message",
-            "replyToken": "r",
+            "replyToken": "reply-direct-1",
+            "timestamp": 1757000000001,
+            "source": {"type": "user", "userId": "Umanager"},
+            "message": {"type": "text", "id": "m2", "text": text},
+        }
+
+    def test_a_direct_message_is_forwarded_ids_only(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on,
+        forwards, bot_idle,
+    ):
+        # guest-feedback §15.5: an allowlisted manager messages the OA in
+        # private and gets the pending guest requests back, without pulling
+        # the staff group into a test. The allowlist is guest-feedback's —
+        # this app forwards every 1:1 message and judges nobody.
+        response = _signed_post(
+            test_client, {"events": [self._direct_message_event()]}
+        )
+
+        assert response.status_code == 200
+        assert forwards == [[{
+            "type": "message",
+            "replyToken": "reply-direct-1",
+            "timestamp": 1757000000001,
+            "userId": "Umanager",
+            "groupId": None,
+            "channel": "staff-oa",
+        }]]
+        # The words stay here, exactly as in a group.
+        assert "ขอดูรายการที่ค้าง" not in json.dumps(forwards, ensure_ascii=False)
+
+    def test_a_direct_message_the_bot_answers_loses_its_reply_token(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on,
+        forwards,
+    ):
+        # No `bot_idle` here: the REAL bot sees this message, and it answers
+        # every 1:1 text (a stranger gets the onboarding pointer), so it
+        # claims the single-use token and the relay must not also get it.
+        # This is the routine 1:1 case, and the documented limitation of the
+        # preview — see docs/EMPLOYEE_HUB_SETUP.md.
+        response = _signed_post(
+            test_client, {"events": [self._direct_message_event()]}
+        )
+
+        assert response.status_code == 200
+        assert forwards[0][0]["replyToken"] is None
+        assert forwards[0][0]["userId"] == "Umanager"  # the id still crosses
+
+    def test_a_user_unfollow_is_never_forwarded(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on,
+        forwards, bot_idle,
+    ):
+        # Only `message` crosses from a 1:1. An unfollow says someone blocked
+        # the OA — an Employee Hub fact, and not guest-feedback's business.
+        response = _signed_post(test_client, {"events": [{
+            "type": "unfollow",
+            "timestamp": 1757000000002,
             "source": {"type": "user", "userId": "U-someone"},
-            "message": {"type": "text", "id": "m2", "text": "hello"},
         }]})
 
         assert response.status_code == 200
+        assert forwards == []
+
+    def test_a_room_source_message_is_never_forwarded(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on,
+        forwards, bot_idle,
+    ):
+        # A multi-person room is neither the staff group nor a 1:1: nothing
+        # about it is forwardable, and there is nobody to answer.
+        response = _signed_post(test_client, {"events": [{
+            "type": "message",
+            "replyToken": "r",
+            "timestamp": 1757000000003,
+            "source": {"type": "room", "roomId": "R-room", "userId": "U-someone"},
+            "message": {"type": "text", "id": "m3", "text": "hello"},
+        }]})
+
+        assert response.status_code == 200
+        assert response.json()["group_events_forwarded"] == 0
         assert forwards == []
 
     def test_nothing_is_forwarded_while_the_url_is_empty(

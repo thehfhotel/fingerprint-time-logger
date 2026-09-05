@@ -20,7 +20,10 @@ The Employee Hub lives on a dedicated staff LINE Official Account
   * the guest-feedback forwarder (``GUEST_FEEDBACK_LINE_*``, dark when the
     URL is empty): the staff LINE GROUP can only host one Official Account,
     so group events this webhook receives are relayed to the guest-feedback
-    app, which replies into the group with this same OA's token.
+    app, which replies into the group with this same OA's token. Since
+    2026-09-05 1:1 ``message`` events are relayed too, reduced to their ids
+    (no text), so an allowlisted manager can preview the pending requests in
+    private — guest-feedback holds that allowlist, not this app.
 """
 
 import base64
@@ -439,7 +442,7 @@ def link_role_menu_for_line_user(db: Session, line_user_id: str) -> Optional[str
 
 
 # ---------------------------------------------------------------------------
-# Guest-feedback forwarder — group events out to the guest-feedback app
+# Guest-feedback forwarder — LINE events out to the guest-feedback app
 # ---------------------------------------------------------------------------
 #
 # LINE allows exactly ONE Official Account per group chat. The staff group
@@ -449,13 +452,28 @@ def link_role_menu_for_line_user(db: Session, line_user_id: str) -> Optional[str
 # does not itself handle, and guest-feedback replies into the group with the
 # Staff OA's token. See guest-feedback docs/CONTRACTS.md §15.4.
 #
-# Deliberately narrow: only `group` sources, only the four event types below,
-# and only the reduced payload — no message text, no user ids, nothing from a
-# 1:1 chat or a multi-person room ever leaves this app.
+# Since 2026-09-05 the same relay also carries 1:1 `message` events, reduced
+# to their ids (guest-feedback §15.5): an allowlisted manager can ask the OA
+# privately for the pending guest requests instead of pulling the whole staff
+# group into a test. The ALLOWLIST LIVES ON THE FAR SIDE — this app forwards
+# every 1:1 message id-only and knows nothing about who may preview.
+#
+# Deliberately narrow, and narrower still for a 1:1: `group` sources forward
+# the four event types below, `user` sources forward ONLY `message`, and a
+# multi-person `room` forwards nothing at all. No message text ever crosses,
+# no userId ever crosses for a group event, and `follow`/`unfollow` stay
+# entirely inside the Employee Hub (app/api/staff_oa.py) — a userId reaching
+# guest-feedback means "this person messaged the OA directly", nothing more.
 
 # Event types guest-feedback acts on: `join`/`memberJoined` learn the group,
 # `leave` forgets it, `message` is the free reply window for pending rows.
 FORWARDED_GROUP_EVENT_TYPES = frozenset({"message", "join", "memberJoined", "leave"})
+
+# 1:1 chats forward ONE type. `follow`/`unfollow` are the Employee Hub's own
+# (they link Role Menus and are answered here), `postback` is a Hub menu tap,
+# and neither is any of guest-feedback's business — a private preview needs a
+# message and a reply window, nothing else.
+FORWARDED_USER_EVENT_TYPES = frozenset({"message"})
 
 # Short on purpose: this runs off the webhook path and the only thing a slow
 # peer may cost us is a background thread, never LINE's 200.
@@ -482,39 +500,79 @@ def group_event_forward_payload(
 ) -> Optional[Dict]:
     """Reduce ONE webhook event to what guest-feedback gets, or None.
 
-    None means "not forwardable": a user/room source, an event type
-    guest-feedback does not act on, or a group source with no groupId. The
-    returned dict is the whole contract — note what is NOT in it, above all
-    ``message.text`` and the sender's userId.
+    Named for the group relay it started as (2026-09-05); it now reduces the
+    two shapes guest-feedback accepts, which are NOT the same payload:
+
+      group  → ``{type, replyToken, timestamp, groupId, channel}``
+      1:1    → ``{type, replyToken, timestamp, userId, groupId: None, channel}``
+
+    A group event never carries the speaker's userId (staff chatter stays
+    here); a 1:1 event carries the userId precisely because it IS the
+    identity guest-feedback checks against its preview allowlist, and carries
+    ``groupId: None`` to say "answer this person, do not touch the group".
+    Neither carries ``message.text``, ever.
+
+    None means "not forwardable": a `room` source, a source with no id, or an
+    event type guest-feedback does not act on for that source — above all
+    `follow`/`unfollow`, which belong to the Employee Hub alone.
 
     ``withhold_reply_token`` — a LINE reply token is single-use. When the
     staff bot (app/services/staff_bot.py) has claimed this event's token for
     its own debounced reply, the payload still crosses (guest-feedback keeps
-    learning the group) but with ``replyToken: None``: "no reply window on
-    this one, wait for the next message". Exactly one consumer per token.
+    learning the group, or the id) but with ``replyToken: None``: "no reply
+    window on this one, wait for the next message". Exactly one consumer per
+    token. NOTE this bites hardest in a 1:1, where the bot answers every text
+    message it is sent and therefore claims nearly every 1:1 token — see
+    docs/EMPLOYEE_HUB_SETUP.md.
     """
     if not isinstance(event, dict):
         return None
     source = event.get("source")
-    if not isinstance(source, dict) or source.get("type") != "group":
+    if not isinstance(source, dict):
         return None
+    source_type = source.get("type")
     event_type = event.get("type")
-    if event_type not in FORWARDED_GROUP_EVENT_TYPES:
-        return None
-    group_id = source.get("groupId")
-    if not group_id:
-        return None
-    return {
-        "type": event_type,
-        "replyToken": None if withhold_reply_token else event.get("replyToken"),
-        "timestamp": event.get("timestamp"),
-        "groupId": group_id,
-        "channel": "staff-oa",
-    }
+    reply_token = None if withhold_reply_token else event.get("replyToken")
+
+    if source_type == "group":
+        if event_type not in FORWARDED_GROUP_EVENT_TYPES:
+            return None
+        group_id = source.get("groupId")
+        if not group_id:
+            return None
+        return {
+            "type": event_type,
+            "replyToken": reply_token,
+            "timestamp": event.get("timestamp"),
+            "groupId": group_id,
+            "channel": "staff-oa",
+        }
+
+    if source_type == "user":
+        if event_type not in FORWARDED_USER_EVENT_TYPES:
+            return None
+        user_id = source.get("userId")
+        if not user_id:
+            return None
+        return {
+            "type": event_type,
+            "replyToken": reply_token,
+            "timestamp": event.get("timestamp"),
+            "userId": user_id,
+            "groupId": None,
+            "channel": "staff-oa",
+        }
+
+    # `room` (multi-person chat, no group id) and anything LINE invents next.
+    return None
 
 
 def forward_group_events(payloads: Sequence[Dict]) -> None:
     """POST each reduced payload to guest-feedback. NEVER raises.
+
+    Group and 1:1 payloads travel the same way — one POST each, same URL,
+    same header, same timeout; only :func:`group_event_forward_payload`
+    knows the difference between them.
 
     Dark (and silent) while ``GUEST_FEEDBACK_LINE_URL`` is empty. Every
     failure — connect error, timeout, non-2xx — is logged and swallowed:

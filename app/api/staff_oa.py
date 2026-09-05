@@ -21,8 +21,16 @@ LINE allows one Official Account per group chat, so the staff group hosts
 this OA and guest-feedback has to be fed second-hand. Follow handling is
 untouched by that, the forward is dark unless GUEST_FEEDBACK_LINE_URL is
 set, and it can neither delay nor fail the response (see
-staff_oa_service.forward_group_events_in_background). No message text and
-no user/room event ever leaves this app.
+staff_oa_service.forward_group_events_in_background). No message text ever
+leaves this app.
+
+The same relay carries 1:1 ``message`` events (``user`` source) reduced to
+``{type, replyToken, timestamp, userId, groupId: None, channel}`` — ids
+only, so an allowlisted manager can pull the pending guest requests in a
+private chat instead of in the staff group (guest-feedback
+docs/CONTRACTS.md §15.5; the allowlist is theirs, not ours). ``follow`` and
+``unfollow`` are NOT forwarded — they stay exactly where they were, in the
+follow loop below — and a multi-person ``room`` still forwards nothing.
 
 Since 2026-09-05 this webhook is ALSO the staff bot's front door
 (``HF ภายใน``): ``message``/``postback``/``join`` events are routed into
@@ -168,14 +176,19 @@ async def staff_oa_webhook(
         if handled_event.command:
             commands += 1
 
-    # Relay group events to guest-feedback BEFORE the follow loop: they carry
-    # the same short-lived reply token LINE hands us, and the loop below makes
-    # blocking LINE API calls. Fire-and-forget on a daemon thread — it cannot
-    # raise, cannot block, and never touches the follow path.
+    # Relay group and 1:1 events to guest-feedback BEFORE the follow loop:
+    # they carry the same short-lived reply token LINE hands us, and the loop
+    # below makes blocking LINE API calls. Fire-and-forget on a daemon
+    # thread — it cannot raise, cannot block, and never touches the follow
+    # path. Which events qualify, and what is stripped from each, is decided
+    # entirely in staff_oa_service.group_event_forward_payload; this loop
+    # offers it every event and forwards what comes back.
     #
     # The URL check is here as well as inside the forwarder so that a dark
     # deployment does nothing at all (no reduction, no thread) and so the
     # count reported below means "actually dispatched", not "would have been".
+    # That count keeps its original key: LINE ignores this body entirely, and
+    # renaming it would only churn the tests that read it.
     forwarded: list = []
     if staff_oa_service.get_guest_feedback_line_url():
         forwarded = [

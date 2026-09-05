@@ -126,8 +126,13 @@ MAX_MESSAGE_CHARS = 5000
 # Debounce timings (module level so a test can shorten them)
 # ---------------------------------------------------------------------------
 
-GROUP_QUIET_SECONDS = 15.0
-DIRECT_QUIET_SECONDS = 2.0
+# Commands (a summon, a command word, a palette tap) are answered at once —
+# the owner's rule (2026-09-05): "15 seconds of quiet is for scheduled
+# reports, not for the command reply". The wait-for-quiet machinery below
+# stays for the phase 2 slot digest, which piggybacks on reception's report
+# burst and must never race it.
+COMMAND_QUIET_SECONDS = 0.0
+SLOT_QUIET_SECONDS = 15.0
 MAX_WAIT_SECONDS = 45.0
 # The drain loop never sleeps longer than this in one go, so a command that
 # lands in ANOTHER chat with a nearer deadline is at most this late.
@@ -135,8 +140,9 @@ DRAIN_SLICE_SECONDS = 1.0
 
 
 def quiet_seconds_for(source_type: str) -> float:
-    """How long the chat must be quiet before the bot answers."""
-    return DIRECT_QUIET_SECONDS if source_type == "user" else GROUP_QUIET_SECONDS
+    """Quiet time before a COMMAND reply — zero everywhere, see above."""
+    del source_type  # one rule for groups, rooms and 1:1
+    return COMMAND_QUIET_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -542,7 +548,7 @@ class PendingReply:
     reply_token: str = ""
     first_at: float = 0.0
     last_at: float = 0.0
-    quiet_seconds: float = GROUP_QUIET_SECONDS
+    quiet_seconds: float = COMMAND_QUIET_SECONDS
 
     def deadline(self, max_wait_seconds: float) -> float:
         """Quiet-timer deadline, capped so the reply token cannot expire."""
@@ -576,7 +582,7 @@ class ReplyDebouncer:
         chat_key: str,
         command: str,
         reply_token: str,
-        quiet_seconds: float = GROUP_QUIET_SECONDS,
+        quiet_seconds: float = COMMAND_QUIET_SECONDS,
     ) -> PendingReply:
         """Record a command: create or MERGE INTO this chat's pending reply."""
         now = self._clock()
