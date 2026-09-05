@@ -32,6 +32,7 @@ alongside that, ``clear_default_rich_menu`` and ``bulk_unlink_rich_menu``.
 import base64
 import hashlib
 import hmac
+import json
 
 import pytest
 
@@ -472,3 +473,200 @@ class TestLinkRoleMenuForLineUser:
 
         assert service.link_role_menu_for_line_user(test_db, "U-2") is None
         assert line_api["linked"] == []
+
+
+class TestGuestFeedbackForwarder:
+    """Group events relayed to the guest-feedback app (2026-09-05).
+
+    LINE allows ONE Official Account per group chat. The staff group hosts
+    the OA these tests have been about all along, so guest-feedback cannot
+    be invited alongside it and cannot receive that group's webhook — HF ID
+    forwards a reduced event instead (guest-feedback
+    docs/CONTRACTS.md §15.4). Two properties matter more than the plumbing
+    and are pinned separately below: the payload carries NO message text and
+    no user/room event, and the forward can never fail the webhook.
+    """
+
+    FORWARD_URL = "http://feedback:4080/api/internal/line/event"
+    FORWARD_SECRET = "guest-feedback-shared-secret"
+
+    @pytest.fixture
+    def forwarder_configured(self, monkeypatch):
+        monkeypatch.setenv("GUEST_FEEDBACK_LINE_URL", self.FORWARD_URL)
+        monkeypatch.setenv("GUEST_FEEDBACK_LINE_SECRET", self.FORWARD_SECRET)
+
+    @pytest.fixture
+    def forwarder_dark(self, monkeypatch):
+        monkeypatch.delenv("GUEST_FEEDBACK_LINE_URL", raising=False)
+        monkeypatch.delenv("GUEST_FEEDBACK_LINE_SECRET", raising=False)
+
+    @staticmethod
+    def _group_message(text="ห้อง 301 ทำความสะอาดแล้ว"):
+        """A realistic group message — text included, as LINE sends it."""
+        return {
+            "type": "message",
+            "replyToken": "reply-token-1",
+            "timestamp": 1757000000000,
+            "source": {"type": "group", "groupId": "Cgroup123", "userId": "Uspeaker"},
+            "message": {"type": "text", "id": "m1", "text": text},
+        }
+
+    # -- what gets reduced, and to what ------------------------------------
+
+    def test_group_message_reduces_to_the_documented_payload(self):
+        assert service.group_event_forward_payload(self._group_message()) == {
+            "type": "message",
+            "replyToken": "reply-token-1",
+            "timestamp": 1757000000000,
+            "groupId": "Cgroup123",
+            "channel": "staff-oa",
+        }
+
+    def test_the_payload_never_carries_message_text_or_the_speaker(self):
+        # The whole privacy argument for this feature: staff chatter and who
+        # said it stay inside LINE and this app. A payload that grew a
+        # `message` or `userId` key would leak both to another app.
+        payload = service.group_event_forward_payload(
+            self._group_message("แขกห้อง 402 บ่นเรื่องแอร์")
+        )
+        assert set(payload) == {
+            "type", "replyToken", "timestamp", "groupId", "channel"
+        }
+        assert "บ่น" not in json.dumps(payload, ensure_ascii=False)
+        assert "Uspeaker" not in json.dumps(payload)
+
+    @pytest.mark.parametrize("event_type", ["message", "join", "memberJoined", "leave"])
+    def test_every_forwardable_type_survives(self, event_type):
+        event = {
+            "type": event_type,
+            "timestamp": 1,
+            "source": {"type": "group", "groupId": "Cg"},
+        }
+        payload = service.group_event_forward_payload(event)
+        assert payload is not None and payload["type"] == event_type
+        # replyToken is optional (leave/memberLeft carry none) and must be
+        # sent as an explicit null rather than dropped — the receiver's
+        # schema has the key.
+        assert payload["replyToken"] is None
+
+    @pytest.mark.parametrize("event_type", ["follow", "unfollow", "postback", "memberLeft"])
+    def test_group_events_guest_feedback_does_not_act_on_are_dropped(self, event_type):
+        event = {"type": event_type, "source": {"type": "group", "groupId": "Cg"}}
+        assert service.group_event_forward_payload(event) is None
+
+    @pytest.mark.parametrize("source_type", ["user", "room"])
+    def test_only_group_sources_are_forwardable(self, source_type):
+        # A 1:1 chat and a multi-person room are private conversations that
+        # guest-feedback has no business seeing, whatever the event type.
+        event = {
+            "type": "message",
+            "replyToken": "r",
+            "source": {"type": source_type, "userId": "U1", "roomId": "R1"},
+        }
+        assert service.group_event_forward_payload(event) is None
+
+    def test_a_group_source_without_a_group_id_is_dropped(self):
+        event = {"type": "message", "source": {"type": "group"}}
+        assert service.group_event_forward_payload(event) is None
+
+    @pytest.mark.parametrize("event", [None, "message", 7, {}, {"source": "group"}])
+    def test_junk_events_reduce_to_none_instead_of_raising(self, event):
+        assert service.group_event_forward_payload(event) is None
+
+    # -- the POST ----------------------------------------------------------
+
+    def test_posts_each_payload_with_the_shared_secret_header(
+        self, forwarder_configured, fake_requests
+    ):
+        payloads = [
+            service.group_event_forward_payload(self._group_message()),
+            service.group_event_forward_payload(
+                {"type": "join", "source": {"type": "group", "groupId": "Cg2"}}
+            ),
+        ]
+
+        service.forward_group_events(payloads)
+
+        assert len(fake_requests.posts) == 2
+        url, kwargs = fake_requests.posts[0]
+        assert url == self.FORWARD_URL
+        assert kwargs["json"] == payloads[0]
+        assert kwargs["headers"] == {"X-Reader-Secret": self.FORWARD_SECRET}
+        assert kwargs["timeout"] == 2
+        assert fake_requests.posts[1][1]["json"] == payloads[1]
+
+    def test_dark_when_the_url_is_empty(self, forwarder_dark, fake_requests):
+        service.forward_group_events([self._group_message()])
+        assert fake_requests.posts == []
+
+    def test_a_non_2xx_answer_is_swallowed(self, forwarder_configured, fake_requests):
+        fake_requests.next_response = _FakeResponse(401, text="unauthorized")
+        # No StaffOaApiError here, unlike every LINE call in this module:
+        # this one hangs off a webhook that must answer 200 regardless.
+        service.forward_group_events([self._group_message()])
+        assert len(fake_requests.posts) == 1
+
+    def test_a_transport_failure_is_swallowed_and_does_not_stop_the_batch(
+        self, forwarder_configured, fake_requests, monkeypatch
+    ):
+        attempted = []
+
+        def _explode(url, **kwargs):
+            attempted.append(kwargs["json"]["groupId"])
+            raise OSError("connection refused")
+
+        monkeypatch.setattr(fake_requests, "post", _explode)
+        service.forward_group_events([
+            {"groupId": "Cg1", "type": "message"},
+            {"groupId": "Cg2", "type": "join"},
+        ])
+        assert attempted == ["Cg1", "Cg2"]  # one bad event never eats the rest
+
+    # -- the background hand-off -------------------------------------------
+
+    def test_background_hand_off_runs_the_forward_off_the_caller(
+        self, forwarder_configured, monkeypatch
+    ):
+        import threading as _threading
+
+        seen = {}
+        done = _threading.Event()
+
+        def _record(payloads):
+            seen["payloads"] = payloads
+            seen["thread"] = _threading.current_thread()
+            done.set()
+
+        monkeypatch.setattr(service, "forward_group_events", _record)
+        service.forward_group_events_in_background([{"type": "join"}])
+
+        assert done.wait(timeout=5), "the forward never ran"
+        assert seen["payloads"] == [{"type": "join"}]
+        assert seen["thread"] is not _threading.current_thread()
+
+    def test_background_hand_off_is_a_no_op_when_dark_or_empty(
+        self, forwarder_dark, monkeypatch
+    ):
+        called = []
+        monkeypatch.setattr(service, "forward_group_events", called.append)
+
+        service.forward_group_events_in_background([{"type": "join"}])  # dark
+        monkeypatch.setenv("GUEST_FEEDBACK_LINE_URL", self.FORWARD_URL)
+        service.forward_group_events_in_background([])  # nothing to send
+
+        assert called == []
+
+    def test_background_hand_off_swallows_a_thread_that_cannot_start(
+        self, forwarder_configured, monkeypatch
+    ):
+        # Belt and braces: the caller is a webhook, so even "the process is
+        # out of threads" must not become a 500.
+        class _CannotStart:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError("can't start new thread")
+
+        monkeypatch.setattr(service.threading, "Thread", _CannotStart)
+        service.forward_group_events_in_background([{"type": "join"}])  # no raise

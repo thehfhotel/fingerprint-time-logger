@@ -14,6 +14,16 @@ the dedicated staff Official Account. We only act on ``follow`` events
     pointer to the Q-badge onboarding flow that links LINE accounts to the
     employee registry.
 
+Everything else used to be dropped on the floor. Since 2026-09-05 GROUP
+events (``message``/``join``/``memberJoined``/``leave`` with a ``group``
+source) are ALSO forwarded, fire-and-forget, to the guest-feedback app —
+LINE allows one Official Account per group chat, so the staff group hosts
+this OA and guest-feedback has to be fed second-hand. Follow handling is
+untouched by that, the forward is dark unless GUEST_FEEDBACK_LINE_URL is
+set, and it can neither delay nor fail the response (see
+staff_oa_service.forward_group_events_in_background). No message text and
+no user/room event ever leaves this app.
+
 FAIL CLOSED: the endpoint answers 503 until both STAFF_OA_* secrets are
 configured (see app/core/config.py), and every request must carry a valid
 ``X-Line-Signature`` (HMAC of the raw body with the channel secret).
@@ -115,7 +125,7 @@ async def staff_oa_webhook(
     x_line_signature: str = Header(default=""),
     db: Session = Depends(get_db),
 ):
-    """LINE Messaging API webhook for the staff OA (follow events only)."""
+    """LINE Messaging API webhook: follow events + group-event forwarding."""
     _require_enabled()
 
     body = await request.body()
@@ -135,6 +145,27 @@ async def staff_oa_webhook(
     if not isinstance(events, list):
         events = []
 
+    # Relay group events to guest-feedback BEFORE the follow loop: they carry
+    # the same short-lived reply token LINE hands us, and the loop below makes
+    # blocking LINE API calls. Fire-and-forget on a daemon thread — it cannot
+    # raise, cannot block, and never touches the follow path.
+    #
+    # The URL check is here as well as inside the forwarder so that a dark
+    # deployment does nothing at all (no reduction, no thread) and so the
+    # count reported below means "actually dispatched", not "would have been".
+    forwarded: list = []
+    if staff_oa_service.get_guest_feedback_line_url():
+        forwarded = [
+            payload
+            for payload in (
+                staff_oa_service.group_event_forward_payload(event)
+                for event in events
+            )
+            if payload is not None
+        ]
+        if forwarded:
+            staff_oa_service.forward_group_events_in_background(forwarded)
+
     handled = 0
     for event in events:
         if not isinstance(event, dict) or event.get("type") != "follow":
@@ -145,4 +176,8 @@ async def staff_oa_webhook(
         except Exception:  # noqa: BLE001 — keep the webhook green per event
             logger.exception("staff-oa follow event handling failed")
 
-    return {"status": "ok", "follow_events_handled": handled}
+    return {
+        "status": "ok",
+        "follow_events_handled": handled,
+        "group_events_forwarded": len(forwarded),
+    }

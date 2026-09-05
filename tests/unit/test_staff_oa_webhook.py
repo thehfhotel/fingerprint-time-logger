@@ -20,6 +20,8 @@ import base64
 import hashlib
 import hmac
 import json
+import threading
+import time
 
 import pytest
 
@@ -291,3 +293,158 @@ class TestFollowEvents:
 
         assert response.status_code == 200
         assert line_api["linked"] == []
+
+
+class TestGroupEventForwarding:
+    """Group events relayed to guest-feedback (2026-09-05).
+
+    LINE allows one Official Account per group chat and the staff group
+    hosts THIS OA, so the guest-feedback app is fed second-hand from here
+    (see guest-feedback docs/CONTRACTS.md §15.4). What these tests pin is
+    the boundary, not guest-feedback's behaviour: the exact payload, that
+    nothing but a group event crosses it, and that the relay can neither
+    delay nor fail the 200 LINE is waiting for — a delivery LINE counts as
+    failed is retried, and a wedged staff channel is a far worse outcome
+    than a missed guest request.
+    """
+
+    FORWARD_URL = "http://feedback:4080/api/internal/line/event"
+
+    @pytest.fixture
+    def forwarding_on(self, monkeypatch):
+        monkeypatch.setenv("GUEST_FEEDBACK_LINE_URL", self.FORWARD_URL)
+        monkeypatch.setenv("GUEST_FEEDBACK_LINE_SECRET", "shared-secret")
+
+    @pytest.fixture
+    def forwards(self, monkeypatch):
+        """Record what the webhook hands the background forwarder.
+
+        Patched at the hand-off, which the request thread calls directly —
+        so the assertions stay synchronous. The thread itself is exercised
+        in tests/unit/test_staff_oa_service.py and by the two
+        does-not-block/does-not-fail tests at the bottom of this class.
+        """
+        calls = []
+        monkeypatch.setattr(
+            service, "forward_group_events_in_background",
+            lambda payloads: calls.append(list(payloads)),
+        )
+        return calls
+
+    @staticmethod
+    def _group_message_event():
+        return {
+            "type": "message",
+            "replyToken": "reply-group-1",
+            "timestamp": 1757000000000,
+            "source": {"type": "group", "groupId": "Cgroup123", "userId": "Uspeaker"},
+            "message": {"type": "text", "id": "m1", "text": "ผ้าเช็ดตัวหมดค่ะ"},
+        }
+
+    def test_group_message_is_forwarded_with_the_exact_payload(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on, forwards
+    ):
+        response = _signed_post(
+            test_client, {"events": [self._group_message_event()]}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["group_events_forwarded"] == 1
+        assert forwards == [[{
+            "type": "message",
+            "replyToken": "reply-group-1",
+            "timestamp": 1757000000000,
+            "groupId": "Cgroup123",
+            "channel": "staff-oa",
+        }]]
+        # The message text and the speaker stay here.
+        assert "ผ้าเช็ดตัวหมดค่ะ" not in json.dumps(forwards, ensure_ascii=False)
+
+    def test_follow_events_are_never_forwarded_and_still_get_their_reply(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on, forwards
+    ):
+        # The one thing this feature must not disturb: a follow is a `user`
+        # source and belongs entirely to the Employee Hub.
+        response = _signed_post(
+            test_client, {"events": [_follow_event("U-stranger", "reply-42")]}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["follow_events_handled"] == 1
+        assert response.json()["group_events_forwarded"] == 0
+        assert forwards == []
+        assert len(line_api["replies"]) == 1  # unchanged onboarding path
+
+    def test_a_user_source_message_is_never_forwarded(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on, forwards
+    ):
+        response = _signed_post(test_client, {"events": [{
+            "type": "message",
+            "replyToken": "r",
+            "source": {"type": "user", "userId": "U-someone"},
+            "message": {"type": "text", "id": "m2", "text": "hello"},
+        }]})
+
+        assert response.status_code == 200
+        assert forwards == []
+
+    def test_nothing_is_forwarded_while_the_url_is_empty(
+        self, test_client, test_db, staff_oa_enabled, line_api, monkeypatch
+    ):
+        monkeypatch.delenv("GUEST_FEEDBACK_LINE_URL", raising=False)
+        ran = []
+        monkeypatch.setattr(service, "forward_group_events", ran.append)
+
+        response = _signed_post(
+            test_client, {"events": [self._group_message_event()]}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["group_events_forwarded"] == 0
+        assert ran == []
+
+    def test_a_slow_guest_feedback_does_not_delay_the_webhook_response(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on, monkeypatch
+    ):
+        # Real thread this time — the point of using one rather than
+        # FastAPI BackgroundTasks, which Starlette runs before the response
+        # leaves the ASGI call.
+        started = threading.Event()
+
+        def _slow(payloads):
+            started.set()
+            time.sleep(5)
+
+        monkeypatch.setattr(service, "forward_group_events", _slow)
+
+        began = time.monotonic()
+        response = _signed_post(
+            test_client, {"events": [self._group_message_event()]}
+        )
+        elapsed = time.monotonic() - began
+
+        assert response.status_code == 200
+        assert elapsed < 1.0, f"webhook waited {elapsed:.2f}s on the forward"
+        assert started.wait(timeout=5)  # it really was dispatched
+
+    def test_a_failing_guest_feedback_does_not_change_the_200(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on, monkeypatch
+    ):
+        # The real forward_group_events runs here; only the HTTP call is
+        # faked, so this exercises the actual swallow path.
+        posted = threading.Event()
+
+        class _RefusingRequests:
+            def post(self, url, **kwargs):
+                posted.set()
+                raise OSError("connection refused")
+
+        monkeypatch.setattr(service, "requests", _RefusingRequests())
+
+        response = _signed_post(
+            test_client, {"events": [self._group_message_event()]}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+        assert posted.wait(timeout=5)  # the failure really happened

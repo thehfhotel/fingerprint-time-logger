@@ -72,6 +72,13 @@ services:
       # READER_* above.
       - STAFF_OA_CHANNEL_ACCESS_TOKEN=${STAFF_OA_CHANNEL_ACCESS_TOKEN}
       - STAFF_OA_CHANNEL_SECRET=${STAFF_OA_CHANNEL_SECRET}
+      # Guest-feedback group forwarder — the staff-OA webhook relays LINE
+      # GROUP events to the guest-feedback app (one OA per group chat, so it
+      # cannot be invited alongside this one). Empty URL = dark, no forward.
+      # Server-to-server over the shared-nginx network below, same shape as
+      # PORTAL_DIRECTORY_URL: the URL is not a secret, the token is.
+      - GUEST_FEEDBACK_LINE_URL=${GUEST_FEEDBACK_LINE_URL:-}
+      - GUEST_FEEDBACK_LINE_SECRET=${GUEST_FEEDBACK_LINE_SECRET:-}
       # HF Portal manager directory — who counts as an admin for Cloudflare
       # Access auto-login. Server-to-server over the shared-nginx network (no
       # Cloudflare Access in the path, so no bypass token needed). The URL is
