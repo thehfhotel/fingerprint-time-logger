@@ -281,6 +281,33 @@ def reply_text_message(reply_token: str, text: str) -> None:
     ))
 
 
+def reply_messages(reply_token: str, messages: Sequence[Dict]) -> None:
+    """Reply with up to 5 message objects — text, Flex, whatever LINE takes.
+
+    The generic form of :func:`reply_text_message`, added for the staff bot
+    (app/services/staff_bot.py), which answers one debounced burst with a
+    palette bubble and/or a digest text in a SINGLE reply. Still a reply, so
+    still free at any chat size — the whole feature rides this call rather
+    than any push (hf-erp ADR: LINE meters pushes per recipient).
+
+    Sliced to LINE's five-object cap rather than trusting the caller: a reply
+    LINE rejects wholesale is worse than a reply missing its last bubble, and
+    the caller is a debouncer that COALESCES commands, so growing past five is
+    exactly the failure mode to expect. An empty list is a no-op — LINE
+    rejects an empty ``messages`` array, and "nothing to say" must not become
+    an API error (same rule as the empty-audience guards above).
+    """
+    payload = list(messages)[:5]
+    if not payload:
+        return
+    _check("reply messages", requests.post(
+        f"{LINE_API_BASE}/v2/bot/message/reply",
+        headers={**_auth_headers(), "Content-Type": "application/json"},
+        json={"replyToken": reply_token, "messages": payload},
+        timeout=_REQUEST_TIMEOUT_SECONDS,
+    ))
+
+
 # ---------------------------------------------------------------------------
 # Role-menu resolution + per-user (re)link
 # ---------------------------------------------------------------------------
@@ -450,13 +477,21 @@ def get_guest_feedback_line_secret() -> str:
     return os.getenv("GUEST_FEEDBACK_LINE_SECRET", "").strip()
 
 
-def group_event_forward_payload(event: Dict) -> Optional[Dict]:
+def group_event_forward_payload(
+    event: Dict, *, withhold_reply_token: bool = False,
+) -> Optional[Dict]:
     """Reduce ONE webhook event to what guest-feedback gets, or None.
 
     None means "not forwardable": a user/room source, an event type
     guest-feedback does not act on, or a group source with no groupId. The
     returned dict is the whole contract — note what is NOT in it, above all
     ``message.text`` and the sender's userId.
+
+    ``withhold_reply_token`` — a LINE reply token is single-use. When the
+    staff bot (app/services/staff_bot.py) has claimed this event's token for
+    its own debounced reply, the payload still crosses (guest-feedback keeps
+    learning the group) but with ``replyToken: None``: "no reply window on
+    this one, wait for the next message". Exactly one consumer per token.
     """
     if not isinstance(event, dict):
         return None
@@ -471,7 +506,7 @@ def group_event_forward_payload(event: Dict) -> Optional[Dict]:
         return None
     return {
         "type": event_type,
-        "replyToken": event.get("replyToken"),
+        "replyToken": None if withhold_reply_token else event.get("replyToken"),
         "timestamp": event.get("timestamp"),
         "groupId": group_id,
         "channel": "staff-oa",

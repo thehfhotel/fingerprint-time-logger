@@ -27,6 +27,7 @@ import pytest
 
 from app.api import staff_oa as staff_oa_module
 from app.models.models import Employee, EmployeeAppGrant
+from app.services import staff_bot
 from app.services import staff_oa_service as service
 
 TOKEN = "test-channel-access-token"
@@ -40,6 +41,29 @@ WEBHOOK_PATH = "/api/public/staff-oa/webhook"
 # which is a different thing from a stranger landing on `base`.
 MENU_GRANT = "housekeeping"
 MENU_IRRELEVANT_GRANT = "payroll"
+
+
+class _NullBotDispatcher:
+    """Swallows what the staff bot files; this module tests the OTHER paths.
+
+    Since 2026-09-05 the same webhook also feeds the staff bot
+    (app/services/staff_bot.py), whose dispatcher is process-wide and holds
+    pending replies BEYOND the request that filed them. Letting these tests
+    write into the real one would leak a pending reply — and a stale reply
+    token — into whatever test drains it next. The bot's own behaviour is
+    covered in tests/unit/test_staff_bot.py.
+    """
+
+    def submit_command(self, command):
+        pass
+
+    def submit_message(self, chat_key, reply_token):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _isolate_staff_bot(monkeypatch):
+    monkeypatch.setattr(staff_bot, "get_dispatcher", _NullBotDispatcher)
 
 
 @pytest.fixture
@@ -448,3 +472,106 @@ class TestGroupEventForwarding:
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
         assert posted.wait(timeout=5)  # the failure really happened
+
+
+class TestReplyTokenArbitration:
+    """A LINE reply token is single-use, and two consumers hang off this
+    webhook: the staff bot (debounced replies) and the guest-feedback relay.
+    The bot files intent FIRST; any event whose token it has claimed still
+    crosses to guest-feedback (the group is still learned) but with
+    ``replyToken: None`` — one consumer per token, decided here, never by a
+    race between two senders.
+    """
+
+    FORWARD_URL = "http://feedback:4080/api/internal/line/event"
+
+    @pytest.fixture
+    def forwarding_on(self, monkeypatch):
+        monkeypatch.setenv("GUEST_FEEDBACK_LINE_URL", self.FORWARD_URL)
+        monkeypatch.setenv("GUEST_FEEDBACK_LINE_SECRET", "shared-secret")
+
+    @pytest.fixture
+    def forwards(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            service, "forward_group_events_in_background",
+            lambda payloads: calls.append(list(payloads)),
+        )
+        return calls
+
+    @pytest.fixture
+    def real_bot(self, monkeypatch):
+        """A private dispatcher whose scheduler never arms a timer, so the
+        state machine holds pending replies and nothing is ever sent."""
+        dispatcher = staff_bot.AsyncioBotDispatcher()
+        dispatcher.debouncer = staff_bot.ReplyDebouncer(scheduler=lambda delay: None)
+        monkeypatch.setattr(staff_bot, "get_dispatcher", lambda: dispatcher)
+        return dispatcher
+
+    @staticmethod
+    def _group_text(text, reply_token, group_id="Cgroup123"):
+        return {
+            "type": "message",
+            "replyToken": reply_token,
+            "timestamp": 1757000000000,
+            "source": {"type": "group", "groupId": group_id, "userId": "Uspeaker"},
+            "message": {"type": "text", "id": "m", "text": text},
+        }
+
+    def test_a_summon_is_relayed_without_its_reply_token(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on, forwards, real_bot
+    ):
+        response = _signed_post(
+            test_client, {"events": [self._group_text("น้องคะ", "reply-claimed")]}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["bot_commands"] == 1
+        assert response.json()["group_events_forwarded"] == 1
+        assert forwards == [[{
+            "type": "message",
+            "replyToken": None,
+            "timestamp": 1757000000000,
+            "groupId": "Cgroup123",
+            "channel": "staff-oa",
+        }]]
+        key = staff_bot._chat_key({"type": "group", "groupId": "Cgroup123"})
+        assert real_bot.debouncer.pending_for(key).reply_token == "reply-claimed"
+
+    def test_plain_chat_keeps_its_token_while_the_bot_is_idle(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on, forwards, real_bot
+    ):
+        response = _signed_post(
+            test_client, {"events": [self._group_text("ผ้าเช็ดตัวหมดค่ะ", "reply-free")]}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["bot_commands"] == 0
+        assert forwards[0][0]["replyToken"] == "reply-free"
+
+    def test_plain_chat_loses_its_token_while_the_bot_holds_the_chat(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on, forwards, real_bot
+    ):
+        _signed_post(test_client, {"events": [self._group_text("น้องคะ", "reply-1")]})
+        response = _signed_post(
+            test_client, {"events": [self._group_text("ขอบคุณค่ะ", "reply-2")]}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["bot_commands"] == 0
+        assert [call[0]["replyToken"] for call in forwards] == [None, None]
+        key = staff_bot._chat_key({"type": "group", "groupId": "Cgroup123"})
+        # The bot moved on to the newer token, which is why the relay must
+        # not get it.
+        assert real_bot.debouncer.pending_for(key).reply_token == "reply-2"
+
+    def test_another_chat_is_not_affected_by_a_pending_reply_elsewhere(
+        self, test_client, test_db, staff_oa_enabled, line_api, forwarding_on, forwards, real_bot
+    ):
+        _signed_post(test_client, {"events": [self._group_text("น้องคะ", "reply-1")]})
+        _signed_post(
+            test_client,
+            {"events": [self._group_text("สวัสดีค่ะ", "reply-other", group_id="Cother")]},
+        )
+
+        assert [call[0]["replyToken"] for call in forwards] == [None, "reply-other"]

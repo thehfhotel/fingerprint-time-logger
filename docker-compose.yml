@@ -79,6 +79,13 @@ services:
       # PORTAL_DIRECTORY_URL: the URL is not a secret, the token is.
       - GUEST_FEEDBACK_LINE_URL=${GUEST_FEEDBACK_LINE_URL:-}
       - GUEST_FEEDBACK_LINE_SECRET=${GUEST_FEEDBACK_LINE_SECRET:-}
+      # Staff bot read side — the OA answers งานค้าง with housekeeping's open
+      # แจ้งซ่อม digest, fetched server-to-server over the shared-nginx
+      # network. The URL is not a secret (it has a working default); the
+      # token is, and an empty token darkens the read (fixed Thai line, no
+      # dial-out). Token value == housekeeping's STAFF_BOT_INGRESS_TOKEN.
+      - HOUSEKEEPING_INTERNAL_URL=${HOUSEKEEPING_INTERNAL_URL:-http://housekeeping:4070}
+      - HOUSEKEEPING_STAFF_BOT_TOKEN=${HOUSEKEEPING_STAFF_BOT_TOKEN:-}
       # HF Portal manager directory — who counts as an admin for Cloudflare
       # Access auto-login. Server-to-server over the shared-nginx network (no
       # Cloudflare Access in the path, so no bypass token needed). The URL is
