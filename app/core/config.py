@@ -204,31 +204,27 @@ def get_server_config() -> dict:
 # answers 503 and scripts/staff_oa_sync.py refuses to run. Zero behavior
 # change until both are delivered to the prod host .env, like HFID_*.
 #
-# GUEST-FEEDBACK FORWARDER (separate, independently dark). LINE allows only
-# ONE Official Account per group chat, and the staff group hosts the staff OA
-# above — so the guest-feedback app cannot receive that group's events
-# itself. The webhook relays them instead, fire-and-forget, and guest-feedback
-# replies into the group with the staff OA's token. Reduced payload only
-# ({type, replyToken, timestamp, groupId, channel}) — never message text.
-# Since 2026-09-05 1:1 `message` events are relayed too, as ids only
-# ({type, replyToken, timestamp, userId, groupId: null, channel}), so an
-# allowlisted manager can preview pending guest requests privately —
-# guest-feedback holds that allowlist. `follow`/`unfollow` and multi-person
-# `room` events are never forwarded. See app/services/staff_oa_service.py and
-# guest-feedback docs/CONTRACTS.md §15.4 and §15.5.
+# GUEST REQUESTS READ/CONFIRM SIDE (separate, independently dark). Since
+# guest-feedback docs/CONTRACTS.md §15 rev 3 this app is the ONLY responder
+# for guest requests raised on the public feedback site: the staff bot reads
+# and confirms them from guest-feedback server-to-server, rather than
+# guest-feedback holding a LINE token or this webhook relaying events to it
+# (that forwarder, PR #28/#30, is retired). Read via os.getenv() in
+# app/services/guest_feedback_client.py.
 #
-#   GUEST_FEEDBACK_LINE_URL
-#                      Guest-feedback's internal endpoint. Production:
-#                      http://feedback:4080/api/internal/line/event —
-#                      container to container over the shared-nginx Docker
-#                      network (no Cloudflare Access in the path), like
-#                      PORTAL_DIRECTORY_URL. Not a secret.
-#                      EMPTY/UNSET ⇒ nothing is ever forwarded (dark).
-#   GUEST_FEEDBACK_LINE_SECRET
-#                      Shared secret sent as the X-Reader-Secret header;
+#   GUEST_FEEDBACK_BASE_URL
+#                      Guest-feedback's internal base URL. Production:
+#                      http://feedback:4080 — container to container over the
+#                      shared-nginx Docker network (no Cloudflare Access in
+#                      the path), like PORTAL_DIRECTORY_URL. Not a secret, and
+#                      has NO built-in default (unlike HOUSEKEEPING_INTERNAL_URL):
+#                      EMPTY/UNSET ⇒ the read is dark.
+#   GUEST_FEEDBACK_READER_SECRET
+#                      Sent as the X-Reader-Secret header on both endpoints;
 #                      guest-feedback compares it constant-time and answers
 #                      401 on a mismatch. Same header name as READER_SECRET
 #                      above, a DIFFERENT secret and a different app.
+#                      EMPTY/UNSET ⇒ the read is dark.
 #
 # STAFF BOT READ SIDE (separate again, independently dark). The staff OA is
 # also a bot (HF ภายใน): summoned in the staff LINE group or in a 1:1 chat, it

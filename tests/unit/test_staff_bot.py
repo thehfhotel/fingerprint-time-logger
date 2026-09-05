@@ -34,7 +34,7 @@ import pytest
 
 from app.api import staff_oa as staff_oa_module
 from app.models.models import Employee
-from app.services import housekeeping_client, staff_bot
+from app.services import guest_feedback_client, housekeeping_client, staff_bot
 from app.services import staff_oa_service as service
 
 TOKEN = "test-channel-access-token"
@@ -66,10 +66,14 @@ class _ExplodingRequests:
 
 @pytest.fixture(autouse=True)
 def _block_line_http(monkeypatch):
-    """No test here may reach api.line.me or housekeeping, by any route."""
+    """No test here may reach api.line.me, housekeeping or guest-feedback,
+    by any route."""
     monkeypatch.setattr(service, "requests", _ExplodingRequests("LINE"))
     monkeypatch.setattr(
         housekeeping_client, "requests", _ExplodingRequests("housekeeping")
+    )
+    monkeypatch.setattr(
+        guest_feedback_client, "requests", _ExplodingRequests("guest-feedback")
     )
 
 
@@ -77,6 +81,24 @@ def _block_line_http(monkeypatch):
 def _dark_housekeeping(monkeypatch):
     """Default: the digest read is dark, so nothing tries to fetch it."""
     monkeypatch.delenv("HOUSEKEEPING_STAFF_BOT_TOKEN", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _dark_guest_feedback(monkeypatch):
+    """Default: the guest-requests read is dark, so nothing tries to fetch it."""
+    monkeypatch.delenv("GUEST_FEEDBACK_BASE_URL", raising=False)
+    monkeypatch.delenv("GUEST_FEEDBACK_READER_SECRET", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _idle_requests_gate(monkeypatch):
+    """Default: no chat ever has pending guest requests, so plain group
+    chatter never auto-upgrades to a command — tests that want the auto-offer
+    install their own gate."""
+    monkeypatch.setattr(
+        staff_bot, "get_requests_gate",
+        lambda: staff_bot.PendingRequestsGate(fetch=lambda: None),
+    )
 
 
 class _CollectingDispatcher:
@@ -179,6 +201,11 @@ class TestSummonGrammar:
         routed = _route(_group_text(f"น้องคะ {word}"))
         assert routed.command == staff_bot.COMMAND_DIGEST
 
+    @pytest.mark.parametrize("word", ["คำขอ", "คำขอลูกค้า", "guest requests"])
+    def test_a_command_word_after_the_summon_runs_the_guest_requests(self, word):
+        routed = _route(_group_text(f"น้องคะ {word}"))
+        assert routed.command == staff_bot.COMMAND_REQUESTS
+
     def test_unrecognised_words_after_the_summon_open_the_palette(self):
         routed = _route(_group_text("น้องคะ ช่วยดูให้หน่อย"))
         assert routed.command == staff_bot.COMMAND_PALETTE
@@ -248,6 +275,12 @@ class TestDirectChat:
         routed = _route(_direct_text(word), known={"U-emp"})
         assert routed.command == staff_bot.COMMAND_DIGEST
 
+    @pytest.mark.parametrize("word", ["คำขอ", "คำขอลูกค้า", "guest requests"])
+    def test_a_bare_guest_requests_word_runs_that_command(self, word):
+        routed = _route(_direct_text(word), known={"U-emp"})
+        assert routed.command == staff_bot.COMMAND_REQUESTS
+        assert routed.source_type == "user"
+
     def test_no_summon_is_needed_in_a_one_to_one_chat(self):
         routed = _route(_direct_text("น้องคะ"), known={"U-emp"})
         assert routed.command == staff_bot.COMMAND_PALETTE
@@ -300,6 +333,10 @@ class TestPostback:
         routed = _route(_postback("cmd=palette"))
         assert routed.command == staff_bot.COMMAND_PALETTE
 
+    def test_cmd_requests_runs_the_guest_requests_command(self):
+        routed = _route(_postback("cmd=requests"))
+        assert routed.command == staff_bot.COMMAND_REQUESTS
+
     def test_extra_parameters_do_not_confuse_the_parse(self):
         routed = _route(_postback("cmd=digest&id=17"))
         assert routed.command == staff_bot.COMMAND_DIGEST
@@ -319,6 +356,132 @@ class TestPostback:
         button = staff_bot.palette_message()["contents"]["footer"]["contents"][0]
         routed = _route(_postback(button["action"]["data"]))
         assert routed.command == staff_bot.COMMAND_DIGEST
+
+    def test_the_requests_button_carries_the_postback_the_router_understands(self):
+        button = staff_bot.palette_message()["contents"]["footer"]["contents"][1]
+        routed = _route(_postback(button["action"]["data"]))
+        assert routed.command == staff_bot.COMMAND_REQUESTS
+
+
+# ===========================================================================
+# Group auto-offer of guest requests — route_event stays pure, the I/O and
+# the 10 s per-chat cache live in handle_event_detail via PendingRequestsGate
+# ===========================================================================
+
+
+class TestGroupAutoOffer:
+    def test_route_event_never_upgrades_plain_chat_on_its_own(self):
+        # route_event does no I/O — a non-summon group message is always a
+        # RoutedMessage from route_event's point of view, pending or not.
+        routed = _route(_group_text("ผ้าเช็ดตัวหมดค่ะ"))
+        assert isinstance(routed, staff_bot.RoutedMessage)
+
+    def test_plain_group_chat_becomes_a_command_when_requests_are_pending(
+        self, dispatcher, test_db, monkeypatch,
+    ):
+        monkeypatch.setattr(
+            staff_bot, "get_requests_gate",
+            lambda: staff_bot.PendingRequestsGate(fetch=lambda: _requests_payload()),
+        )
+        handled = staff_bot.handle_event_detail(
+            _group_text("ผ้าเช็ดตัวหมดค่ะ", reply_token="reply-g"), test_db,
+        )
+        assert handled.command is True
+        assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_REQUESTS]
+        assert dispatcher.commands[0].source_type == "group"
+        assert dispatcher.commands[0].reply_token == "reply-g"
+
+    def test_plain_group_chat_stays_a_message_when_nothing_is_pending(
+        self, dispatcher, test_db, monkeypatch,
+    ):
+        monkeypatch.setattr(
+            staff_bot, "get_requests_gate",
+            lambda: staff_bot.PendingRequestsGate(fetch=lambda: None),
+        )
+        handled = staff_bot.handle_event_detail(_group_text("ผ้าเช็ดตัวหมดค่ะ"), test_db)
+        assert handled.command is False
+        assert dispatcher.commands == []
+
+    def test_a_summon_is_unaffected_by_pending_requests(self, dispatcher, test_db, monkeypatch):
+        # A summon is already a RoutedCommand before the gate ever runs —
+        # the digest/palette rules are untouched by this feature.
+        monkeypatch.setattr(
+            staff_bot, "get_requests_gate",
+            lambda: staff_bot.PendingRequestsGate(fetch=lambda: _requests_payload()),
+        )
+        staff_bot.handle_event_detail(_group_text("น้องคะ"), test_db)
+        assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_PALETTE]
+
+    def test_the_pending_check_is_cached_per_chat_for_ten_seconds(self):
+        clock = _Clock()
+        fetch_calls = []
+
+        def _fetch():
+            fetch_calls.append(True)
+            return _requests_payload()
+
+        gate = staff_bot.PendingRequestsGate(clock=clock, fetch=_fetch)
+
+        assert gate.has_pending("Cgroup") is True
+        assert gate.has_pending("Cgroup") is True
+        assert len(fetch_calls) == 1  # second call served from cache
+
+        clock.advance(staff_bot.REQUESTS_AUTO_TRIGGER_CACHE_SECONDS - 0.01)
+        assert gate.has_pending("Cgroup") is True
+        assert len(fetch_calls) == 1
+
+        clock.advance(0.02)
+        assert gate.has_pending("Cgroup") is True
+        assert len(fetch_calls) == 2  # cache expired, checked again
+
+    def test_the_cache_is_per_chat(self):
+        clock = _Clock()
+        fetch_calls = []
+
+        def _fetch():
+            fetch_calls.append(True)
+            return _requests_payload()
+
+        gate = staff_bot.PendingRequestsGate(clock=clock, fetch=_fetch)
+        gate.has_pending("C1")
+        gate.has_pending("C2")
+        assert len(fetch_calls) == 2
+
+    def test_a_room_message_is_also_a_candidate(self, dispatcher, test_db, monkeypatch):
+        monkeypatch.setattr(
+            staff_bot, "get_requests_gate",
+            lambda: staff_bot.PendingRequestsGate(fetch=lambda: _requests_payload()),
+        )
+        event = {
+            "type": "message",
+            "replyToken": "reply-r",
+            "source": {"type": "room", "roomId": "R1", "userId": "Uspeaker"},
+            "message": {"type": "text", "id": "m1", "text": "hello"},
+        }
+        staff_bot.handle_event_detail(event, test_db)
+        assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_REQUESTS]
+        assert dispatcher.commands[0].source_type == "room"
+
+    def test_a_one_to_one_chat_is_never_upgraded_by_the_gate(
+        self, dispatcher, test_db, monkeypatch,
+    ):
+        # 1:1 never produces a RoutedMessage in the first place (route_event
+        # always turns it into a command), so the gate never even runs.
+        gate_calls = []
+        monkeypatch.setattr(
+            staff_bot, "get_requests_gate",
+            lambda: staff_bot.PendingRequestsGate(
+                fetch=lambda: gate_calls.append(True) or _requests_payload()
+            ),
+        )
+        test_db.add(Employee(
+            badge_number="9010", display_name="maid", is_active=True,
+            is_hidden=False, line_user_id="U-emp",
+        ))
+        test_db.commit()
+        staff_bot.handle_event_detail(_direct_text("สวัสดีค่ะ"), test_db)
+        assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_PALETTE]
+        assert gate_calls == []
 
 
 # ===========================================================================
@@ -587,6 +750,13 @@ class TestPalette:
             "data": "cmd=digest",
             "displayText": "งานค้าง",
         }
+        requests_action = bubble["footer"]["contents"][1]["action"]
+        assert requests_action == {
+            "type": "postback",
+            "label": "คำขอลูกค้า",
+            "data": "cmd=requests",
+            "displayText": "คำขอลูกค้า",
+        }
 
     def test_a_coalesced_reply_is_palette_then_digest(self, monkeypatch):
         monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: None)
@@ -602,6 +772,171 @@ class TestPalette:
             [staff_bot.COMMAND_PALETTE] * 9 + [staff_bot.COMMAND_DIGEST]
         )
         assert len(messages) <= staff_bot.MAX_REPLY_MESSAGES
+
+
+# ===========================================================================
+# Guest requests (คำขอลูกค้า) — rendering, build_messages, the ids threaded
+# through for the delivery confirm
+# ===========================================================================
+
+
+def _requests_payload(count=2, text="รายการคำขอ 2 รายการ", items=None):
+    return {
+        "ok": True,
+        "count": count,
+        "text": text,
+        "items": items if items is not None else [
+            {"id": "fb-1", "ref": "A1"}, {"id": "fb-2", "ref": "A2"},
+        ],
+    }
+
+
+class TestRequestsRendering:
+    def test_prints_guest_feedback_s_own_text_as_is_when_pending(self):
+        payload = _requests_payload()
+        assert staff_bot.render_requests(payload) == payload["text"]
+
+    def test_a_reachable_read_with_nothing_pending_says_so(self):
+        payload = _requests_payload(count=0, text="")
+        assert staff_bot.render_requests(payload) == staff_bot.REQUESTS_NONE_TEXT
+
+    def test_a_dark_or_broken_read_gets_one_fixed_thai_line(self):
+        assert staff_bot.render_requests(None) == staff_bot.REQUESTS_UNAVAILABLE_TEXT
+
+    def test_build_messages_includes_the_requests_text(self, monkeypatch):
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending", lambda: _requests_payload()
+        )
+        messages = staff_bot.build_messages([staff_bot.COMMAND_REQUESTS])
+        assert messages == [{"type": "text", "text": _requests_payload()["text"]}]
+
+    def test_build_messages_carries_the_dark_line_when_the_read_fails(self, monkeypatch):
+        monkeypatch.setattr(guest_feedback_client, "fetch_pending", lambda: None)
+        messages = staff_bot.build_messages([staff_bot.COMMAND_REQUESTS])
+        assert messages == [
+            {"type": "text", "text": staff_bot.REQUESTS_UNAVAILABLE_TEXT}
+        ]
+
+    def test_build_messages_collects_the_ids_used_to_render(self, monkeypatch):
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending", lambda: _requests_payload()
+        )
+        collected = []
+        staff_bot.build_messages([staff_bot.COMMAND_REQUESTS], collected)
+        assert collected == ["fb-1", "fb-2"]
+
+    def test_no_ids_are_collected_when_nothing_is_pending(self, monkeypatch):
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending",
+            lambda: _requests_payload(count=0, text="", items=[]),
+        )
+        collected = []
+        staff_bot.build_messages([staff_bot.COMMAND_REQUESTS], collected)
+        assert collected == []
+
+
+# ===========================================================================
+# guest_feedback_client — fail closed, never raise
+# ===========================================================================
+
+
+class TestGuestFeedbackClient:
+    def test_either_env_unset_dials_nothing(self, monkeypatch):
+        monkeypatch.delenv("GUEST_FEEDBACK_BASE_URL", raising=False)
+        monkeypatch.delenv("GUEST_FEEDBACK_READER_SECRET", raising=False)
+        assert guest_feedback_client.is_enabled() is False
+        assert guest_feedback_client.fetch_pending() is None
+        assert guest_feedback_client.confirm_delivered(["fb-1"]) is False
+
+    def test_only_the_url_set_is_still_dark(self, monkeypatch):
+        monkeypatch.setenv("GUEST_FEEDBACK_BASE_URL", "http://feedback:4080")
+        monkeypatch.delenv("GUEST_FEEDBACK_READER_SECRET", raising=False)
+        assert guest_feedback_client.fetch_pending() is None
+
+    def _wire_get(self, monkeypatch, response=None, boom=None):
+        calls = {}
+
+        def _get(url, headers=None, timeout=None, **kwargs):
+            calls.update(url=url, headers=headers, timeout=timeout)
+            if boom:
+                raise boom
+            return response
+
+        monkeypatch.setenv("GUEST_FEEDBACK_BASE_URL", "http://feedback:4080")
+        monkeypatch.setenv("GUEST_FEEDBACK_READER_SECRET", "shared-secret")
+        monkeypatch.setattr(
+            guest_feedback_client, "requests",
+            type("R", (), {"get": staticmethod(_get)}),
+        )
+        return calls
+
+    def test_fetch_pending_calls_the_documented_endpoint(self, monkeypatch):
+        payload = _requests_payload()
+        calls = self._wire_get(monkeypatch, _Response(200, payload))
+
+        assert guest_feedback_client.fetch_pending() == payload
+        assert calls["url"] == "http://feedback:4080/api/internal/line/pending"
+        assert calls["headers"] == {"X-Reader-Secret": "shared-secret"}
+        assert calls["timeout"] == 2
+
+    @pytest.mark.parametrize("status", [401, 403, 500, 503])
+    def test_a_refusal_is_a_miss_not_an_exception(self, monkeypatch, status):
+        self._wire_get(monkeypatch, _Response(status, {}))
+        assert guest_feedback_client.fetch_pending() is None
+
+    def test_a_timeout_is_a_miss(self, monkeypatch):
+        self._wire_get(monkeypatch, boom=OSError("timed out"))
+        assert guest_feedback_client.fetch_pending() is None
+
+    def test_a_non_json_body_is_a_miss(self, monkeypatch):
+        self._wire_get(monkeypatch, _Response(200, raises=True))
+        assert guest_feedback_client.fetch_pending() is None
+
+    def test_a_json_array_is_a_miss(self, monkeypatch):
+        self._wire_get(monkeypatch, _Response(200, ["nope"]))
+        assert guest_feedback_client.fetch_pending() is None
+
+    def _wire_post(self, monkeypatch, response=None, boom=None):
+        calls = {}
+
+        def _post(url, headers=None, json=None, timeout=None, **kwargs):
+            calls.update(url=url, headers=headers, json=json, timeout=timeout)
+            if boom:
+                raise boom
+            return response
+
+        monkeypatch.setenv("GUEST_FEEDBACK_BASE_URL", "http://feedback:4080")
+        monkeypatch.setenv("GUEST_FEEDBACK_READER_SECRET", "shared-secret")
+        monkeypatch.setattr(
+            guest_feedback_client, "requests",
+            type("R", (), {"post": staticmethod(_post)}),
+        )
+        return calls
+
+    def test_confirm_delivered_posts_the_documented_body(self, monkeypatch):
+        calls = self._wire_post(monkeypatch, _Response(200, {"ok": True, "marked": 2}))
+
+        assert guest_feedback_client.confirm_delivered(["fb-1", "fb-2"]) is True
+        assert calls["url"] == "http://feedback:4080/api/internal/line/delivered"
+        assert calls["headers"] == {"X-Reader-Secret": "shared-secret"}
+        assert calls["json"] == {"ids": ["fb-1", "fb-2"], "method": "reply"}
+        assert calls["timeout"] == 2
+
+    def test_confirm_delivered_with_no_ids_dials_nothing(self, monkeypatch):
+        # `requests` here is the un-stubbed real module — a real dial would
+        # fail loudly rather than silently pass.
+        monkeypatch.setenv("GUEST_FEEDBACK_BASE_URL", "http://feedback:4080")
+        monkeypatch.setenv("GUEST_FEEDBACK_READER_SECRET", "shared-secret")
+        assert guest_feedback_client.confirm_delivered([]) is False
+
+    @pytest.mark.parametrize("status", [401, 403, 500, 503])
+    def test_confirm_delivered_refusal_is_a_miss(self, monkeypatch, status):
+        self._wire_post(monkeypatch, _Response(status, {}))
+        assert guest_feedback_client.confirm_delivered(["fb-1"]) is False
+
+    def test_confirm_delivered_timeout_is_a_miss(self, monkeypatch):
+        self._wire_post(monkeypatch, boom=OSError("timed out"))
+        assert guest_feedback_client.confirm_delivered(["fb-1"]) is False
 
 
 # ===========================================================================
@@ -760,6 +1095,94 @@ class TestAsyncioDispatcher:
         asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(pending))
         assert sent == []
 
+    def test_a_group_requests_reply_confirms_delivery_exactly_once(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: None)
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending", lambda: _requests_payload()
+        )
+        confirmed = []
+        monkeypatch.setattr(
+            guest_feedback_client, "confirm_delivered",
+            lambda ids: confirmed.append(list(ids)) or True,
+        )
+        pending = staff_bot.PendingReply(
+            chat_key="Cgroup", commands={staff_bot.COMMAND_REQUESTS},
+            reply_token="tok", source_type="group",
+        )
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(pending))
+        assert confirmed == [["fb-1", "fb-2"]]
+
+    def test_a_room_requests_reply_also_confirms(self, monkeypatch, staff_oa_enabled):
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: None)
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending", lambda: _requests_payload()
+        )
+        confirmed = []
+        monkeypatch.setattr(
+            guest_feedback_client, "confirm_delivered",
+            lambda ids: confirmed.append(list(ids)) or True,
+        )
+        pending = staff_bot.PendingReply(
+            chat_key="Croom", commands={staff_bot.COMMAND_REQUESTS},
+            reply_token="tok", source_type="room",
+        )
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(pending))
+        assert len(confirmed) == 1
+
+    def test_a_one_to_one_requests_reply_never_confirms(self, monkeypatch, staff_oa_enabled):
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: None)
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending", lambda: _requests_payload()
+        )
+        confirmed = []
+        monkeypatch.setattr(
+            guest_feedback_client, "confirm_delivered",
+            lambda ids: confirmed.append(list(ids)) or True,
+        )
+        pending = staff_bot.PendingReply(
+            chat_key="U-emp", commands={staff_bot.COMMAND_REQUESTS},
+            reply_token="tok", source_type="user",
+        )
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(pending))
+        assert confirmed == []
+
+    def test_a_failed_line_reply_never_confirms_delivery(self, monkeypatch, staff_oa_enabled):
+        def _explode(token, messages):
+            raise service.StaffOaApiError("reply messages", 500, "boom")
+
+        monkeypatch.setattr(service, "reply_messages", _explode)
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending", lambda: _requests_payload()
+        )
+        confirmed = []
+        monkeypatch.setattr(
+            guest_feedback_client, "confirm_delivered",
+            lambda ids: confirmed.append(list(ids)) or True,
+        )
+        pending = staff_bot.PendingReply(
+            chat_key="Cgroup", commands={staff_bot.COMMAND_REQUESTS},
+            reply_token="tok", source_type="group",
+        )
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(pending))
+        assert confirmed == []
+
+    def test_no_pending_requests_means_no_confirm_call(self, monkeypatch, staff_oa_enabled):
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: None)
+        monkeypatch.setattr(guest_feedback_client, "fetch_pending", lambda: None)
+        confirmed = []
+        monkeypatch.setattr(
+            guest_feedback_client, "confirm_delivered",
+            lambda ids: confirmed.append(list(ids)) or True,
+        )
+        pending = staff_bot.PendingReply(
+            chat_key="Cgroup", commands={staff_bot.COMMAND_REQUESTS},
+            reply_token="tok", source_type="group",
+        )
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(pending))
+        assert confirmed == []
+
 
 class TestReplyMessages:
     """The one new LINE call — still a REPLY, never a push."""
@@ -862,6 +1285,35 @@ class TestWebhookIntegration:
         _signed_post(test_client, {"events": [_direct_text("งานค้าง")]})
 
         assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_DIGEST]
+
+    def test_a_known_employee_asking_for_requests_in_a_one_to_one_gets_that_command(
+        self, test_client, test_db, staff_oa_enabled, dispatcher
+    ):
+        test_db.add(Employee(
+            badge_number="7002", display_name="maid", is_active=True,
+            is_hidden=False, line_user_id="U-emp",
+        ))
+        test_db.commit()
+
+        _signed_post(test_client, {"events": [_direct_text("คำขอลูกค้า")]})
+
+        assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_REQUESTS]
+        assert dispatcher.commands[0].source_type == "user"
+
+    def test_plain_group_chat_files_a_requests_command_when_pending(
+        self, test_client, test_db, staff_oa_enabled, dispatcher, monkeypatch,
+    ):
+        monkeypatch.setattr(
+            staff_bot, "get_requests_gate",
+            lambda: staff_bot.PendingRequestsGate(fetch=lambda: _requests_payload()),
+        )
+        response = _signed_post(
+            test_client, {"events": [_group_text("ผ้าเช็ดตัวหมดค่ะ")]}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["bot_commands"] == 1
+        assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_REQUESTS]
 
     def test_an_unknown_one_to_one_sender_gets_the_onboarding_command(
         self, test_client, test_db, staff_oa_enabled, dispatcher
