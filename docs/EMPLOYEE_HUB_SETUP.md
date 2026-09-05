@@ -296,14 +296,19 @@ any chat size. A *push* into the staff group would be metered **per member**
 "Mind the push cap" below. No push, multicast, broadcast or narrowcast exists
 anywhere in this feature, and none may be added to it.
 
-### It waits for quiet (debounce)
+### Commands answer at once; scheduled digests wait for quiet
 
-People type in bursts, so the bot never answers the message it was summoned
-by. A command opens a pending reply; every later message in that chat hands it
-a fresher reply token and restarts the timer. It answers after **15 s of quiet
-in a group** (2 s in a 1:1) and at the latest **45 s** after the first
-trigger — reply tokens are short lived, so that cap is not optional. Two
-commands in one burst coalesce into a single reply carrying both messages.
+A summon, a command word or a palette tap is answered **immediately**
+(`COMMAND_QUIET_SECONDS = 0`). The owner's rule (2026-09-05): "15 seconds of
+quiet is for scheduled reports, not for the command reply."
+
+The wait-for-quiet machinery (`ReplyDebouncer`) exists for the **phase 2 slot
+digest**, which piggybacks on reception's hourly report and must never land in
+the middle of that burst: it waits for **15 s of quiet** (`SLOT_QUIET_SECONDS`)
+in the chat, every later message hands it a fresher reply token and restarts
+the timer, and it fires at the latest **45 s** after the first trigger — reply
+tokens are short lived, so that cap is not optional. Commands filed in the same
+instant for one chat still coalesce into a single reply.
 
 ### Privacy rule
 

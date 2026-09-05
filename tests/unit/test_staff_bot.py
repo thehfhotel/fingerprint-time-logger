@@ -280,9 +280,9 @@ class TestDirectChat:
 
     def test_one_to_one_waits_two_seconds_not_fifteen(self):
         routed = _route(_direct_text("งานค้าง"), known={"U-emp"})
-        assert routed.quiet_seconds == staff_bot.DIRECT_QUIET_SECONDS
+        assert routed.quiet_seconds == staff_bot.COMMAND_QUIET_SECONDS == 0.0
         group = _route(_group_text("น้องคะ"))
-        assert group.quiet_seconds == staff_bot.GROUP_QUIET_SECONDS
+        assert group.quiet_seconds == staff_bot.COMMAND_QUIET_SECONDS == 0.0
 
 
 # ===========================================================================
@@ -1016,3 +1016,21 @@ class TestReplyTokenClaims:
     def test_handle_event_still_reports_commands_only(self, bot, test_db):
         assert staff_bot.handle_event(_group_text("น้องคะ", reply_token="t1"), test_db) is True
         assert staff_bot.handle_event(_group_text("ขอบคุณค่ะ", reply_token="t2"), test_db) is False
+
+
+class TestCommandsAnswerAtOnce:
+    """Owner rule 2026-09-05: the quiet wait is for scheduled reports, never
+    for a command reply. A command is due the moment it is filed."""
+
+    def test_a_group_command_is_due_immediately(self):
+        clock = [100.0]
+        debouncer = staff_bot.ReplyDebouncer(clock=lambda: clock[0])
+        routed = staff_bot.route_event(_group_text("น้องคะ งานค้าง", reply_token="t1"), lambda _u: True)
+        debouncer.note_command(routed.chat_key, routed.command, routed.reply_token,
+                               quiet_seconds=routed.quiet_seconds)
+        assert debouncer.next_delay() == 0.0
+        due = debouncer.pop_due()
+        assert [p.reply_token for p in due] == ["t1"]
+
+    def test_slot_quiet_is_still_fifteen_seconds_for_phase_two(self):
+        assert staff_bot.SLOT_QUIET_SECONDS == 15.0
