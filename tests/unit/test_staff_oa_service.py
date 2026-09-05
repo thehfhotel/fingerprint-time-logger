@@ -476,15 +476,23 @@ class TestLinkRoleMenuForLineUser:
 
 
 class TestGuestFeedbackForwarder:
-    """Group events relayed to the guest-feedback app (2026-09-05).
+    """LINE events relayed to the guest-feedback app (2026-09-05).
 
     LINE allows ONE Official Account per group chat. The staff group hosts
     the OA these tests have been about all along, so guest-feedback cannot
     be invited alongside it and cannot receive that group's webhook — HF ID
     forwards a reduced event instead (guest-feedback
-    docs/CONTRACTS.md §15.4). Two properties matter more than the plumbing
-    and are pinned separately below: the payload carries NO message text and
-    no user/room event, and the forward can never fail the webhook.
+    docs/CONTRACTS.md §15.4). Since the same day it also forwards 1:1
+    ``message`` events, reduced to their ids, so an allowlisted manager can
+    preview the pending requests privately (§15.5).
+
+    TWO SHAPES, DELIBERATELY DIFFERENT. A group payload carries the groupId
+    and NO userId (staff chatter and who said it stay here); a 1:1 payload
+    carries the userId — it is the identity guest-feedback allowlists — and
+    ``groupId: None``. Neither carries message text, no `room` event crosses
+    at all, and `follow`/`unfollow` never do either: those are the Employee
+    Hub's own. That, and "the forward can never fail the webhook", are the
+    properties pinned below; the plumbing matters less than either.
     """
 
     FORWARD_URL = "http://feedback:4080/api/internal/line/event"
@@ -554,20 +562,98 @@ class TestGuestFeedbackForwarder:
         event = {"type": event_type, "source": {"type": "group", "groupId": "Cg"}}
         assert service.group_event_forward_payload(event) is None
 
-    @pytest.mark.parametrize("source_type", ["user", "room"])
-    def test_only_group_sources_are_forwardable(self, source_type):
-        # A 1:1 chat and a multi-person room are private conversations that
-        # guest-feedback has no business seeing, whatever the event type.
+    @pytest.mark.parametrize(
+        "event_type", ["message", "join", "memberJoined", "leave", "follow"]
+    )
+    def test_a_room_source_is_never_forwardable(self, event_type):
+        # A multi-person room is a private conversation guest-feedback has no
+        # business seeing, whatever the event type — and unlike a 1:1 there is
+        # nothing it could do with one: the preview answers a person.
         event = {
-            "type": "message",
+            "type": event_type,
             "replyToken": "r",
-            "source": {"type": source_type, "userId": "U1", "roomId": "R1"},
+            "source": {"type": "room", "roomId": "R1", "userId": "U1"},
         }
         assert service.group_event_forward_payload(event) is None
 
     def test_a_group_source_without_a_group_id_is_dropped(self):
         event = {"type": "message", "source": {"type": "group"}}
         assert service.group_event_forward_payload(event) is None
+
+    # -- 1:1 (the private preview, guest-feedback §15.5) --------------------
+
+    @staticmethod
+    def _direct_message(text="ขอดูรายการที่ค้างหน่อยค่ะ"):
+        """A realistic 1:1 message — text included, as LINE sends it."""
+        return {
+            "type": "message",
+            "replyToken": "reply-token-direct",
+            "timestamp": 1757000000001,
+            "source": {"type": "user", "userId": "Umanager"},
+            "message": {"type": "text", "id": "m9", "text": text},
+        }
+
+    def test_direct_message_reduces_to_the_documented_ids_only_payload(self):
+        assert service.group_event_forward_payload(self._direct_message()) == {
+            "type": "message",
+            "replyToken": "reply-token-direct",
+            "timestamp": 1757000000001,
+            "userId": "Umanager",
+            "groupId": None,
+            "channel": "staff-oa",
+        }
+
+    def test_the_direct_payload_never_carries_message_text(self):
+        # Same privacy rule as the group payload: the ids and the reply
+        # window cross, the words never do. `groupId: None` is carried
+        # explicitly rather than dropped — it is what tells guest-feedback to
+        # answer this person instead of posting into the staff group.
+        payload = service.group_event_forward_payload(
+            self._direct_message("ห้อง 402 บ่นเรื่องแอร์")
+        )
+        assert set(payload) == {
+            "type", "replyToken", "timestamp", "userId", "groupId", "channel"
+        }
+        assert payload["groupId"] is None
+        assert "บ่น" not in json.dumps(payload, ensure_ascii=False)
+
+    @pytest.mark.parametrize(
+        "event_type", ["follow", "unfollow", "postback", "join", "leave"]
+    )
+    def test_only_message_crosses_from_a_1_to_1_chat(self, event_type):
+        # `follow`/`unfollow` are the Employee Hub's own events — they link
+        # and unlink Role Menus in app/api/staff_oa.py and must not leave
+        # this app — and a menu tap (`postback`) is nobody else's business.
+        event = {
+            "type": event_type,
+            "replyToken": "r",
+            "source": {"type": "user", "userId": "Umanager"},
+        }
+        assert service.group_event_forward_payload(event) is None
+
+    def test_a_user_source_without_a_user_id_is_dropped(self):
+        # Nothing to allowlist and nobody to answer.
+        event = {"type": "message", "replyToken": "r", "source": {"type": "user"}}
+        assert service.group_event_forward_payload(event) is None
+
+    def test_a_withheld_token_is_withheld_from_a_1_to_1_too(self):
+        # The single-use-token rule is the same in both shapes, and it bites
+        # hardest here: the staff bot answers every 1:1 text it is sent, so
+        # this is the ROUTINE 1:1 payload, not the exception (see
+        # docs/EMPLOYEE_HUB_SETUP.md, "Known limitation — the reply token").
+        payload = service.group_event_forward_payload(
+            self._direct_message(), withhold_reply_token=True
+        )
+        assert payload["replyToken"] is None
+        assert payload["userId"] == "Umanager"  # the id still crosses
+
+    def test_the_group_payload_did_not_grow_a_user_id_key(self):
+        # The 1:1 shape carries userId; the group shape must not start to.
+        # Asserted against the live reducer rather than a copy of it so the
+        # two shapes cannot quietly converge.
+        payload = service.group_event_forward_payload(self._group_message())
+        assert "userId" not in payload
+        assert "groupId" in payload
 
     @pytest.mark.parametrize("event", [None, "message", 7, {}, {"source": "group"}])
     def test_junk_events_reduce_to_none_instead_of_raising(self, event):

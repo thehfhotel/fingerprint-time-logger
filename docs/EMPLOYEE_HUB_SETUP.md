@@ -11,7 +11,7 @@ tools from grant-driven **Role Menus**; this repo hosts the machinery:
 | Menu image renderer (PIL, HF One palette, bundled Thai font) | `app/services/staff_oa_images.py` |
 | Credentials, webhook signature, LINE API client, relink helper | `app/services/staff_oa_service.py` |
 | Follow-event webhook | `app/api/staff_oa.py` → `POST /api/public/staff-oa/webhook` |
-| Group-event forward to guest-feedback (LINE allows 1 OA per group) | `app/services/staff_oa_service.py` → `forward_group_events*` |
+| Event forward to guest-feedback (group relay + 1:1 preview) | `app/services/staff_oa_service.py` → `forward_group_events*` |
 | **Automatic per-employee provisioning (create menu + link/unlink)** | `app/services/staff_oa_provision.py` |
 | Idempotent menu/link sync (dry-run by default) | `scripts/staff_oa_sync.py` |
 | Offline image preview | `scripts/staff_oa_render_menus.py` |
@@ -246,8 +246,9 @@ Employees who follow the OA are still linked by the webhook as well.
   (`/qr-checkin/onboard`) that links LINE accounts.
 
 Since 2026-09-05 the webhook also drives the **staff bot** (below) on
-`message`, `postback` and `join`, and **forwards** group events to
-guest-feedback (further below). Everything else is ignored. Per-event failures
+`message`, `postback` and `join`, and **forwards** group events — plus 1:1
+`message` events, ids only — to guest-feedback (further below). Everything
+else is ignored. Per-event failures
 are logged but never fail the delivery (LINE would retry the whole batch), and
 a delivery marked `deliveryContext.isRedelivery` is dropped by the bot so a
 LINE retry cannot double-post.
@@ -332,7 +333,7 @@ Both variables ride the deploy (`env_payload` in
 `.github/workflows/build.yml`, passthrough in `docker-compose.yml`); do not
 hand-edit the host `.env`, every deploy rewrites it.
 
-## Group events forwarded to guest-feedback
+## Events forwarded to guest-feedback
 
 LINE allows exactly **one Official Account per group chat**. The staff LINE
 group hosts the staff OA above, so the guest-feedback app
@@ -340,22 +341,26 @@ group hosts the staff OA above, so the guest-feedback app
 same group and cannot receive its webhook. This webhook relays the events it
 does not handle itself, and guest-feedback replies into the group using the
 **staff OA's** channel access token. Contract of record: guest-feedback
-`docs/CONTRACTS.md` §15.4.
+`docs/CONTRACTS.md` §15.4 (the group relay) and §15.5 (the 1:1 preview).
 
 | | |
 |---|---|
 | Sender | `app/api/staff_oa.py` → `app/services/staff_oa_service.py` (`forward_group_events*`) |
 | Receiver | `POST http://feedback:4080/api/internal/line/event` over the shared-nginx Docker network |
 | Auth | `X-Reader-Secret: <GUEST_FEEDBACK_LINE_SECRET>` (constant-time compare on the far side; 401 on mismatch) |
-| Forwarded | `source.type == "group"` **and** type in `message`, `join`, `memberJoined`, `leave` |
-| Payload | `{"type", "replyToken", "timestamp", "groupId", "channel": "staff-oa"}` |
+| Forwarded | `source.type == "group"` **and** type in `message`, `join`, `memberJoined`, `leave`; `source.type == "user"` **and** type `message` |
+| Group payload | `{"type", "replyToken", "timestamp", "groupId", "channel": "staff-oa"}` |
+| 1:1 payload | `{"type", "replyToken", "timestamp", "userId", "groupId": null, "channel": "staff-oa"}` |
 
 Deliberate properties, each covered by a test:
 
-- **No message text, ever**, and no `userId` — staff chatter and who said it
-  never leave this app. Only the group id and the reply token cross.
-- **No user or room events.** A 1:1 chat with the OA and a multi-person room
-  are private; only group events qualify.
+- **No message text, ever.** For a GROUP event no `userId` crosses either —
+  staff chatter and who said it never leave this app; only the group id and
+  the reply token do.
+- **1:1 `message` events cross as ids only** (see below). A multi-person
+  `room` still forwards nothing, and `follow`/`unfollow` are never forwarded:
+  they are the Employee Hub's own events, handled by the follow path above
+  and unchanged by any of this.
 - **Fire-and-forget on a daemon thread**, 2 s timeout, every failure logged
   and swallowed. It cannot delay or fail the webhook's `200` — a delivery
   LINE counts as failed is retried, and a wedged staff channel would cost far
@@ -364,6 +369,31 @@ Deliberate properties, each covered by a test:
   hold the response.)
 - **Follow handling is untouched**, and forwarding is a separate darkness
   switch from the OA credentials.
+
+### 1:1 messages: a private preview for an allowlisted manager
+
+Since 2026-09-05 a `message` event from a **1:1 chat** (`source.type ==
+"user"`) is forwarded too, reduced to `{"type": "message", "replyToken",
+"timestamp", "userId", "groupId": null, "channel": "staff-oa"}` — the ids and
+the reply window, never the text. The point is a private preview: a manager
+whose LINE user id guest-feedback has allowlisted (`LINE_PREVIEW_USER_IDS`,
+its env, not ours) can message the OA directly and get the pending guest
+requests back in that chat, instead of testing the relay by posting into the
+staff group. `groupId: null` is what tells guest-feedback to answer the
+person rather than the group; the allowlist decision, and the ignoring of
+anyone not on it, happen entirely on the far side — this app forwards every
+1:1 message id-only and knows nothing about who may preview. Contract of
+record: guest-feedback `docs/CONTRACTS.md` §15.5.
+
+> **Known limitation — the reply token.** A LINE reply token is single-use,
+> so an event whose token the staff bot (`app/services/staff_bot.py`) has
+> claimed crosses with `replyToken: null`. In a group that is rare; in a 1:1
+> the bot answers **every** text message it is sent, so nearly every 1:1
+> event will reach guest-feedback without a reply window and its preview
+> reply will be skipped. Whichever way that is resolved — the bot yielding
+> 1:1 tokens, or guest-feedback pushing instead of replying — is a decision
+> for the owner and a separate change; what ships here is the relay, and the
+> rule that exactly one sender ever holds a token.
 
 ### Env
 
