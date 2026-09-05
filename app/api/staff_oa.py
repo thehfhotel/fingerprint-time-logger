@@ -14,29 +14,18 @@ the dedicated staff Official Account. We only act on ``follow`` events
     pointer to the Q-badge onboarding flow that links LINE accounts to the
     employee registry.
 
-Everything else used to be dropped on the floor. Since 2026-09-05 GROUP
-events (``message``/``join``/``memberJoined``/``leave`` with a ``group``
-source) are ALSO forwarded, fire-and-forget, to the guest-feedback app —
-LINE allows one Official Account per group chat, so the staff group hosts
-this OA and guest-feedback has to be fed second-hand. Follow handling is
-untouched by that, the forward is dark unless GUEST_FEEDBACK_LINE_URL is
-set, and it can neither delay nor fail the response (see
-staff_oa_service.forward_group_events_in_background). No message text ever
-leaves this app.
-
-The same relay carries 1:1 ``message`` events (``user`` source) reduced to
-``{type, replyToken, timestamp, userId, groupId: None, channel}`` — ids
-only, so an allowlisted manager can pull the pending guest requests in a
-private chat instead of in the staff group (guest-feedback
-docs/CONTRACTS.md §15.5; the allowlist is theirs, not ours). ``follow`` and
-``unfollow`` are NOT forwarded — they stay exactly where they were, in the
-follow loop below — and a multi-person ``room`` still forwards nothing.
-
 Since 2026-09-05 this webhook is ALSO the staff bot's front door
 (``HF ภายใน``): ``message``/``postback``/``join`` events are routed into
 app/services/staff_bot.py, which debounces them and answers with a free reply
 token. Follow handling is byte-for-byte what it was; the bot never pushes, and
 non-command chat is discarded before anything is logged.
+
+The bot is also the ONLY responder for guest requests raised on the public
+guest-feedback site (guest-feedback docs/CONTRACTS.md §15 rev 3): it reads
+and confirms them from guest-feedback itself
+(app/services/guest_feedback_client.py) rather than guest-feedback holding
+any LINE credentials or relaying events here. The event-forwarding relay this
+webhook used to run (PR #28/#30) is retired along with it.
 
 FAIL CLOSED: the endpoint answers 503 until both STAFF_OA_* secrets are
 configured (see app/core/config.py), and every request must carry a valid
@@ -138,7 +127,7 @@ async def staff_oa_webhook(
     x_line_signature: str = Header(default=""),
     db: Session = Depends(get_db),
 ):
-    """LINE Messaging API webhook: follow events + group-event forwarding."""
+    """LINE Messaging API webhook: follow events + the staff bot."""
     _require_enabled()
 
     body = await request.body()
@@ -158,51 +147,19 @@ async def staff_oa_webhook(
     if not isinstance(events, list):
         events = []
 
-    # Staff bot (HF ภายใน) FIRST: message/postback/join events become
-    # debounced, free replies. Nothing is sent from inside this request — the
-    # bot waits for the chat to go quiet — so this loop only files intent, and
-    # a failure in it must not change the 200 LINE is waiting for. It runs
-    # before the relay below because the two compete for the same single-use
-    # reply token: an event the bot has claimed is relayed WITHOUT its token.
+    # Staff bot (HF ภายใน): message/postback/join events become debounced,
+    # free replies. Nothing is sent from inside this request — the bot waits
+    # for the chat to go quiet — so this loop only files intent, and a
+    # failure in it must not change the 200 LINE is waiting for.
     commands = 0
-    claimed: list = []
     for event in events:
-        handled_event = staff_bot._NOT_HANDLED
         try:
             handled_event = staff_bot.handle_event_detail(event, db)
         except Exception:  # noqa: BLE001 — keep the webhook green per event
             logger.exception("staff-bot event handling failed")
-        claimed.append(handled_event.claims_reply_token)
+            continue
         if handled_event.command:
             commands += 1
-
-    # Relay group and 1:1 events to guest-feedback BEFORE the follow loop:
-    # they carry the same short-lived reply token LINE hands us, and the loop
-    # below makes blocking LINE API calls. Fire-and-forget on a daemon
-    # thread — it cannot raise, cannot block, and never touches the follow
-    # path. Which events qualify, and what is stripped from each, is decided
-    # entirely in staff_oa_service.group_event_forward_payload; this loop
-    # offers it every event and forwards what comes back.
-    #
-    # The URL check is here as well as inside the forwarder so that a dark
-    # deployment does nothing at all (no reduction, no thread) and so the
-    # count reported below means "actually dispatched", not "would have been".
-    # That count keeps its original key: LINE ignores this body entirely, and
-    # renaming it would only churn the tests that read it.
-    forwarded: list = []
-    if staff_oa_service.get_guest_feedback_line_url():
-        forwarded = [
-            payload
-            for payload in (
-                staff_oa_service.group_event_forward_payload(
-                    event, withhold_reply_token=claims,
-                )
-                for event, claims in zip(events, claimed)
-            )
-            if payload is not None
-        ]
-        if forwarded:
-            staff_oa_service.forward_group_events_in_background(forwarded)
 
     handled = 0
     for event in events:
@@ -217,6 +174,5 @@ async def staff_oa_webhook(
     return {
         "status": "ok",
         "follow_events_handled": handled,
-        "group_events_forwarded": len(forwarded),
         "bot_commands": commands,
     }
