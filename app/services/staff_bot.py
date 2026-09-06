@@ -47,7 +47,20 @@ message goes through :func:`strip_pictographs` first.
 
 FAIL CLOSED: with HOUSEKEEPING_STAFF_BOT_TOKEN unset the digest read is dark
 and the bot says one fixed Thai line rather than guessing or going quiet
-(see app/services/housekeeping_client.py).
+(see app/services/housekeeping_client.py). The same rule covers the guest
+requests read: with either GUEST_FEEDBACK_BASE_URL or
+GUEST_FEEDBACK_READER_SECRET unset, คำขอลูกค้า answers its own fixed Thai line
+(see app/services/guest_feedback_client.py).
+
+GUEST REQUESTS (คำขอลูกค้า): since guest-feedback docs/CONTRACTS.md §15 rev 3
+("the Employee Hub bot is the ONLY responder"), this bot is also the sole
+sender for guest requests raised on the public feedback site. It reads and
+confirms them from guest-feedback (never holds them, never owns a queue) and
+answers only with reply tokens, exactly like the housekeeping digest above.
+A group message — summoned or not — auto-offers the pending list when one
+exists; a 1:1 request renders the identical text as a PREVIEW and never
+confirms delivery, so pending rows are not silently consumed by someone
+checking privately.
 
 TESTABILITY: :class:`ReplyDebouncer` is a pure state machine — an injectable
 clock, an injectable scheduler, no I/O, no timers — so the debounce rules are
@@ -71,7 +84,7 @@ from sqlalchemy.orm import Session
 
 from app.core import database
 from app.models.models import Employee, EmployeeAppGrant, StaffBotSlotMark
-from app.services import housekeeping_client, staff_oa_service
+from app.services import guest_feedback_client, housekeeping_client, staff_oa_service
 from app.utils.timezone import BANGKOK_TZ
 
 logger = logging.getLogger(__name__)
@@ -98,10 +111,23 @@ PALETTE_TITLE = "HF ภายใน"
 PALETTE_BODY = "มีอะไรให้ช่วยคะ"
 PALETTE_BUTTON_LABEL = "งานค้าง แจ้งซ่อม"
 PALETTE_BUTTON_DISPLAY_TEXT = "งานค้าง"
+PALETTE_REQUESTS_BUTTON_LABEL = "คำขอลูกค้า"
+PALETTE_REQUESTS_BUTTON_DISPLAY_TEXT = "คำขอลูกค้า"
 
 # Housekeeping dark, unreachable, or refusing. ONE fixed line: staff get a
 # plain Thai sentence, never a status code and never silence.
 DIGEST_UNAVAILABLE_TEXT = "ระบบงานซ่อมยังไม่เชื่อมต่อ ลองใหม่อีกครั้งภายหลัง"
+
+# Guest-feedback dark, unreachable, or refusing — the same fail-closed rule
+# as the digest above, one fixed Thai line.
+REQUESTS_UNAVAILABLE_TEXT = "ยังอ่านคำขอลูกค้าไม่ได้ค่ะ ลองใหม่อีกครั้ง"
+# Reachable, but nothing is waiting.
+REQUESTS_NONE_TEXT = "ยังไม่มีคำขอที่รอส่งค่ะ"
+
+# How long a "no pending guest requests" (or "yes") answer from guest-feedback
+# is trusted before asking again, per chat — group chatter must not hammer
+# the endpoint on every single message.
+REQUESTS_AUTO_TRIGGER_CACHE_SECONDS = 10.0
 
 THAI_MONTH_ABBREVIATIONS = (
     "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
@@ -121,6 +147,7 @@ SUMMON_PATTERN = re.compile(r"^น้อง\s*(?:คะ|ค่ะ|ครับ|�
 COMMAND_PALETTE = "palette"
 COMMAND_DIGEST = "digest"
 COMMAND_ONBOARDING = "onboarding"
+COMMAND_REQUESTS = "requests"
 
 # Phase 2. NOT a command anybody can type: it is filed by the slot rules
 # below when the bot decides this group's window is due. It renders the same
@@ -130,8 +157,11 @@ COMMAND_SLOT_DIGEST = "slot_digest"
 # Words that run the digest directly, with or without a summon in front.
 DIGEST_WORDS = frozenset({"งานค้าง", "งานซ่อมค้าง", "แจ้งซ่อมค้าง"})
 
+# Words that ask for the guest-requests list directly.
+REQUEST_WORDS = frozenset({"คำขอ", "คำขอลูกค้า", "guest requests"})
+
 # Canonical order of the message objects in one coalesced reply.
-COMMAND_ORDER = (COMMAND_ONBOARDING, COMMAND_PALETTE, COMMAND_DIGEST)
+COMMAND_ORDER = (COMMAND_ONBOARDING, COMMAND_PALETTE, COMMAND_DIGEST, COMMAND_REQUESTS)
 
 # LINE's cap on message objects per reply.
 MAX_REPLY_MESSAGES = 5
@@ -364,7 +394,12 @@ def summon_remainder(text: str, message: Optional[Dict] = None) -> Optional[str]
 
 def command_for_words(words: str) -> str:
     """Map what was said to a command. Anything unrecognised opens the palette."""
-    return COMMAND_DIGEST if words.strip() in DIGEST_WORDS else COMMAND_PALETTE
+    stripped = words.strip()
+    if stripped in REQUEST_WORDS:
+        return COMMAND_REQUESTS
+    if stripped in DIGEST_WORDS:
+        return COMMAND_DIGEST
+    return COMMAND_PALETTE
 
 
 # ---------------------------------------------------------------------------
@@ -505,7 +540,8 @@ def route_event(
 
 
 def _postback_command(postback) -> Optional[str]:
-    """``cmd=palette`` / ``cmd=digest`` out of a postback's urlencoded data."""
+    """``cmd=palette`` / ``cmd=digest`` / ``cmd=requests`` out of a postback's
+    urlencoded data."""
     if not isinstance(postback, dict):
         return None
     data = postback.get("data")
@@ -513,7 +549,7 @@ def _postback_command(postback) -> Optional[str]:
         return None
     values = parse_qs(data).get("cmd") or []
     command = values[0] if values else ""
-    if command in (COMMAND_PALETTE, COMMAND_DIGEST):
+    if command in (COMMAND_PALETTE, COMMAND_DIGEST, COMMAND_REQUESTS):
         return command
     return None
 
@@ -552,6 +588,15 @@ def palette_message() -> Dict:
                             "label": PALETTE_BUTTON_LABEL,
                             "data": f"cmd={COMMAND_DIGEST}",
                             "displayText": PALETTE_BUTTON_DISPLAY_TEXT,
+                        },
+                    },
+                    {
+                        "type": "button", "style": "secondary",
+                        "action": {
+                            "type": "postback",
+                            "label": PALETTE_REQUESTS_BUTTON_LABEL,
+                            "data": f"cmd={COMMAND_REQUESTS}",
+                            "displayText": PALETTE_REQUESTS_BUTTON_DISPLAY_TEXT,
                         },
                     },
                 ],
@@ -699,7 +744,42 @@ class BuiltReply:
     digest_available: bool = False
 
 
-def build_reply(commands: Sequence[str], slot_id: Optional[str] = None) -> BuiltReply:
+def render_requests(payload: Optional[Dict]) -> str:
+    """The คำขอลูกค้า text for the guest-feedback pending JSON.
+
+    ``None`` (either env unset, timeout, non-2xx, malformed body — see
+    guest_feedback_client.fetch_pending) renders the one fixed Thai line:
+    staff are told the read failed, never given a status code and never left
+    guessing at silence. A reachable read with nothing waiting gets its own
+    plain line; otherwise guest-feedback's own ``text`` (already formatted,
+    already Thai) is printed as-is — this bot does not reshape it.
+    """
+    if payload is None:
+        return REQUESTS_UNAVAILABLE_TEXT
+    if _as_int(payload.get("count")) <= 0:
+        return REQUESTS_NONE_TEXT
+    text = payload.get("text")
+    return text if isinstance(text, str) else REQUESTS_UNAVAILABLE_TEXT
+
+
+def _request_ids(payload: Optional[Dict]) -> List[str]:
+    """The feedback ids in a pending payload, for the delivery confirm."""
+    if not isinstance(payload, dict):
+        return []
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return []
+    return [
+        str(item["id"]) for item in items
+        if isinstance(item, dict) and item.get("id") is not None
+    ]
+
+
+def build_reply(
+    commands: Sequence[str],
+    slot_id: Optional[str] = None,
+    confirmed_request_ids: Optional[List[str]] = None,
+) -> BuiltReply:
     """Build ONE coalesced reply, in canonical order.
 
     At most one digest object per reply: a slot digest and a plain digest in
@@ -709,6 +789,11 @@ def build_reply(commands: Sequence[str], slot_id: Optional[str] = None) -> Built
     slot digest renders nothing and a digest somebody actually typed still
     gets its fixed Thai "not connected" line. A palette asked for in the same
     burst always rides along.
+
+    ``confirmed_request_ids`` — when given, the ids of a :data:`COMMAND_REQUESTS`
+    reply's fetched rows are appended to it, so the caller
+    (:meth:`AsyncioBotDispatcher._reply`) can confirm delivery with
+    guest-feedback after LINE accepts the reply.
     """
     wanted = set(commands)
     messages: List[Dict] = []
@@ -737,12 +822,25 @@ def build_reply(commands: Sequence[str], slot_id: Optional[str] = None) -> Built
                 if COMMAND_DIGEST not in wanted:
                     continue  # scheduled + dark: say nothing at all
             messages.append({"type": "text", "text": render_digest(payload)})
+        elif command == COMMAND_REQUESTS and command in wanted:
+            payload = guest_feedback_client.fetch_pending()
+            messages.append({"type": "text", "text": render_requests(payload)})
+            if confirmed_request_ids is not None:
+                confirmed_request_ids.extend(_request_ids(payload))
     return BuiltReply(messages[:MAX_REPLY_MESSAGES], slot_included, digest_available)
 
 
-def build_messages(commands: Sequence[str], slot_id: Optional[str] = None) -> List[Dict]:
-    """The message objects for one coalesced reply, in canonical order."""
-    return build_reply(commands, slot_id).messages
+def build_messages(
+    commands: Sequence[str],
+    confirmed_request_ids: Optional[List[str]] = None,
+    slot_id: Optional[str] = None,
+) -> List[Dict]:
+    """The message objects for one coalesced reply, in canonical order.
+
+    ``confirmed_request_ids`` stays the SECOND positional parameter (the
+    guest-requests call shape); ``slot_id`` selects the slot digest prefix.
+    """
+    return build_reply(commands, slot_id, confirmed_request_ids).messages
 
 
 # ---------------------------------------------------------------------------
@@ -765,6 +863,10 @@ class PendingReply:
     # What opened that slot (reception|late), carried only so the mark can be
     # rewritten faithfully in the corner where its row went missing.
     slot_trigger: str = TRIGGER_COMMAND
+    # "group" / "room" / "user" — which the first command in this burst came
+    # from. Used only to gate the guest-requests delivery confirm: a group or
+    # room reply confirms, a 1:1 reply is a preview and never does.
+    source_type: str = ""
 
     def deadline(self, max_wait_seconds: float) -> float:
         """Quiet-timer deadline, capped so the reply token cannot expire."""
@@ -800,6 +902,7 @@ class ReplyDebouncer:
         reply_token: str,
         quiet_seconds: float = COMMAND_QUIET_SECONDS,
         slot_ref: Optional[SlotRef] = None,
+        source_type: str = "",
     ) -> PendingReply:
         """Record a command: create or MERGE INTO this chat's pending reply."""
         now = self._clock()
@@ -819,6 +922,8 @@ class ReplyDebouncer:
         pending.quiet_seconds = min(pending.quiet_seconds, quiet_seconds)
         if slot_ref is not None:
             pending.slot_ref = slot_ref
+        if source_type:
+            pending.source_type = source_type
         self._notify()
         return pending
 
@@ -1080,6 +1185,7 @@ class AsyncioBotDispatcher:
             command.chat_key, command.command, command.reply_token,
             quiet_seconds=command.quiet_seconds,
             slot_ref=command.slot_ref,
+            source_type=command.source_type,
         )
 
     def submit_message(self, chat_key: str, reply_token: str) -> bool:
@@ -1135,9 +1241,11 @@ class AsyncioBotDispatcher:
             if owns_mark:
                 await self._drop_mark(slot_ref, "send_failed")
             return
+        request_ids: List[str] = []
         try:
             built = await asyncio.to_thread(
                 build_reply, pending.commands, slot_ref[2] if slot_ref else None,
+                request_ids,
             )
         except Exception as exc:  # noqa: BLE001 — a reply must never crash the loop
             logger.warning("staff-bot could not build a reply: %s", exc)
@@ -1181,6 +1289,19 @@ class AsyncioBotDispatcher:
             # nothing, and a window that saw only that is still owed a digest.
             await self._mark_sent(slot_ref, trigger=TRIGGER_COMMAND)
 
+        # Confirm delivery only once LINE has ACCEPTED the reply, and only
+        # for a group/room: a 1:1 คำขอลูกค้า answer is a preview and must
+        # never consume the rows it showed (guest-feedback docs/CONTRACTS.md
+        # §15 rev 3).
+        if (
+            COMMAND_REQUESTS in pending.commands
+            and request_ids
+            and pending.source_type in ("group", "room")
+        ):
+            await asyncio.to_thread(
+                guest_feedback_client.confirm_delivered, request_ids
+            )
+
     async def _mark_sent(self, ref: SlotRef, trigger: str) -> None:
         await asyncio.to_thread(
             _in_own_session, lambda db: mark_slot_sent(db, ref, trigger)
@@ -1219,6 +1340,68 @@ def is_linked_employee(db: Session, line_user_id: str) -> bool:
     )
 
 
+class PendingRequestsGate:
+    """Caches "does guest-feedback have pending guest requests" per chat.
+
+    Group chatter of any kind is a candidate to auto-offer คำขอลูกค้า into
+    (guest-feedback docs/CONTRACTS.md §15 rev 3), but every ordinary message
+    checking guest-feedback would hammer it. A TTL cache keyed by chat_key
+    answers from the last real check for
+    :data:`REQUESTS_AUTO_TRIGGER_CACHE_SECONDS`, injectable clock so tests
+    need not sleep.
+    """
+
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        ttl_seconds: float = REQUESTS_AUTO_TRIGGER_CACHE_SECONDS,
+        fetch: Callable[[], Optional[Dict]] = guest_feedback_client.fetch_pending,
+    ):
+        self._clock = clock
+        self._ttl_seconds = ttl_seconds
+        self._fetch = fetch
+        self._cache: Dict[str, tuple] = {}  # chat_key -> (expires_at, has_pending)
+
+    def has_pending(self, chat_key: str) -> bool:
+        now = self._clock()
+        cached = self._cache.get(chat_key)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+        payload = self._fetch()
+        has_pending = isinstance(payload, dict) and _as_int(payload.get("count")) > 0
+        self._cache[chat_key] = (now + self._ttl_seconds, has_pending)
+        return has_pending
+
+
+_requests_gate = PendingRequestsGate()
+
+
+def get_requests_gate() -> PendingRequestsGate:
+    """The process-wide guest-requests cache (a seam tests replace wholesale)."""
+    return _requests_gate
+
+
+def _maybe_upgrade_to_requests(routed: RoutedMessage, event: Dict) -> Routed:
+    """A non-summon GROUP/ROOM message becomes COMMAND_REQUESTS when guest-
+    feedback has something pending — a summon is untouched (it never reaches
+    here as a RoutedMessage) and a 1:1 never reaches here at all (route_event
+    always turns a 1:1 text message into a command)."""
+    source = event.get("source")
+    source_type = (source or {}).get("type") or ""
+    if source_type not in ("group", "room"):
+        return routed
+    if not get_requests_gate().has_pending(routed.chat_key):
+        return routed
+    return RoutedCommand(
+        chat_key=routed.chat_key,
+        command=COMMAND_REQUESTS,
+        reply_token=routed.reply_token,
+        quiet_seconds=quiet_seconds_for(source_type),
+        event_type=event.get("type") or "message",
+        source_type=source_type,
+    )
+
+
 @dataclass(frozen=True)
 class HandledEvent:
     """What the bot did with one webhook event.
@@ -1226,9 +1409,7 @@ class HandledEvent:
     ``command`` — the event was a command and a reply is now pending.
     ``claims_reply_token`` — the bot intends to spend THIS event's reply
     token (it is a command, or the chat already had a reply pending and the
-    token was refreshed to this newer one). A LINE reply token is single-use,
-    so a claimed token must not be handed to any other consumer — the
-    webhook withholds it from the guest-feedback relay.
+    token was refreshed to this newer one). A LINE reply token is single-use.
     """
 
     command: bool
@@ -1280,7 +1461,10 @@ def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
 
     The privacy rule lives here: nothing is logged until an event has been
     recognised as a command, and then only its type, its source type and the
-    chat id — never text, never a photo, never the speaker.
+    chat id — never text, never a photo, never the speaker. The one piece of
+    I/O route_event itself may not do — checking guest-feedback for pending
+    คำขอลูกค้า so plain group chat can auto-offer them — happens here, right
+    after routing, so route_event stays pure.
     """
     if not isinstance(event, dict):
         return _NOT_HANDLED
@@ -1303,12 +1487,18 @@ def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
         return _NOT_HANDLED
 
     dispatcher = get_dispatcher()
+    filed = False
     if isinstance(routed, RoutedMessage):
-        refreshed = bool(dispatcher.submit_message(routed.chat_key, routed.reply_token))
         # Ordinary group chat is still the bot's cue for the SLOT digest: the
         # message is discarded (nothing about it is read, kept or logged), but
         # its clock and its sender decide whether this window is now due.
         filed = _maybe_file_slot_digest(event, routed, db, dispatcher)
+        # ...and, independently, the moment to auto-offer pending guest
+        # requests (ADR 0001): a plain message may become a command here. A
+        # slot filed above coalesces into that command's immediate reply.
+        routed = _maybe_upgrade_to_requests(routed, event)
+    if isinstance(routed, RoutedMessage):
+        refreshed = bool(dispatcher.submit_message(routed.chat_key, routed.reply_token))
         return HandledEvent(
             command=False, claims_reply_token=refreshed or filed,
         )

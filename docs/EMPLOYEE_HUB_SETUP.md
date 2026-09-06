@@ -11,7 +11,8 @@ tools from grant-driven **Role Menus**; this repo hosts the machinery:
 | Menu image renderer (PIL, HF One palette, bundled Thai font) | `app/services/staff_oa_images.py` |
 | Credentials, webhook signature, LINE API client, relink helper | `app/services/staff_oa_service.py` |
 | Follow-event webhook | `app/api/staff_oa.py` → `POST /api/public/staff-oa/webhook` |
-| Event forward to guest-feedback (group relay + 1:1 preview) | `app/services/staff_oa_service.py` → `forward_group_events*` |
+| Staff bot (HF ภายใน): digest, guest requests, palette, debounce | `app/services/staff_bot.py` |
+| Guest-requests read/confirm (guest-feedback docs/CONTRACTS.md §15 rev 3) | `app/services/guest_feedback_client.py` |
 | **Automatic per-employee provisioning (create menu + link/unlink)** | `app/services/staff_oa_provision.py` |
 | Idempotent menu/link sync (dry-run by default) | `scripts/staff_oa_sync.py` |
 | Offline image preview | `scripts/staff_oa_render_menus.py` |
@@ -246,32 +247,20 @@ Employees who follow the OA are still linked by the webhook as well.
   (`/qr-checkin/onboard`) that links LINE accounts.
 
 Since 2026-09-05 the webhook also drives the **staff bot** (below) on
-`message`, `postback` and `join`, and **forwards** group events — plus 1:1
-`message` events, ids only — to guest-feedback (further below). Everything
-else is ignored. Per-event failures
-are logged but never fail the delivery (LINE would retry the whole batch), and
-a delivery marked `deliveryContext.isRedelivery` is dropped by the bot so a
-LINE retry cannot double-post.
+`message`, `postback` and `join`. Everything else is ignored. Per-event
+failures are logged but never fail the delivery (LINE would retry the whole
+batch), and a delivery marked `deliveryContext.isRedelivery` is dropped by
+the bot so a LINE retry cannot double-post.
 
 ## The staff bot (HF ภายใน)
-
-**Reply-token arbitration.** A LINE reply token is single-use, and this
-webhook has two consumers: the staff bot (debounced replies) and the
-guest-feedback relay (`GUEST_FEEDBACK_LINE_*`, dark until configured). The
-bot files intent first; any event whose token it has claimed — a command, or
-ordinary chat in a chat where a reply is already pending (the bot moves to the
-newer token) — is still relayed to guest-feedback, but with `replyToken:
-null`, meaning "no reply window on this one, wait for the next message". One
-consumer per token, decided in the webhook, never by a race between two
-senders. See `staff_bot.handle_event_detail` and
-`staff_oa_service.group_event_forward_payload(withhold_reply_token=...)`.
 
 
 The OA answers questions in the all-staff LINE group and in 1:1 chats.
 Design authority: hf-erp ADR *"The staff bot answers only with reply tokens;
 LINE meters pushes per recipient"*. Code: `app/services/staff_bot.py`
-(router, palette, digest, debounce) and `app/services/housekeeping_client.py`
-(the one outbound read).
+(router, palette, digest, requests, debounce),
+`app/services/housekeeping_client.py` (the แจ้งซ่อม read) and
+`app/services/guest_feedback_client.py` (the guest-requests read/confirm).
 
 ### Summoning it
 
@@ -279,9 +268,13 @@ LINE meters pushes per recipient"*. Code: `app/services/staff_bot.py`
 |---|---|---|
 | Staff group | `น้องคะ` / `น้องค่ะ` / `น้องครับ` / `น้องคับ` (a space after น้อง is fine), or @-mention the OA | the palette bubble |
 | Staff group | the same summon followed by `งานค้าง` (also `งานซ่อมค้าง`, `แจ้งซ่อมค้าง`) | the digest |
+| Staff group | the same summon (or a bare command word) followed by `คำขอ` / `คำขอลูกค้า` / `guest requests` | the pending guest requests |
+| Staff group | any ordinary message, no summon at all, **while guest requests are pending** | the pending guest requests (see below) |
 | 1:1 chat | `งานค้าง` on its own | the digest |
+| 1:1 chat | `คำขอ` / `คำขอลูกค้า` / `guest requests` on its own | a **preview** of the pending guest requests |
 | 1:1 chat | anything else | the palette bubble |
 | anywhere | tapping the palette's **งานค้าง แจ้งซ่อม** button (`cmd=digest`) | the digest |
+| anywhere | tapping the palette's **คำขอลูกค้า** button (`cmd=requests`) | the pending guest requests |
 
 `น้อง` without one of the four particles is ordinary chat — "น้องเอาข้าวไหม"
 never wakes the bot. In a 1:1 chat the sender must resolve to an **active**
@@ -387,87 +380,73 @@ Both variables ride the deploy (`env_payload` in
 `.github/workflows/build.yml`, passthrough in `docker-compose.yml`); do not
 hand-edit the host `.env`, every deploy rewrites it.
 
-## Events forwarded to guest-feedback
+## Guest requests (คำขอลูกค้า)
 
-LINE allows exactly **one Official Account per group chat**. The staff LINE
-group hosts the staff OA above, so the guest-feedback app
-(`feedback.thehfhotel.org`, repo `guest-feedback`) cannot be invited into the
-same group and cannot receive its webhook. This webhook relays the events it
-does not handle itself, and guest-feedback replies into the group using the
-**staff OA's** channel access token. Contract of record: guest-feedback
-`docs/CONTRACTS.md` §15.4 (the group relay) and §15.5 (the 1:1 preview).
+Since guest-feedback `docs/CONTRACTS.md` §15 rev 3 ("the Employee Hub bot is
+the ONLY responder"), the staff bot is the sole sender for guest requests
+raised on the public feedback site. Earlier revisions had guest-feedback hold
+its own LINE token, then (PR #28/#30) had this webhook relay LINE events to
+it fire-and-forget — both are retired. The bot now reads and confirms guest
+requests from guest-feedback itself, server-to-server, and answers only with
+its own reply tokens, exactly like the housekeeping digest above.
 
 | | |
 |---|---|
-| Sender | `app/api/staff_oa.py` → `app/services/staff_oa_service.py` (`forward_group_events*`) |
-| Receiver | `POST http://feedback:4080/api/internal/line/event` over the shared-nginx Docker network |
-| Auth | `X-Reader-Secret: <GUEST_FEEDBACK_LINE_SECRET>` (constant-time compare on the far side; 401 on mismatch) |
-| Forwarded | `source.type == "group"` **and** type in `message`, `join`, `memberJoined`, `leave`; `source.type == "user"` **and** type `message` |
-| Group payload | `{"type", "replyToken", "timestamp", "groupId", "channel": "staff-oa"}` |
-| 1:1 payload | `{"type", "replyToken", "timestamp", "userId", "groupId": null, "channel": "staff-oa"}` |
+| Code | `app/services/guest_feedback_client.py` (`fetch_pending`, `confirm_delivered`); command handling in `app/services/staff_bot.py` |
+| Read | `GET {GUEST_FEEDBACK_BASE_URL}/api/internal/line/pending` — `X-Reader-Secret: <GUEST_FEEDBACK_READER_SECRET>`, 2 s timeout |
+| Confirm | `POST {GUEST_FEEDBACK_BASE_URL}/api/internal/line/delivered` — `{"ids": [...], "method": "reply"}` |
+| Contract of record | guest-feedback `docs/CONTRACTS.md` §15 rev 3 |
 
-Deliberate properties, each covered by a test:
+**The command.** `คำขอ` / `คำขอลูกค้า` / `guest requests` (with or without a
+summon in a group; on its own in a 1:1) and the palette's **คำขอลูกค้า**
+button (`cmd=requests`) all render guest-feedback's own pre-formatted `text`
+as-is when `count > 0`, `"ยังไม่มีคำขอที่รอส่งค่ะ"` when the read succeeds with
+nothing pending, and `"ยังอ่านคำขอลูกค้าไม่ได้ค่ะ ลองใหม่อีกครั้ง"` on any
+failure (either env unset, timeout, non-2xx, malformed body) — the bot never
+shows a status code and never goes silent.
 
-- **No message text, ever.** For a GROUP event no `userId` crosses either —
-  staff chatter and who said it never leave this app; only the group id and
-  the reply token do.
-- **1:1 `message` events cross as ids only** (see below). A multi-person
-  `room` still forwards nothing, and `follow`/`unfollow` are never forwarded:
-  they are the Employee Hub's own events, handled by the follow path above
-  and unchanged by any of this.
-- **Fire-and-forget on a daemon thread**, 2 s timeout, every failure logged
-  and swallowed. It cannot delay or fail the webhook's `200` — a delivery
-  LINE counts as failed is retried, and a wedged staff channel would cost far
-  more than a missed guest request. (A FastAPI `BackgroundTasks` would NOT do:
-  Starlette runs those inside the same ASGI call, so a slow peer would still
-  hold the response.)
-- **Follow handling is untouched**, and forwarding is a separate darkness
-  switch from the OA credentials.
+**Group auto-offer.** Unlike the digest, a **plain group message with no
+summon at all** also triggers this command — but only when guest-feedback
+reports something pending. Every non-summon group message checks (through
+`staff_bot.PendingRequestsGate`, cached **10 s per chat** so ordinary chatter
+cannot hammer the endpoint); if pending requests exist, that message becomes
+a `COMMAND_REQUESTS` reply under the same immediate-answer rule as any other
+command (`COMMAND_QUIET_SECONDS = 0`). A summon is unaffected either way — it
+already produces a command before this check ever runs.
 
-### 1:1 messages: a private preview for an allowlisted manager
+**1:1 is a preview, never a confirm.** In a 1:1 chat `คำขอ` renders the exact
+same list, but the reply **never confirms delivery** — it is someone checking
+privately, not the group being told. Confirmation only follows a reply that
+went to a **group or room**.
 
-Since 2026-09-05 a `message` event from a **1:1 chat** (`source.type ==
-"user"`) is forwarded too, reduced to `{"type": "message", "replyToken",
-"timestamp", "userId", "groupId": null, "channel": "staff-oa"}` — the ids and
-the reply window, never the text. The point is a private preview: a manager
-whose LINE user id guest-feedback has allowlisted (`LINE_PREVIEW_USER_IDS`,
-its env, not ours) can message the OA directly and get the pending guest
-requests back in that chat, instead of testing the relay by posting into the
-staff group. `groupId: null` is what tells guest-feedback to answer the
-person rather than the group; the allowlist decision, and the ignoring of
-anyone not on it, happen entirely on the far side — this app forwards every
-1:1 message id-only and knows nothing about who may preview. Contract of
-record: guest-feedback `docs/CONTRACTS.md` §15.5.
-
-> **Known limitation — the reply token.** A LINE reply token is single-use,
-> so an event whose token the staff bot (`app/services/staff_bot.py`) has
-> claimed crosses with `replyToken: null`. In a group that is rare; in a 1:1
-> the bot answers **every** text message it is sent, so nearly every 1:1
-> event will reach guest-feedback without a reply window and its preview
-> reply will be skipped. Whichever way that is resolved — the bot yielding
-> 1:1 tokens, or guest-feedback pushing instead of replying — is a decision
-> for the owner and a separate change; what ships here is the relay, and the
-> rule that exactly one sender ever holds a token.
+**Delivery confirm.** Once LINE has **accepted** a group/room reply that
+included the guest-requests text, the bot calls `confirm_delivered` with the
+feedback ids from the same fetch that rendered the text — marking those rows
+delivered on guest-feedback's side so they are not offered again. A reply
+LINE rejects, or a 1:1 reply, never confirms anything.
 
 ### Env
 
 ```
-GUEST_FEEDBACK_LINE_URL=http://feedback:4080/api/internal/line/event
-GUEST_FEEDBACK_LINE_SECRET=<shared with guest-feedback's LINE_FORWARD_SECRET>
+GUEST_FEEDBACK_BASE_URL=http://feedback:4080
+GUEST_FEEDBACK_READER_SECRET=<shared with guest-feedback's LINE_READER_SECRET>
 ```
 
-**Empty/unset URL ⇒ dark**: no reduction, no thread, no request. The URL is
-not a secret (container-to-container, no Cloudflare Access in the path) and
-rides the deploy as the GitHub **variable** `GUEST_FEEDBACK_LINE_URL`; the
-secret is the GitHub **secret** `GUEST_FEEDBACK_LINE_SECRET`. Both are in the
+**Either empty/unset ⇒ dark**: nothing is dialed, and every guest-requests
+read answers the fixed "ยังอ่านคำขอลูกค้าไม่ได้ค่ะ ..." line. The URL is not a
+secret (container-to-container, no Cloudflare Access in the path) and has
+**no built-in default** (unlike `HOUSEKEEPING_INTERNAL_URL`); it rides the
+deploy as the GitHub **variable** `GUEST_FEEDBACK_BASE_URL`, the secret as the
+GitHub **secret** `GUEST_FEEDBACK_READER_SECRET`. Both are in the
 `env_payload` of `.github/workflows/build.yml` and in `docker-compose.yml` —
 do not hand-edit the host `.env`, every deploy rewrites it. The secret is
 **not** `READER_SECRET`, despite sharing the header name.
 
-### Console prerequisites for the group
+### Console prerequisite for the group
 
-The group side is console configuration, not code — the forward stays silent
-until all of this is true:
+The staff bot only sees group chat at all once a human has invited the OA
+into the staff LINE group — there is no API for this — and the console is
+configured to allow it:
 
 1. **LINE Developers console → the staff OA's Messaging API tab**: *Allow bot
    to join group chats* **ON**.
@@ -479,9 +458,6 @@ until all of this is true:
    event is delivered at all.
 4. **Auto-reply and greeting messages OFF** (OA Manager → Response settings) —
    otherwise the OA answers every group message on its own and burns the reply.
-5. **A human invites the OA into the staff group.** There is no API for this.
-   guest-feedback learns the group id from the `join`/`memberJoined` event this
-   forwarder relays; nothing needs to be configured with the group id by hand.
 
 ## Images
 
