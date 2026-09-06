@@ -101,6 +101,19 @@ def _idle_requests_gate(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _fresh_ticket_state(monkeypatch):
+    """Phase 3's photo buffer and attach-window store are process-wide
+    singletons (like the dispatcher and the requests gate above) — reset to
+    a fresh instance every test so chat/user ids reused across tests (Cgroup,
+    U-reception, ...) never leak a buffered photo or an open window from one
+    test into another."""
+    fresh_buffer = staff_bot.PhotoBuffer()
+    fresh_windows = staff_bot.AttachWindowStore()
+    monkeypatch.setattr(staff_bot, "get_photo_buffer", lambda: fresh_buffer)
+    monkeypatch.setattr(staff_bot, "get_attach_windows", lambda: fresh_windows)
+
+
 class _CollectingDispatcher:
     """Records what the router files, without any timers or a loop."""
 
@@ -1091,6 +1104,210 @@ class TestHousekeepingClient:
 
 
 # ===========================================================================
+# housekeeping_client — ticket intake (phase 3): write + read-one calls
+# ===========================================================================
+
+
+class TestHousekeepingClientTickets:
+    """The six phase-3 calls share one internal helper
+    (housekeeping_client._call): a token-unset/timeout/5xx/malformed-body miss
+    is None everywhere, same as the digest; a 4xx becomes ``{"error": ...}``
+    because the person who tapped a button is owed the Thai reason."""
+
+    def _wire_request(self, monkeypatch, response=None, boom=None):
+        calls = {}
+
+        def _request(method, url, headers=None, json=None, data=None,
+                     params=None, timeout=None, **kwargs):
+            calls.update(method=method, url=url, headers=headers, json=json,
+                         data=data, params=params, timeout=timeout)
+            if boom:
+                raise boom
+            return response
+
+        monkeypatch.setenv("HOUSEKEEPING_STAFF_BOT_TOKEN", "shared-token")
+        monkeypatch.setattr(
+            housekeeping_client, "requests",
+            type("R", (), {"request": staticmethod(_request)}),
+        )
+        return calls
+
+    # -- fail closed, shared across all six --------------------------------
+
+    @pytest.mark.parametrize("call", [
+        lambda: housekeeping_client.create_work_order({}),
+        lambda: housekeeping_client.upload_photo(1, b"x", "image/jpeg", "7001"),
+        lambda: housekeeping_client.patch_work_order(1, {}, {}),
+        lambda: housekeeping_client.cancel_work_order(1, {}),
+        lambda: housekeeping_client.get_work_order(1),
+        lambda: housekeeping_client.list_work_orders("7001"),
+    ])
+    def test_an_unset_token_dials_nothing(self, monkeypatch, call):
+        monkeypatch.delenv("HOUSEKEEPING_STAFF_BOT_TOKEN", raising=False)
+        # `requests` is still the exploding stub: a real dial would blow up.
+        assert call() is None
+
+    def test_create_work_order_posts_the_documented_body(self, monkeypatch):
+        order_view = {"id": 128, "reporterBadge": "7001"}
+        calls = self._wire_request(monkeypatch, _Response(201, {"order": order_view}))
+        payload = {"property": "hf", "location_kind": "room", "room_no": "204",
+                   "category": "aircon", "urgent": True,
+                   "reporter": {"badge": "7001", "name": "สมชาย"},
+                   "source": "line-bot"}
+
+        assert housekeeping_client.create_work_order(payload) == {"order": order_view}
+        assert calls["method"] == "POST"
+        assert calls["url"] == "http://housekeeping:4070/internal/staff-bot/work-orders"
+        assert calls["headers"]["Authorization"] == "Bearer shared-token"
+        assert calls["json"] == payload
+
+    def test_create_work_order_400_becomes_a_relayable_error(self, monkeypatch):
+        self._wire_request(monkeypatch, _Response(400, {"error": "หมวดไม่ถูกต้อง"}))
+        assert housekeeping_client.create_work_order({}) == {"error": "หมวดไม่ถูกต้อง"}
+
+    def test_create_work_order_400_without_a_body_falls_back(self, monkeypatch):
+        self._wire_request(monkeypatch, _Response(400, raises=True))
+        result = housekeeping_client.create_work_order({})
+        assert result == {"error": housekeeping_client._GENERIC_REFUSAL_TEXT}
+
+    @pytest.mark.parametrize("status", [500, 503])
+    def test_create_work_order_5xx_is_a_miss(self, monkeypatch, status):
+        self._wire_request(monkeypatch, _Response(status, {}))
+        assert housekeeping_client.create_work_order({}) is None
+
+    def test_create_work_order_timeout_is_a_miss(self, monkeypatch):
+        self._wire_request(monkeypatch, boom=OSError("timed out"))
+        assert housekeeping_client.create_work_order({}) is None
+
+    def test_upload_photo_posts_raw_bytes_with_actor_header(self, monkeypatch):
+        calls = self._wire_request(monkeypatch, _Response(201, {"photoId": "p1", "photoCount": 1}))
+
+        result = housekeeping_client.upload_photo(128, b"\xff\xd8", "image/jpeg", "7001")
+
+        assert result == {"photoId": "p1", "photoCount": 1}
+        assert calls["method"] == "POST"
+        assert calls["url"] == "http://housekeeping:4070/internal/staff-bot/work-orders/128/photos"
+        assert calls["data"] == b"\xff\xd8"
+        assert calls["headers"]["Content-Type"] == "image/jpeg"
+        assert calls["headers"]["X-Actor-Badge"] == "7001"
+        assert calls["timeout"] == housekeeping_client.PHOTO_UPLOAD_TIMEOUT_SECONDS
+
+    def test_upload_photo_409_relays_the_reason(self, monkeypatch):
+        self._wire_request(monkeypatch, _Response(409, {"error": "งานนี้ปิดแล้ว"}))
+        assert housekeeping_client.upload_photo(1, b"x", "image/jpeg", "7001") == {
+            "error": "งานนี้ปิดแล้ว"
+        }
+
+    def test_patch_work_order_puts_actor_alongside_the_fields(self, monkeypatch):
+        calls = self._wire_request(monkeypatch, _Response(200, {"order": {"id": 1}}))
+        result = housekeeping_client.patch_work_order(
+            1, {"urgent": True}, {"badge": "7001", "name": "สมชาย"},
+        )
+        assert result == {"order": {"id": 1}}
+        assert calls["method"] == "PATCH"
+        assert calls["url"] == "http://housekeeping:4070/internal/staff-bot/work-orders/1"
+        assert calls["json"] == {"urgent": True, "actor": {"badge": "7001", "name": "สมชาย"}}
+
+    def test_patch_work_order_409_relays_the_reason(self, monkeypatch):
+        self._wire_request(monkeypatch, _Response(409, {"error": "แก้ไขได้เฉพาะงานที่ยังไม่เริ่มซ่อม"}))
+        assert housekeeping_client.patch_work_order(1, {}, {})["error"] == (
+            "แก้ไขได้เฉพาะงานที่ยังไม่เริ่มซ่อม"
+        )
+
+    def test_cancel_work_order_posts_the_actor(self, monkeypatch):
+        calls = self._wire_request(monkeypatch, _Response(200, {"order": {"id": 1}}))
+        housekeeping_client.cancel_work_order(1, {"badge": "7001", "name": "สมชาย"})
+        assert calls["method"] == "POST"
+        assert calls["url"] == "http://housekeeping:4070/internal/staff-bot/work-orders/1/cancel"
+        assert calls["json"] == {"actor": {"badge": "7001", "name": "สมชาย"}}
+
+    @pytest.mark.parametrize("reason", [
+        "ยกเลิกได้เฉพาะผู้แจ้ง",
+        "งานนี้เริ่มดำเนินการแล้ว ยกเลิกไม่ได้",
+        "เลย 10 นาทีแล้ว ยกเลิกไม่ได้ กรุณาแจ้งแผนกต้อนรับ",
+    ])
+    def test_cancel_work_order_409_relays_every_documented_reason(self, monkeypatch, reason):
+        self._wire_request(monkeypatch, _Response(409, {"error": reason}))
+        assert housekeeping_client.cancel_work_order(1, {})["error"] == reason
+
+    def test_get_work_order_success(self, monkeypatch):
+        calls = self._wire_request(monkeypatch, _Response(200, {"order": {"id": 1}}))
+        assert housekeeping_client.get_work_order(1) == {"order": {"id": 1}}
+        assert calls["method"] == "GET"
+        assert calls["url"] == "http://housekeeping:4070/internal/staff-bot/work-orders/1"
+
+    def test_get_work_order_404(self, monkeypatch):
+        self._wire_request(monkeypatch, _Response(404, {"error": "ไม่พบรายการแจ้งซ่อมนี้"}))
+        assert housekeeping_client.get_work_order(999) == {"error": "ไม่พบรายการแจ้งซ่อมนี้"}
+
+    def test_list_work_orders_sends_the_documented_query(self, monkeypatch):
+        calls = self._wire_request(monkeypatch, _Response(200, {"orders": []}))
+        housekeeping_client.list_work_orders("7001", active=True, limit=5)
+        assert calls["method"] == "GET"
+        assert calls["url"] == "http://housekeeping:4070/internal/staff-bot/work-orders"
+        assert calls["params"] == {"reporter_badge": "7001", "active": "1", "limit": 5}
+
+    def test_list_work_orders_active_false_sends_zero(self, monkeypatch):
+        calls = self._wire_request(monkeypatch, _Response(200, {"orders": []}))
+        housekeeping_client.list_work_orders("7001", active=False)
+        assert calls["params"]["active"] == "0"
+
+
+# ===========================================================================
+# staff_oa_service.fetch_message_content — the LINE content-download call
+# ===========================================================================
+
+
+class TestFetchMessageContent:
+    def test_disabled_returns_none_without_dialing(self, monkeypatch):
+        monkeypatch.delenv("STAFF_OA_CHANNEL_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("STAFF_OA_CHANNEL_SECRET", raising=False)
+        # `requests` is still the exploding stub for this whole file.
+        assert service.fetch_message_content("m1") is None
+
+    def test_a_blank_message_id_dials_nothing(self, staff_oa_enabled):
+        assert service.fetch_message_content("") is None
+
+    def test_success_returns_bytes_and_content_type(self, monkeypatch, staff_oa_enabled):
+        calls = {}
+
+        class _Resp:
+            status_code = 200
+            content = b"\xff\xd8\xff"
+            headers = {"Content-Type": "image/jpeg"}
+
+        def _get(url, headers=None, timeout=None, **kwargs):
+            calls.update(url=url, headers=headers, timeout=timeout)
+            return _Resp()
+
+        monkeypatch.setattr(service, "requests", type("R", (), {"get": staticmethod(_get)}))
+
+        result = service.fetch_message_content("m1")
+
+        assert result == (b"\xff\xd8\xff", "image/jpeg")
+        assert calls["url"] == "https://api-data.line.me/v2/bot/message/m1/content"
+        assert calls["headers"] == {"Authorization": f"Bearer {TOKEN}"}
+
+    @pytest.mark.parametrize("status", [401, 404, 500])
+    def test_a_refusal_is_a_miss(self, monkeypatch, staff_oa_enabled, status):
+        class _Resp:
+            status_code = status
+
+        monkeypatch.setattr(
+            service, "requests",
+            type("R", (), {"get": staticmethod(lambda *a, **k: _Resp())}),
+        )
+        assert service.fetch_message_content("m1") is None
+
+    def test_a_timeout_is_a_miss(self, monkeypatch, staff_oa_enabled):
+        def _boom(*args, **kwargs):
+            raise OSError("timed out")
+
+        monkeypatch.setattr(service, "requests", type("R", (), {"get": staticmethod(_boom)}))
+        assert service.fetch_message_content("m1") is None
+
+
+# ===========================================================================
 # The asyncio adapter (the only part with a loop)
 # ===========================================================================
 
@@ -1791,10 +2008,30 @@ class TestSlotTriggers:
         assert handled.command is True
         assert _mark(test_db) is None
 
-    def test_a_photo_never_opens_a_window(self, slot_bot, staff, test_db):
-        staff_bot.handle_event_detail(
-            _group_text("", message={"type": "image"}, timestamp=_ts(6, 0),
+    @pytest.mark.parametrize("message", [
+        {"type": "sticker", "packageId": "1", "stickerId": "2"},
+        {"type": "image", "id": "m-img", "contentProvider": {"type": "line"}},
+    ])
+    def test_a_sticker_or_photo_from_reception_opens_the_window(
+        self, slot_bot, staff, test_db, message
+    ):
+        # Owner rule 2026-09-06: a sticker is "someone is here" — any message
+        # kind is the heartbeat a scheduled post rides in on.
+        handled = staff_bot.handle_event_detail(
+            _group_text("", message=message, timestamp=_ts(6, 0),
                         user_id="U-reception"),
+            test_db,
+        )
+        assert handled.command is False
+        mark = _mark(test_db)
+        assert mark is not None and mark.state == "pending"
+
+    def test_a_sticker_from_a_maid_before_the_late_window_does_not(
+        self, slot_bot, staff, test_db
+    ):
+        staff_bot.handle_event_detail(
+            _group_text("", message={"type": "sticker", "packageId": "1", "stickerId": "2"},
+                        timestamp=_ts(6, 0), user_id="U-maid"),
             test_db,
         )
         assert _mark(test_db) is None

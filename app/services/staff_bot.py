@@ -41,6 +41,29 @@ restart. A window nobody talks in is skipped, and a window in which
 housekeeping is dark posts NOTHING: a scheduled message must never spam an
 error line into HF Family. See "Slot digest" below and hf-erp ADR 0007.
 
+PHASE 3 (2026-09-06) adds TICKET INTAKE: a linked employee types แจ้งซ่อม
+<room/area> <symptom> (a summon prefix in a group, bare in 1:1) and the bot
+creates a work order in housekeeping over the internal door
+(app/services/housekeeping_client.py), replies a confirmation bubble at
+once, and uploads any photos the sender sent in the same burst in the
+BACKGROUND (never blocking the reply). Postbacks on that bubble
+(fixcat/setcat/toggleurgent/addphoto/cancel/switchprop) let the reporter (or
+a `reception`-grant holder) edit or cancel while housekeeping still allows
+it. A photo is NEVER downloaded unless it is tied to a ticket — either
+claimed at creation (buffered message ids only, 90 s TTL, no bytes, no log)
+or received while that ticket's attach window is open (120 s, refreshed per
+photo, hard capped at 5 min). See docs/EMPLOYEE_HUB_SETUP.md and hf-erp
+docs/staff-bot-plan.md ("Locked interface (phases 3 and 4)").
+
+PHASE 4 (2026-09-06) adds STATUS: งานของฉัน (palette button or the bare word)
+answers a Flex carousel of the tapper's own active tickets (<= 10, newest
+first, each with เพิ่มรูป/ยกเลิก buttons riding the phase-3 postbacks), or one
+plain-text line when there are none or housekeeping is dark. 'สถานะ <id>' /
+'งาน <id>' answers the same ticket as one bubble, gated exactly like the
+edit postbacks (reporter or a `reception`-grant holder) with its own 404
+line — this is a READ, and never changes a ticket's status; that stays on
+the reception board in every phase.
+
 PLAIN THAI, NO EMOJI, in every bot-facing string (house rule, same as
 staff_oa_menu / hk_escalation_service). Anything human-typed that reaches a
 message goes through :func:`strip_pictographs` first.
@@ -77,8 +100,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 from urllib.parse import parse_qs
@@ -117,10 +141,53 @@ PALETTE_BUTTON_LABEL = "งานค้าง แจ้งซ่อม"
 PALETTE_BUTTON_DISPLAY_TEXT = "งานค้าง"
 PALETTE_REQUESTS_BUTTON_LABEL = "ความคิดเห็นลูกค้า"
 PALETTE_REQUESTS_BUTTON_DISPLAY_TEXT = "ความคิดเห็นลูกค้า"
+# Phase 3/4 additions to the same palette bubble (existing two buttons kept).
+PALETTE_REPORT_BUTTON_LABEL = "แจ้งซ่อมใหม่"
+PALETTE_REPORT_BUTTON_DISPLAY_TEXT = "แจ้งซ่อมใหม่"
+PALETTE_MINE_BUTTON_LABEL = "งานของฉัน"
+PALETTE_MINE_BUTTON_DISPLAY_TEXT = "งานของฉัน"
 
 # Housekeeping dark, unreachable, or refusing. ONE fixed line: staff get a
 # plain Thai sentence, never a status code and never silence.
 DIGEST_UNAVAILABLE_TEXT = "ระบบงานซ่อมยังไม่เชื่อมต่อ ลองใหม่อีกครั้งภายหลัง"
+# The identical fixed line for a phase-3 write (create/edit/cancel/photo) —
+# same fail-closed rule, same text, a separate name because the two features
+# are allowed to drift apart later.
+TICKET_UNAVAILABLE_TEXT = "ระบบแจ้งซ่อมยังไม่เชื่อมต่อ ลองใหม่อีกครั้งภายหลัง"
+
+# A sender with no ACTIVE Employee.line_user_id tries to แจ้งซ่อม (or tap a
+# ticket postback): free reply, group and 1:1 alike, never a silent drop.
+NOT_LINKED_TEXT = "ยังไม่รู้จักบัญชีนี้ค่ะ กรุณาเชื่อมบัญชี LINE กับ HF ID ก่อนแจ้งซ่อม"
+
+# A tapper who is neither the reporter nor a `reception`-grant holder tries
+# to edit/cancel/add a photo to somebody else's ticket.
+EDIT_FORBIDDEN_TEXT = "แก้ได้เฉพาะผู้แจ้งค่ะ"
+
+# แจ้งซ่อมใหม่ (palette button / cmd=report_help): a one-line how-to. The
+# group copy repeats the summon so it reads like something to paste back;
+# the 1:1 copy drops it (no summon needed in a 1:1 chat).
+REPORT_HELP_GROUP_TEXT = (
+    "พิมพ์ น้องคะ แจ้งซ่อม <เลขห้อง> <อาการ> แล้วส่งรูปตามมาได้เลยค่ะ "
+    "เช่น น้องคะ แจ้งซ่อม 204 แอร์ไม่เย็น ด่วน"
+)
+REPORT_HELP_DIRECT_TEXT = (
+    "พิมพ์ แจ้งซ่อม <เลขห้อง> <อาการ> แล้วส่งรูปตามมาได้เลยค่ะ "
+    "เช่น แจ้งซ่อม 204 แอร์ไม่เย็น ด่วน"
+)
+
+# งานของฉัน (palette button / text, phase 4): the tapper's own open tickets,
+# reachable only with a resolved identity (see NOT_LINKED_TEXT above).
+MINE_EMPTY_TEXT = "ไม่มีงานแจ้งซ่อมที่ค้างอยู่ค่ะ"
+MINE_ALT_TEXT = "งานของฉัน"
+
+# 'สถานะ <id>' / 'งาน <id>' (phase 4): a lookup gated the same way as the
+# edit postbacks (reporter or `reception`), never a status CHANGE.
+STATUS_FORBIDDEN_TEXT = "ดูได้เฉพาะงานของตัวเองค่ะ"
+STATUS_NOT_FOUND_FMT = "ไม่พบงาน #{id} ค่ะ"
+
+ADDPHOTO_PROMPT_FMT = "ส่งรูปมาได้เลยค่ะ (ภายใน 2 นาที) #{id}"
+CANCEL_SUCCESS_FMT = "ยกเลิก #{id} แล้วค่ะ"
+FIXCAT_PROMPT_FMT = "เลือกหมวดใหม่ของ #{id}"
 
 # Guest-feedback dark, unreachable, or refusing — the same fail-closed rule
 # as the digest above, one fixed Thai line.
@@ -158,6 +225,42 @@ COMMAND_REQUESTS = "requests"
 # digest as COMMAND_DIGEST, under a "สรุปงานซ่อมค้างประจำรอบ..." line.
 COMMAND_SLOT_DIGEST = "slot_digest"
 
+# Phase 3 — ticket intake. Each of these carries per-invocation data (order
+# id, category, the แจ้งซ่อม text, the sender's resolved identity) on the
+# RoutedCommand itself rather than through the plain command-word table
+# below, because — unlike palette/digest/requests — no two calls to these
+# render the same reply. See ReplyDebouncer.note_command's ``action`` param
+# and PendingReply.actions.
+COMMAND_REPORT = "report"
+COMMAND_REPORT_HELP = "report_help"
+# Phase 4 — the tapper's own open tickets as a Flex carousel.
+COMMAND_MINE = "mine"
+COMMAND_FIXCAT = "fixcat"
+COMMAND_SETCAT = "setcat"
+COMMAND_TOGGLEURGENT = "toggleurgent"
+COMMAND_ADDPHOTO = "addphoto"
+COMMAND_CANCEL = "cancel"
+COMMAND_SWITCHPROP = "switchprop"
+# Phase 4 — 'สถานะ <id>' / 'งาน <id>': one ticket's bubble, gated the same
+# way as the edit postbacks (reporter or `reception`). A text command only
+# (no palette button, no postback in normal use) but it still carries an
+# order id, so it lives in TICKET_ORDER_POSTBACKS too — see _parse_postback.
+COMMAND_STATUS = "status"
+
+TICKET_COMMANDS = frozenset({
+    COMMAND_REPORT, COMMAND_REPORT_HELP, COMMAND_MINE,
+    COMMAND_FIXCAT, COMMAND_SETCAT, COMMAND_TOGGLEURGENT,
+    COMMAND_ADDPHOTO, COMMAND_CANCEL, COMMAND_SWITCHPROP,
+    COMMAND_STATUS,
+})
+# Ticket commands that name an existing order (everything above except the
+# three that never carry an id: report/report_help/mine).
+TICKET_ORDER_POSTBACKS = frozenset({
+    COMMAND_FIXCAT, COMMAND_SETCAT, COMMAND_TOGGLEURGENT,
+    COMMAND_ADDPHOTO, COMMAND_CANCEL, COMMAND_SWITCHPROP,
+    COMMAND_STATUS,
+})
+
 # Words that run the digest directly, with or without a summon in front.
 DIGEST_WORDS = frozenset({"งานค้าง", "งานซ่อมค้าง", "แจ้งซ่อมค้าง"})
 
@@ -171,6 +274,21 @@ REQUEST_WORDS = frozenset({
     "คำขอ", "คำขอลูกค้า", "guest requests",
     "ความคิดเห็น", "ฟีดแบค", "feedback",
 })
+
+# แจ้งซ่อม is a PREFIX command (the room/symptom follows); the others above
+# are exact words. Checked only after the exact-word tables above, so
+# "แจ้งซ่อมค้าง" (a digest word that happens to start with this prefix) is
+# never mistaken for a report.
+REPORT_WORD = "แจ้งซ่อม"
+# งานของฉัน is exact, bare (no prefix) — phase 4's carousel.
+MINE_WORD = "งานของฉัน"
+
+# 'สถานะ <id>' / 'งาน <id>' (phase 4) — a strict "word, one space, digits"
+# match, not a prefix, so ordinary chat starting with งาน (a very common
+# Thai word) is never mistaken for this command. Checked after the exact
+# words above (so งานของฉัน / งานค้าง / แจ้งซ่อมค้าง always win first) and
+# before the แจ้งซ่อม prefix.
+_STATUS_WORD_PATTERN = re.compile(r"^(?:สถานะ|งาน)\s+(\d{1,10})$")
 
 # Canonical order of the message objects in one coalesced reply.
 COMMAND_ORDER = (COMMAND_ONBOARDING, COMMAND_PALETTE, COMMAND_DIGEST, COMMAND_REQUESTS)
@@ -404,14 +522,180 @@ def summon_remainder(text: str, message: Optional[Dict] = None) -> Optional[str]
     return None
 
 
-def command_for_words(words: str) -> str:
-    """Map what was said to a command. Anything unrecognised opens the palette."""
+def _word_command(words: str) -> Tuple[str, str, Optional[int]]:
+    """(command, report_text, order_id) for a stripped remainder of speech.
+
+    Exact-word commands (digest/requests/mine) are checked before the
+    สถานะ/งาน <id> match and the แจ้งซ่อม PREFIX check, so "แจ้งซ่อมค้าง" (a
+    digest word that happens to start with the report prefix) and
+    "งานของฉัน" (which happens to start with งาน) are never mistaken for
+    something else. ``report_text`` is only ever non-empty for
+    :data:`COMMAND_REPORT`; ``order_id`` only ever set for
+    :data:`COMMAND_STATUS` — every other command ignores both.
+    """
     stripped = words.strip()
     if stripped in REQUEST_WORDS:
-        return COMMAND_REQUESTS
+        return COMMAND_REQUESTS, "", None
     if stripped in DIGEST_WORDS:
-        return COMMAND_DIGEST
-    return COMMAND_PALETTE
+        return COMMAND_DIGEST, "", None
+    if stripped == MINE_WORD:
+        return COMMAND_MINE, "", None
+    status_match = _STATUS_WORD_PATTERN.match(stripped)
+    if status_match:
+        return COMMAND_STATUS, "", int(status_match.group(1))
+    if stripped == REPORT_WORD or stripped.startswith(REPORT_WORD):
+        return COMMAND_REPORT, stripped[len(REPORT_WORD):].strip(), None
+    return COMMAND_PALETTE, "", None
+
+
+def command_for_words(words: str) -> str:
+    """Map what was said to a command. Anything unrecognised opens the palette."""
+    return _word_command(words)[0]
+
+
+# ---------------------------------------------------------------------------
+# Ticket categories (phase 3)
+# ---------------------------------------------------------------------------
+
+CATEGORY_AIRCON = "aircon"
+CATEGORY_TV = "tv"
+CATEGORY_PLUMBING = "plumbing"
+CATEGORY_ELECTRIC = "electric"
+CATEGORY_FURNITURE = "furniture"
+CATEGORY_OTHER = "other"
+
+# Priority order for both keyword matching (first match wins) and the fixcat
+# quick-reply chips.
+CATEGORY_ORDER: Tuple[str, ...] = (
+    CATEGORY_AIRCON, CATEGORY_TV, CATEGORY_PLUMBING,
+    CATEGORY_ELECTRIC, CATEGORY_FURNITURE, CATEGORY_OTHER,
+)
+CATEGORY_SET = frozenset(CATEGORY_ORDER)
+
+CATEGORY_LABELS: Dict[str, str] = {
+    CATEGORY_AIRCON: "แอร์",
+    CATEGORY_TV: "ทีวี",
+    CATEGORY_PLUMBING: "ประปา",
+    CATEGORY_ELECTRIC: "ไฟฟ้า",
+    CATEGORY_FURNITURE: "เฟอร์นิเจอร์",
+    CATEGORY_OTHER: "อื่นๆ",
+}
+
+# Keyword -> category, checked in this exact priority order (first category
+# with a hit wins) — the owner's list, verbatim.
+_CATEGORY_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    (CATEGORY_AIRCON, ("แอร์", "aircon", "คอมเพรสเซอร์")),
+    (CATEGORY_TV, ("ทีวี", "tv", "รีโมท")),
+    (CATEGORY_PLUMBING, ("น้ำ", "ท่อ", "ฝักบัว", "ชักโครก", "ส้วม", "อ่าง", "ก๊อก", "รั่ว", "ตัน", "ประปา")),
+    (CATEGORY_ELECTRIC, ("ไฟ", "หลอด", "ปลั๊ก", "สวิตช์", "สวิทช์", "ไฟฟ้า", "เบรกเกอร์")),
+    (CATEGORY_FURNITURE, ("เตียง", "ตู้", "เก้าอี้", "โต๊ะ", "ผ้าม่าน", "ประตู", "ลิ้นชัก", "กระจก", "เฟอร์นิเจอร์")),
+)
+
+
+def categorize(text: str) -> str:
+    """The first category (in priority order) whose keyword appears in text."""
+    for category, keywords in _CATEGORY_KEYWORDS:
+        if any(keyword in text for keyword in keywords):
+            return category
+    return CATEGORY_OTHER
+
+
+# Area word -> common_area value, checked in this order (first hit wins).
+_AREA_KEYWORDS: Tuple[Tuple[Tuple[str, ...], str], ...] = (
+    (("ล็อบบี้", "ล็อบบี", "lobby"), "lobby"),
+    (("ทางเดิน", "โถง"), "corridor"),
+    (("สระ",), "pool"),
+    (("ครัว",), "kitchen"),
+    (("ซักรีด", "ซักผ้า"), "laundry"),
+    (("ด้านนอก", "ข้างนอก", "ลานจอด", "ที่จอดรถ", "สวน"), "outside"),
+)
+
+
+def _detect_area(text: str) -> Optional[str]:
+    for keywords, area in _AREA_KEYWORDS:
+        if any(keyword in text for keyword in keywords):
+            return area
+    return None
+
+
+# A bare 3-4 digit token, optionally preceded by ห้อง — "204", "1204" and
+# "ห้อง 204" all match; \b on both ends means a run of 5+ digits never
+# matches a 3-4 digit substring of itself.
+# No \b: Thai letters are \w too, so "ห้อง204แอร์เสีย" (a plausible fat-finger
+# LINE message) has no word boundary around 204. Digit look-arounds instead.
+_ROOM_TOKEN_PATTERN = re.compile(r"(?:ห้อง\s*)?(?<!\d)(\d{3,4})(?!\d)")
+
+PARSE_ERROR_NO_ROOM_TEXT = (
+    "ยังไม่รู้ว่าห้องไหนค่ะ พิมพ์ใหม่พร้อมเลขห้อง เช่น แจ้งซ่อม 204 แอร์ไม่เย็น"
+)
+
+# The two location_kind values housekeeping's work-order route accepts
+# (housekeeping's LOCATION_KINDS enum is ["room", "common"] — verified
+# against src/shared/types.ts / api.ts's isLocationKind in the
+# housekeeping-phase34 worktree), paired with the field that carries the
+# value (room_no / common_area).
+LOCATION_KIND_ROOM = "room"
+LOCATION_KIND_COMMON_AREA = "common"
+
+_DETAIL_MAX_CHARS = 200
+
+
+@dataclass(frozen=True)
+class ReportDraft:
+    """A parsed แจ้งซ่อม message, ready for housekeeping_client.create_work_order."""
+
+    location_kind: str
+    room_no: Optional[str] = None
+    common_area: Optional[str] = None
+    category: str = CATEGORY_OTHER
+    urgent: bool = False
+    detail_text: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ParseError:
+    """แจ้งซ่อม text with neither a room number nor a recognised area word."""
+
+    message: str = PARSE_ERROR_NO_ROOM_TEXT
+
+
+def parse_report(text: str) -> Union[ReportDraft, ParseError]:
+    """The text after แจ้งซ่อม -> a :class:`ReportDraft`, or a Thai
+    :class:`ParseError` when no room and no area can be found.
+
+    Room wins over area when both could apply (a room number is the more
+    specific signal). ``urgent`` and ``category`` are read off the FULL
+    original text; ``detail_text`` is the text with only the room token (and
+    its optional ห้อง prefix) removed, pictographs stripped, collapsed
+    whitespace, capped at 200 chars — empty after all that becomes None.
+    """
+    original = text or ""
+
+    match = _ROOM_TOKEN_PATTERN.search(original)
+    room_no: Optional[str] = None
+    remainder = original
+    if match:
+        room_no = match.group(1)
+        remainder = original[:match.start()] + original[match.end():]
+
+    common_area: Optional[str] = None
+    if room_no is None:
+        common_area = _detect_area(original)
+        if common_area is None:
+            return ParseError()
+
+    detail_text = strip_pictographs(remainder)
+    if len(detail_text) > _DETAIL_MAX_CHARS:
+        detail_text = detail_text[:_DETAIL_MAX_CHARS]
+
+    return ReportDraft(
+        location_kind=LOCATION_KIND_ROOM if room_no is not None else LOCATION_KIND_COMMON_AREA,
+        room_no=room_no,
+        common_area=common_area,
+        category=categorize(original),
+        urgent="ด่วน" in original,
+        detail_text=detail_text or None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +717,30 @@ class RoutedCommand:
     # an open window (rule 7: a งานค้าง answer covers the slot, so the slot
     # must not post a near-duplicate afterwards). None everywhere else.
     slot_ref: Optional[SlotRef] = None
+
+    # --- phase 3 (ticket intake) additions -----------------------------
+    # The SENDER's LINE userId — chat_key already IS this in a 1:1, but a
+    # group/room command needs it separately to key the photo buffer/attach
+    # window and to resolve identity. "" for anything phase 1/2 never
+    # populated it for (never read outside TICKET_COMMANDS).
+    user_id: str = ""
+    # แจ้งซ่อม's free text (COMMAND_REPORT only); postback's id=/cat=; a
+    # text-typed 'สถานะ <id>' / 'งาน <id>' (COMMAND_STATUS) sets order_id the
+    # same way a postback would.
+    report_text: str = ""
+    order_id: Optional[int] = None
+    category: Optional[str] = None
+    # Resolved once, at route time (handle_event_detail has the db session;
+    # by the time a debounced reply fires — up to 45 s later — that session
+    # is long closed). identity_known False means NOT_LINKED_TEXT is the
+    # whole of the reply; badge/display_name/property/is_reception are only
+    # meaningful when it is True. Defaults suit every non-ticket command,
+    # which never looks at these fields at all.
+    identity_known: bool = True
+    badge: str = ""
+    display_name: str = ""
+    property: str = ""
+    is_reception: bool = False
 
 
 @dataclass(frozen=True)
@@ -492,17 +800,20 @@ def route_event(
         # needs it). Logged by the caller; nothing is answered.
         return None
 
+    sender_user_id = source.get("userId") or ""
+
     if event_type == "postback":
         if not chat_key or not reply_token:
             return None
-        command = _postback_command(event.get("postback"))
-        if command is None:
+        parsed = _parse_postback(event.get("postback"))
+        if parsed is None:
             return None
         return RoutedCommand(
-            chat_key=chat_key, command=command, reply_token=reply_token,
+            chat_key=chat_key, command=parsed.command, reply_token=reply_token,
             quiet_seconds=quiet_seconds_for(source_type),
             event_type="postback", source_type=source_type,
-            slot_ref=slot_ref,
+            slot_ref=slot_ref, user_id=sender_user_id,
+            order_id=parsed.order_id, category=parsed.category,
         )
 
     if event_type != "message":
@@ -528,11 +839,13 @@ def route_event(
                 quiet_seconds=quiet_seconds_for(source_type),
                 event_type="message", source_type=source_type,
             )
+        command, report_text, order_id = _word_command(text)
         return RoutedCommand(
-            chat_key=chat_key, command=command_for_words(text),
+            chat_key=chat_key, command=command,
             reply_token=reply_token,
             quiet_seconds=quiet_seconds_for(source_type),
             event_type="message", source_type=source_type,
+            user_id=chat_key, report_text=report_text, order_id=order_id,
         )
 
     # Group / room: only a summon is a command. Everything else is staff
@@ -541,29 +854,68 @@ def route_event(
     remainder = summon_remainder(text, message)
     if remainder is None:
         return RoutedMessage(chat_key=chat_key, reply_token=reply_token)
+    command, report_text, order_id = (
+        (COMMAND_PALETTE, "", None) if remainder == "" else _word_command(remainder)
+    )
     return RoutedCommand(
         chat_key=chat_key,
-        command=COMMAND_PALETTE if remainder == "" else command_for_words(remainder),
+        command=command,
         reply_token=reply_token,
         quiet_seconds=quiet_seconds_for(source_type),
         event_type="message", source_type=source_type,
-        slot_ref=slot_ref,
+        slot_ref=slot_ref, user_id=sender_user_id, report_text=report_text,
+        order_id=order_id,
     )
 
 
-def _postback_command(postback) -> Optional[str]:
-    """``cmd=palette`` / ``cmd=digest`` / ``cmd=requests`` out of a postback's
-    urlencoded data."""
+@dataclass(frozen=True)
+class _ParsedPostback:
+    command: str
+    order_id: Optional[int] = None
+    category: Optional[str] = None
+
+
+# Every postback ``cmd=`` value the bot understands. An unlisted value (or a
+# malformed id/cat on one that needs it) is ignored outright — the same
+# "unrecognised postback is silence, not an error" rule phase 1 already had.
+_KNOWN_POSTBACK_COMMANDS = frozenset({
+    COMMAND_PALETTE, COMMAND_DIGEST, COMMAND_REQUESTS,
+}) | TICKET_COMMANDS
+
+
+def _parse_postback(postback) -> Optional[_ParsedPostback]:
+    """``cmd=...`` (+ ``id=``/``cat=`` for the ticket ones) out of a
+    postback's urlencoded data."""
     if not isinstance(postback, dict):
         return None
     data = postback.get("data")
     if not isinstance(data, str) or not data:
         return None
-    values = parse_qs(data).get("cmd") or []
-    command = values[0] if values else ""
-    if command in (COMMAND_PALETTE, COMMAND_DIGEST, COMMAND_REQUESTS):
-        return command
-    return None
+    values = parse_qs(data)
+    command = (values.get("cmd") or [""])[0]
+    if command not in _KNOWN_POSTBACK_COMMANDS:
+        return None
+
+    order_id: Optional[int] = None
+    if "id" in values:
+        raw_id = (values.get("id") or [""])[0]
+        try:
+            order_id = int(raw_id)
+        except (TypeError, ValueError):
+            return None
+    if command in TICKET_ORDER_POSTBACKS and order_id is None:
+        return None
+
+    category: Optional[str] = None
+    if "cat" in values:
+        raw_category = (values.get("cat") or [""])[0]
+        if raw_category not in CATEGORY_SET:
+            return None
+        category = raw_category
+    if command == COMMAND_SETCAT and category is None:
+        return None
+
+    return _ParsedPostback(command=command, order_id=order_id, category=category)
 
 
 # ---------------------------------------------------------------------------
@@ -609,6 +961,24 @@ def palette_message() -> Dict:
                             "label": PALETTE_REQUESTS_BUTTON_LABEL,
                             "data": f"cmd={COMMAND_REQUESTS}",
                             "displayText": PALETTE_REQUESTS_BUTTON_DISPLAY_TEXT,
+                        },
+                    },
+                    {
+                        "type": "button", "style": "secondary",
+                        "action": {
+                            "type": "postback",
+                            "label": PALETTE_REPORT_BUTTON_LABEL,
+                            "data": f"cmd={COMMAND_REPORT_HELP}",
+                            "displayText": PALETTE_REPORT_BUTTON_DISPLAY_TEXT,
+                        },
+                    },
+                    {
+                        "type": "button", "style": "secondary",
+                        "action": {
+                            "type": "postback",
+                            "label": PALETTE_MINE_BUTTON_LABEL,
+                            "data": f"cmd={COMMAND_MINE}",
+                            "displayText": PALETTE_MINE_BUTTON_DISPLAY_TEXT,
                         },
                     },
                 ],
@@ -739,6 +1109,501 @@ def render_slot_digest(slot_id: str, payload: Optional[Dict]) -> Optional[str]:
     )
 
 
+# ---------------------------------------------------------------------------
+# Identity (phase 3) — resolved once, at route time, onto the RoutedCommand
+# ---------------------------------------------------------------------------
+
+# Employee.location -> housekeeping's property code. Unset/unrecognised
+# location defaults to "hf" (the switchprop button gets it to hfville from
+# there if that is wrong for this sender).
+_PROPERTY_FOR_LOCATION: Dict[str, str] = {"HF": "hf", "HF_VILLE": "hfville"}
+
+
+@dataclass(frozen=True)
+class EmployeeIdentity:
+    badge: str
+    display_name: str
+    property: str
+
+
+def resolve_employee_identity(db: Session, line_user_id: str) -> Optional[EmployeeIdentity]:
+    """The ACTIVE employee behind this LINE account, or None (a stranger)."""
+    if not line_user_id:
+        return None
+    employee = (
+        db.query(Employee)
+        .filter(Employee.line_user_id == line_user_id, Employee.is_active == True)  # noqa: E712
+        .first()
+    )
+    if employee is None:
+        return None
+    return EmployeeIdentity(
+        badge=employee.badge_number,
+        display_name=employee.display_name,
+        property=_PROPERTY_FOR_LOCATION.get(employee.location or "", "hf"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Photo buffer + attach window (phase 3) — in-process only, no DB, no bytes
+# ---------------------------------------------------------------------------
+
+# Buffered as message ids ONLY (never downloaded) for this long; a ticket
+# created after this claims nothing from an older photo.
+PHOTO_BUFFER_TTL_SECONDS = 90.0
+# create_work_order claims at most this many buffered photos.
+PHOTO_BUFFER_MAX_CLAIM = 6
+# An addphoto/create attach window: this long, refreshed by each photo it
+# lets through, but never past the hard cap below.
+ATTACH_WINDOW_SECONDS = 120.0
+ATTACH_WINDOW_HARD_CAP_SECONDS = 300.0
+
+
+@dataclass(frozen=True)
+class _BufferedPhoto:
+    message_id: str
+    at: float  # the injectable clock's reading when it arrived
+
+
+class PhotoBuffer:
+    """Per-(chat_key, LINE userId) buffered image message ids.
+
+    NOT bytes, not logged, and never read except by a ticket that claims
+    them within :data:`PHOTO_BUFFER_TTL_SECONDS`. A non-linked sender's
+    photos are never even offered to :meth:`add` — see
+    :func:`_maybe_handle_photo` — so this class does not need to know about
+    identity at all.
+
+    ``add`` runs on the asyncio event-loop thread (from the webhook
+    handler) while ``claim`` runs inside ``_create_ticket``, which executes
+    on a real worker thread via ``asyncio.to_thread(build_reply, ...)``.
+    Both are non-atomic read-modify-write sequences over the same
+    per-(chat_key, user_id) slot, so a plain dict would let a photo arrive
+    mid-claim and either be silently dropped or resurface against a later,
+    unrelated ticket. A ``threading.Lock`` (not ``asyncio.Lock`` — the two
+    callers are on different OS threads, not just different coroutines)
+    serializes the whole read-modify-write on each call.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic,
+                 ttl_seconds: float = PHOTO_BUFFER_TTL_SECONDS):
+        self._clock = clock
+        self._ttl_seconds = ttl_seconds
+        self._store: Dict[Tuple[str, str], List[_BufferedPhoto]] = {}
+        self._lock = threading.Lock()
+
+    def add(self, chat_key: str, user_id: str, message_id: str) -> None:
+        key = (chat_key, user_id)
+        with self._lock:
+            now = self._clock()
+            fresh = [p for p in self._store.get(key, []) if now - p.at <= self._ttl_seconds]
+            fresh.append(_BufferedPhoto(message_id=message_id, at=now))
+            self._store[key] = fresh
+
+    def claim(self, chat_key: str, user_id: str,
+              max_count: int = PHOTO_BUFFER_MAX_CLAIM) -> List[str]:
+        """Pop up to ``max_count`` still-fresh buffered ids, oldest first."""
+        key = (chat_key, user_id)
+        with self._lock:
+            now = self._clock()
+            fresh = [p for p in self._store.pop(key, []) if now - p.at <= self._ttl_seconds]
+            return [p.message_id for p in fresh[:max_count]]
+
+
+@dataclass
+class _AttachWindow:
+    order_id: int
+    expires_at: float
+    hard_cap_at: float
+
+
+class AttachWindowStore:
+    """Per-(chat_key, LINE userId): which order id a just-arrived photo
+    should attach to, and until when.
+
+    ``open``/``refresh`` (from ``_create_ticket``, on the worker thread
+    behind ``asyncio.to_thread(build_reply, ...)``) and ``active_order``
+    (from the event-loop-thread webhook handler) each read-modify-write the
+    same per-(chat_key, user_id) slot, so this needs the same
+    ``threading.Lock`` protection as :class:`PhotoBuffer` and for the same
+    reason — the two callers are genuinely different OS threads."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic,
+                 window_seconds: float = ATTACH_WINDOW_SECONDS,
+                 hard_cap_seconds: float = ATTACH_WINDOW_HARD_CAP_SECONDS):
+        self._clock = clock
+        self._window_seconds = window_seconds
+        self._hard_cap_seconds = hard_cap_seconds
+        self._store: Dict[Tuple[str, str], _AttachWindow] = {}
+        self._lock = threading.Lock()
+
+    def open(self, chat_key: str, user_id: str, order_id: int) -> None:
+        """Open (or extend) the window for this order. Re-opening for the
+        SAME order id extends the expiry without resetting the hard cap;
+        opening for a DIFFERENT order id starts both clocks over."""
+        with self._lock:
+            self._open_locked(chat_key, user_id, order_id)
+
+    def _open_locked(self, chat_key: str, user_id: str, order_id: int) -> None:
+        key = (chat_key, user_id)
+        now = self._clock()
+        existing = self._store.get(key)
+        if existing is not None and existing.order_id == order_id:
+            hard_cap_at = existing.hard_cap_at
+        else:
+            hard_cap_at = now + self._hard_cap_seconds
+        self._store[key] = _AttachWindow(
+            order_id=order_id,
+            expires_at=min(now + self._window_seconds, hard_cap_at),
+            hard_cap_at=hard_cap_at,
+        )
+
+    def active_order(self, chat_key: str, user_id: str) -> Optional[int]:
+        """The order id a photo now should attach to, or None (closed/expired)."""
+        key = (chat_key, user_id)
+        with self._lock:
+            window = self._store.get(key)
+            if window is None:
+                return None
+            now = self._clock()
+            if now >= window.expires_at or now >= window.hard_cap_at:
+                self._store.pop(key, None)
+                return None
+            return window.order_id
+
+    def refresh(self, chat_key: str, user_id: str) -> Optional[int]:
+        """A photo just arrived: extend the window (respecting the hard cap)
+        and return the order id it belongs to, or None if none is open."""
+        key = (chat_key, user_id)
+        with self._lock:
+            now = self._clock()
+            window = self._store.get(key)
+            if window is None:
+                return None
+            if now >= window.expires_at or now >= window.hard_cap_at:
+                self._store.pop(key, None)
+                return None
+            order_id = window.order_id
+            self._open_locked(chat_key, user_id, order_id)
+            return order_id
+
+
+_photo_buffer = PhotoBuffer()
+_attach_windows = AttachWindowStore()
+
+
+def get_photo_buffer() -> PhotoBuffer:
+    """The process-wide photo buffer (a seam tests replace wholesale)."""
+    return _photo_buffer
+
+
+def get_attach_windows() -> AttachWindowStore:
+    """The process-wide attach-window store (a seam tests replace wholesale)."""
+    return _attach_windows
+
+
+# ---------------------------------------------------------------------------
+# Ticket rendering (phase 3)
+# ---------------------------------------------------------------------------
+
+def _flex_row(label: str, value: str) -> Dict:
+    return {
+        "type": "box", "layout": "baseline",
+        "contents": [
+            {"type": "text", "text": label, "size": "sm", "color": "#8C8C8C", "flex": 2},
+            {"type": "text", "text": value, "size": "sm", "wrap": True, "flex": 5},
+        ],
+    }
+
+
+def _postback_button(label: str, data: str, style: str = "secondary") -> Dict:
+    return {
+        "type": "button", "style": style,
+        "action": {"type": "postback", "label": label, "data": data, "displayText": label},
+    }
+
+
+def build_confirmation_bubble(order: Dict, photo_count: int) -> Dict:
+    """The 'รับเรื่องแล้ว #N' Flex bubble, for a create OR any later edit.
+
+    ``order`` is an OrderView (housekeeping already computed propertyLabel/
+    location/categoryLabel — this function never re-derives them). Human text
+    fields are stripped of pictographs on the way in, same as the digest.
+    """
+    order_id = order.get("id")
+    title = f"รับเรื่องแล้ว #{order_id}"
+    urgent = bool(order.get("urgent"))
+    urgency_text = "ด่วน" if urgent else "ปกติ"
+    toggle_label = "ไม่ด่วน" if urgent else "ด่วน"
+    detail = strip_pictographs(order.get("detailText")) or "-"
+    photo_line = f"กำลังแนบ {photo_count} รูป" if photo_count > 0 else "ยังไม่มีรูป"
+
+    return {
+        "type": "flex",
+        "altText": title,
+        "contents": {
+            "type": "bubble",
+            "header": {
+                "type": "box", "layout": "vertical",
+                "contents": [{"type": "text", "text": title, "weight": "bold", "size": "lg"}],
+            },
+            "body": {
+                "type": "box", "layout": "vertical", "spacing": "sm",
+                "contents": [
+                    _flex_row("สาขา", strip_pictographs(order.get("propertyLabel"))),
+                    _flex_row("ที่", strip_pictographs(order.get("location"))),
+                    _flex_row("หมวด", strip_pictographs(order.get("categoryLabel"))),
+                    {
+                        "type": "text", "text": urgency_text, "size": "sm", "weight": "bold",
+                        "color": "#D64545" if urgent else "#8C8C8C",
+                    },
+                    _flex_row("รายละเอียด", detail),
+                    _flex_row("ผู้แจ้ง", strip_pictographs(order.get("reporterName"))),
+                    _flex_row("รูป", photo_line),
+                ],
+            },
+            "footer": {
+                "type": "box", "layout": "vertical", "spacing": "sm",
+                "contents": [
+                    _postback_button("แก้หมวด", f"cmd={COMMAND_FIXCAT}&id={order_id}"),
+                    _postback_button(toggle_label, f"cmd={COMMAND_TOGGLEURGENT}&id={order_id}"),
+                    _postback_button("เพิ่มรูป", f"cmd={COMMAND_ADDPHOTO}&id={order_id}"),
+                    _postback_button("ยกเลิก", f"cmd={COMMAND_CANCEL}&id={order_id}"),
+                    _postback_button("สลับสาขา", f"cmd={COMMAND_SWITCHPROP}&id={order_id}"),
+                ],
+            },
+        },
+    }
+
+
+def build_category_chip_message(order_id: int) -> Dict:
+    """แก้หมวด's reply: a text carrying quick-reply chips for the six
+    categories, each a cmd=setcat&id=N&cat=X postback."""
+    return {
+        "type": "text",
+        "text": FIXCAT_PROMPT_FMT.format(id=order_id),
+        "quickReply": {
+            "items": [
+                {
+                    "type": "action",
+                    "action": {
+                        "type": "postback",
+                        "label": CATEGORY_LABELS[category],
+                        "data": f"cmd={COMMAND_SETCAT}&id={order_id}&cat={category}",
+                        "displayText": CATEGORY_LABELS[category],
+                    },
+                }
+                for category in CATEGORY_ORDER
+            ],
+        },
+    }
+
+
+def _authorized_for_order(action: "RoutedCommand", order: Dict) -> bool:
+    """The reporter, or anybody holding the `reception` grant — nobody else."""
+    if action.is_reception:
+        return True
+    return bool(action.badge) and action.badge == order.get("reporterBadge")
+
+
+@dataclass(frozen=True)
+class PendingUpload:
+    """One ticket's just-claimed photos, to be downloaded and uploaded in the
+    background AFTER the confirmation bubble is on its way — never before."""
+
+    order_id: int
+    message_ids: List[str]
+    actor_badge: str = ""
+
+
+def _create_ticket(action: "RoutedCommand") -> Tuple[List[Dict], Optional[PendingUpload]]:
+    draft = parse_report(action.report_text)
+    if isinstance(draft, ParseError):
+        return [{"type": "text", "text": draft.message}], None
+
+    payload: Dict = {
+        "property": action.property or "hf",
+        "location_kind": draft.location_kind,
+        "category": draft.category,
+        "urgent": draft.urgent,
+        "reporter": {"badge": action.badge, "name": action.display_name},
+        "source": "line-bot",
+    }
+    if draft.room_no:
+        payload["room_no"] = draft.room_no
+    if draft.common_area:
+        payload["common_area"] = draft.common_area
+    if draft.detail_text:
+        payload["detail_text"] = draft.detail_text
+
+    result = housekeeping_client.create_work_order(payload)
+    if result is None:
+        return [{"type": "text", "text": TICKET_UNAVAILABLE_TEXT}], None
+    if "error" in result:
+        return [{"type": "text", "text": result["error"]}], None
+
+    order = result.get("order") or {}
+    order_id = order.get("id")
+    claimed: List[str] = []
+    upload: Optional[PendingUpload] = None
+    if isinstance(order_id, int):
+        claimed = get_photo_buffer().claim(action.chat_key, action.user_id)
+        get_attach_windows().open(action.chat_key, action.user_id, order_id)
+        logger.info(
+            "staff-bot ticket created: chat=%s order=%s photos=%s",
+            action.chat_key, order_id, len(claimed),
+        )
+        if claimed:
+            upload = PendingUpload(order_id=order_id, message_ids=claimed, actor_badge=action.badge)
+    return [build_confirmation_bubble(order, photo_count=len(claimed))], upload
+
+
+def _cancel_ticket(action: "RoutedCommand") -> Tuple[List[Dict], None]:
+    result = housekeeping_client.cancel_work_order(
+        action.order_id, {"badge": action.badge, "name": action.display_name},
+    )
+    if result is None:
+        return [{"type": "text", "text": TICKET_UNAVAILABLE_TEXT}], None
+    if "error" in result:
+        return [{"type": "text", "text": result["error"]}], None
+    logger.info("staff-bot ticket cancelled: order=%s", action.order_id)
+    return [{"type": "text", "text": CANCEL_SUCCESS_FMT.format(id=action.order_id)}], None
+
+
+def _patch_ticket(action: "RoutedCommand", order: Dict) -> Tuple[List[Dict], None]:
+    if action.command == COMMAND_SETCAT:
+        field_name, fields = "category", {"category": action.category}
+    elif action.command == COMMAND_TOGGLEURGENT:
+        field_name, fields = "urgent", {"urgent": not bool(order.get("urgent"))}
+    else:  # COMMAND_SWITCHPROP
+        field_name = "property"
+        fields = {"property": "hfville" if order.get("property") == "hf" else "hf"}
+
+    result = housekeeping_client.patch_work_order(
+        action.order_id, fields, {"badge": action.badge, "name": action.display_name},
+    )
+    if result is None:
+        return [{"type": "text", "text": TICKET_UNAVAILABLE_TEXT}], None
+    if "error" in result:
+        return [{"type": "text", "text": result["error"]}], None
+    logger.info("staff-bot ticket edited: order=%s field=%s", action.order_id, field_name)
+    new_order = result.get("order") or {}
+    bubble = build_confirmation_bubble(new_order, photo_count=_as_int(new_order.get("photoCount")))
+    return [bubble], None
+
+
+def _mine_bubble(order: Dict) -> Dict:
+    """One ticket's row-bubble for the งานของฉัน carousel AND the สถานะ/งาน
+    <id> single lookup — same content, same layout, one definition."""
+    order_id = order.get("id")
+    location = strip_pictographs(order.get("location"))
+    title = f"#{order_id} · {location}" if location else f"#{order_id}"
+    return {
+        "type": "bubble",
+        "size": "kilo",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "contents": [{"type": "text", "text": title, "weight": "bold",
+                          "size": "md", "wrap": True}],
+        },
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "sm",
+            "contents": [
+                _flex_row("หมวด", strip_pictographs(order.get("categoryLabel"))),
+                _flex_row("สถานะ", strip_pictographs(order.get("statusLabel"))),
+                _flex_row("อายุ", _age_text(_as_int(order.get("ageDays")))),
+                _flex_row("รูป", str(_as_int(order.get("photoCount")))),
+            ],
+        },
+        "footer": {
+            "type": "box", "layout": "vertical", "spacing": "sm",
+            "contents": [
+                _postback_button("เพิ่มรูป", f"cmd={COMMAND_ADDPHOTO}&id={order_id}"),
+                _postback_button("ยกเลิก", f"cmd={COMMAND_CANCEL}&id={order_id}"),
+            ],
+        },
+    }
+
+
+def _list_mine(action: "RoutedCommand") -> Tuple[List[Dict], None]:
+    """cmd=mine / งานของฉัน: the tapper's own active tickets, newest first,
+    as one Flex carousel (<= 10 bubbles). Empty and dark are both a single
+    plain-text line, never silence and never an error."""
+    result = housekeeping_client.list_work_orders(action.badge, active=True, limit=10)
+    if result is None:
+        return [{"type": "text", "text": TICKET_UNAVAILABLE_TEXT}], None
+    if "error" in result:
+        return [{"type": "text", "text": result["error"]}], None
+    raw_orders = result.get("orders")
+    orders = [o for o in raw_orders if isinstance(o, dict)][:10] if isinstance(raw_orders, list) else []
+    if not orders:
+        return [{"type": "text", "text": MINE_EMPTY_TEXT}], None
+    return [{
+        "type": "flex",
+        "altText": MINE_ALT_TEXT,
+        "contents": {"type": "carousel", "contents": [_mine_bubble(o) for o in orders]},
+    }], None
+
+
+def _status_lookup(action: "RoutedCommand") -> Tuple[List[Dict], None]:
+    """'สถานะ <id>' / 'งาน <id>': one ticket's bubble, gated exactly like the
+    edit postbacks (reporter or `reception`) — a read, never a status
+    CHANGE. 404 and "not your ticket" get their own fixed lines rather than
+    housekeeping's edit-flavoured error text."""
+    fetched = housekeeping_client.get_work_order(action.order_id)
+    if fetched is None:
+        return [{"type": "text", "text": TICKET_UNAVAILABLE_TEXT}], None
+    if "error" in fetched:
+        return [{"type": "text", "text": STATUS_NOT_FOUND_FMT.format(id=action.order_id)}], None
+    order = fetched.get("order") or {}
+    if not _authorized_for_order(action, order):
+        return [{"type": "text", "text": STATUS_FORBIDDEN_TEXT}], None
+    return [{
+        "type": "flex",
+        "altText": f"งาน #{action.order_id}",
+        "contents": _mine_bubble(order),
+    }], None
+
+
+def _build_ticket_messages(action: "RoutedCommand") -> Tuple[List[Dict], Optional[PendingUpload]]:
+    """One ticket action -> the message object(s) for it, plus any photos to
+    upload in the background. Runs inside asyncio.to_thread, same as the
+    digest/requests fetches above — I/O here is fine."""
+    if action.command == COMMAND_REPORT_HELP:
+        text = REPORT_HELP_GROUP_TEXT if action.source_type in ("group", "room") else REPORT_HELP_DIRECT_TEXT
+        return [{"type": "text", "text": text}], None
+
+    if not action.identity_known:
+        return [{"type": "text", "text": NOT_LINKED_TEXT}], None
+
+    if action.command == COMMAND_REPORT:
+        return _create_ticket(action)
+    if action.command == COMMAND_MINE:
+        return _list_mine(action)
+    if action.command == COMMAND_STATUS:
+        return _status_lookup(action)
+
+    # Every remaining ticket command names an existing order — fetch it once
+    # (to know the reporter, for authorization) before doing anything else.
+    fetched = housekeeping_client.get_work_order(action.order_id)
+    if fetched is None:
+        return [{"type": "text", "text": TICKET_UNAVAILABLE_TEXT}], None
+    if "error" in fetched:
+        return [{"type": "text", "text": fetched["error"]}], None
+    order = fetched.get("order") or {}
+    if not _authorized_for_order(action, order):
+        return [{"type": "text", "text": EDIT_FORBIDDEN_TEXT}], None
+
+    if action.command == COMMAND_FIXCAT:
+        return [build_category_chip_message(action.order_id)], None
+    if action.command == COMMAND_ADDPHOTO:
+        get_attach_windows().open(action.chat_key, action.user_id, action.order_id)
+        return [{"type": "text", "text": ADDPHOTO_PROMPT_FMT.format(id=action.order_id)}], None
+    if action.command == COMMAND_CANCEL:
+        return _cancel_ticket(action)
+    return _patch_ticket(action, order)  # setcat / toggleurgent / switchprop
+
+
 @dataclass(frozen=True)
 class BuiltReply:
     """The message objects for one reply, plus what became of the slot digest.
@@ -754,6 +1619,10 @@ class BuiltReply:
     messages: List[Dict]
     slot_digest_included: bool = False
     digest_available: bool = False
+    # Phase 3: photos claimed by a ticket created in THIS reply, to be
+    # downloaded and uploaded in the background once LINE accepts the reply
+    # that carries the confirmation bubble.
+    pending_uploads: List[PendingUpload] = field(default_factory=list)
 
 
 def render_requests(payload: Optional[Dict]) -> str:
@@ -792,6 +1661,7 @@ def build_reply(
     commands: Sequence[str],
     slot_id: Optional[str] = None,
     confirmed_request_ids: Optional[List[str]] = None,
+    actions: Sequence["RoutedCommand"] = (),
 ) -> BuiltReply:
     """Build ONE coalesced reply, in canonical order.
 
@@ -807,6 +1677,13 @@ def build_reply(
     reply's fetched rows are appended to it, so the caller
     (:meth:`AsyncioBotDispatcher._reply`) can confirm delivery with
     guest-feedback after LINE accepts the reply.
+
+    ``actions`` (phases 3/4) — the RoutedCommand for each ticket action
+    (report/report_help/mine/status/fixcat/setcat/toggleurgent/addphoto/
+    cancel/switchprop) in this burst, rendered AFTER the COMMAND_ORDER messages
+    above and in the order they were noted. Unlike the fixed commands, no
+    two of these ever render the same reply, so each carries its own data
+    rather than a shared string in ``commands``.
     """
     wanted = set(commands)
     messages: List[Dict] = []
@@ -840,20 +1717,29 @@ def build_reply(
             messages.append({"type": "text", "text": render_requests(payload)})
             if confirmed_request_ids is not None:
                 confirmed_request_ids.extend(_request_ids(payload))
-    return BuiltReply(messages[:MAX_REPLY_MESSAGES], slot_included, digest_available)
+
+    pending_uploads: List[PendingUpload] = []
+    for action in actions:
+        action_messages, upload = _build_ticket_messages(action)
+        messages.extend(action_messages)
+        if upload is not None:
+            pending_uploads.append(upload)
+
+    return BuiltReply(messages[:MAX_REPLY_MESSAGES], slot_included, digest_available, pending_uploads)
 
 
 def build_messages(
     commands: Sequence[str],
     confirmed_request_ids: Optional[List[str]] = None,
     slot_id: Optional[str] = None,
+    actions: Sequence["RoutedCommand"] = (),
 ) -> List[Dict]:
     """The message objects for one coalesced reply, in canonical order.
 
     ``confirmed_request_ids`` stays the SECOND positional parameter (the
     guest-feedback call shape); ``slot_id`` selects the slot digest prefix.
     """
-    return build_reply(commands, slot_id, confirmed_request_ids).messages
+    return build_reply(commands, slot_id, confirmed_request_ids, actions).messages
 
 
 # ---------------------------------------------------------------------------
@@ -880,6 +1766,10 @@ class PendingReply:
     # from. Used only to gate the guest-feedback delivery confirm: a group or
     # room reply confirms, a 1:1 reply is a preview and never does.
     source_type: str = ""
+    # Phase 3: the RoutedCommand for each ticket action noted in this burst,
+    # in arrival order — see build_reply's ``actions`` parameter. A plain
+    # command word never appends here; only TICKET_COMMANDS do.
+    actions: List["RoutedCommand"] = field(default_factory=list)
 
     def deadline(self, max_wait_seconds: float) -> float:
         """Quiet-timer deadline, capped so the reply token cannot expire."""
@@ -916,8 +1806,14 @@ class ReplyDebouncer:
         quiet_seconds: float = COMMAND_QUIET_SECONDS,
         slot_ref: Optional[SlotRef] = None,
         source_type: str = "",
+        action: Optional["RoutedCommand"] = None,
     ) -> PendingReply:
-        """Record a command: create or MERGE INTO this chat's pending reply."""
+        """Record a command: create or MERGE INTO this chat's pending reply.
+
+        ``action`` (phase 3) — the full RoutedCommand for a ticket command,
+        appended to ``pending.actions`` so build_reply can render it with its
+        own data later. None for every non-ticket command.
+        """
         now = self._clock()
         pending = self._pending.get(chat_key)
         if pending is None:
@@ -937,6 +1833,8 @@ class ReplyDebouncer:
             pending.slot_ref = slot_ref
         if source_type:
             pending.source_type = source_type
+        if action is not None:
+            pending.actions.append(action)
         self._notify()
         return pending
 
@@ -1192,6 +2090,10 @@ class AsyncioBotDispatcher:
     def __init__(self, clock: Callable[[], float] = time.monotonic):
         self.debouncer = ReplyDebouncer(clock=clock, scheduler=self._wake)
         self._task: Optional[asyncio.Task] = None
+        # Phase 3 background photo uploads (fire-and-forget, but kept
+        # referenced so they are not garbage-collected mid-flight — the
+        # standard asyncio gotcha with detached tasks).
+        self._background_tasks: Set[asyncio.Task] = set()
 
     def submit_command(self, command: RoutedCommand) -> None:
         self.debouncer.note_command(
@@ -1199,7 +2101,42 @@ class AsyncioBotDispatcher:
             quiet_seconds=command.quiet_seconds,
             slot_ref=command.slot_ref,
             source_type=command.source_type,
+            action=command if command.command in TICKET_COMMANDS else None,
         )
+
+    def spawn_photo_upload(self, order_id: int, message_id: str, actor_badge: str) -> None:
+        """Download + upload ONE claimed photo, off the request path.
+
+        Used both for photos claimed at ticket creation (via
+        ``_reply``/``pending_uploads``) and for a photo that arrives while an
+        attach window is already open (silent attach — no reply at all, see
+        ``_maybe_handle_photo``). A missing event loop (a script, a sync
+        test) is a silent no-op: there is nowhere to run this in the
+        background, and a photo that never got claimed via an open loop was
+        never going to be attached synchronously either.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._upload_one_photo(order_id, message_id, actor_badge))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _upload_one_photo(self, order_id: int, message_id: str, actor_badge: str) -> None:
+        fetched = await asyncio.to_thread(staff_oa_service.fetch_message_content, message_id)
+        if fetched is None:
+            logger.warning("staff-bot photo failed: order=%s reason=download", order_id)
+            return
+        data, content_type = fetched
+        mime = content_type or "image/jpeg"
+        result = await asyncio.to_thread(
+            housekeeping_client.upload_photo, order_id, data, mime, actor_badge
+        )
+        if result is None or "error" in result:
+            logger.warning("staff-bot photo failed: order=%s reason=upload", order_id)
+            return
+        logger.info("staff-bot photo attached: order=%s", order_id)
 
     def submit_message(self, chat_key: str, reply_token: str) -> bool:
         return bool(self.debouncer.note_message(chat_key, reply_token))
@@ -1258,13 +2195,21 @@ class AsyncioBotDispatcher:
         try:
             built = await asyncio.to_thread(
                 build_reply, pending.commands, slot_ref[2] if slot_ref else None,
-                request_ids,
+                request_ids, pending.actions,
             )
         except Exception as exc:  # noqa: BLE001 — a reply must never crash the loop
             logger.warning("staff-bot could not build a reply: %s", exc)
             if owns_mark:
                 await self._drop_mark(slot_ref, "send_failed")
             return
+
+        # The ticket (if any) already exists in housekeeping and its photos
+        # are already claimed out of the buffer by the time build_reply
+        # returns, regardless of whether the LINE reply below succeeds — so
+        # they are uploaded either way rather than lost.
+        for upload in built.pending_uploads:
+            for message_id in upload.message_ids:
+                self.spawn_photo_upload(upload.order_id, message_id, upload.actor_badge)
 
         if owns_mark and not built.slot_digest_included:
             # Housekeeping was dark or unreachable: the scheduled post says
@@ -1441,19 +2386,18 @@ def _maybe_file_slot_digest(
 ) -> bool:
     """File the slot digest if this group message opens a window. Rule 3.
 
-    Groups only — a room or a 1:1 has no slot digest — and text only: a photo
-    or a sticker refreshes a pending reply (that is ``routed``'s job) but is
-    not the kind of traffic a scheduled post rides in on. Nothing here reads,
-    keeps or logs what was said; the message is a heartbeat and a sender id,
-    which is all rule 3 needs.
+    Groups only — a room or a 1:1 has no slot digest. ANY message kind counts
+    as the human heartbeat a scheduled post rides in on: text, sticker, photo,
+    video, location (owner rule 2026-09-06: "stickers should count"). Nothing
+    here reads, keeps or logs what was sent; the event is a timestamp and a
+    sender id, which is all rule 3 needs. Commands never reach this function.
     """
     source = event.get("source")
     if not isinstance(source, dict) or source.get("type") != "group":
         return False
     if event.get("type") != "message":
         return False
-    message = event.get("message")
-    if not isinstance(message, dict) or message.get("type") != "text":
+    if not isinstance(event.get("message"), dict):
         return False
     if not routed.reply_token:
         return False
@@ -1468,6 +2412,61 @@ def _maybe_file_slot_digest(
         return False
     dispatcher.submit_slot_digest(ref, routed.reply_token, trigger)
     return True
+
+
+def _maybe_handle_photo(
+    event: Dict,
+    routed: RoutedMessage,
+    db: Session,
+    dispatcher,
+) -> None:
+    """Buffer or silently attach one image message. Phase 3's core privacy
+    rule: a photo is NEVER downloaded unless it is already tied to a ticket.
+
+    A non-linked sender's photo is ignored outright — not buffered, not
+    logged, not counted. A linked sender's photo either attaches silently
+    (an attach window is open for them in this chat: schedule the
+    download+upload in the background, no reply at all) or is buffered as a
+    bare message id (no bytes) for later claiming by a ticket created within
+    :data:`PHOTO_BUFFER_TTL_SECONDS`.
+    """
+    message = event.get("message")
+    if not isinstance(message, dict) or message.get("type") != "image":
+        return
+    source = event.get("source")
+    user_id = (source or {}).get("userId") or ""
+    if not user_id:
+        return  # LINE gives no userId for some senders; nobody to attribute to
+    identity = resolve_employee_identity(db, user_id)
+    if identity is None:
+        return
+    message_id = message.get("id")
+    if not isinstance(message_id, str) or not message_id:
+        return
+
+    order_id = get_attach_windows().refresh(routed.chat_key, user_id)
+    if order_id is not None:
+        dispatcher.spawn_photo_upload(order_id, message_id, identity.badge)
+        return
+    get_photo_buffer().add(routed.chat_key, user_id, message_id)
+
+
+def _enrich_ticket_command(routed: RoutedCommand, db: Session) -> RoutedCommand:
+    """Resolve the sender's identity onto a ticket RoutedCommand, at route
+    time — the request's ``db`` session is long closed by the time a
+    debounced reply actually fires (up to 45 s later, see PendingReply)."""
+    identity = resolve_employee_identity(db, routed.user_id)
+    is_reception = bool(routed.user_id) and has_reception_grant(db, routed.user_id)
+    if identity is None:
+        return replace(routed, identity_known=False, is_reception=is_reception)
+    return replace(
+        routed,
+        identity_known=True,
+        badge=identity.badge,
+        display_name=identity.display_name,
+        property=identity.property,
+        is_reception=is_reception,
+    )
 
 
 def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
@@ -1507,6 +2506,9 @@ def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
         # message is discarded (nothing about it is read, kept or logged), but
         # its clock and its sender decide whether this window is now due.
         filed = _maybe_file_slot_digest(event, routed, db, dispatcher)
+        # Phase 3: an image from a linked sender either attaches silently (an
+        # open window) or joins the photo buffer — never downloaded here.
+        _maybe_handle_photo(event, routed, db, dispatcher)
         # ...and, independently, the moment to auto-offer pending guest
         # requests (ADR 0001): a plain message may become a command here. A
         # slot filed above coalesces into that command's immediate reply.
@@ -1516,6 +2518,11 @@ def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
         return HandledEvent(
             command=False, claims_reply_token=refreshed or filed,
         )
+
+    if routed.command in TICKET_COMMANDS:
+        # Ticket commands need the sender's identity/reception-grant, resolved
+        # here (while ``db`` is still open) rather than at reply time.
+        routed = _enrich_ticket_command(routed, db)
 
     logger.info(
         "staff-bot command: event=%s source=%s chat=%s",

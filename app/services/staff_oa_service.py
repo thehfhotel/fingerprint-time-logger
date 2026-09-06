@@ -33,7 +33,7 @@ import hmac
 import logging
 import os
 import threading
-from typing import Dict, Iterable, List, Optional, Sequence, Set
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import requests
 from sqlalchemy.orm import Session
@@ -283,6 +283,36 @@ def reply_text_message(reply_token: str, text: str) -> None:
         json={"replyToken": reply_token, "messages": [{"type": "text", "text": text}]},
         timeout=_REQUEST_TIMEOUT_SECONDS,
     ))
+
+
+def fetch_message_content(message_id: str) -> Optional[Tuple[bytes, str]]:
+    """A message's binary content (a photo the staff bot decided to keep).
+
+    GET {DATA API}/v2/bot/message/{id}/content — the only place in the repo
+    this URL appears; the staff bot (app/services/staff_bot.py) calls it
+    exactly once per CLAIMED photo (a buffered image tied to a ticket, or one
+    that arrives while a ticket's attach window is open), never for a photo
+    it only buffered. Returns ``(bytes, content_type)`` or None on ANY
+    failure — dark channel, unknown/expired message id, timeout, connection
+    error — never raises. The caller logs only the order id and "download"
+    on a miss; nothing here logs the message id or any byte of the image.
+    """
+    if not is_enabled() or not message_id:
+        return None
+    try:
+        response = requests.get(
+            f"{LINE_DATA_API_BASE}/v2/bot/message/{message_id}/content",
+            headers=_auth_headers(), timeout=_REQUEST_TIMEOUT_SECONDS,
+        )
+    except Exception:  # noqa: BLE001 — a photo miss, not a crash
+        return None
+    if response.status_code // 100 != 2:
+        return None
+    content_type = ""
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        content_type = headers.get("Content-Type", "") or ""
+    return response.content, content_type
 
 
 def reply_messages(reply_token: str, messages: Sequence[Dict]) -> None:
