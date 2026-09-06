@@ -473,3 +473,165 @@ class TestLinkRoleMenuForLineUser:
 
         assert service.link_role_menu_for_line_user(test_db, "U-2") is None
         assert line_api["linked"] == []
+
+
+# ===========================================================================
+# fetch_message_content(max_bytes=...) + wait_for_transcoding (video support,
+# 2026-09-06) — LINE's data-API content and transcoding-status endpoints,
+# mocked at the module's own `requests` name (this module's convention for
+# HTTP: see the fake `line_api` fixture above for the rich-menu endpoints).
+# ===========================================================================
+
+class _FakeMediaResponse:
+    def __init__(self, status_code=200, content=b"", headers=None,
+                 json_body=None, chunks=None):
+        self.status_code = status_code
+        self.content = content
+        self.headers = headers or {}
+        self._json_body = json_body
+        self._chunks = chunks if chunks is not None else ([content] if content else [])
+        self.closed = False
+
+    def json(self):
+        if self._json_body is None:
+            raise ValueError("no json body configured")
+        return self._json_body
+
+    def iter_content(self, chunk_size=None):
+        for chunk in self._chunks:
+            yield chunk
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeMediaRequests:
+    """A minimal stand-in for the ``requests`` module: ``.get`` pops fake
+    responses in order and records every call's url/stream flag."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = []
+
+    def get(self, url, headers=None, timeout=None, stream=False):
+        self.calls.append({"url": url, "headers": headers, "stream": stream})
+        return self._responses.pop(0)
+
+
+class TestFetchMessageContentPlain:
+    """max_bytes=None (every photo call, unchanged since before video
+    support): one-shot ``response.content``, no streaming."""
+
+    def test_returns_bytes_and_content_type(self, monkeypatch, staff_oa_enabled):
+        fake = _FakeMediaRequests([_FakeMediaResponse(
+            status_code=200, content=b"hello", headers={"Content-Type": "image/jpeg"},
+        )])
+        monkeypatch.setattr(service, "requests", fake)
+        assert service.fetch_message_content("m1") == (b"hello", "image/jpeg")
+        assert fake.calls[0]["stream"] is False
+
+    def test_non_2xx_is_none(self, monkeypatch, staff_oa_enabled):
+        fake = _FakeMediaRequests([_FakeMediaResponse(status_code=404)])
+        monkeypatch.setattr(service, "requests", fake)
+        assert service.fetch_message_content("m1") is None
+
+    def test_dark_channel_makes_no_request(self, monkeypatch, staff_oa_dark):
+        fake = _FakeMediaRequests([])
+        monkeypatch.setattr(service, "requests", fake)
+        assert service.fetch_message_content("m1") is None
+        assert fake.calls == []
+
+
+class TestFetchMessageContentStreamed:
+    """max_bytes given (video support, 2026-09-06): streamed, capped."""
+
+    def test_streams_and_joins_chunks_under_the_cap(self, monkeypatch, staff_oa_enabled):
+        fake = _FakeMediaRequests([_FakeMediaResponse(
+            status_code=200, headers={"Content-Type": "video/mp4"},
+            chunks=[b"ab", b"cd"],
+        )])
+        monkeypatch.setattr(service, "requests", fake)
+        assert service.fetch_message_content("m1", max_bytes=10) == (b"abcd", "video/mp4")
+        assert fake.calls[0]["stream"] is True
+
+    def test_over_the_cap_raises_content_too_large(self, monkeypatch, staff_oa_enabled):
+        fake = _FakeMediaRequests([_FakeMediaResponse(
+            status_code=200, headers={"Content-Type": "video/mp4"},
+            chunks=[b"a" * 6, b"b" * 6],
+        )])
+        monkeypatch.setattr(service, "requests", fake)
+        with pytest.raises(service.ContentTooLarge):
+            service.fetch_message_content("m1", max_bytes=10)
+
+    def test_exactly_at_the_cap_succeeds(self, monkeypatch, staff_oa_enabled):
+        fake = _FakeMediaRequests([_FakeMediaResponse(
+            status_code=200, headers={"Content-Type": "video/mp4"},
+            chunks=[b"a" * 10],
+        )])
+        monkeypatch.setattr(service, "requests", fake)
+        data, content_type = service.fetch_message_content("m1", max_bytes=10)
+        assert data == b"a" * 10
+
+    def test_non_2xx_is_still_none_not_content_too_large(self, monkeypatch, staff_oa_enabled):
+        fake = _FakeMediaRequests([_FakeMediaResponse(status_code=404)])
+        monkeypatch.setattr(service, "requests", fake)
+        assert service.fetch_message_content("m1", max_bytes=10) is None
+
+    def test_dark_channel_makes_no_request(self, monkeypatch, staff_oa_dark):
+        fake = _FakeMediaRequests([])
+        monkeypatch.setattr(service, "requests", fake)
+        assert service.fetch_message_content("m1", max_bytes=10) is None
+        assert fake.calls == []
+
+
+class TestWaitForTranscoding:
+    def test_succeeded_on_the_first_poll_is_true(self, monkeypatch, staff_oa_enabled):
+        fake = _FakeMediaRequests([_FakeMediaResponse(
+            status_code=200, json_body={"status": "succeeded"},
+        )])
+        monkeypatch.setattr(service, "requests", fake)
+        assert service.wait_for_transcoding("m1", 90.0) is True
+        assert len(fake.calls) == 1
+
+    def test_polls_through_processing_then_succeeds(self, monkeypatch, staff_oa_enabled):
+        fake = _FakeMediaRequests([
+            _FakeMediaResponse(status_code=200, json_body={"status": "processing"}),
+            _FakeMediaResponse(status_code=200, json_body={"status": "succeeded"}),
+        ])
+        monkeypatch.setattr(service, "requests", fake)
+        monkeypatch.setattr(service.time, "sleep", lambda seconds: None)
+        assert service.wait_for_transcoding("m1", 90.0) is True
+        assert len(fake.calls) == 2
+
+    def test_failed_status_is_false(self, monkeypatch, staff_oa_enabled):
+        fake = _FakeMediaRequests([_FakeMediaResponse(
+            status_code=200, json_body={"status": "failed"},
+        )])
+        monkeypatch.setattr(service, "requests", fake)
+        assert service.wait_for_transcoding("m1", 90.0) is False
+
+    def test_a_zero_timeout_gives_up_after_one_still_processing_poll(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        fake = _FakeMediaRequests([_FakeMediaResponse(
+            status_code=200, json_body={"status": "processing"},
+        )])
+        monkeypatch.setattr(service, "requests", fake)
+        assert service.wait_for_transcoding("m1", 0.0) is False
+        assert len(fake.calls) == 1
+
+    def test_non_2xx_is_false(self, monkeypatch, staff_oa_enabled):
+        fake = _FakeMediaRequests([_FakeMediaResponse(status_code=500)])
+        monkeypatch.setattr(service, "requests", fake)
+        assert service.wait_for_transcoding("m1", 90.0) is False
+
+    def test_malformed_json_is_false(self, monkeypatch, staff_oa_enabled):
+        fake = _FakeMediaRequests([_FakeMediaResponse(status_code=200, json_body=None)])
+        monkeypatch.setattr(service, "requests", fake)
+        assert service.wait_for_transcoding("m1", 90.0) is False
+
+    def test_dark_channel_makes_no_request(self, monkeypatch, staff_oa_dark):
+        fake = _FakeMediaRequests([])
+        monkeypatch.setattr(service, "requests", fake)
+        assert service.wait_for_transcoding("m1", 90.0) is False
+        assert fake.calls == []

@@ -91,17 +91,6 @@ def _dark_guest_feedback(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _idle_requests_gate(monkeypatch):
-    """Default: no chat ever has pending guest requests, so plain group
-    chatter never auto-upgrades to a command — tests that want the auto-offer
-    install their own gate."""
-    monkeypatch.setattr(
-        staff_bot, "get_requests_gate",
-        lambda: staff_bot.PendingRequestsGate(fetch=lambda: None),
-    )
-
-
-@pytest.fixture(autouse=True)
 def _fresh_ticket_state(monkeypatch):
     """Phase 3's photo buffer and attach-window store are process-wide
     singletons (like the dispatcher and the requests gate above) — reset to
@@ -195,10 +184,13 @@ def _direct_text(text, user_id="U-emp", reply_token="reply-d"):
 
 
 def _postback(data, reply_token="reply-p", source=None):
+    # 1:1 by default (2026-09-06 policy: a group/room postback is always
+    # ignored, see route_event) — tests that specifically want the
+    # group/room-ignored behaviour pass their own source=.
     return {
         "type": "postback",
         "replyToken": reply_token,
-        "source": source or {"type": "group", "groupId": "Cgroup"},
+        "source": source or {"type": "user", "userId": "U-emp"},
         "postback": {"data": data},
     }
 
@@ -212,104 +204,58 @@ def _route(event, known=()):
 # ===========================================================================
 
 
-class TestSummonGrammar:
-    @pytest.mark.parametrize("particle", ["คะ", "ค่ะ", "ครับ", "คับ"])
-    def test_every_particle_summons_the_palette(self, particle):
-        routed = _route(_group_text(f"น้อง{particle}"))
-        assert isinstance(routed, staff_bot.RoutedCommand)
-        assert routed.command == staff_bot.COMMAND_PALETTE
+class TestGroupIsReportOnly:
+    """GROUP/ROOM SOURCES ARE REPORT-ONLY (owner policy, 2026-09-06 —
+    "command through chat is considered spam in HF Family group"). A group
+    never answers a command any more, of any kind — summoned or bare, a
+    recognised word or not, text or media. The only thing a group ever hears
+    is the slot report (TestSlotWindows/TestSlotTriggers/TestSlotDigestRendering
+    below, unaffected)."""
 
-    @pytest.mark.parametrize(
-        "text",
-        ["น้อง คะ", "น้อง   ครับ", "  น้องค่ะ  ", "น้องคับ "],
-    )
-    def test_spaces_around_the_summon_are_tolerated(self, text):
+    @pytest.mark.parametrize("text", [
+        "น้องคะ", "น้อง คะ", "น้องครับ", "น้องเอาข้าวไหม",
+        "น้องคะ งานค้าง", "งานค้าง", "น้องคะ คำขอ", "feedback",
+        "น้องคะ ช่วยดูให้หน่อย", "พรุ่งนี้เข้ากี่โมง",
+    ])
+    def test_every_kind_of_group_text_is_only_ever_a_message(self, text):
         routed = _route(_group_text(text))
-        assert isinstance(routed, staff_bot.RoutedCommand)
-        assert routed.command == staff_bot.COMMAND_PALETTE
+        assert isinstance(routed, staff_bot.RoutedMessage)
 
-    @pytest.mark.parametrize("word", ["งานค้าง", "งานซ่อมค้าง", "แจ้งซ่อมค้าง"])
-    def test_a_command_word_after_the_summon_runs_the_digest(self, word):
-        routed = _route(_group_text(f"น้องคะ {word}"))
-        assert routed.command == staff_bot.COMMAND_DIGEST
-
-    @pytest.mark.parametrize(
-        "word",
-        [
-            "คำขอ", "คำขอลูกค้า", "guest requests",
-            "ความคิดเห็น", "ฟีดแบค", "feedback",
-        ],
-    )
-    def test_a_command_word_after_the_summon_runs_the_guest_requests(self, word):
-        routed = _route(_group_text(f"น้องคะ {word}"))
-        assert routed.command == staff_bot.COMMAND_REQUESTS
-
-    def test_unrecognised_words_after_the_summon_open_the_palette(self):
-        routed = _route(_group_text("น้องคะ ช่วยดูให้หน่อย"))
-        assert routed.command == staff_bot.COMMAND_PALETTE
-
-    def test_feedback_is_only_a_command_as_a_bare_word_after_the_summon(self):
-        # The new "feedback" keyword must match the same way the other five
-        # already do: the WHOLE remainder, never a substring — so ordinary
-        # chatter that happens to contain the word stays ordinary chatter.
-        routed = _route(_group_text("น้องคะ ขอบคุณสำหรับ feedback นะ"))
-        assert routed.command == staff_bot.COMMAND_PALETTE
-
-    def test_a_self_mention_summons_and_its_span_is_stripped(self):
-        # "@HF ภายใน งานค้าง" — the mention occupies the first 12 characters.
+    def test_a_self_mention_is_also_only_ever_a_message(self):
+        # The @-mention summon grammar is gone along with every other group
+        # command path — an @-mention of the bot in a group is now ordinary
+        # chatter like anything else.
         text = "@HF ภายใน งานค้าง"
         routed = _route(_group_text(text, message={"mention": {"mentionees": [
             {"index": 0, "length": 9, "isSelf": True, "userId": "Ubot"},
         ]}}))
-        assert routed.command == staff_bot.COMMAND_DIGEST
-
-    def test_a_mention_of_somebody_else_is_not_a_summon(self):
-        routed = _route(_group_text("@สมชาย งานค้าง", message={"mention": {
-            "mentionees": [{"index": 0, "length": 7, "userId": "Usomchai"}],
-        }}))
         assert isinstance(routed, staff_bot.RoutedMessage)
-
-    def test_a_bare_mention_opens_the_palette(self):
-        routed = _route(_group_text("@HF ภายใน", message={"mention": {
-            "mentionees": [{"index": 0, "length": 9, "isSelf": True}],
-        }}))
-        assert routed.command == staff_bot.COMMAND_PALETTE
-
-    def test_nong_without_a_particle_is_ordinary_chat(self):
-        # THE false-trigger case: staff talking about a น้อง, not to the bot.
-        routed = _route(_group_text("น้องเอาข้าวไหม"))
-        assert isinstance(routed, staff_bot.RoutedMessage)
-
-    def test_a_command_word_alone_in_a_group_is_not_a_summon(self):
-        # Reads are open, but the group still has to ASK. Otherwise every
-        # mention of งานค้าง in staff chat would make the bot interrupt.
-        routed = _route(_group_text("งานค้าง"))
-        assert isinstance(routed, staff_bot.RoutedMessage)
-
-    def test_feedback_mentioned_in_ordinary_group_chatter_is_not_a_command(self):
-        # THE false-trigger case for the new keyword, mirroring
-        # test_nong_without_a_particle_is_ordinary_chat above: no summon, so
-        # this is ordinary chat regardless of what words it contains — the
-        # word "feedback" appearing mid-sentence must never wake the bot.
-        routed = _route(_group_text("ขอบคุณสำหรับ feedback นะ"))
-        assert isinstance(routed, staff_bot.RoutedMessage)
-
-    def test_a_summon_mid_sentence_does_not_count(self):
-        routed = _route(_group_text("ฝากบอกน้องคะ"))
-        assert isinstance(routed, staff_bot.RoutedMessage)
-
-    def test_group_noise_never_becomes_a_command(self, dispatcher, test_db):
-        # The privacy rule, at the handler edge: a non-summon message files
-        # no command (and therefore logs nothing about it).
-        assert staff_bot.handle_event(_group_text("พรุ่งนี้เข้ากี่โมง"), test_db) is False
-        assert dispatcher.commands == []
-        assert dispatcher.messages == [("Cgroup", "reply-g")]
 
     def test_a_photo_in_the_group_only_refreshes_the_token(self):
         event = _group_text("", message={"type": "image"})
         routed = _route(event)
         assert isinstance(routed, staff_bot.RoutedMessage)
         assert routed.reply_token == "reply-g"
+
+    def test_group_noise_never_becomes_a_command(self, dispatcher, test_db):
+        # The privacy rule, at the handler edge: a group message files no
+        # command (and therefore logs nothing about it) regardless of
+        # content.
+        assert staff_bot.handle_event(_group_text("พรุ่งนี้เข้ากี่โมง"), test_db) is False
+        assert dispatcher.commands == []
+        assert dispatcher.messages == [("Cgroup", "reply-g")]
+
+    def test_a_group_postback_is_ignored(self):
+        assert staff_bot.route_event(
+            _postback("cmd=digest", source={"type": "group", "groupId": "Cgroup"}),
+            lambda u: True,
+        ) is None
+
+    def test_a_room_postback_is_ignored(self):
+        assert staff_bot.route_event(
+            _postback("cmd=digest", source={"type": "room", "roomId": "R1"}),
+            lambda u: True,
+        ) is None
 
 
 # ===========================================================================
@@ -377,11 +323,9 @@ class TestDirectChat:
         test_db.commit()
         assert staff_bot.is_linked_employee(test_db, "U-maid") is True
 
-    def test_one_to_one_waits_two_seconds_not_fifteen(self):
+    def test_one_to_one_command_answers_at_once(self):
         routed = _route(_direct_text("งานค้าง"), known={"U-emp"})
         assert routed.quiet_seconds == staff_bot.COMMAND_QUIET_SECONDS == 0.0
-        group = _route(_group_text("น้องคะ"))
-        assert group.quiet_seconds == staff_bot.COMMAND_QUIET_SECONDS == 0.0
 
 
 # ===========================================================================
@@ -430,93 +374,34 @@ class TestPostback:
 
 
 # ===========================================================================
-# Group auto-offer of guest requests — route_event stays pure, the I/O and
-# the 10 s per-chat cache live in handle_event_detail via PendingRequestsGate
+# The chatter-triggered guest-feedback auto-offer is REMOVED (2026-09-06):
+# guest feedback now reaches a group only through its own slot report
+# section (b) — see TestSlotDigestRendering / TestGroupIsReportOnly.
 # ===========================================================================
 
 
-class TestGroupAutoOffer:
+class TestNoGuestFeedbackAutoOffer:
     def test_route_event_never_upgrades_plain_chat_on_its_own(self):
-        # route_event does no I/O — a non-summon group message is always a
-        # RoutedMessage from route_event's point of view, pending or not.
         routed = _route(_group_text("ผ้าเช็ดตัวหมดค่ะ"))
         assert isinstance(routed, staff_bot.RoutedMessage)
 
-    def test_plain_group_chat_becomes_a_command_when_requests_are_pending(
+    def test_plain_group_chat_with_pending_feedback_stays_a_message(
         self, dispatcher, test_db, monkeypatch,
     ):
         monkeypatch.setattr(
-            staff_bot, "get_requests_gate",
-            lambda: staff_bot.PendingRequestsGate(fetch=lambda: _requests_payload()),
+            guest_feedback_client, "fetch_pending", lambda: _requests_payload(),
         )
         handled = staff_bot.handle_event_detail(
             _group_text("ผ้าเช็ดตัวหมดค่ะ", reply_token="reply-g"), test_db,
         )
-        assert handled.command is True
-        assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_REQUESTS]
-        assert dispatcher.commands[0].source_type == "group"
-        assert dispatcher.commands[0].reply_token == "reply-g"
-
-    def test_plain_group_chat_stays_a_message_when_nothing_is_pending(
-        self, dispatcher, test_db, monkeypatch,
-    ):
-        monkeypatch.setattr(
-            staff_bot, "get_requests_gate",
-            lambda: staff_bot.PendingRequestsGate(fetch=lambda: None),
-        )
-        handled = staff_bot.handle_event_detail(_group_text("ผ้าเช็ดตัวหมดค่ะ"), test_db)
         assert handled.command is False
         assert dispatcher.commands == []
 
-    def test_a_summon_is_unaffected_by_pending_requests(self, dispatcher, test_db, monkeypatch):
-        # A summon is already a RoutedCommand before the gate ever runs —
-        # the digest/palette rules are untouched by this feature.
+    def test_a_room_message_with_pending_feedback_also_stays_a_message(
+        self, dispatcher, test_db, monkeypatch,
+    ):
         monkeypatch.setattr(
-            staff_bot, "get_requests_gate",
-            lambda: staff_bot.PendingRequestsGate(fetch=lambda: _requests_payload()),
-        )
-        staff_bot.handle_event_detail(_group_text("น้องคะ"), test_db)
-        assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_PALETTE]
-
-    def test_the_pending_check_is_cached_per_chat_for_ten_seconds(self):
-        clock = _Clock()
-        fetch_calls = []
-
-        def _fetch():
-            fetch_calls.append(True)
-            return _requests_payload()
-
-        gate = staff_bot.PendingRequestsGate(clock=clock, fetch=_fetch)
-
-        assert gate.has_pending("Cgroup") is True
-        assert gate.has_pending("Cgroup") is True
-        assert len(fetch_calls) == 1  # second call served from cache
-
-        clock.advance(staff_bot.REQUESTS_AUTO_TRIGGER_CACHE_SECONDS - 0.01)
-        assert gate.has_pending("Cgroup") is True
-        assert len(fetch_calls) == 1
-
-        clock.advance(0.02)
-        assert gate.has_pending("Cgroup") is True
-        assert len(fetch_calls) == 2  # cache expired, checked again
-
-    def test_the_cache_is_per_chat(self):
-        clock = _Clock()
-        fetch_calls = []
-
-        def _fetch():
-            fetch_calls.append(True)
-            return _requests_payload()
-
-        gate = staff_bot.PendingRequestsGate(clock=clock, fetch=_fetch)
-        gate.has_pending("C1")
-        gate.has_pending("C2")
-        assert len(fetch_calls) == 2
-
-    def test_a_room_message_is_also_a_candidate(self, dispatcher, test_db, monkeypatch):
-        monkeypatch.setattr(
-            staff_bot, "get_requests_gate",
-            lambda: staff_bot.PendingRequestsGate(fetch=lambda: _requests_payload()),
+            guest_feedback_client, "fetch_pending", lambda: _requests_payload(),
         )
         event = {
             "type": "message",
@@ -524,30 +409,9 @@ class TestGroupAutoOffer:
             "source": {"type": "room", "roomId": "R1", "userId": "Uspeaker"},
             "message": {"type": "text", "id": "m1", "text": "hello"},
         }
-        staff_bot.handle_event_detail(event, test_db)
-        assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_REQUESTS]
-        assert dispatcher.commands[0].source_type == "room"
-
-    def test_a_one_to_one_chat_is_never_upgraded_by_the_gate(
-        self, dispatcher, test_db, monkeypatch,
-    ):
-        # 1:1 never produces a RoutedMessage in the first place (route_event
-        # always turns it into a command), so the gate never even runs.
-        gate_calls = []
-        monkeypatch.setattr(
-            staff_bot, "get_requests_gate",
-            lambda: staff_bot.PendingRequestsGate(
-                fetch=lambda: gate_calls.append(True) or _requests_payload()
-            ),
-        )
-        test_db.add(Employee(
-            badge_number="9010", display_name="maid", is_active=True,
-            is_hidden=False, line_user_id="U-emp",
-        ))
-        test_db.commit()
-        staff_bot.handle_event_detail(_direct_text("สวัสดีค่ะ"), test_db)
-        assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_PALETTE]
-        assert gate_calls == []
+        handled = staff_bot.handle_event_detail(event, test_db)
+        assert handled.command is False
+        assert dispatcher.commands == []
 
 
 # ===========================================================================
@@ -857,24 +721,53 @@ def _requests_payload(count=2, text="รายการคำขอ 2 ราย�
     }
 
 
+def _feedback_item(**overrides):
+    item = {
+        "id": "fb-1", "ref": "A1", "branch": "hf", "locationLabelTh": "ห้อง 310",
+        "tagsTh": ["พนักงานเป็นมิตร"], "comment": None, "createdAt": "2026-09-06T03:00:00Z",
+        "kind": "praise", "urgent": False,
+    }
+    item.update(overrides)
+    return item
+
+
 class TestRequestsRendering:
-    def test_prints_guest_feedback_s_own_text_as_is_when_pending(self):
-        payload = _requests_payload()
-        assert staff_bot.render_requests(payload) == payload["text"]
+    """render_requests is the 1:1 ความคิดเห็นลูกค้า PREVIEW — since 2026-09-06
+    it renders the same report-style section (b) text render_slot_digest
+    carries in a group (header + one line per item), not guest-feedback's
+    own chat-style ``text`` any more."""
+
+    def test_renders_the_report_style_header_and_lines(self):
+        payload = _requests_payload(count=1, items=[_feedback_item()])
+        text = staff_bot.render_requests(payload)
+        assert text.splitlines()[0] == "ความคิดเห็นลูกค้า (1 รายการ)"
+        assert "คำชม" in text and "HF ห้อง 310" in text and "พนักงานเป็นมิตร" in text
+
+    def test_kind_labels_and_urgent_prefix(self):
+        payload = _requests_payload(count=2, items=[
+            _feedback_item(id="fb-1", kind="issue", urgent=True, tagsTh=["น้ำไม่ร้อน"]),
+            _feedback_item(id="fb-2", kind="request", urgent=False, tagsTh=["ขอทำความสะอาดห้อง"]),
+        ])
+        lines = staff_bot.render_requests(payload).splitlines()
+        assert lines[1] == "ด่วน ปัญหา · HF ห้อง 310 · น้ำไม่ร้อน"
+        assert lines[2] == "คำขอ · HF ห้อง 310 · ขอทำความสะอาดห้อง"
+
+    def test_an_unrecognised_kind_falls_back_to_its_raw_value(self):
+        payload = _requests_payload(count=1, items=[_feedback_item(kind="mystery")])
+        assert "mystery ·" in staff_bot.render_requests(payload)
 
     def test_a_reachable_read_with_nothing_pending_says_so(self):
-        payload = _requests_payload(count=0, text="")
+        payload = _requests_payload(count=0, text="", items=[])
         assert staff_bot.render_requests(payload) == staff_bot.REQUESTS_NONE_TEXT
 
     def test_a_dark_or_broken_read_gets_one_fixed_thai_line(self):
         assert staff_bot.render_requests(None) == staff_bot.REQUESTS_UNAVAILABLE_TEXT
 
     def test_build_messages_includes_the_requests_text(self, monkeypatch):
-        monkeypatch.setattr(
-            guest_feedback_client, "fetch_pending", lambda: _requests_payload()
-        )
+        payload = _requests_payload(count=1, items=[_feedback_item()])
+        monkeypatch.setattr(guest_feedback_client, "fetch_pending", lambda: payload)
         messages = staff_bot.build_messages([staff_bot.COMMAND_REQUESTS])
-        assert messages == [{"type": "text", "text": _requests_payload()["text"]}]
+        assert messages == [{"type": "text", "text": staff_bot.render_requests(payload)}]
 
     def test_build_messages_carries_the_dark_line_when_the_read_fails(self, monkeypatch):
         monkeypatch.setattr(guest_feedback_client, "fetch_pending", lambda: None)
@@ -900,26 +793,38 @@ class TestRequestsRendering:
         staff_bot.build_messages([staff_bot.COMMAND_REQUESTS], collected)
         assert collected == []
 
-    def test_items_carrying_kind_and_urgent_are_tolerated(self, monkeypatch):
-        # rev 3.1: items[] now carry `kind` ("praise"/"issue"/"request") and
-        # `urgent`. The bot's gate/confirm logic is kind-agnostic — it only
-        # ever reads `id` off an item and relays guest-feedback's own
-        # pre-formatted `text` as-is, so the extra fields must be tolerated
-        # (not crash, not filter, not reshape the text) rather than acted on.
-        payload = _requests_payload(
-            count=2,
-            text="ความคิดเห็นจากผู้เข้าพัก 2 รายการ",
-            items=[
-                {"id": "fb-1", "kind": "praise", "urgent": False},
-                {"id": "fb-2", "kind": "issue", "urgent": True},
-            ],
+    def test_a_1_1_preview_never_confirms_delivery(self, monkeypatch, staff_oa_enabled):
+        # The report-style rewrite changed WHAT is rendered, not the
+        # never-confirms rule (guest-feedback docs/CONTRACTS.md §15 rev 3).
+        confirm_calls = []
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending",
+            lambda: _requests_payload(count=1, items=[_feedback_item()]),
         )
-        assert staff_bot.render_requests(payload) == payload["text"]
-        monkeypatch.setattr(guest_feedback_client, "fetch_pending", lambda: payload)
-        collected = []
-        messages = staff_bot.build_messages([staff_bot.COMMAND_REQUESTS], collected)
-        assert messages == [{"type": "text", "text": payload["text"]}]
-        assert collected == ["fb-1", "fb-2"]
+        monkeypatch.setattr(
+            guest_feedback_client, "confirm_delivered",
+            lambda ids: confirm_calls.append(ids) or True,
+        )
+        sent = []
+        monkeypatch.setattr(
+            service, "reply_messages",
+            lambda token, messages: sent.append((token, messages)),
+        )
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.submit_command(staff_bot.RoutedCommand(
+                chat_key="U-emp", command=staff_bot.COMMAND_REQUESTS,
+                reply_token="tok-1", quiet_seconds=0.0,
+                event_type="message", source_type="user",
+            ))
+            deadline = time.monotonic() + 3
+            while not sent and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+        asyncio.run(_scenario())
+
+        assert len(sent) == 1
+        assert confirm_calls == []
 
 
 # ===========================================================================
@@ -1191,6 +1096,14 @@ class TestHousekeepingClientTickets:
         assert calls["headers"]["Content-Type"] == "image/jpeg"
         assert calls["headers"]["X-Actor-Badge"] == "7001"
         assert calls["timeout"] == housekeeping_client.PHOTO_UPLOAD_TIMEOUT_SECONDS
+
+    @pytest.mark.parametrize("mime", ["video/mp4", "video/quicktime"])
+    def test_upload_photo_uses_the_longer_video_timeout(self, monkeypatch, mime):
+        # Cleanup (2026-09-06 review): a video mime gets 60 s, not 15 s.
+        calls = self._wire_request(monkeypatch, _Response(201, {"photoId": "p1", "videoCount": 1}))
+        housekeeping_client.upload_photo(128, b"v", mime, "7001")
+        assert calls["timeout"] == housekeeping_client.VIDEO_UPLOAD_TIMEOUT_SECONDS
+        assert calls["timeout"] != housekeeping_client.PHOTO_UPLOAD_TIMEOUT_SECONDS
 
     def test_upload_photo_409_relays_the_reason(self, monkeypatch):
         self._wire_request(monkeypatch, _Response(409, {"error": "งานนี้ปิดแล้ว"}))
@@ -1542,16 +1455,16 @@ def _signed_post(client, payload):
 
 
 class TestWebhookIntegration:
-    def test_a_summon_files_one_command_and_still_answers_line_fast(
+    def test_group_text_of_any_kind_never_becomes_a_command(
         self, test_client, test_db, staff_oa_enabled, dispatcher
     ):
+        # Report-only groups (2026-09-06): a group message never becomes a
+        # command, summon or command word or not.
         response = _signed_post(test_client, {"events": [_group_text("น้องคะ งานค้าง")]})
 
         assert response.status_code == 200
-        assert response.json()["bot_commands"] == 1
-        assert [(c.chat_key, c.command, c.reply_token) for c in dispatcher.commands] == [
-            ("Cgroup", staff_bot.COMMAND_DIGEST, "reply-g")
-        ]
+        assert response.json()["bot_commands"] == 0
+        assert dispatcher.commands == []
 
     def test_group_chatter_files_nothing_but_a_token_refresh(
         self, test_client, test_db, staff_oa_enabled, dispatcher
@@ -1591,20 +1504,21 @@ class TestWebhookIntegration:
         assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_REQUESTS]
         assert dispatcher.commands[0].source_type == "user"
 
-    def test_plain_group_chat_files_a_requests_command_when_pending(
+    def test_plain_group_chat_with_pending_feedback_still_gets_no_command(
         self, test_client, test_db, staff_oa_enabled, dispatcher, monkeypatch,
     ):
+        # The chatter-triggered auto-offer is removed (2026-09-06): guest
+        # feedback now reaches a group only through its own slot report.
         monkeypatch.setattr(
-            staff_bot, "get_requests_gate",
-            lambda: staff_bot.PendingRequestsGate(fetch=lambda: _requests_payload()),
+            guest_feedback_client, "fetch_pending", lambda: _requests_payload(),
         )
         response = _signed_post(
             test_client, {"events": [_group_text("ผ้าเช็ดตัวหมดค่ะ")]}
         )
 
         assert response.status_code == 200
-        assert response.json()["bot_commands"] == 1
-        assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_REQUESTS]
+        assert response.json()["bot_commands"] == 0
+        assert dispatcher.commands == []
 
     def test_an_unknown_one_to_one_sender_gets_the_onboarding_command(
         self, test_client, test_db, staff_oa_enabled, dispatcher
@@ -1631,7 +1545,7 @@ class TestWebhookIntegration:
     def test_a_first_delivery_is_not_ignored(
         self, test_client, test_db, staff_oa_enabled, dispatcher
     ):
-        event = _group_text("น้องคะ")
+        event = _direct_text("สวัสดีค่ะ")
         event["deliveryContext"] = {"isRedelivery": False}
         _signed_post(test_client, {"events": [event]})
         assert len(dispatcher.commands) == 1
@@ -1657,13 +1571,12 @@ class TestWebhookIntegration:
         with caplog.at_level("INFO"):
             _signed_post(
                 test_client,
-                {"events": [_group_text("น้องคะ ขอดูงานค้างหน่อยเรื่องแอร์ห้อง 204")]},
+                {"events": [_direct_text("ขอดูงานค้างหน่อยเรื่องแอร์ห้อง 204")]},
             )
 
-        assert "staff-bot command: event=message source=group chat=Cgroup" in caplog.text
+        assert "staff-bot command: event=message source=user chat=U-emp" in caplog.text
         # The message text is NEVER written down.
         assert "แอร์ห้อง 204" not in caplog.text
-        assert "Uspeaker" not in caplog.text
 
     def test_the_follow_path_is_untouched(
         self, test_client, test_db, staff_oa_enabled, dispatcher, monkeypatch
@@ -1726,7 +1639,7 @@ class TestReplyTokenClaims:
         return dispatcher
 
     def test_a_command_claims_its_token(self, bot, test_db):
-        handled = staff_bot.handle_event_detail(_group_text("น้องคะ", reply_token="t1"), test_db)
+        handled = staff_bot.handle_event_detail(_direct_text("สวัสดีค่ะ", reply_token="t1"), test_db)
         assert handled == staff_bot.HandledEvent(command=True, claims_reply_token=True)
 
     def test_plain_chat_in_an_idle_chat_claims_nothing(self, bot, test_db):
@@ -1736,17 +1649,27 @@ class TestReplyTokenClaims:
         assert handled == staff_bot.HandledEvent(command=False, claims_reply_token=False)
 
     def test_plain_chat_while_a_reply_is_pending_claims_the_newer_token(self, bot, test_db):
-        staff_bot.handle_event_detail(_group_text("น้องคะ", reply_token="t1"), test_db)
-        handled = staff_bot.handle_event_detail(_group_text("ขอบคุณค่ะ", reply_token="t2"), test_db)
+        # A group message is now always "plain chat" for the debounce
+        # machinery — a 1:1 non-text message (a photo here) is the one
+        # remaining way a chat still gets a genuine "plain chat refreshes an
+        # already-pending token" scenario, since 1:1 TEXT always resolves to
+        # a command (route_event).
+        staff_bot.handle_event_detail(_direct_text("สวัสดีค่ะ", reply_token="t1"), test_db)
+        handled = staff_bot.handle_event_detail({
+            "type": "message", "replyToken": "t2",
+            "source": {"type": "user", "userId": "U-emp"},
+            "message": {"type": "image", "id": "img-1"},
+        }, test_db)
         assert handled == staff_bot.HandledEvent(command=False, claims_reply_token=True)
-        key = staff_bot._chat_key({"type": "group", "groupId": "Cgroup"})
-        assert bot.debouncer.pending_for(key).reply_token == "t2"
+        assert bot.debouncer.pending_for("U-emp").reply_token == "t2"
 
     def test_a_pending_reply_in_one_chat_claims_nothing_in_another(self, bot, test_db):
-        staff_bot.handle_event_detail(_group_text("น้องคะ", reply_token="t1"), test_db)
-        handled = staff_bot.handle_event_detail(
-            _group_text("ขอบคุณค่ะ", reply_token="t9", group_id="Cother"), test_db
-        )
+        staff_bot.handle_event_detail(_direct_text("สวัสดีค่ะ", reply_token="t1", user_id="U-a"), test_db)
+        handled = staff_bot.handle_event_detail({
+            "type": "message", "replyToken": "t9",
+            "source": {"type": "user", "userId": "U-b"},
+            "message": {"type": "image", "id": "img-1"},
+        }, test_db)
         assert handled.claims_reply_token is False
 
     def test_redelivery_and_join_claim_nothing(self, bot, test_db):
@@ -1757,7 +1680,7 @@ class TestReplyTokenClaims:
         assert staff_bot.handle_event_detail(join, test_db) == staff_bot._NOT_HANDLED
 
     def test_handle_event_still_reports_commands_only(self, bot, test_db):
-        assert staff_bot.handle_event(_group_text("น้องคะ", reply_token="t1"), test_db) is True
+        assert staff_bot.handle_event(_direct_text("สวัสดีค่ะ", reply_token="t1"), test_db) is True
         assert staff_bot.handle_event(_group_text("ขอบคุณค่ะ", reply_token="t2"), test_db) is False
 
 
@@ -1765,10 +1688,10 @@ class TestCommandsAnswerAtOnce:
     """Owner rule 2026-09-05: the quiet wait is for scheduled reports, never
     for a command reply. A command is due the moment it is filed."""
 
-    def test_a_group_command_is_due_immediately(self):
+    def test_a_one_to_one_command_is_due_immediately(self):
         clock = [100.0]
         debouncer = staff_bot.ReplyDebouncer(clock=lambda: clock[0])
-        routed = staff_bot.route_event(_group_text("น้องคะ งานค้าง", reply_token="t1"), lambda _u: True)
+        routed = staff_bot.route_event(_direct_text("งานค้าง", reply_token="t1"), lambda _u: True)
         debouncer.note_command(routed.chat_key, routed.command, routed.reply_token,
                                quiet_seconds=routed.quiet_seconds)
         assert debouncer.next_delay() == 0.0
@@ -1999,14 +1922,18 @@ class TestSlotTriggers:
             "morning", "noon"
         }
 
-    def test_a_command_is_not_a_slot_trigger(self, slot_bot, staff, test_db):
-        # Commands are phase 1's business; rule 3 only looks at chat.
+    def test_a_group_message_is_never_a_command_and_still_only_the_heartbeat(
+        self, slot_bot, staff, test_db,
+    ):
+        # Report-only groups (2026-09-06): a group message is NEVER a
+        # command any more — it is only ever the slot heartbeat rule 3
+        # already was, summon or command word or not.
         handled = staff_bot.handle_event_detail(
             _group_text("น้องคะ งานค้าง", timestamp=_ts(6, 0), user_id="U-reception"),
             test_db,
         )
-        assert handled.command is True
-        assert _mark(test_db) is None
+        assert handled.command is False
+        assert _mark(test_db) is not None  # still filed the heartbeat
 
     @pytest.mark.parametrize("message", [
         {"type": "sticker", "packageId": "1", "stickerId": "2"},
@@ -2229,6 +2156,83 @@ class TestSlotDigestRendering:
         assert messages[0]["text"].startswith("งานซ่อมค้าง 2 งาน")
 
 
+class TestSlotReportFeedbackSection:
+    """Guest feedback consolidated into the slot report (2026-09-06): section
+    (b) — 'ความคิดเห็นลูกค้า (n รายการ)' plus one line per item — rides after
+    the existing maintenance digest, either section omitted when its own
+    source has nothing to say."""
+
+    def test_both_sections_present(self):
+        feedback = _requests_payload(count=1, items=[_feedback_item()])
+        text = staff_bot.render_slot_digest("morning", _payload(), feedback)
+        assert text.startswith("สรุปงานซ่อมค้างประจำรอบเช้า")
+        assert "งานซ่อมค้าง 2 งาน" in text
+        assert "ความคิดเห็นลูกค้า (1 รายการ)" in text
+        assert "คำชม" in text
+
+    def test_feedback_only_when_housekeeping_is_dark(self):
+        feedback = _requests_payload(count=1, items=[_feedback_item()])
+        text = staff_bot.render_slot_digest("morning", None, feedback)
+        assert text is not None
+        assert "สรุปงานซ่อมค้างประจำรอบ" not in text
+        assert "ความคิดเห็นลูกค้า (1 รายการ)" in text
+
+    def test_maintenance_only_when_feedback_is_dark(self):
+        text = staff_bot.render_slot_digest("morning", _payload(), None)
+        assert text.startswith("สรุปงานซ่อมค้างประจำรอบเช้า")
+        assert "ความคิดเห็นลูกค้า" not in text
+
+    def test_maintenance_only_when_feedback_is_zero(self):
+        feedback = _requests_payload(count=0, items=[])
+        text = staff_bot.render_slot_digest("morning", _payload(), feedback)
+        assert "ความคิดเห็นลูกค้า" not in text
+
+    def test_nothing_at_all_when_both_are_dark(self):
+        assert staff_bot.render_slot_digest("morning", None, None) is None
+
+    def test_fifteen_line_cap_then_and_more(self):
+        items = [_feedback_item(id=f"fb-{i}") for i in range(20)]
+        feedback = _requests_payload(count=20, items=items)
+        text = staff_bot.render_slot_digest("morning", None, feedback)
+        lines = text.splitlines()
+        assert lines[0] == "ความคิดเห็นลูกค้า (20 รายการ)"
+        assert len(lines) == 1 + 15 + 1
+        assert lines[-1] == "และอีก 5 รายการ"
+
+    def test_urgent_prefix_and_kind_labels(self):
+        feedback = _requests_payload(count=1, items=[
+            _feedback_item(kind="issue", urgent=True, tagsTh=["น้ำไม่ร้อน"]),
+        ])
+        text = staff_bot.render_slot_digest("morning", None, feedback)
+        assert "ด่วน ปัญหา · HF ห้อง 310 · น้ำไม่ร้อน" in text
+
+    def test_build_reply_collects_feedback_ids_for_the_slot_digest(self, monkeypatch):
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending",
+            lambda: _requests_payload(count=1, items=[_feedback_item()]),
+        )
+        ids = []
+        built = staff_bot.build_reply(
+            {staff_bot.COMMAND_SLOT_DIGEST}, slot_id="morning",
+            confirmed_request_ids=ids,
+        )
+        assert built.slot_digest_included is True
+        assert ids == ["fb-1"]
+
+    def test_a_plain_typed_digest_never_fetches_feedback(self, monkeypatch):
+        # Only the SLOT digest carries section (b) — a plain งานค้าง (typed
+        # or tapped) is unchanged, never touches guest-feedback at all.
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        calls = []
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending",
+            lambda: calls.append(1) or _requests_payload(),
+        )
+        staff_bot.build_messages({staff_bot.COMMAND_DIGEST})
+        assert calls == []
+
+
 class TestSlotSendOutcome:
     """The mark is written where the send outcome is known — and nowhere else."""
 
@@ -2399,6 +2403,55 @@ class TestSlotSendOutcome:
         ))
         assert test_db.query(StaffBotSlotMark).count() == 0
 
+    def test_confirm_delivered_fires_after_a_successful_slot_send_carrying_feedback(
+        self, monkeypatch, staff_oa_enabled, test_db,
+    ):
+        monkeypatch.setattr(
+            service, "reply_messages", lambda token, messages: None,
+        )
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending",
+            lambda: _requests_payload(count=1, items=[_feedback_item(id="fb-9")]),
+        )
+        confirm_calls = []
+        monkeypatch.setattr(
+            guest_feedback_client, "confirm_delivered",
+            lambda ids: confirm_calls.append(ids) or True,
+        )
+        self._file_pending_mark(test_db)
+
+        pending = self._pending([staff_bot.COMMAND_SLOT_DIGEST])
+        pending.source_type = "group"
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(pending))
+
+        assert confirm_calls == [["fb-9"]]
+
+    def test_confirm_delivered_is_not_called_when_the_send_fails(
+        self, monkeypatch, staff_oa_enabled, test_db,
+    ):
+        def _explode(token, messages):
+            raise service.StaffOaApiError("reply messages", 500, "boom")
+
+        monkeypatch.setattr(service, "reply_messages", _explode)
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending",
+            lambda: _requests_payload(count=1, items=[_feedback_item(id="fb-9")]),
+        )
+        confirm_calls = []
+        monkeypatch.setattr(
+            guest_feedback_client, "confirm_delivered",
+            lambda ids: confirm_calls.append(ids) or True,
+        )
+        self._file_pending_mark(test_db)
+
+        pending = self._pending([staff_bot.COMMAND_SLOT_DIGEST])
+        pending.source_type = "group"
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(pending))
+
+        assert confirm_calls == []
+
 
 class TestSlotEndToEnd:
     """One group message in, one slot-labelled reply out, one 'sent' row."""
@@ -2439,9 +2492,13 @@ class TestSlotEndToEnd:
 
 
 class TestCommandDuringASlotPending:
-    """Rule 7: the impatient quiet wins, and the reply carries both."""
+    """Rule 7 ("a command answered inside an open window covers the slot")
+    no longer applies: a group message is never a command any more, so
+    ordinary chat during a pending slot digest only ever refreshes its
+    token/timer — it can never make the reply due at once or add a second
+    command to it."""
 
-    def test_a_command_makes_the_waiting_slot_reply_due_at_once(
+    def test_group_chatter_only_refreshes_the_pending_slot_reply(
         self, slot_bot, staff, test_db
     ):
         _speak(test_db, at=_ts(6, 0), user_id="U-reception", token="tok-1")
@@ -2454,13 +2511,12 @@ class TestCommandDuringASlotPending:
         )
 
         pending = slot_bot.debouncer.pending_for(GROUP)
-        assert pending.quiet_seconds == 0.0
-        assert pending.commands == {
-            staff_bot.COMMAND_SLOT_DIGEST, staff_bot.COMMAND_DIGEST
-        }
+        # Still waiting the full 15 s — a group message is only ever "someone
+        # is here" now, never a command that could win the impatient race.
+        assert pending.quiet_seconds == 15.0
+        assert pending.commands == {staff_bot.COMMAND_SLOT_DIGEST}
+        assert pending.reply_token == "tok-2"  # the newest token, still refreshed
         assert pending.slot_ref == _ref()
-        assert slot_bot.debouncer.next_delay() == 0.0
-        assert [p.reply_token for p in slot_bot.debouncer.pop_due()] == ["tok-2"]
 
     def test_that_reply_carries_the_slot_labelled_digest_and_marks_it_sent(
         self, monkeypatch, staff_oa_enabled, test_db
@@ -2486,11 +2542,14 @@ class TestCommandDuringASlotPending:
         assert texts[0].startswith("สรุปงานซ่อมค้างประจำรอบเช้า")
         assert _mark(test_db).state == "sent"
 
-    def test_a_command_in_a_group_carries_the_window_it_landed_in(self):
+    def test_a_group_message_never_carries_a_window_any_more(self):
+        # A group message is always a plain RoutedMessage now (no slot_ref
+        # field at all) — the window it may have landed in only ever matters
+        # to _maybe_file_slot_digest's own, independent lookup.
         routed = staff_bot.route_event(
             _group_text("น้องคะ งานค้าง", timestamp=_ts(20, 0)), lambda _u: True
         )
-        assert routed.slot_ref == (GROUP, SLOT_DAY, "night")
+        assert isinstance(routed, staff_bot.RoutedMessage)
 
     def test_a_one_to_one_command_carries_no_window(self):
         event = _direct_text("งานค้าง")

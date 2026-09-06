@@ -255,32 +255,35 @@ the bot so a LINE retry cannot double-post.
 ## The staff bot (HF ภายใน)
 
 
-The OA answers questions in the all-staff LINE group and in 1:1 chats.
-Design authority: hf-erp ADR *"The staff bot answers only with reply tokens;
-LINE meters pushes per recipient"*. Code: `app/services/staff_bot.py`
-(router, palette, digest, requests, debounce),
-`app/services/housekeeping_client.py` (the แจ้งซ่อม read) and
-`app/services/guest_feedback_client.py` (the guest-feedback read/confirm).
+**HF Family (or any group/room) is REPORT-ONLY** (owner policy, 2026-09-06:
+*"command through chat is considered spam in HF Family group... feedback
+should be consolidated and report in reporting style not chat style"*). A
+group never answers a command, of any kind, from anybody — its only voice is
+the four daily **slot reports** (below). Every command, ticket, photo/video
+upload and preview lives in a **1:1 chat**. Design authority: hf-erp ADR
+*"The staff bot answers only with reply tokens; LINE meters pushes per
+recipient"*. Code: `app/services/staff_bot.py` (router, palette, digest,
+requests, debounce), `app/services/housekeeping_client.py` (the แจ้งซ่อม
+read/write) and `app/services/guest_feedback_client.py` (the guest-feedback
+read/confirm).
 
-### Summoning it
+### What to type, and where
 
 | Where | What to type | What comes back |
 |---|---|---|
-| Staff group | `น้องคะ` / `น้องค่ะ` / `น้องครับ` / `น้องคับ` (a space after น้อง is fine), or @-mention the OA | the palette bubble |
-| Staff group | the same summon followed by `งานค้าง` (also `งานซ่อมค้าง`, `แจ้งซ่อมค้าง`) | the digest |
-| Staff group | the same summon (or a bare command word) followed by `คำขอ` / `คำขอลูกค้า` / `guest requests` / `ความคิดเห็น` / `ฟีดแบค` / `feedback` | the pending guest feedback |
-| Staff group | any ordinary message, no summon at all, **while guest feedback is pending** | the pending guest feedback (see below) |
-| Staff group | **bare** `แจ้งซ่อม <ห้อง/พื้นที่> <อาการ>`, **no summon** (owner decision 2026-09-06) — unless it STARTS WITH a digest word (`แจ้งซ่อมค้าง`, prefix match — reviewer finding, so "แจ้งซ่อมค้าง 204 ยังไม่มาเลย" stays chat too, not only the bare word alone), the remainder contains a completion phrase (`เสร็จแล้ว`/`เสร็จ`/`แล้วนะ`/`แล้วค่ะ`/`แล้วครับ`/`เรียบร้อย`/`ซ่อมแล้ว`/`แก้แล้ว`/`ทำแล้ว`), or the remainder has no room/area — any of those three stays ordinary chat, silently | the same แจ้งซ่อม ticket flow as the summoned form (see below) |
-| 1:1 chat | `งานค้าง` on its own | the digest |
-| 1:1 chat | `คำขอ` / `คำขอลูกค้า` / `guest requests` / `ความคิดเห็น` / `ฟีดแบค` / `feedback` on its own | a **preview** of the pending guest feedback |
+| HF Family (any group/room) | anything at all — text, a tap on an old bubble's button, a photo, a video | **nothing.** The message is only a candidate for the scheduled slot report's heartbeat (see "The slot report" below); it is never parsed, never buffered, never acknowledged. |
+| 1:1 chat | `งานค้าง` (also `งานซ่อมค้าง`, `แจ้งซ่อมค้าง`) on its own | the digest |
+| 1:1 chat | `คำขอ` / `คำขอลูกค้า` / `guest requests` / `ความคิดเห็น` / `ฟีดแบค` / `feedback` on its own | a **preview** of the pending guest feedback, report-style (see "Guest feedback" below) |
+| 1:1 chat | `แจ้งซ่อม <ห้อง/พื้นที่> <อาการ>` | the ticket flow (see "แจ้งซ่อม from chat" below) |
+| 1:1 chat | `เพิ่มรูป <id>` / `เพิ่มรูป #<id>` (reply-to-media, 2026-09-06) | attach a photo/video, gated like `cmd=addphoto` (see "Reply-to-media" below) |
 | 1:1 chat | anything else | the palette bubble |
-| anywhere | tapping the palette's **งานค้าง แจ้งซ่อม** button (`cmd=digest`) | the digest |
-| anywhere | tapping the palette's **ความคิดเห็นลูกค้า** button (`cmd=requests`) | the pending guest feedback |
+| 1:1 chat | tapping the palette's **งานค้าง แจ้งซ่อม** button (`cmd=digest`) | the digest |
+| 1:1 chat | tapping the palette's **ความคิดเห็นลูกค้า** button (`cmd=requests`) | the pending guest feedback preview |
 
-`น้อง` without one of the four particles is ordinary chat — "น้องเอาข้าวไหม"
-never wakes the bot. In a 1:1 chat the sender must resolve to an **active**
-employee via `line_user_id`; an unknown account gets the same Q-badge
-onboarding reply a stranger's `follow` gets, and nothing else.
+The sender must resolve to an **active** employee via `line_user_id`; an
+unknown account gets the same Q-badge onboarding reply a stranger's `follow`
+gets, and nothing else. There is no summon grammar any more — a group never
+listens for one, and a 1:1 never needed one.
 
 ### Zero metered messages
 
@@ -290,25 +293,44 @@ any chat size. A *push* into the staff group would be metered **per member**
 "Mind the push cap" below. No push, multicast, broadcast or narrowcast exists
 anywhere in this feature, and none may be added to it.
 
-### Commands answer at once; scheduled digests wait for quiet
+### Commands answer at once; scheduled reports wait for quiet
 
-A summon, a command word or a palette tap is answered **immediately**
+A 1:1 command word or a palette tap is answered **immediately**
 (`COMMAND_QUIET_SECONDS = 0`). The owner's rule (2026-09-05): "15 seconds of
 quiet is for scheduled reports, not for the command reply."
 
 The wait-for-quiet machinery (`ReplyDebouncer`) exists for the **phase 2 slot
-digest**, which piggybacks on reception's hourly report and must never land in
+report**, which piggybacks on reception's hourly report and must never land in
 the middle of that burst: it waits for **15 s of quiet** (`SLOT_QUIET_SECONDS`)
 in the chat, every later message hands it a fresher reply token and restarts
 the timer, and it fires at the latest **45 s** after the first trigger — reply
 tokens are short lived, so that cap is not optional. Commands filed in the same
 instant for one chat still coalesce into a single reply.
 
-### The slot digest (phase 2)
+### The slot report (phase 2, consolidated 2026-09-06)
 
 Four Bangkok windows a day, in **groups only** (rooms and 1:1 chats never have
-one), each carrying the same งานค้าง digest **once**, under one extra line:
-`สรุปงานซ่อมค้างประจำรอบ<เช้า|เที่ยง|บ่าย|ค่ำ>`.
+one) — the ONLY thing a group ever hears from this bot. Each window posts
+**once**, as a REPORT with up to two sections:
+
+- **(a) the maintenance digest** — unchanged text, under one extra line:
+  `สรุปงานซ่อมค้างประจำรอบ<เช้า|เที่ยง|บ่าย|ค่ำ>` — present whenever housekeeping
+  answers at all (even "ไม่มีงานซ่อมค้าง").
+- a blank line, then **(b) ความคิดเห็นลูกค้า** — pending guest feedback,
+  consolidated in 2026-09-06 (owner: *"feedback should be consolidated and
+  report in reporting style not chat style"*), present whenever guest-feedback
+  has something pending. See "Guest feedback" below for the line format.
+
+Either section is simply **omitted** when its own source has nothing to say
+(housekeeping dark, or guest-feedback dark/zero pending) — the report still
+goes out with just the other section. The window posts **nothing at all**
+only when BOTH are empty (a scheduled message must never spam an error line
+into HF Family, but a scheduled post that DOES have real content — feedback
+pending even while housekeeping is dark — must not be dropped either).
+`render_slot_digest` / `render_feedback_section` in `staff_bot.py` are the
+two functions this splits across; the combined text is still capped at
+LINE's 5000-char message limit (`_fit`), same as the maintenance section
+always was on its own.
 
 | Slot | Window (Bangkok, start inclusive / end exclusive) | Label |
 |---|---|---|
@@ -320,7 +342,10 @@ one), each carrying the same งานค้าง digest **once**, under one ex
 The window is decided by the **event's own timestamp** (LINE's epoch-ms
 `timestamp`, converted to Bangkok), not by the server clock at send time.
 
-**What opens a window.** Any ordinary (non-command) message in the group, of any kind (text, sticker, photo, video, location; owner rule 2026-09-06: stickers count):
+**What opens a window.** Any message in the group, of any kind (text,
+sticker, photo, video, location; owner rule 2026-09-06: stickers count) —
+never read, kept or logged, since a group message can no longer be a command
+of any kind either:
 
 1. from someone whose LINE account maps to an **active employee holding the
    `reception` grant**, riding the report burst this digest is meant to piggyback
@@ -335,16 +360,15 @@ is by design, not a failure. There is no group allowlist.
 `staff_bot_slot_marks` (UNIQUE `group_id, bkk_date, slot`), written `pending`
 the moment the slot is filed and promoted to `sent` when the LINE reply
 succeeds. Every other outcome **deletes** the row so the next qualifying
-message re-triggers: the send failed, housekeeping was dark (a scheduled post
-must never spam `ระบบงานซ่อมยังไม่เชื่อมต่อ` into the group four times a day;
-it says nothing at all instead), or a `pending` older than 120 s was left
-behind by a process that died mid-debounce.
+message re-triggers: the send failed, both sources had nothing to say (a
+scheduled post must never spam `ระบบงานซ่อมยังไม่เชื่อมต่อ` into the group four
+times a day; it says nothing at all instead), or a `pending` older than 120 s
+was left behind by a process that died mid-debounce.
 
-**Interaction with commands.** A command typed while a slot digest is waiting
-wins on timing (quiet 0) and the reply carries the slot-labelled digest with
-it, one digest per reply, never two. And a plain `งานค้าง` answered inside an
-unmarked window marks that slot `sent` too, so no near-duplicate follows a few
-minutes later.
+**Delivery confirm.** Once LINE has **accepted** a slot report that carried
+section (b), the bot calls `guest_feedback_client.confirm_delivered` with
+that fetch's feedback ids — the group posting the report IS the delivery,
+exactly as a 1:1 preview (below) never triggers it.
 
 Logs, ids only, INFO: `staff-bot slot filed: group=... date=... slot=...
 trigger=reception|late`, `staff-bot slot sent: ...`, `staff-bot slot dropped:
@@ -355,11 +379,13 @@ in as soon as this deploys.
 
 ### Privacy rule
 
-The webhook sees every message in the staff group. Non-command chat is
-discarded **before any logging** — no text, no photo, no sender. A recognised
-command logs exactly three fields: event type, source type, chat id. The first
-`join` logs the group id once (`staff-bot joined group C...`), which is how
-the rollout learns it. Nothing else about a message is ever written down.
+The webhook sees every message in the staff group. A group/room message of
+any kind is discarded **before any logging** (DEBUG-only, never INFO: `staff-bot
+group ignored: type=message|postback chat=...`) — no text, no photo, no
+sender. A recognised 1:1 command logs exactly three fields: event type,
+source type, chat id. The first `join` logs the group id once (`staff-bot
+joined group C...`), which is how the rollout learns it. Nothing else about a
+message is ever written down.
 
 ### Where the งานซ่อม rows come from
 
@@ -381,33 +407,20 @@ Both variables ride the deploy (`env_payload` in
 `.github/workflows/build.yml`, passthrough in `docker-compose.yml`); do not
 hand-edit the host `.env`, every deploy rewrites it.
 
-### แจ้งซ่อม from chat (phase 3)
+### แจ้งซ่อม from chat (phase 3, 1:1 only since 2026-09-06)
 
 A linked employee raises a ticket without leaving LINE: `แจ้งซ่อม <ห้อง/พื้นที่>
-<อาการ>` after the summon in the group, bare in a 1:1, or — since 2026-09-06 —
-**bare in the group too**, gated by two safeguards so ordinary chat never
-files a junk ticket: (1) the remainder after `แจ้งซ่อม` must not contain a
-completion/status phrase (`BARE_REPORT_SKIP_PHRASES` — `เสร็จแล้ว`, `เสร็จ`,
-`แล้วนะ`, `แล้วค่ะ`, `แล้วครับ`, `เรียบร้อย`, `ซ่อมแล้ว`, `แก้แล้ว`, `ทำแล้ว`, checked
-as a substring anywhere in the remainder), and (2) it must parse to a room or
-area (`parse_report`) — a bare message that fails either check is left as
-ordinary chat, **silently** (no PARSE_ERROR reply, unlike the summoned form).
-A digest word as a PREFIX of the message (`แจ้งซ่อมค้าง`, not only an exact
-match — reviewer finding, so a digest word followed by more text is caught
-too) is excluded up front and keeps needing a summon, exactly as before. A
-bare report that clears both checks is routed as
-the identical `COMMAND_REPORT` the summoned form produces — same identity
-gate, ticket creation, photo claiming/attach window, confirmation bubble and
-logging — and, being a command, it never counts as slot-trigger chatter
-(`_maybe_file_slot_digest` is not reached for it, same as any other command).
-No new environment variable; live for every group as soon as this deploys.
-Code: `app/services/staff_bot.py` (parser, palette buttons, postback handlers),
-`app/services/housekeeping_client.py` (create/patch/cancel/get/list work
-orders + the photo upload), `app/services/staff_oa_service.fetch_message_content`
-(the one place `api-data.line.me/v2/bot/message/{id}/content` is ever called).
+<อาการ>`, bare, in a 1:1 chat. Every ticket command — report, addphoto,
+fixcat, setcat, toggleurgent, cancel, switchprop, mine, status — is 1:1 only;
+a group/room event never reaches any of this (see "GROUP/ROOM SOURCES ARE
+REPORT-ONLY" above). Code: `app/services/staff_bot.py` (parser, palette
+buttons, postback handlers), `app/services/housekeeping_client.py`
+(create/patch/cancel/get/list work orders + the photo upload),
+`app/services/staff_oa_service.fetch_message_content` (the one place
+`api-data.line.me/v2/bot/message/{id}/content` is ever called).
 
 **Identity.** The sender must resolve to an **active** employee via
-`line_user_id`, in the group and in 1:1 alike; a stranger gets one fixed line
+`line_user_id`; a stranger gets one fixed line
 (`ยังไม่รู้จักบัญชีนี้ค่ะ กรุณาเชื่อมบัญชี LINE กับ HF ID ก่อนแจ้งซ่อม`) and
 nothing is created. The employee's `location` picks the property (`HF` →
 `hf`, `HF_VILLE` → `hfville`, unset → `hf`, correctable afterwards with the
@@ -467,22 +480,25 @@ reply, never a push:
   the background exactly as before; when they finish, they produce no ack of
   their own, because a buffered photo never had a reply token of its own to
   answer with (silent, by design).
-- **In-window acks** (rule A): a photo that arrives WHILE an order's attach
-  window is open (the "silent attach" case — เพิ่มรูป, or more photos after
-  the ticket already exists) still attaches with no reply of its own at the
-  moment it arrives, but once its upload resolves, the bot now answers on
-  that photo event's own reply token: `แนบรูปเข้า #N แล้ว k รูป (รวม total รูป)`
-  on success (the parenthesis is omitted when the upload's response did not
-  carry a photo count), `แนบรูปไม่สำเร็จ f รูป ลองส่งใหม่อีกครั้งค่ะ (#N)` on
-  failure, or both as two lines when some of a burst succeeded and some
-  failed. Several images sent together arrive as separate events a couple of
-  seconds apart, so this coalesces like any other reply —
-  `PHOTO_ACK_QUIET_SECONDS` (3 s) of quiet, the same 45 s cap as everything
-  else — and a command typed into the same chat during that quiet window
-  wins the impatient race (0 s) and carries the ack along in its own
-  immediate reply. Photos with no ticket to attach to (no attach window
-  open) are never fetched and never acknowledged — they only ever join the
-  90-second buffer.
+- **In-window acks** (rule A): a photo or video that arrives WHILE an order's
+  attach window is open (the "silent attach" case — เพิ่มรูป, or more media
+  after the ticket already exists) still attaches with no reply of its own at
+  the moment it arrives, but once its upload resolves, the bot now answers on
+  that event's own reply token: `แนบรูปเข้า #N แล้ว k รูป` and/or
+  `แนบวิดีโอเข้า #N แล้ว v คลิป` — photos and videos are counted (and worded)
+  SEPARATELY everywhere, see "Video support" below — followed by
+  `(รวม t ไฟล์)` where `t` is the upload's own `photoCount + videoCount`
+  (omitted when that total is not known), `แนบรูปไม่สำเร็จ f รูป
+  ลองส่งใหม่อีกครั้งค่ะ (#N)` and/or `แนบวิดีโอไม่สำเร็จ f คลิป
+  ลองส่งใหม่อีกครั้งค่ะ (#N)` on failure, or a mix of these as separate lines
+  when a burst had more than one outcome. Several media sent together arrive
+  as separate events a couple of seconds apart, so this coalesces like any
+  other reply — `PHOTO_ACK_QUIET_SECONDS` (3 s) of quiet, the same 45 s cap as
+  everything else — and a command typed into the same chat during that quiet
+  window wins the impatient race (0 s) and carries the ack along in its own
+  immediate reply. Photos/videos with no ticket to attach to (no attach
+  window open) are never fetched and never acknowledged — they only ever join
+  the 90-second buffer.
 
 Housekeeping unreachable at any step: the one fixed line
 `ระบบแจ้งซ่อมยังไม่เชื่อมต่อ ลองใหม่อีกครั้งภายหลัง` — buffered photos are left
@@ -518,6 +534,123 @@ the reporter or a `reception`-grant holder gets the bubble
 `ไม่พบงาน #N ค่ะ`. This is a READ — no button or command in this chat ever
 changes a ticket's status; that stays on the reception board in every phase.
 
+### Reply-to-media (2026-09-06)
+
+LINE marks a text message as a reply with `message.quotedMessageId`. Two
+commands read it (`RoutedCommand.quoted_message_id`, parsed in `route_event`,
+threaded onto the RoutedCommand for both — never logged, only the message id
+is ever carried):
+
+- **แจ้งซ่อม, as a reply** (1:1 only): the quoted photo/video — whoever
+  originally sent it — is attached to the new ticket alongside anything
+  already buffered, exactly like a claimed buffered photo (rule B's bounded
+  `CLAIMED_UPLOAD_WAIT_SECONDS` wait; the confirmation bubble's photo row
+  reflects the outcome once it resolves).
+- **เพิ่มรูป #N** (text command, `^เพิ่มรูป\s*#?(\d{1,10})$` — bare in 1:1):
+  same authorization as the `cmd=addphoto` postback (reporter or a
+  `reception`-grant holder). **As a reply to a message**, the quoted media is
+  fetched and attached right away (bounded wait, then the ack line replaces
+  the placeholder). **Without a quote**, it behaves exactly as before: opens
+  the attach window and replies `ส่งรูปหรือวิดีโอมาได้เลยค่ะ (ภายใน 2 นาที) #N`.
+
+A quoted message whose content is neither `image/*` nor `video/*` (a quoted
+TEXT message, say — LINE's content endpoint answers with something else, or
+refuses outright) counts as one failed attach, the same line an ordinary
+failed upload gets. The quoted item's kind is not known ahead of the fetch —
+unlike a photo/video sent directly (see below), a quote is fetched once,
+capped at `VIDEO_BYTES_MAX` (never unbounded — cleanup, 2026-09-06 review;
+an oversize quote raises `ContentTooLarge` and is bucketed as a video
+failure the same as an oversize declared video), and its kind decided from
+the response's Content-Type; this means a quoted VIDEO skips the
+transcoding wait (LINE's transcoding status is only meaningful for a
+message LINE itself flagged as needing it) — if LINE has not finished
+processing a just-sent, just-quoted video yet, the fetch fails and it counts
+as a generic failed attach rather than the specific "still processing" line.
+
+### Video support (2026-09-06)
+
+`message.type == "video"` is buffered, claimed and attached exactly like an
+image (the photo buffer's entries carry `kind`: `image` | `video`), with one
+extra step: LINE transcodes a video server-side before its bytes are
+downloadable at all.
+
+- **Pipeline**: `staff_oa_service.wait_for_transcoding(message_id,
+  VIDEO_TRANSCODE_WAIT_SECONDS)` polls `GET
+  {DATA API}/v2/bot/message/{id}/content/transcoding` every 3 s
+  (`{"status": "processing"|"succeeded"|"failed"}`) until it succeeds
+  (`True`), or fails/times out (`False`, indistinguishable at this layer —
+  both render the same line) → `fetch_message_content(message_id,
+  VIDEO_BYTES_MAX)` (streamed, aborts past **60 MB** — raises
+  `staff_oa_service.ContentTooLarge`, caught and rendered as its own line) →
+  `housekeeping_client.upload_photo(..., mime)` with the mime LINE reported
+  (`video/mp4` or `video/quicktime`; defaults to `video/mp4` for anything
+  else) — a `video/*` mime gets `VIDEO_UPLOAD_TIMEOUT_SECONDS` (60 s) on
+  that upload call rather than the plain `PHOTO_UPLOAD_TIMEOUT_SECONDS`
+  (15 s): a video is both larger and slower to push through (cleanup,
+  2026-09-06 review).
+- **Failure lines** (rule A's own-token ack; rule B's bounded-wait bubble
+  shows only the aggregate counts, not the specific reason): transcode
+  failed/timed out → `วิดีโอประมวลผลไม่สำเร็จ ลองส่งใหม่อีกครั้งค่ะ (#N)`;
+  oversize → `วิดีโอใหญ่เกินไป (สูงสุด 60 MB) (#N)`; any other upload failure →
+  `แนบวิดีโอไม่สำเร็จ f คลิป ลองส่งใหม่อีกครั้งค่ะ (#N)` (the video-worded
+  parallel of the existing photo failure line, since counts are separated
+  everywhere now).
+- **VIDEO_ACK_DEADLINE_SECONDS (40 s)**: a video's transcode can outlive an
+  IN-WINDOW event's LINE reply token (LINE's tokens are short-lived; a
+  transcode can take up to `VIDEO_TRANSCODE_WAIT_SECONDS` = 90 s). Past 40 s
+  without an outcome, the bot files `วิดีโอกำลังประมวลผล จะแนบให้เมื่อพร้อมค่ะ
+  (#N)` on that about-to-expire token and lets the upload keep going in the
+  background — its eventual real outcome is **silent** (no second ack; the
+  token was already spent). Finishing within 40 s answers the normal ack
+  instead. A claimed/quoted video inside rule B's 10-second bounded wait is
+  simpler: it almost always shows as still-running (`กำลังแนบอีก m ไฟล์`) at
+  that mark, and its later completion is silent the same way a still-running
+  photo's always was — it never had a reply token of its own to answer with.
+- **Counts, everywhere**: photos and videos are counted and worded
+  separately — the confirmation bubble's row says `รูป k รูป · วิดีโอ v คลิป`
+  (a zero part omitted; `ยังไม่มีรูป` when both are zero), and so do the
+  งานของฉัน/สถานะ bubbles. A claimed-but-not-yet-uploaded batch says
+  `กำลังแนบ 2 รูป 1 คลิป` (per-kind, space-joined). A still-running count that
+  is purely photos keeps saying `...N รูป` (unchanged from before video
+  support); any video in the mix says `...N ไฟล์`.
+- **Row label** (cleanup, 2026-09-06 review): the confirmation bubble's and
+  the งานของฉัน/สถานะ bubble's media row is labelled **ไฟล์** whenever the
+  order carries any video at all, else the original **รูป** —
+  `_media_row_label` in `staff_bot.py`; the confirmation bubble's label is
+  re-derived once the claimed batch settles, so a quoted attachment that
+  turns out to be a video still ends up under ไฟล์ even though the
+  claiming-time render (kind unknown yet) guessed รูป.
+- **Works board**: `src/server/worksFeed.ts` in the housekeeping repo serves
+  media bytes by id with the stored mime already — a video shows as a broken
+  thumbnail there until it is updated to read the mime and render
+  accordingly (noted, not fixed, in that repo's own README).
+
+No new environment variables for either of the above — same
+`HOUSEKEEPING_INTERNAL_URL` / `HOUSEKEEPING_STAFF_BOT_TOKEN` /
+`STAFF_OA_CHANNEL_*` pairs as everything else in this section.
+
+### Group is report-only (owner policy, 2026-09-06)
+
+Superseding phase 3's narrower "group silence" rule (which only suppressed
+two specific ticket-nag replies), the owner's 2026-09-06 decision is
+absolute: *"command through chat is considered spam in HF Family group —
+10 people send commands in 1 chat room is bad."* In HF Family (or any
+group/room) the bot's only voice at all is the scheduled slot report — it
+never answers a command, of any kind, from anybody, summoned or bare,
+recognised word or not, text or media, from a stranger or a linked employee
+alike. This is enforced structurally in `route_event` (a group/room message
+event always becomes a plain `RoutedMessage`, never a `RoutedCommand`; a
+group/room postback event always routes to `None`), not by a per-case reply
+suppression — so there is no reply left to drop for phase 3's old
+`PARSE_ERROR_NO_ROOM_TEXT`/`NOT_LINKED_TEXT` cases: a group ticket attempt
+never reaches ticket routing in the first place.
+
+**Unaffected in 1:1** — a stranger or a parse error there still gets the
+fixed line, exactly as always. The webhook logs a group/room drop at
+**DEBUG only** (never INFO — a group is told nothing and the log stays
+quiet by default too): `staff-bot group ignored: type=message|postback
+chat=<chat id>` — never the message text, never the sender.
+
 ## Guest feedback (ความคิดเห็นลูกค้า)
 
 Since guest-feedback `docs/CONTRACTS.md` §15 rev 3 ("the Employee Hub bot is
@@ -528,47 +661,55 @@ it fire-and-forget — both are retired. The bot now reads and confirms guest
 feedback from guest-feedback itself, server-to-server, and answers only with
 its own reply tokens, exactly like the housekeeping digest above. Rev 3.1
 (2026-09-06) widened the queue from requests-only to **every** guest
-submission — praise, issue and request alike — and every one of them is
-relayed to the staff group on the bot's next free reply token, same as
-before.
+submission — praise, issue and request alike.
+
+**Consolidated into the slot report (2026-09-06)**, superseding the
+chatter-triggered group auto-offer phase 3 shipped: the ONLY place a group
+ever sees pending guest feedback is section (b) of its own scheduled slot
+report (see "The slot report" above) — never from ordinary chat, pending or
+not, summoned or bare. A 1:1 `คำขอ` still renders the identical report-style
+text as a PREVIEW, and still never confirms delivery.
 
 | | |
 |---|---|
-| Code | `app/services/guest_feedback_client.py` (`fetch_pending`, `confirm_delivered`); command handling in `app/services/staff_bot.py` |
+| Code | `app/services/guest_feedback_client.py` (`fetch_pending`, `confirm_delivered`); rendering (`render_feedback_section`, `render_requests`, `render_slot_digest`) and command handling in `app/services/staff_bot.py` |
 | Read | `GET {GUEST_FEEDBACK_BASE_URL}/api/internal/line/pending` — `X-Reader-Secret: <GUEST_FEEDBACK_READER_SECRET>`, 2 s timeout |
 | Confirm | `POST {GUEST_FEEDBACK_BASE_URL}/api/internal/line/delivered` — `{"ids": [...], "method": "reply"}` |
 | Contract of record | guest-feedback `docs/CONTRACTS.md` §15 rev 3, widened by rev 3.1 |
 
-**The command.** `คำขอ` / `คำขอลูกค้า` / `guest requests` / `ความคิดเห็น` /
-`ฟีดแบค` / `feedback` (with or without a summon in a group; on its own in a
-1:1) and the palette's **ความคิดเห็นลูกค้า** button (`cmd=requests`) all
-render guest-feedback's own pre-formatted `text` as-is when `count > 0`,
-`"ยังไม่มีความคิดเห็นใหม่ค่ะ"` when the read succeeds with nothing pending, and
-`"ยังอ่านความคิดเห็นลูกค้าไม่ได้ค่ะ ลองใหม่อีกครั้ง"` on any failure (either env
-unset, timeout, non-2xx, malformed body) — the bot never shows a status code
-and never goes silent. Items carry `kind` (`praise`/`issue`/`request`) and
-`urgent`, but the bot relays guest-feedback's pre-formatted `text` unchanged
-and does not branch on either field — the gate/confirm logic is kind-agnostic.
+**Rendering (2026-09-06 consolidation).** Both the slot report's section (b)
+and the 1:1 preview render the SAME report-style text
+(`render_feedback_section`) built from the pending JSON's `items[]` —
+never guest-feedback's own chat-style `text` field any more:
 
-**Group auto-offer.** Unlike the digest, a **plain group message with no
-summon at all** also triggers this command — but only when guest-feedback
-reports something pending. Every non-summon group message checks (through
-`staff_bot.PendingRequestsGate`, cached **10 s per chat** so ordinary chatter
-cannot hammer the endpoint); if pending feedback exists, that message becomes
-a `COMMAND_REQUESTS` reply under the same immediate-answer rule as any other
-command (`COMMAND_QUIET_SECONDS = 0`). A summon is unaffected either way — it
-already produces a command before this check ever runs.
+```
+ความคิดเห็นลูกค้า (3 รายการ)
+ด่วน ปัญหา · HF ห้อง 412 · น้ำไม่ร้อน — "Sometimes scalding"
+คำชม · HF ห้อง 310 · พนักงานเป็นมิตร, ทำเลดี — "พนักงานน่ารักมากค่ะ"
+คำขอ · HF Ville ห้อง 112 · ขอทำความสะอาดห้อง
+```
 
-**1:1 is a preview, never a confirm.** In a 1:1 chat `คำขอ` renders the exact
-same list, but the reply **never confirms delivery** — it is someone checking
-privately, not the group being told. Confirmation only follows a reply that
-went to a **group or room**.
+One line per item: `<ด่วน ><kind label> · <branch><location> · <short text>`
+— kind labels `praise`→คำชม, `issue`→ปัญหา, `request`→คำขอ (any other kind
+falls back to its raw value); branch label `hf`→HF, `hfville`→HF Ville
+(matches guest-feedback's own `branchShort`); the short text is `tagsTh`
+joined by `, ` plus an optional quoted `comment`, pictographs stripped and
+capped at 80 characters. Capped at **15 lines**, then `และอีก m รายการ` for
+the rest (`m` = the fetch's total `count` minus the 15 shown). The whole
+combined text (both sections, in a slot report) is still capped at LINE's
+5000-char message limit (`_fit`).
 
-**Delivery confirm.** Once LINE has **accepted** a group/room reply that
-included the guest-feedback text, the bot calls `confirm_delivered` with the
-feedback ids from the same fetch that rendered the text — marking those rows
-delivered on guest-feedback's side so they are not offered again. A reply
-LINE rejects, or a 1:1 reply, never confirms anything.
+**1:1 `คำขอ` is a preview, never a confirm.** Same rendering, but the reply
+**never confirms delivery** — it is someone checking privately, not the
+group being told. `render_requests` maps a dark/unreachable read to
+`"ยังอ่านความคิดเห็นลูกค้าไม่ได้ค่ะ ลองใหม่อีกครั้ง"` and a reachable read with
+nothing pending to `"ยังไม่มีความคิดเห็นใหม่ค่ะ"`.
+
+**Delivery confirm.** Once LINE has **accepted** a slot report or a group/room
+reply that carried the feedback section, the bot calls `confirm_delivered`
+with the feedback ids from the same fetch that rendered it — marking those
+rows delivered on guest-feedback's side so they are not offered again. A
+reply LINE rejects, or a 1:1 preview, never confirms anything.
 
 ### Env
 

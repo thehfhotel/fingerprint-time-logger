@@ -25,14 +25,16 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.models.models import Employee, EmployeeAppGrant
+from app.models.models import Employee, EmployeeAppGrant, StaffBotSlotMark
 from app.services import guest_feedback_client, housekeeping_client, staff_bot
 from app.services import staff_oa_service as service
 
 TOKEN = "test-channel-access-token"
+BANGKOK = timezone(timedelta(hours=7))
 SECRET = "test-channel-secret"
 WEBHOOK_PATH = "/api/public/staff-oa/webhook"
 
@@ -69,14 +71,6 @@ def _dark_housekeeping(monkeypatch):
 def _dark_guest_feedback(monkeypatch):
     monkeypatch.delenv("GUEST_FEEDBACK_BASE_URL", raising=False)
     monkeypatch.delenv("GUEST_FEEDBACK_READER_SECRET", raising=False)
-
-
-@pytest.fixture(autouse=True)
-def _idle_requests_gate(monkeypatch):
-    monkeypatch.setattr(
-        staff_bot, "get_requests_gate",
-        lambda: staff_bot.PendingRequestsGate(fetch=lambda: None),
-    )
 
 
 @pytest.fixture(autouse=True)
@@ -120,6 +114,7 @@ class _CollectingDispatcher:
         self.slots = []
         self.photo_uploads = []
         self.photo_upload_tokens = []
+        self.photo_upload_kinds = []
 
     def submit_command(self, command):
         self.commands.append(command)
@@ -130,12 +125,14 @@ class _CollectingDispatcher:
     def submit_slot_digest(self, ref, reply_token, trigger):
         self.slots.append((ref, reply_token, trigger))
 
-    def spawn_photo_upload(self, order_id, message_id, actor_badge, chat_key="", reply_token=""):
-        # chat_key/reply_token (rule A, 2026-09-06) are recorded separately so
-        # the existing 3-tuple assertions in TestAttachWindow/TestPhotoBuffer
-        # stay exactly as they were.
+    def spawn_photo_upload(self, order_id, message_id, actor_badge, chat_key="", reply_token="", kind="image"):
+        # chat_key/reply_token (rule A, 2026-09-06) and kind (video support,
+        # 2026-09-06) are recorded separately so the existing 3-tuple
+        # assertions in TestAttachWindow/TestPhotoBuffer stay exactly as they
+        # were.
         self.photo_uploads.append((order_id, message_id, actor_badge))
         self.photo_upload_tokens.append((order_id, chat_key, reply_token))
+        self.photo_upload_kinds.append((order_id, kind))
 
 
 @pytest.fixture
@@ -183,38 +180,80 @@ def _flatten_texts(node, out=None):
     return out
 
 
-def _group_text(text, reply_token="reply-g", group_id="Cgroup", user_id="Uspeaker"):
-    return {
+def _group_text(text, reply_token="reply-g", group_id="Cgroup", user_id="Uspeaker",
+                 quoted_message_id=None, timestamp=None):
+    message = {"type": "text", "id": "m1", "text": text}
+    if quoted_message_id:
+        message["quotedMessageId"] = quoted_message_id
+    event = {
         "type": "message",
         "replyToken": reply_token,
         "source": {"type": "group", "groupId": group_id, "userId": user_id},
-        "message": {"type": "text", "id": "m1", "text": text},
+        "message": message,
     }
+    if timestamp is not None:
+        event["timestamp"] = timestamp
+    return event
 
 
-def _direct_text(text, user_id="U-emp", reply_token="reply-d"):
+def _direct_text(text, user_id="U-emp", reply_token="reply-d", quoted_message_id=None):
+    message = {"type": "text", "id": "m1", "text": text}
+    if quoted_message_id:
+        message["quotedMessageId"] = quoted_message_id
     return {
         "type": "message",
         "replyToken": reply_token,
         "source": {"type": "user", "userId": user_id},
-        "message": {"type": "text", "id": "m1", "text": text},
+        "message": message,
     }
 
 
-def _image(message_id="line-img-1", group_id="Cgroup", user_id="U-emp", reply_token="reply-i"):
+def _image(message_id="line-img-1", group_id="Cgroup", user_id="U-emp",
+           reply_token="reply-i", direct=False, timestamp=None):
+    # direct=True (photo buffering/attach is 1:1 only, 2026-09-06 policy —
+    # see TestGroupReportOnly for the group-is-heartbeat-only coverage).
+    source = (
+        {"type": "user", "userId": user_id} if direct
+        else {"type": "group", "groupId": group_id, "userId": user_id}
+    )
+    event = {
+        "type": "message",
+        "replyToken": reply_token,
+        "source": source,
+        "message": {"type": "image", "id": message_id},
+    }
+    if timestamp is not None:
+        event["timestamp"] = timestamp
+    return event
+
+
+def _video(message_id="line-vid-1", group_id="Cgroup", user_id="U-emp",
+           reply_token="reply-v", direct=False):
+    source = (
+        {"type": "user", "userId": user_id} if direct
+        else {"type": "group", "groupId": group_id, "userId": user_id}
+    )
     return {
         "type": "message",
         "replyToken": reply_token,
-        "source": {"type": "group", "groupId": group_id, "userId": user_id},
-        "message": {"type": "image", "id": message_id},
+        "source": source,
+        "message": {"type": "video", "id": message_id},
     }
 
 
-def _postback(data, group_id="Cgroup", user_id="U-emp", reply_token="reply-p"):
+def _postback(data, user_id="U-emp", reply_token="reply-p", group=False, group_id="Cgroup"):
+    # Postback commands are 1:1 only, 2026-09-06 policy (a group/room postback
+    # is always ignored, see route_event) — user is the default here on
+    # purpose, so every test that only wants "does this postback parse"
+    # exercises the reachable path without repeating source= everywhere.
+    source = (
+        {"type": "group", "groupId": group_id, "userId": user_id} if group
+        else {"type": "user", "userId": user_id}
+    )
     return {
         "type": "postback",
         "replyToken": reply_token,
-        "source": {"type": "group", "groupId": group_id, "userId": user_id},
+        "source": source,
         "postback": {"data": data},
     }
 
@@ -422,18 +461,13 @@ class TestIdentityAndProperty:
 # ===========================================================================
 
 class TestReportRouting:
-    def test_a_summoned_report_is_routed_with_its_text(self):
-        routed = staff_bot.route_event(_group_text("น้องคะ แจ้งซ่อม 204 แอร์ไม่เย็น"), lambda u: True)
-        assert routed.command == staff_bot.COMMAND_REPORT
-        assert routed.report_text == "204 แอร์ไม่เย็น"
-
     def test_a_bare_report_in_1_1_needs_no_summon(self):
         routed = staff_bot.route_event(_direct_text("แจ้งซ่อม 204 แอร์ไม่เย็น"), lambda u: True)
         assert routed.command == staff_bot.COMMAND_REPORT
         assert routed.report_text == "204 แอร์ไม่เย็น"
 
     def test_digest_word_is_never_mistaken_for_a_report(self):
-        routed = staff_bot.route_event(_group_text("น้องคะ แจ้งซ่อมค้าง"), lambda u: True)
+        routed = staff_bot.route_event(_direct_text("แจ้งซ่อมค้าง"), lambda u: True)
         assert routed.command == staff_bot.COMMAND_DIGEST
 
     def test_mine_word_routes_to_mine(self):
@@ -444,70 +478,14 @@ class TestReportRouting:
         routed = staff_bot.route_event(_direct_text("แจ้งซ่อม 204 แอร์เสีย"), lambda u: True)
         assert routed.quiet_seconds == staff_bot.COMMAND_QUIET_SECONDS == 0.0
 
-
-# ===========================================================================
-# Bare แจ้งซ่อม in a group/room (owner decision 2026-09-06)
-# ===========================================================================
-
-class TestBareGroupReport:
-    def test_bare_group_report_routes_exactly_like_the_summoned_form(self):
-        summoned = staff_bot.route_event(
-            _group_text("น้องคะ แจ้งซ่อม 204 แอร์ไม่เย็น ด่วน"), lambda u: True,
-        )
-        bare = staff_bot.route_event(
-            _group_text("แจ้งซ่อม 204 แอร์ไม่เย็น ด่วน"), lambda u: True,
-        )
-        assert bare.command == summoned.command == staff_bot.COMMAND_REPORT
-        assert bare.report_text == summoned.report_text == "204 แอร์ไม่เย็น ด่วน"
-        assert bare.quiet_seconds == staff_bot.COMMAND_QUIET_SECONDS == 0.0
-
-    @pytest.mark.parametrize("text", ["แจ้งซ่อมแล้วนะ", "แจ้งซ่อม ไฟดับ"])
-    def test_bare_report_with_no_room_is_silent_chatter(self, text):
-        routed = staff_bot.route_event(_group_text(text), lambda u: True)
-        assert isinstance(routed, staff_bot.RoutedMessage)
-
-    @pytest.mark.parametrize("phrase", sorted(staff_bot.BARE_REPORT_SKIP_PHRASES))
-    def test_each_skip_phrase_with_a_room_is_silent_chatter(self, phrase):
-        routed = staff_bot.route_event(_group_text(f"แจ้งซ่อม 204 {phrase}"), lambda u: True)
-        assert isinstance(routed, staff_bot.RoutedMessage)
-
-    def test_digest_word_bare_in_group_is_still_chatter(self):
-        routed = staff_bot.route_event(_group_text("แจ้งซ่อมค้าง"), lambda u: True)
-        assert isinstance(routed, staff_bot.RoutedMessage)
-
-    @pytest.mark.parametrize("word", sorted(staff_bot.DIGEST_WORDS))
-    def test_a_digest_word_prefix_with_trailing_text_is_still_chatter(self, word):
-        # Reviewer finding: a digest word followed by MORE text (not just the
-        # bare word on its own) must stay chatter too — a PREFIX match, not
-        # only an exact one. Regression for "แจ้งซ่อมค้าง 204 ยังไม่มาเลย" once
-        # silently becoming a ticket.
-        routed = staff_bot.route_event(_group_text(f"{word} 204 ยังไม่มาเลย"), lambda u: True)
-        assert isinstance(routed, staff_bot.RoutedMessage)
-
-    def test_summoned_form_with_no_room_is_still_a_command(self):
-        # The summon form is unchanged: unlike the bare form, a parse error
-        # is still a command (and its reply still nags for a room), not
-        # silence.
-        routed = staff_bot.route_event(_group_text("น้องคะ แจ้งซ่อม แอร์เสีย"), lambda u: True)
-        assert routed.command == staff_bot.COMMAND_REPORT
-        messages = staff_bot.build_messages([], actions=[routed])
-        assert messages == [{"type": "text", "text": staff_bot.PARSE_ERROR_NO_ROOM_TEXT}]
-
     def test_the_skip_phrase_filter_does_not_apply_to_1_1(self):
-        # Rule 2: the safeguard is bare-GROUP-only. A 1:1 "...เสร็จแล้ว" is
-        # still a plain แจ้งซ่อม with that text in the detail.
+        # A 1:1 "...เสร็จแล้ว" is still a plain แจ้งซ่อม with that text in the
+        # detail — the group-only bare-report skip-phrase safeguard this used
+        # to pin is gone along with bare group reporting itself (2026-09-06:
+        # groups are report-only, see TestGroupReportOnly).
         routed = staff_bot.route_event(_direct_text("แจ้งซ่อม 204 เสร็จแล้ว"), lambda u: True)
         assert routed.command == staff_bot.COMMAND_REPORT
         assert routed.report_text == "204 เสร็จแล้ว"
-
-    @pytest.mark.parametrize("text", ["แจ้งซ่อมแล้วนะ", "แจ้งซ่อม ไฟดับ", "แจ้งซ่อม 204 เสร็จแล้ว"])
-    def test_webhook_bare_chatter_gets_no_command_and_no_reply(
-        self, text, test_client, test_db, staff_oa_enabled, dispatcher,
-    ):
-        _employee(test_db, badge="7001", line_user_id="U-emp")
-        response = _signed_post(test_client, {"events": [_group_text(text, user_id="U-emp")]})
-        assert response.status_code == 200
-        assert dispatcher.commands == []
 
 
 class TestPostbackRouting:
@@ -596,30 +574,8 @@ class TestNotLinkedGate:
         # sender) — this pins that the two "not linked" paths do not
         # conflict, not that phase 3 replaces phase 1's onboarding text.
         assert [c.command for c in dispatcher.commands] == [staff_bot.COMMAND_ONBOARDING]
-
-    def test_webhook_group_report_from_a_non_employee_is_not_linked(
-        self, test_client, test_db, staff_oa_enabled, dispatcher,
-    ):
-        _signed_post(test_client, {"events": [_group_text(
-            "น้องคะ แจ้งซ่อม 204 แอร์เสีย", user_id="U-stranger",
-        )]})
-        assert len(dispatcher.commands) == 1
-        routed = dispatcher.commands[0]
-        assert routed.command == staff_bot.COMMAND_REPORT
-        assert routed.identity_known is False
-
-    def test_webhook_bare_group_report_from_a_non_employee_is_not_linked(
-        self, test_client, test_db, staff_oa_enabled, dispatcher,
-    ):
-        _signed_post(test_client, {"events": [_group_text(
-            "แจ้งซ่อม 204 แอร์เสีย", user_id="U-stranger",
-        )]})
-        assert len(dispatcher.commands) == 1
-        routed = dispatcher.commands[0]
-        assert routed.command == staff_bot.COMMAND_REPORT
-        assert routed.identity_known is False
-        messages = staff_bot.build_messages([], actions=[routed])
-        assert messages == [{"type": "text", "text": staff_bot.NOT_LINKED_TEXT}]
+        # A group ticket attempt (linked or not) is now report-only silence —
+        # see TestGroupReportOnly for the dedicated coverage.
 
 
 # ===========================================================================
@@ -933,22 +889,30 @@ class TestPhotoBuffer:
 
     def test_a_photo_is_never_downloaded_just_by_being_buffered(self, test_db, dispatcher):
         _employee(test_db, badge="7001", line_user_id="U-emp")
-        staff_bot.handle_event_detail(_image(message_id="img-1"), test_db)
+        staff_bot.handle_event_detail(_image(message_id="img-1", direct=True), test_db)
         assert dispatcher.photo_uploads == []
-        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-emp") == ["img-1"]
+        assert staff_bot.get_photo_buffer().claim("U-emp", "U-emp") == ["img-1"]
 
     def test_a_non_linked_senders_photo_is_ignored_entirely(self, test_db, dispatcher):
         staff_bot.handle_event_detail(
-            _image(message_id="img-1", user_id="U-stranger"), test_db,
+            _image(message_id="img-1", user_id="U-stranger", direct=True), test_db,
         )
         assert dispatcher.photo_uploads == []
-        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-stranger") == []
+        assert staff_bot.get_photo_buffer().claim("U-stranger", "U-stranger") == []
 
     def test_a_photo_with_no_sender_id_is_ignored(self, test_db, dispatcher):
-        event = _image(message_id="img-1")
-        event["source"] = {"type": "group", "groupId": "Cgroup"}
+        event = _image(message_id="img-1", direct=True)
+        event["source"] = {"type": "user"}
         staff_bot.handle_event_detail(event, test_db)
         assert dispatcher.photo_uploads == []
+
+    def test_a_photo_in_a_group_is_never_buffered_or_fetched(self, test_db, dispatcher):
+        # Report-only groups (2026-09-06): a group photo is heartbeat only,
+        # never even offered to the photo buffer.
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        staff_bot.handle_event_detail(_image(message_id="img-1"), test_db)
+        assert dispatcher.photo_uploads == []
+        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-emp") == []
 
 
 class TestAttachWindow:
@@ -1007,9 +971,9 @@ class TestAttachWindow:
 
     def test_a_photo_while_a_window_is_open_attaches_silently(self, test_db, dispatcher):
         _employee(test_db, badge="7001", line_user_id="U-emp")
-        staff_bot.get_attach_windows().open("Cgroup", "U-emp", 55)
+        staff_bot.get_attach_windows().open("U-emp", "U-emp", 55)
 
-        handled = staff_bot.handle_event_detail(_image(message_id="img-1"), test_db)
+        handled = staff_bot.handle_event_detail(_image(message_id="img-1", direct=True), test_db)
 
         assert dispatcher.photo_uploads == [(55, "img-1", "7001")]
         # An attached photo is STILL just "a message in this chat" for the
@@ -1020,8 +984,8 @@ class TestAttachWindow:
 
     def test_a_photo_never_opens_a_window_by_itself(self, test_db, dispatcher):
         _employee(test_db, badge="7001", line_user_id="U-emp")
-        staff_bot.handle_event_detail(_image(), test_db)
-        assert staff_bot.get_attach_windows().active_order("Cgroup", "U-emp") is None
+        staff_bot.handle_event_detail(_image(direct=True), test_db)
+        assert staff_bot.get_attach_windows().active_order("U-emp", "U-emp") is None
 
     def test_an_attached_photo_is_spawned_with_its_own_event_reply_token(
         self, test_db, dispatcher,
@@ -1030,9 +994,22 @@ class TestAttachWindow:
         # (not whatever token some other pending reply currently holds) is
         # what note_photo_ack will later file the ack with.
         _employee(test_db, badge="7001", line_user_id="U-emp")
+        staff_bot.get_attach_windows().open("U-emp", "U-emp", 55)
+        staff_bot.handle_event_detail(
+            _image(message_id="img-1", reply_token="reply-i", direct=True), test_db,
+        )
+        assert dispatcher.photo_upload_tokens == [(55, "U-emp", "reply-i")]
+
+    def test_an_open_window_never_attaches_a_group_photo(self, test_db, dispatcher):
+        # Report-only groups (2026-09-06): even with an attach window open
+        # for this (chat, user), a GROUP photo is still heartbeat only — the
+        # window itself can only ever have been opened by a 1:1 ticket
+        # command, so this is defense in depth, not a reachable production
+        # path today.
+        _employee(test_db, badge="7001", line_user_id="U-emp")
         staff_bot.get_attach_windows().open("Cgroup", "U-emp", 55)
-        staff_bot.handle_event_detail(_image(message_id="img-1", reply_token="reply-i"), test_db)
-        assert dispatcher.photo_upload_tokens == [(55, "Cgroup", "reply-i")]
+        staff_bot.handle_event_detail(_image(message_id="img-1"), test_db)
+        assert dispatcher.photo_uploads == []
 
 
 # ===========================================================================
@@ -1078,7 +1055,7 @@ class TestPhotoAck:
         assert pending.photo_acks[55] == {"attached": 2, "failed": 0, "total": 4}
         assert pending.reply_token == "tok-2"
         messages = staff_bot.build_messages([], actions=[], photo_acks=pending.photo_acks)
-        assert messages == [{"type": "text", "text": "แนบรูปเข้า #55 แล้ว 2 รูป (รวม 4 รูป)"}]
+        assert messages == [{"type": "text", "text": "แนบรูปเข้า #55 แล้ว 2 รูป (รวม 4 ไฟล์)"}]
 
     def test_one_success_and_one_failure_produce_two_lines(
         self, monkeypatch, staff_oa_enabled,
@@ -1103,7 +1080,7 @@ class TestPhotoAck:
         pending = asyncio.run(_scenario())
         text = staff_bot.build_messages([], actions=[], photo_acks=pending.photo_acks)[0]["text"]
         assert text == (
-            "แนบรูปเข้า #55 แล้ว 1 รูป (รวม 1 รูป)\n"
+            "แนบรูปเข้า #55 แล้ว 1 รูป (รวม 1 ไฟล์)\n"
             "แนบรูปไม่สำเร็จ 1 รูป ลองส่งใหม่อีกครั้งค่ะ (#55)"
         )
 
@@ -1141,7 +1118,7 @@ class TestPhotoAck:
         assert token == "tok-cmd"
         assert any(m.get("type") == "flex" for m in messages)  # the palette
         assert any(
-            t == "แนบรูปเข้า #55 แล้ว 1 รูป (รวม 1 รูป)" for t in _flatten_texts(messages)
+            t == "แนบรูปเข้า #55 แล้ว 1 รูป (รวม 1 ไฟล์)" for t in _flatten_texts(messages)
         )
 
     def test_a_buffered_photo_with_no_attach_window_never_fetches_or_acks(
@@ -1159,10 +1136,10 @@ class TestPhotoAck:
         dispatcher = staff_bot.AsyncioBotDispatcher()
         monkeypatch.setattr(staff_bot, "get_dispatcher", lambda: dispatcher)
 
-        staff_bot.handle_event_detail(_image(message_id="img-1"), test_db)
+        staff_bot.handle_event_detail(_image(message_id="img-1", direct=True), test_db)
 
         assert fetch_calls == []
-        assert dispatcher.debouncer.pending_for("Cgroup") is None
+        assert dispatcher.debouncer.pending_for("U-emp") is None
 
 
 # ===========================================================================
@@ -1177,7 +1154,7 @@ class TestAddPhoto:
         )
         action = _action(staff_bot.COMMAND_ADDPHOTO, order_id=5)
         messages = staff_bot.build_messages([], actions=[action])
-        assert messages == [{"type": "text", "text": "ส่งรูปมาได้เลยค่ะ (ภายใน 2 นาที) #5"}]
+        assert messages == [{"type": "text", "text": "ส่งรูปหรือวิดีโอมาได้เลยค่ะ (ภายใน 2 นาที) #5"}]
         assert staff_bot.get_attach_windows().active_order("Cgroup", "U-emp") == 5
 
     def test_a_non_reporter_non_reception_tapper_is_refused(self, monkeypatch):
@@ -1611,12 +1588,15 @@ class TestStatus:
 # ===========================================================================
 
 class TestTicketWebhookIntegration:
+    """1:1 only, 2026-09-06 policy — a report in a GROUP is now report-only
+    silence regardless of summon/bare form (see TestGroupReportOnly)."""
+
     def test_report_creates_a_ticket_and_the_command_is_immediate(
         self, test_client, test_db, staff_oa_enabled, dispatcher,
     ):
         _employee(test_db, badge="7001", line_user_id="U-emp")
         response = _signed_post(test_client, {"events": [
-            _group_text("น้องคะ แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp"),
+            _direct_text("แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp"),
         ]})
         assert response.status_code == 200
         assert len(dispatcher.commands) == 1
@@ -1626,27 +1606,25 @@ class TestTicketWebhookIntegration:
         assert routed.badge == "7001"
         assert routed.quiet_seconds == 0.0
 
-    def test_a_report_inside_a_slot_window_never_marks_the_slot(
+    def test_a_report_never_marks_a_slot(
         self, test_client, test_db, staff_oa_enabled, dispatcher,
     ):
-        # Same shape as test_staff_bot.py's slot-digest tests: a report is
-        # phase 1/2's "a command lands inside an open window" case, and only
-        # COMMAND_DIGEST (not COMMAND_REPORT) is allowed to cover a slot.
+        # A ticket command is 1:1 only, and a 1:1 RoutedCommand never carries
+        # a slot_ref at all (route_event computes one only inside its
+        # group/room branch, which a ticket command never reaches) — so a
+        # report can never mark or cover a slot, structurally.
         from app.models.models import StaffBotSlotMark
 
         _employee(test_db, badge="7001", line_user_id="U-emp")
         response = _signed_post(test_client, {"events": [
-            _group_text("น้องคะ แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp"),
+            _direct_text("แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp"),
         ]})
         assert response.status_code == 200
         assert test_db.query(StaffBotSlotMark).count() == 0
 
-    def test_bare_report_creates_a_ticket_and_the_command_is_immediate(
+    def test_photos_claimed_at_creation_are_scheduled_for_upload(
         self, test_client, test_db, staff_oa_enabled, dispatcher, monkeypatch,
     ):
-        # Rule 1c: a bare group report is a RoutedCommand indistinguishable
-        # (bar its user_id) from the summoned form, so everything downstream
-        # — identity, ticket creation, photo claiming — is unchanged.
         _employee(test_db, badge="7001", line_user_id="U-emp")
         captured = {}
 
@@ -1664,10 +1642,10 @@ class TestTicketWebhookIntegration:
             }}
 
         monkeypatch.setattr(housekeeping_client, "create_work_order", _create)
-        staff_bot.get_photo_buffer().add("Cgroup", "U-emp", "img-1")
+        staff_bot.get_photo_buffer().add("U-emp", "U-emp", "img-1")
 
         response = _signed_post(test_client, {"events": [
-            _group_text("แจ้งซ่อม 204 แอร์ไม่เย็น ด่วน", user_id="U-emp"),
+            _direct_text("แจ้งซ่อม 204 แอร์ไม่เย็น ด่วน", user_id="U-emp"),
         ]})
         assert response.status_code == 200
         assert len(dispatcher.commands) == 1
@@ -1678,8 +1656,6 @@ class TestTicketWebhookIntegration:
         assert routed.badge == "7001"
         assert routed.quiet_seconds == 0.0
 
-        # Ticket creation and photo attaching, exactly as the summoned form
-        # (TestCreateTicket) already exercises via build_reply.
         built = staff_bot.build_reply([], actions=[routed])
         assert captured["room_no"] == "204"
         assert captured["urgent"] is True
@@ -1687,27 +1663,15 @@ class TestTicketWebhookIntegration:
         assert built.pending_uploads[0].order_id == 128
         assert built.pending_uploads[0].message_ids == ["img-1"]
 
-    def test_a_bare_report_inside_a_slot_window_never_marks_the_slot(
-        self, test_client, test_db, staff_oa_enabled, dispatcher,
-    ):
-        from app.models.models import StaffBotSlotMark
-
-        _employee(test_db, badge="7001", line_user_id="U-emp")
-        response = _signed_post(test_client, {"events": [
-            _group_text("แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp"),
-        ]})
-        assert response.status_code == 200
-        assert test_db.query(StaffBotSlotMark).count() == 0
-
     def test_a_command_logs_no_report_text(
         self, test_client, test_db, staff_oa_enabled, dispatcher, caplog,
     ):
         _employee(test_db, badge="7001", line_user_id="U-emp")
         with caplog.at_level("INFO"):
             _signed_post(test_client, {"events": [
-                _group_text("น้องคะ แจ้งซ่อม 204 แอร์ไม่เย็นลับสุดยอด", user_id="U-emp"),
+                _direct_text("แจ้งซ่อม 204 แอร์ไม่เย็นลับสุดยอด", user_id="U-emp"),
             ]})
-        assert "staff-bot command: event=message source=group chat=Cgroup" in caplog.text
+        assert "staff-bot command: event=message source=user chat=U-emp" in caplog.text
         assert "แอร์ไม่เย็นลับสุดยอด" not in caplog.text
 
     def test_the_asyncio_dispatcher_replies_the_bubble_and_never_touches_the_network(
@@ -1745,3 +1709,741 @@ class TestTicketWebhookIntegration:
         token, messages = sent[0]
         assert token == "tok-1"
         assert messages[0]["altText"] == "รับเรื่องแล้ว #9"
+
+
+# ===========================================================================
+# เพิ่มรูป text command routing (reply-to-media, 2026-09-06) — bare in a
+# group/room, after a summon, and bare in 1:1.
+# ===========================================================================
+
+class TestAddPhotoWordRouting:
+    def test_bare_addphoto_routes_with_order_id(self):
+        routed = staff_bot.route_event(_direct_text("เพิ่มรูป 128"), lambda u: True)
+        assert routed.command == staff_bot.COMMAND_ADDPHOTO
+        assert routed.order_id == 128
+
+    def test_bare_addphoto_accepts_a_hash_prefix(self):
+        routed = staff_bot.route_event(_direct_text("เพิ่มรูป #128"), lambda u: True)
+        assert routed.command == staff_bot.COMMAND_ADDPHOTO
+        assert routed.order_id == 128
+
+    def test_addphoto_with_trailing_text_is_not_a_command(self):
+        # A strict whole-string match — "เพิ่มรูป 128 ด้วยนะ" is ordinary chat,
+        # never mistaken for the command (same rule as สถานะ/งาน <id>).
+        routed = staff_bot.route_event(_direct_text("เพิ่มรูป 128 ด้วยนะ"), lambda u: True)
+        assert routed.command == staff_bot.COMMAND_PALETTE
+
+    def test_addphoto_postback_still_works_unchanged(self):
+        routed = staff_bot.route_event(_postback("cmd=addphoto&id=128"), lambda u: True)
+        assert routed.command == staff_bot.COMMAND_ADDPHOTO
+        assert routed.order_id == 128
+        assert routed.quoted_message_id == ""
+
+    def test_addphoto_postback_is_ignored_in_a_group(self):
+        assert staff_bot.route_event(
+            _postback("cmd=addphoto&id=128", group=True), lambda u: True,
+        ) is None
+
+
+# ===========================================================================
+# Reply-to-media: message.quotedMessageId threaded onto RoutedCommand
+# ===========================================================================
+
+class TestQuotedMessageRouting:
+    def test_a_direct_report_carries_the_quoted_id(self):
+        routed = staff_bot.route_event(
+            _direct_text("แจ้งซ่อม 204 แอร์เสีย", quoted_message_id="line-q-1"), lambda u: True,
+        )
+        assert routed.command == staff_bot.COMMAND_REPORT
+        assert routed.quoted_message_id == "line-q-1"
+
+    def test_a_direct_addphoto_carries_the_quoted_id(self):
+        routed = staff_bot.route_event(
+            _direct_text("เพิ่มรูป 128", quoted_message_id="line-q-1"), lambda u: True,
+        )
+        assert routed.quoted_message_id == "line-q-1"
+
+    def test_a_group_report_attempt_carries_no_quote_at_all(self):
+        # Report-only groups never reach a RoutedCommand, so there is no
+        # quoted_message_id to thread — the whole event is a RoutedMessage.
+        routed = staff_bot.route_event(
+            _group_text("แจ้งซ่อม 204 แอร์เสีย", quoted_message_id="line-q-1"), lambda u: True,
+        )
+        assert isinstance(routed, staff_bot.RoutedMessage)
+
+    def test_no_quote_is_an_empty_string(self):
+        routed = staff_bot.route_event(_direct_text("แจ้งซ่อม 204 แอร์เสีย"), lambda u: True)
+        assert routed.quoted_message_id == ""
+
+
+# ===========================================================================
+# Report + quote (reply-to-media, 2026-09-06): the quoted media is claimed
+# and uploaded exactly like a buffered photo (rule B's bounded wait).
+# ===========================================================================
+
+class TestReportWithQuote:
+    def _order(self):
+        return {
+            "id": 9, "propertyLabel": "HF", "location": "ห้อง 204",
+            "categoryLabel": "แอร์", "urgent": False, "detailText": "แอร์ไม่เย็น",
+            "reporterName": "สมชาย",
+        }
+
+    def _submit_and_wait(self, action, sent):
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.submit_command(action)
+            await _wait_until(lambda: bool(sent))
+            await asyncio.sleep(0.2)
+        asyncio.run(_scenario())
+
+    def test_the_quoted_image_is_fetched_uploaded_and_counted(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        fetch_calls = []
+        monkeypatch.setattr(
+            service, "fetch_message_content",
+            lambda mid, max_bytes=None: fetch_calls.append((mid, max_bytes)) or (b"x", "image/jpeg"),
+        )
+        upload_calls = []
+        monkeypatch.setattr(
+            housekeeping_client, "upload_photo",
+            lambda order_id, data, mime, badge: upload_calls.append(mime)
+            or {"photoId": 1, "photoCount": 1, "videoCount": 0},
+        )
+        sent = []
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: sent.append((token, messages)))
+
+        self._submit_and_wait(_action(
+            staff_bot.COMMAND_REPORT, reply_token="tok-1", quiet_seconds=0.0,
+            report_text="204 แอร์ไม่เย็น", quoted_message_id="line-q-1",
+        ), sent)
+
+        # Cleanup (2026-09-06 review): a quoted fetch is capped at
+        # VIDEO_BYTES_MAX — never unbounded — since its kind is not known
+        # ahead of the fetch.
+        assert fetch_calls == [("line-q-1", staff_bot.VIDEO_BYTES_MAX)]
+        assert upload_calls == ["image/jpeg"]
+        assert len(sent) == 1
+        _, messages = sent[0]
+        assert "รูป 1 รูป" in _flatten_texts(messages[0])
+
+    def test_a_quoted_non_media_message_is_a_failed_attach(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        # A quoted TEXT message: LINE's content endpoint answers with
+        # something that is neither image/* nor video/* — counted as a
+        # failed attach, the existing failure line.
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        monkeypatch.setattr(service, "fetch_message_content", lambda mid, max_bytes=None: (b"hi", "text/plain"))
+        sent = []
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: sent.append((token, messages)))
+
+        self._submit_and_wait(_action(
+            staff_bot.COMMAND_REPORT, reply_token="tok-1", quiet_seconds=0.0,
+            report_text="204 แอร์ไม่เย็น", quoted_message_id="line-q-2",
+        ), sent)
+
+        _, messages = sent[0]
+        assert "แนบไม่สำเร็จ 1 รูป" in _flatten_texts(messages[0])
+
+    def test_a_quoted_message_line_refuses_to_serve_is_also_a_failed_attach(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        monkeypatch.setattr(service, "fetch_message_content", lambda mid, max_bytes=None: None)
+        sent = []
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: sent.append((token, messages)))
+
+        self._submit_and_wait(_action(
+            staff_bot.COMMAND_REPORT, reply_token="tok-1", quiet_seconds=0.0,
+            report_text="204 แอร์ไม่เย็น", quoted_message_id="line-q-3",
+        ), sent)
+
+        _, messages = sent[0]
+        assert "แนบไม่สำเร็จ 1 รูป" in _flatten_texts(messages[0])
+
+    def test_a_quoted_message_over_the_size_cap_counts_as_a_video_failure(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        # Cleanup (2026-09-06 review): the quoted fetch is capped exactly
+        # like a declared video's — a quote large enough to trip the cap
+        # aborts mid-stream (ContentTooLarge) before its kind is otherwise
+        # known, and is bucketed as a video failure (rule B's bounded-wait
+        # bubble shows only the aggregate counts, not the specific reason —
+        # see TestVideoFailureLines for the rule-A specific-line coverage).
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+
+        def _too_large(mid, max_bytes=None):
+            raise service.ContentTooLarge("too big")
+
+        monkeypatch.setattr(service, "fetch_message_content", _too_large)
+        sent = []
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: sent.append((token, messages)))
+
+        self._submit_and_wait(_action(
+            staff_bot.COMMAND_REPORT, reply_token="tok-1", quiet_seconds=0.0,
+            report_text="204 แอร์ไม่เย็น", quoted_message_id="line-q-4",
+        ), sent)
+
+        _, messages = sent[0]
+        assert "แนบวิดีโอไม่สำเร็จ 1 คลิป" in _flatten_texts(messages[0])
+
+
+# ===========================================================================
+# เพิ่มรูป <id> as a REPLY (reply-to-media, 2026-09-06) — same authorization
+# gate as the postback, quoted media attached via the bounded wait.
+# ===========================================================================
+
+class TestAddPhotoWithQuote:
+    def test_auth_ok_attaches_the_quoted_media_and_replies_the_ack(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(
+            housekeeping_client, "get_work_order",
+            lambda order_id: {"order": {"id": 5, "reporterBadge": "7001"}},
+        )
+        monkeypatch.setattr(service, "fetch_message_content", lambda mid, max_bytes=None: (b"x", "image/jpeg"))
+        monkeypatch.setattr(
+            housekeeping_client, "upload_photo",
+            lambda *a, **k: {"photoId": 1, "photoCount": 1, "videoCount": 0},
+        )
+        sent = []
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: sent.append((token, messages)))
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.submit_command(_action(
+                staff_bot.COMMAND_ADDPHOTO, reply_token="tok-1", quiet_seconds=0.0,
+                order_id=5, quoted_message_id="line-q-1",
+            ))
+            await _wait_until(lambda: bool(sent))
+            await asyncio.sleep(0.2)
+        asyncio.run(_scenario())
+
+        assert len(sent) == 1
+        _, messages = sent[0]
+        # No "(รวม ... ไฟล์)" suffix: unlike rule A's own-token ack, this path
+        # does not carry the upload's total forward — omitted "when unknown"
+        # per spec, rather than showing a fabricated total.
+        assert any(
+            t == "แนบรูปเข้า #5 แล้ว 1 รูป" for t in _flatten_texts(messages)
+        )
+
+    def test_a_non_reporter_non_reception_tapper_is_denied_and_nothing_is_fetched(
+        self, monkeypatch,
+    ):
+        monkeypatch.setattr(
+            housekeeping_client, "get_work_order",
+            lambda order_id: {"order": {"id": 5, "reporterBadge": "9999"}},
+        )
+        fetch_calls = []
+        monkeypatch.setattr(
+            service, "fetch_message_content",
+            lambda mid: fetch_calls.append(mid) or (b"x", "image/jpeg"),
+        )
+        action = _action(
+            staff_bot.COMMAND_ADDPHOTO, order_id=5, badge="7001", is_reception=False,
+            quoted_message_id="line-q-1",
+        )
+        messages = staff_bot.build_messages([], actions=[action])
+        assert messages == [{"type": "text", "text": staff_bot.EDIT_FORBIDDEN_TEXT}]
+        assert fetch_calls == []
+
+    def test_a_reception_grant_holder_may_addphoto_with_quote_on_someone_elses_ticket(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(
+            housekeeping_client, "get_work_order",
+            lambda order_id: {"order": {"id": 5, "reporterBadge": "9999"}},
+        )
+        monkeypatch.setattr(service, "fetch_message_content", lambda mid, max_bytes=None: (b"x", "image/jpeg"))
+        monkeypatch.setattr(
+            housekeeping_client, "upload_photo",
+            lambda *a, **k: {"photoId": 1, "photoCount": 1, "videoCount": 0},
+        )
+        sent = []
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: sent.append((token, messages)))
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.submit_command(_action(
+                staff_bot.COMMAND_ADDPHOTO, reply_token="tok-1", quiet_seconds=0.0,
+                order_id=5, badge="7001", is_reception=True, quoted_message_id="line-q-1",
+            ))
+            await _wait_until(lambda: bool(sent))
+            await asyncio.sleep(0.2)
+        asyncio.run(_scenario())
+
+        assert len(sent) == 1
+
+
+# ===========================================================================
+# Video buffering (video support, 2026-09-06) — a video message from the
+# webhook is buffered/attached exactly like an image, with kind="video".
+# ===========================================================================
+
+class TestVideoBuffering:
+    def test_a_video_from_a_linked_sender_is_buffered_with_video_kind(self, test_db, dispatcher):
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        staff_bot.handle_event_detail(_video(message_id="vid-1", direct=True), test_db)
+        assert staff_bot.get_photo_buffer().claim_detailed("U-emp", "U-emp") == [("vid-1", "video")]
+        assert dispatcher.photo_uploads == []
+
+    def test_a_video_while_a_window_is_open_attaches_silently_with_video_kind(
+        self, test_db, dispatcher,
+    ):
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        staff_bot.get_attach_windows().open("U-emp", "U-emp", 55)
+        staff_bot.handle_event_detail(_video(message_id="vid-1", direct=True), test_db)
+        assert dispatcher.photo_uploads == [(55, "vid-1", "7001")]
+        assert dispatcher.photo_upload_kinds == [(55, "video")]
+
+    def test_a_non_linked_senders_video_is_ignored_entirely(self, test_db, dispatcher):
+        staff_bot.handle_event_detail(
+            _video(message_id="vid-1", user_id="U-stranger", direct=True), test_db,
+        )
+        assert dispatcher.photo_uploads == []
+        assert staff_bot.get_photo_buffer().claim("U-stranger", "U-stranger") == []
+
+    def test_a_video_in_a_group_is_never_buffered_or_fetched(self, test_db, dispatcher):
+        # Report-only groups (2026-09-06): a group video is heartbeat only.
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        staff_bot.handle_event_detail(_video(message_id="vid-1"), test_db)
+        assert dispatcher.photo_uploads == []
+        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-emp") == []
+
+
+class TestPhotoBufferKinds:
+    def test_add_defaults_to_image_kind(self):
+        buf = staff_bot.PhotoBuffer(clock=_Clock())
+        buf.add("C1", "U1", "a")
+        assert buf.claim_detailed("C1", "U1") == [("a", "image")]
+
+    def test_add_records_the_video_kind(self):
+        buf = staff_bot.PhotoBuffer(clock=_Clock())
+        buf.add("C1", "U1", "a", kind="video")
+        assert buf.claim_detailed("C1", "U1") == [("a", "video")]
+
+    def test_claim_still_returns_plain_ids_regardless_of_kind(self):
+        clock = _Clock()
+        buf = staff_bot.PhotoBuffer(clock=clock)
+        buf.add("C1", "U1", "a", kind="video")
+        clock.advance(1)
+        buf.add("C1", "U1", "b")
+        assert buf.claim("C1", "U1") == ["a", "b"]
+
+    def test_claim_detailed_respects_ttl_and_ordering(self):
+        clock = _Clock()
+        buf = staff_bot.PhotoBuffer(clock=clock, ttl_seconds=90.0)
+        buf.add("C1", "U1", "old", kind="video")
+        clock.advance(91)
+        buf.add("C1", "U1", "new")
+        assert buf.claim_detailed("C1", "U1") == [("new", "image")]
+
+
+# ===========================================================================
+# Video upload pipeline (video support, 2026-09-06): transcoding wait, size
+# cap, mime resolution, and the specific failure lines.
+# ===========================================================================
+
+class TestVideoUploadPipeline:
+    def _order(self):
+        return {
+            "id": 9, "propertyLabel": "HF", "location": "ห้อง 204",
+            "categoryLabel": "แอร์", "urgent": False, "detailText": "แอร์ไม่เย็น",
+            "reporterName": "สมชาย",
+        }
+
+    def test_a_buffered_video_is_transcoded_then_uploaded_with_video_mime(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        transcode_calls = []
+        monkeypatch.setattr(
+            service, "wait_for_transcoding",
+            lambda message_id, timeout_seconds: transcode_calls.append((message_id, timeout_seconds)) or True,
+        )
+        fetch_calls = []
+        monkeypatch.setattr(
+            service, "fetch_message_content",
+            lambda message_id, max_bytes=None: fetch_calls.append((message_id, max_bytes)) or (b"v", "video/mp4"),
+        )
+        upload_calls = []
+        monkeypatch.setattr(
+            housekeeping_client, "upload_photo",
+            lambda order_id, data, mime, badge: upload_calls.append(mime)
+            or {"photoId": 1, "photoCount": 0, "videoCount": 1},
+        )
+        staff_bot.get_photo_buffer().add("Cgroup", "U-emp", "vid-1", kind="video")
+
+        sent = []
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: sent.append((token, messages)))
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.submit_command(_action(
+                staff_bot.COMMAND_REPORT, reply_token="tok-1", quiet_seconds=0.0,
+                report_text="204 แอร์ไม่เย็น",
+            ))
+            await _wait_until(lambda: bool(sent))
+            await asyncio.sleep(0.2)
+        asyncio.run(_scenario())
+
+        assert transcode_calls == [("vid-1", staff_bot.VIDEO_TRANSCODE_WAIT_SECONDS)]
+        assert fetch_calls == [("vid-1", staff_bot.VIDEO_BYTES_MAX)]
+        assert upload_calls == ["video/mp4"]
+        assert len(sent) == 1
+        _, messages = sent[0]
+        assert "วิดีโอ 1 คลิป" in _flatten_texts(messages[0])
+
+    def test_a_quicktime_video_keeps_its_own_mime(self, monkeypatch, staff_oa_enabled):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        monkeypatch.setattr(service, "wait_for_transcoding", lambda mid, timeout: True)
+        monkeypatch.setattr(
+            service, "fetch_message_content",
+            lambda mid, max_bytes=None: (b"v", "video/quicktime"),
+        )
+        upload_calls = []
+        monkeypatch.setattr(
+            housekeeping_client, "upload_photo",
+            lambda order_id, data, mime, badge: upload_calls.append(mime)
+            or {"photoId": 1, "photoCount": 0, "videoCount": 1},
+        )
+        staff_bot.get_photo_buffer().add("Cgroup", "U-emp", "vid-1", kind="video")
+        sent = []
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: sent.append((token, messages)))
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.submit_command(_action(
+                staff_bot.COMMAND_REPORT, reply_token="tok-1", quiet_seconds=0.0,
+                report_text="204 แอร์ไม่เย็น",
+            ))
+            await _wait_until(lambda: bool(sent))
+            await asyncio.sleep(0.2)
+        asyncio.run(_scenario())
+
+        assert upload_calls == ["video/quicktime"]
+
+
+class TestVideoFailureLines:
+    def _wait_for_ack(self, order_id, kind, upload_kwargs):
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.spawn_photo_upload(order_id, "vid-1", "7001", chat_key="Cgroup",
+                                           reply_token="tok-1", kind=kind)
+            await _wait_until(lambda: (
+                (pending := dispatcher.debouncer.pending_for("Cgroup")) is not None
+                and order_id in pending.photo_acks
+                and pending.photo_acks[order_id].get("notes")
+            ))
+            return dispatcher.debouncer.pending_for("Cgroup")
+        return asyncio.run(_scenario())
+
+    def test_transcoding_failure_files_the_specific_line(self, monkeypatch, staff_oa_enabled):
+        monkeypatch.setattr(service, "wait_for_transcoding", lambda mid, timeout: False)
+        pending = self._wait_for_ack(55, "video", {})
+        messages = staff_bot.build_messages([], actions=[], photo_acks=pending.photo_acks)
+        assert messages == [{"type": "text", "text": "วิดีโอประมวลผลไม่สำเร็จ ลองส่งใหม่อีกครั้งค่ะ (#55)"}]
+
+    def test_transcoding_timeout_reads_as_the_same_failure_line(self, monkeypatch, staff_oa_enabled):
+        # wait_for_transcoding itself collapses "failed" and "a timeout while
+        # still processing" to the same False (see
+        # TestWaitForTranscoding.test_a_zero_timeout_gives_up_after_one_still_processing_poll
+        # in test_staff_oa_service.py) — staff_bot cannot tell them apart and
+        # is not asked to: both render this one line.
+        monkeypatch.setattr(service, "wait_for_transcoding", lambda mid, timeout: False)
+        pending = self._wait_for_ack(56, "video", {})
+        messages = staff_bot.build_messages([], actions=[], photo_acks=pending.photo_acks)
+        assert messages == [{"type": "text", "text": "วิดีโอประมวลผลไม่สำเร็จ ลองส่งใหม่อีกครั้งค่ะ (#56)"}]
+
+    def test_oversize_files_the_specific_line(self, monkeypatch, staff_oa_enabled):
+        monkeypatch.setattr(service, "wait_for_transcoding", lambda mid, timeout: True)
+
+        def _too_large(mid, max_bytes=None):
+            raise service.ContentTooLarge("too big")
+
+        monkeypatch.setattr(service, "fetch_message_content", _too_large)
+        pending = self._wait_for_ack(57, "video", {})
+        messages = staff_bot.build_messages([], actions=[], photo_acks=pending.photo_acks)
+        assert messages == [{"type": "text", "text": "วิดีโอใหญ่เกินไป (สูงสุด 60 MB) (#57)"}]
+
+    def test_an_other_video_upload_failure_uses_the_video_worded_generic_line(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(service, "wait_for_transcoding", lambda mid, timeout: True)
+        monkeypatch.setattr(service, "fetch_message_content", lambda mid, max_bytes=None: None)
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.spawn_photo_upload(58, "vid-1", "7001", chat_key="Cgroup",
+                                           reply_token="tok-1", kind="video")
+            await _wait_until(lambda: (
+                (pending := dispatcher.debouncer.pending_for("Cgroup")) is not None
+                and pending.photo_acks.get(58, {}).get("video_failed") == 1
+            ))
+            return dispatcher.debouncer.pending_for("Cgroup")
+
+        pending = asyncio.run(_scenario())
+        messages = staff_bot.build_messages([], actions=[], photo_acks=pending.photo_acks)
+        assert messages == [{
+            "type": "text",
+            "text": "แนบวิดีโอไม่สำเร็จ 1 คลิป ลองส่งใหม่อีกครั้งค่ะ (#58)",
+        }]
+
+
+class TestVideoAckDeadline:
+    def test_in_window_video_past_the_deadline_files_the_processing_line_only(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(staff_bot, "VIDEO_ACK_DEADLINE_SECONDS", 0.05)
+
+        def _slow_transcode(mid, timeout):
+            time.sleep(0.3)  # slower than the (shrunk) ack deadline above
+            return True
+
+        monkeypatch.setattr(service, "wait_for_transcoding", _slow_transcode)
+        monkeypatch.setattr(
+            service, "fetch_message_content",
+            lambda mid, max_bytes=None: (b"v", "video/mp4"),
+        )
+        monkeypatch.setattr(
+            housekeeping_client, "upload_photo",
+            lambda *a, **k: {"photoId": 1, "photoCount": 0, "videoCount": 1},
+        )
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.spawn_photo_upload(55, "vid-1", "7001", chat_key="Cgroup",
+                                           reply_token="tok-1", kind="video")
+            await _wait_until(lambda: (
+                (pending := dispatcher.debouncer.pending_for("Cgroup")) is not None
+                and 55 in pending.photo_acks
+            ))
+            pending = dispatcher.debouncer.pending_for("Cgroup")
+            # Let the still-running upload actually finish inside this same
+            # loop (nothing torn down mid-flight at asyncio.run's exit) — its
+            # eventual real outcome must NOT add a second ack.
+            await asyncio.sleep(0.4)
+            return pending
+
+        pending = asyncio.run(_scenario())
+        messages = staff_bot.build_messages([], actions=[], photo_acks=pending.photo_acks)
+        assert messages == [{
+            "type": "text",
+            "text": "วิดีโอกำลังประมวลผล จะแนบให้เมื่อพร้อมค่ะ (#55)",
+        }]
+
+
+# ===========================================================================
+# Counts rendering (video support, 2026-09-06): photos and videos counted
+# separately everywhere — bubble, ack, งานของฉัน/สถานะ.
+# ===========================================================================
+
+class TestCountsRendering:
+    def test_claiming_line_covers_photos_videos_both_and_neither(self):
+        assert staff_bot._claiming_line(2, 0) == "กำลังแนบ 2 รูป"
+        assert staff_bot._claiming_line(0, 1) == "กำลังแนบ 1 คลิป"
+        assert staff_bot._claiming_line(2, 1) == "กำลังแนบ 2 รูป 1 คลิป"
+        assert staff_bot._claiming_line(0, 0) == "ยังไม่มีรูป"
+
+    def test_media_counts_text_omits_a_zero_part(self):
+        assert staff_bot._media_counts_text(2, 1) == "รูป 2 รูป · วิดีโอ 1 คลิป"
+        assert staff_bot._media_counts_text(2, 0) == "รูป 2 รูป"
+        assert staff_bot._media_counts_text(0, 1) == "วิดีโอ 1 คลิป"
+        assert staff_bot._media_counts_text(0, 0) == "ยังไม่มีรูป"
+
+    def test_mine_bubble_shows_both_counts(self):
+        order = {
+            "id": 5, "location": "ห้อง 204", "categoryLabel": "แอร์",
+            "statusLabel": "รอช่าง", "ageDays": 0, "photoCount": 2, "videoCount": 1,
+        }
+        texts = _flatten_texts(staff_bot._mine_bubble(order))
+        assert "รูป 2 รูป · วิดีโอ 1 คลิป" in texts
+
+    def test_mine_bubble_says_no_photos_when_both_are_zero(self):
+        order = {
+            "id": 5, "location": "ห้อง 204", "categoryLabel": "แอร์",
+            "statusLabel": "รอช่าง", "ageDays": 0, "photoCount": 0, "videoCount": 0,
+        }
+        texts = _flatten_texts(staff_bot._mine_bubble(order))
+        assert "ยังไม่มีรูป" in texts
+
+    def test_claimed_photo_line_mixed_completion(self):
+        assert staff_bot._claimed_photo_line(1, 0, 0, 1, 0, 0) == "รูป 1 รูป วิดีโอ 1 คลิป"
+
+    def test_claimed_photo_line_pure_photo_still_running_says_photos(self):
+        assert staff_bot._claimed_photo_line(0, 0, 1, 0, 0, 0) == "กำลังแนบอีก 1 รูป"
+
+    def test_claimed_photo_line_pure_video_still_running_says_files(self):
+        assert staff_bot._claimed_photo_line(0, 0, 0, 0, 0, 1) == "กำลังแนบอีก 1 ไฟล์"
+
+    def test_claimed_photo_line_mixed_still_running_says_files(self):
+        assert staff_bot._claimed_photo_line(0, 0, 1, 0, 0, 1) == "กำลังแนบอีก 2 ไฟล์"
+
+    def test_claimed_photo_line_video_failure(self):
+        assert staff_bot._claimed_photo_line(0, 0, 0, 0, 1, 0) == "แนบวิดีโอไม่สำเร็จ 1 คลิป"
+
+    def test_media_row_label_covers_photo_only_video_only_and_neither(self):
+        assert staff_bot._media_row_label(0) == "รูป"
+        assert staff_bot._media_row_label(1) == "ไฟล์"
+
+    def test_mine_bubble_row_label_is_files_when_a_video_is_present(self):
+        order = {
+            "id": 5, "location": "ห้อง 204", "categoryLabel": "แอร์",
+            "statusLabel": "รอช่าง", "ageDays": 0, "photoCount": 0, "videoCount": 1,
+        }
+        rows = staff_bot._mine_bubble(order)["body"]["contents"]
+        label = rows[-1]["contents"][0]["text"]
+        assert label == "ไฟล์"
+
+    def test_mine_bubble_row_label_stays_photos_with_no_video(self):
+        order = {
+            "id": 5, "location": "ห้อง 204", "categoryLabel": "แอร์",
+            "statusLabel": "รอช่าง", "ageDays": 0, "photoCount": 2, "videoCount": 0,
+        }
+        rows = staff_bot._mine_bubble(order)["body"]["contents"]
+        label = rows[-1]["contents"][0]["text"]
+        assert label == "รูป"
+
+    def test_confirmation_bubble_row_label_is_files_when_claiming_a_video(self):
+        order = {"id": 5, "propertyLabel": "HF", "location": "ห้อง 204", "categoryLabel": "แอร์"}
+        bubble = staff_bot.build_confirmation_bubble(order, photo_count=0, video_count=1)
+        rows = bubble["contents"]["body"]["contents"]
+        label = rows[-1]["contents"][0]["text"]
+        assert label == "ไฟล์"
+
+    def test_confirmation_bubble_label_settles_to_files_once_a_quote_resolves_as_video(self):
+        # A quoted attachment's kind is unknown at claim time (counted as a
+        # photo), so the bubble is built with the "รูป" label — the settled
+        # patch must still relabel it once the quote resolves as a video.
+        order = {"id": 5, "propertyLabel": "HF", "location": "ห้อง 204", "categoryLabel": "แอร์"}
+        bubble = staff_bot.build_confirmation_bubble(order, photo_count=1, video_count=0)
+        assert bubble["contents"]["body"]["contents"][-1]["contents"][0]["text"] == "รูป"
+        staff_bot._patch_confirmation_photo_line(bubble, 0, 0, 0, 1, 0, 0)
+        assert bubble["contents"]["body"]["contents"][-1]["contents"][0]["text"] == "ไฟล์"
+
+
+# ===========================================================================
+# GROUP SILENCE (owner rule, 2026-09-06): only acks and direct responses in
+# a group/room — the parse-error nag and the not-linked reply are dropped
+# silently there, and unaffected in 1:1.
+# ===========================================================================
+
+class TestGroupReportOnly:
+    """GROUP/ROOM SOURCES ARE REPORT-ONLY (owner policy, 2026-09-06 —
+    "command through chat is considered spam in HF Family group"). A group
+    or room never answers a command any more, of any kind, from anybody —
+    the only thing it ever hears is the slot report (test_staff_bot.py's
+    TestSlotWindows/TestSlotTriggers cover that heartbeat rule itself, kept
+    exactly as it was)."""
+
+    def test_the_same_no_room_text_in_1_1_still_gets_the_parse_error_reply(
+        self, test_db, dispatcher,
+    ):
+        # Group ticket routing is gone entirely (see below) — this only pins
+        # that 1:1 is unaffected by the policy.
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        event = _direct_text("แจ้งซ่อม แอร์เสีย", user_id="U-emp")
+        handled = staff_bot.handle_event_detail(event, test_db)
+        assert handled.command is True
+        assert len(dispatcher.commands) == 1
+        routed = dispatcher.commands[0]
+        assert routed.command == staff_bot.COMMAND_REPORT
+        messages = staff_bot.build_messages([], actions=[routed])
+        assert messages == [{"type": "text", "text": staff_bot.PARSE_ERROR_NO_ROOM_TEXT}]
+
+    @pytest.mark.parametrize("text", ["น้องคะ งานของฉัน", "งานของฉัน", "น้องคะ แจ้งซ่อม 204 แอร์เสีย"])
+    def test_group_text_summoned_or_bare_never_becomes_a_command(
+        self, text, test_client, test_db, staff_oa_enabled, dispatcher, caplog,
+    ):
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        with caplog.at_level("INFO"):
+            response = _signed_post(test_client, {"events": [_group_text(text, user_id="U-emp")]})
+        assert response.status_code == 200
+        assert dispatcher.commands == []
+        assert "staff-bot command" not in caplog.text
+
+    def test_no_message_text_or_photo_ever_reaches_a_log_line(
+        self, test_db, dispatcher, caplog,
+    ):
+        event = _group_text("น้องคะ แจ้งซ่อม ห้ามบอกใครความลับสุดยอด", user_id="U-stranger")
+        with caplog.at_level("DEBUG"):
+            staff_bot.handle_event_detail(event, test_db)
+        assert "ห้ามบอกใครความลับสุดยอด" not in caplog.text
+        assert "U-stranger" not in caplog.text
+
+    def test_group_ignored_message_is_logged_at_debug_only(self, test_db, dispatcher, caplog):
+        event = _group_text("น้องคะ งานของฉัน", user_id="U-stranger")
+        with caplog.at_level("DEBUG"):
+            staff_bot.handle_event_detail(event, test_db)
+        assert "staff-bot group ignored: type=message chat=Cgroup" in caplog.text
+
+    def test_group_postback_is_ignored(self, test_db, dispatcher, caplog):
+        event = _postback("cmd=mine", group=True, user_id="U-stranger")
+        with caplog.at_level("DEBUG"):
+            handled = staff_bot.handle_event_detail(event, test_db)
+        assert handled.command is False
+        assert dispatcher.commands == []
+        assert "staff-bot group ignored: type=postback chat=Cgroup" in caplog.text
+
+    def test_group_postback_from_the_confirmation_bubble_is_ignored(self, test_db, dispatcher):
+        # Even a well-formed postback from an existing confirmation bubble
+        # (a linked reporter, a real order id) never becomes a command.
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        event = _postback("cmd=cancel&id=5", group=True, user_id="U-emp")
+        handled = staff_bot.handle_event_detail(event, test_db)
+        assert handled.command is False
+        assert dispatcher.commands == []
+
+    def test_group_image_is_not_buffered_and_never_fetched(self, test_db, dispatcher):
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        staff_bot.handle_event_detail(_image(message_id="img-1"), test_db)
+        assert dispatcher.photo_uploads == []
+        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-emp") == []
+
+    def test_group_video_is_not_buffered_and_never_fetched(self, test_db, dispatcher):
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        staff_bot.handle_event_detail(_video(message_id="vid-1"), test_db)
+        assert dispatcher.photo_uploads == []
+        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-emp") == []
+
+    def test_a_group_image_from_reception_still_files_the_slot_heartbeat(
+        self, test_db, dispatcher,
+    ):
+        # A group photo/video carries no ticket meaning any more, but it is
+        # still just "a message in this chat" for the slot heartbeat rule
+        # (_maybe_file_slot_digest, unchanged) — a reception sender's photo
+        # inside a slot window still opens it.
+        _employee(test_db, badge="9001", line_user_id="U-reception")
+        test_db.add(EmployeeAppGrant(employee_badge_number="9001", app_id="reception"))
+        test_db.commit()
+        moment = datetime(2026, 9, 5, 6, 0, 0, tzinfo=BANGKOK)
+        timestamp = int(moment.timestamp() * 1000)
+        staff_bot.handle_event_detail(
+            _image(message_id="img-1", user_id="U-reception", timestamp=timestamp), test_db,
+        )
+        assert dispatcher.slots
+        assert test_db.query(StaffBotSlotMark).count() == 1
+
+    def test_group_chatter_with_pending_guest_feedback_gets_no_auto_offer(
+        self, test_db, dispatcher, monkeypatch,
+    ):
+        # The chatter-triggered auto-offer is removed entirely (2026-09-06):
+        # guest feedback now only ever reaches a group through its own slot
+        # report section (b) — never through ordinary chatter, pending or
+        # not.
+        monkeypatch.setattr(
+            guest_feedback_client, "fetch_pending",
+            lambda: {"ok": True, "count": 2, "text": "รายการ", "items": [
+                {"id": "fb-1"}, {"id": "fb-2"},
+            ]},
+        )
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        handled = staff_bot.handle_event_detail(
+            _group_text("ผ้าเช็ดตัวหมดค่ะ", user_id="U-emp"), test_db,
+        )
+        assert handled.command is False
+        assert dispatcher.commands == []
