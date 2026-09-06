@@ -31,11 +31,13 @@ variant still syncs and the run never raises.
 
 WHY THE OVER-SIZED VARIANT IS SYNTHETIC
 ---------------------------------------
-The real table is 6 buttons across two menu grants (`housekeeping` and
-`reception`), so the real variants are `base` (0 buttons), `base+reception`
-(2), `base+housekeeping` (5) and `base+housekeeping+reception` (6). No real
+The table has 8 rows across two menu grants (`housekeeping` and
+`reception`), but two of them (สถานะห้อง, งานซ่อมค้าง) hide behind
+`housekeeping`, so the SHOWN variants are `base` (0 buttons), `base+reception`
+(4), `base+housekeeping` (6, since จัดการงานซ่อม was widened 2026-09-06 into
+a tile a maid reaches too) and `base+housekeeping+reception` (6). No real
 grant combination can overflow LINE's cap — but as of 2026-09-02 the biggest
-one SITS ON it, so the margin is a single MenuButton row rather than the
+one SITS ON it, so the margin is a single shown row rather than the
 four it used to be. The guard is load-bearing (the overflow actually
 happened, back when payroll + ota + housekeeping = 7 buttons, and one more
 tile would make it live again), so its test mints the over-sized variant
@@ -103,7 +105,16 @@ SYNTHETIC_GRANT = "extra"
 
 LINE_BUTTON_CAP = 6
 
-MAX_REAL_BUTTON_COUNT = len(staff_oa_menu.MENU_BUTTONS)  # 6 today
+# Was ``len(staff_oa_menu.MENU_BUTTONS)`` — true only while every row in the
+# table was actually SHOWN together. That stopped holding on 2026-09-06:
+# ``MenuButton.hidden_by_grant_app_ids`` lets a row be defined but not shown
+# for a particular grant combination (สถานะห้อง and งานซ่อมค้าง both hide
+# behind `housekeeping`, so the both-grants variant stays at 6 even though
+# the table itself grew to 8 rows that day). The biggest REAL variant is what
+# ``buttons_for(MENU_GRANT_APP_IDS)`` actually returns, not the row count.
+MAX_REAL_BUTTON_COUNT = len(
+    staff_oa_menu.buttons_for(staff_oa_menu.MENU_GRANT_APP_IDS)
+)  # 6 today
 SYNTHETIC_BUTTON_COUNT = max(1, 7 - MAX_REAL_BUTTON_COUNT)  # 1 today
 OVERSIZED_BUTTON_COUNT = MAX_REAL_BUTTON_COUNT + SYNTHETIC_BUTTON_COUNT  # 7 today
 
@@ -133,21 +144,29 @@ SYNTHETIC_BASE_BUTTON = staff_oa_menu.MenuButton(
 
 
 def _real_buttons_leaving_room_for(base_button_count):
-    """The real table, trimmed so ``base + real`` still fits LINE's cap.
+    """The rows the real both-grants menu actually SHOWS, trimmed so
+    ``base + these`` still fits LINE's cap.
 
-    The real table reached SIX buttons on 2026-09-02 (รายงานแม่บ้าน), i.e.
-    exactly the cap. Prepending a base button on top of it would push the
-    MAXIMAL REAL variant to 7 and silently move it into the over-cap branch —
-    which is the branch ``sync_env_with_base`` exists to prove is NOT taken.
-    The fixture would have gone green while testing the opposite thing, so it
-    trims instead: with a base button present, the real rows it keeps are the
-    ones that still leave the biggest real variant renderable.
+    The real both-grants variant sits exactly ON the cap (6 shown, even
+    though the table itself has grown to 8 rows since 2026-09-06 — see
+    MAX_REAL_BUTTON_COUNT). Prepending a base button on top would push it to
+    7 and silently move it into the over-cap branch — which is the branch
+    ``sync_env_with_base`` exists to prove is NOT taken. The fixture would
+    have gone green while testing the opposite thing, so it trims instead.
 
-    Trimming the TAIL keeps `housekeeping` and `reception` both revealing at
-    least one row (they own rows 1 and 5), so MENU_GRANT_APP_IDS and the
-    variant keys stay exactly what the production module would mint.
+    Built from ``buttons_for(MENU_GRANT_APP_IDS)`` — the rows an employee
+    holding both grants actually SEES, in the order they see them — rather
+    than a raw slice of ``MENU_BUTTONS``: slicing the raw table risks keeping
+    a hidden row (สถานะห้อง or งานซ่อมค้าง, both invisible whenever
+    `housekeeping` is also granted) while dropping a shown one, which would
+    silently change how many tiles this fixture's both-grants variant
+    renders. Trimming the TAIL of
+    the SHOWN list keeps `housekeeping` and `reception` both owning at least
+    one visible row, so MENU_GRANT_APP_IDS and the variant keys stay exactly
+    what the production module would mint.
     """
-    return staff_oa_menu.MENU_BUTTONS[: LINE_BUTTON_CAP - base_button_count]
+    shown = staff_oa_menu.buttons_for(staff_oa_menu.MENU_GRANT_APP_IDS)
+    return shown[: LINE_BUTTON_CAP - base_button_count]
 
 # The keys sync() will see, built the way staff_oa_menu.menu_key() builds
 # them (base first, then grants sorted) so they always match what the module

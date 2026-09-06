@@ -64,6 +64,25 @@ class MenuButton:
 
     Use ``grant_app_ids`` (below), never the raw ``grant_app_id``, anywhere
     the question is "does this grant set reveal this tile".
+
+    ``message_text`` (2026-09-06) turns the tile into a LINE ``message``
+    action instead of ``uri``: tapping it sends this text into the 1:1 chat
+    rather than opening a browser. It exists for a tool with no openable web
+    page at all — งานซ่อมค้าง's board is Google-IdP-gated and cannot open
+    inside LINE's in-app browser, so the tile instead sends the text the
+    staff bot (``app/services/staff_bot.py``) already answers. ``url`` may be
+    ``""`` for such a button; ``rich_menu_payload`` branches on
+    ``message_text`` being set, never on ``url`` being empty.
+
+    ``hidden_by_grant_app_ids`` (2026-09-06) is the cap-preserving counterpart
+    to ``also_grant_app_ids``: it REMOVES a row, after the grant/also_grant
+    reveal, from an employee who ALSO holds any of these grants. It exists
+    because สถานะห้อง and แม่บ้าน open the identical board — an employee
+    holding both `housekeeping` and `reception` gets full write access via
+    แม่บ้าน, so the read-only สถานะห้อง tile would be a redundant duplicate
+    slot on a canvas that is already at LINE's 6-tile cap. Hiding it (rather
+    than leaving the duplicate) is what pays for a new tool's row without
+    breaking the cap.
     """
 
     grant_app_id: Optional[str]
@@ -71,6 +90,8 @@ class MenuButton:
     url: str
     glyph: str
     also_grant_app_ids: FrozenSet[str] = frozenset()
+    message_text: Optional[str] = None
+    hidden_by_grant_app_ids: FrozenSet[str] = frozenset()
 
     def __post_init__(self) -> None:
         # A base button is revealed by EVERYONE, so extra grants on one are
@@ -256,11 +277,20 @@ MENU_BUTTONS: Tuple[MenuButton, ...] = (
     # This takes the both-grants variant to FIVE buttons — the 3+2 layout,
     # first real use of menu_rows(5). LINE's cap is 6, so exactly one tile of
     # headroom was left at this point; รายงานแม่บ้าน below spent it.
+    #
+    # HIDDEN FROM A HOUSEKEEPING HOLDER (2026-09-06): แม่บ้าน above opens this
+    # SAME board with full write access, so a housekeeping+reception employee
+    # gained nothing from a second, read-only tile pointing at it — it was a
+    # duplicate slot on a canvas already at LINE's cap. Hiding it here is what
+    # pays for งานซ่อมค้าง's new row below without the both-grants variant
+    # going to 7. A reception-only employee (no housekeeping) still sees it —
+    # the hide only fires when the write-access tile is ALSO on the menu.
     MenuButton(
         grant_app_id="reception",
         label="สถานะห้อง",
         url="https://hotel.thehfhotel.org/hk",
         glyph="clipboard",
+        hidden_by_grant_app_ids=frozenset({"housekeeping"}),
     ),
     # รายงานแม่บ้าน — Report HK, the owner's paper room-report sheet digitized
     # (decisions grilled 2026-09-02; vocabulary in new-hotel CONTEXT.md
@@ -308,14 +338,95 @@ MENU_BUTTONS: Tuple[MenuButton, ...] = (
         url="https://hotel.thehfhotel.org/hk/report",
         glyph="photo_sheet",
     ),
+    # งานซ่อมค้าง — outstanding-maintenance report, for reception (owner
+    # request 2026-09-06: "add menu for reception to view maintenance
+    # outstanding in LINE HF ภายใน menu"). The reception web board
+    # (works.thehfhotel.org) cannot open from LINE at all — it sits behind
+    # Google-IdP Cloudflare Access, and Google refuses OAuth inside LINE's
+    # in-app browser (disallowed_useragent), the exact dead-end Reimbursement
+    # and payroll already hit (see the note atop this table). So this tile
+    # carries no URL: it is a ``message`` action that sends the text งานค้าง
+    # into the 1:1 chat, and the staff bot (app/services/staff_bot.py,
+    # already live — งานค้าง is one of its DIGEST_WORDS) answers a linked
+    # employee with the outstanding-maintenance report. No new web page, no
+    # metered LINE push — a message action is a reply token spend, not a
+    # push.
+    #
+    # GLYPH: a new one, ``wrench_list`` (app/services/staff_oa_images.py) — a
+    # wrench beside two ruled rows, rather than reusing ``clipboard`` (that
+    # mark is already สถานะห้อง's board-of-rooms) or the full ``wrench``
+    # (that one means "go fix a room now", แจ้งซ่อม's action; this tile only
+    # lists what is still open, read-only, so it needed its own mark rather
+    # than borrowing either existing one).
+    #
+    # HIDDEN FROM A HOUSEKEEPING HOLDER (widened 2026-09-06, owner: "let maid
+    # mark fix done too"): จัดการงานซ่อม below is now a SHARED tile a maid can
+    # open too, on the SAME queue page a housekeeping+reception employee
+    # already reaches with full write access — this chat-only, read-only
+    # report would be a redundant second surface for the identical job on a
+    # canvas already at LINE's 6-tile cap. A reception-only employee (no
+    # housekeeping) is unaffected by the hide and still gets this tile; a
+    # maid gets the queue page instead of the chat report, which is also what
+    # keeps a housekeeping-only variant at the cap now that จัดการงานซ่อม
+    # reaches her too. A reception-only employee still gets both tiles side
+    # by side (สถานะห้อง's hide argument, restated for this pair).
+    MenuButton(
+        grant_app_id="reception",
+        label="งานซ่อมค้าง",
+        url="",
+        glyph="wrench_list",
+        message_text="งานค้าง",
+        hidden_by_grant_app_ids=frozenset({"housekeeping"}),
+    ),
+    # จัดการงานซ่อม — owner decision 2026-09-06 ("launch both"), WIDENED the
+    # same day ("let maid mark fix done too"): opens the actual queue page
+    # where the work gets done (claim a card, move it, close it) — a `uri`
+    # tile, since housekeeping.thehfhotel.org/staff/queue is on this domain's
+    # own Cloudflare Access app and (unlike works.thehfhotel.org) does not hit
+    # the Google-IdP-inside-LINE dead end. งานซ่อมค้าง above answers "what's
+    # still open" as a chat message; this is where it gets closed.
+    #
+    # NOW A SHARED TILE, like รายงานแม่บ้าน — housekeeping's own /staff/queue
+    # page already admits the `housekeeping` grant as well as `reception`
+    # (the maids' half of "let maid mark fix done too"), so a maid needs this
+    # launcher exactly as much as reception does. One row, revealed by either
+    # grant, rendered once — the same shared-tile shape รายงานแม่บ้าน already
+    # uses, and for the identical reason: a second, housekeeping-only row
+    # would show TWICE for a housekeeping+reception holder.
+    #
+    # NO LONGER HIDDEN: unlike สถานะห้อง and งานซ่อมค้าง above, a
+    # housekeeping+reception employee does NOT already have an equivalent tile
+    # for this job — งานซ่อมค้าง is read-only chat, not the queue page — so
+    # there is nothing redundant to drop here. That employee instead loses
+    # งานซ่อมค้าง's slot to this one (see its ``hidden_by_grant_app_ids``
+    # above), which is what keeps the both-grants variant at LINE's 6-tile
+    # cap.
+    #
+    # GLYPH: reuses ``wrench`` rather than ``wrench_list`` — this tile is
+    # where work actually gets DONE (the full corner-to-corner wrench, the
+    # same "go act" mark แจ้งซ่อม already wears), not where it is merely
+    # listed (wrench_list, งานซ่อมค้าง's mark, stays a read-only report).
+    MenuButton(
+        grant_app_id="reception",
+        also_grant_app_ids=frozenset({"housekeeping"}),
+        label="จัดการงานซ่อม",
+        url="https://housekeeping.thehfhotel.org/staff/queue",
+        glyph="wrench",
+    ),
 )
 
 # Grants that actually change the menu. Any other grant (rooms, portal, …)
 # is menu-irrelevant and ignored when computing variants. Unioned over each
-# button's FULL grant set, so a grant that only ever appears as a shared
-# tile's `also_grant_app_ids` still counts as menu-relevant.
+# button's FULL grant set AND its hidden_by_grant_app_ids, so a grant that
+# only ever appears as a shared tile's `also_grant_app_ids` — or only ever
+# HIDES a row, never reveals one — still counts as menu-relevant. Without the
+# hidden_by half, a hiding grant absent from every button's reveal set would
+# be stripped out of `relevant` by menu_grants() before buttons_for() ever
+# gets to check it, and the hide would silently never fire.
 MENU_GRANT_APP_IDS: FrozenSet[str] = frozenset(
-    grant for button in MENU_BUTTONS for grant in button.grant_app_ids
+    grant
+    for button in MENU_BUTTONS
+    for grant in button.grant_app_ids | button.hidden_by_grant_app_ids
 )
 
 
@@ -353,12 +464,22 @@ def buttons_for(granted_app_ids: Iterable[str]) -> Tuple[MenuButton, ...]:
     appears exactly ONCE regardless of how many the employee holds — this walk
     visits each row once, which is why the model puts several grants on one
     row rather than one row per grant.
+
+    Hiding runs as a SECOND pass, after the grant/also_grant reveal above: a
+    revealed row is then dropped if the employee holds ANY of its
+    ``hidden_by_grant_app_ids``. Two passes, not one combined filter, because
+    the questions are different — "is this row revealed at all" vs. "does a
+    BETTER row already cover the same ground for this employee" — and merging
+    them would let a hide accidentally suppress a row nothing else revealed.
     """
     relevant = menu_grants(granted_app_ids)
-    return tuple(
+    revealed = (
         button
         for button in MENU_BUTTONS
         if not button.grant_app_ids or button.grant_app_ids & relevant
+    )
+    return tuple(
+        button for button in revealed if not button.hidden_by_grant_app_ids & relevant
     )
 
 
@@ -421,7 +542,13 @@ def menu_signature(granted_app_ids: Iterable[str]) -> str:
         # keeps the hash covering everything about the row that decides what
         # gets rendered — including a widened `also_grant_app_ids`.
         "buttons": [
-            [sorted(button.grant_app_ids), button.label, button.url, button.glyph]
+            [
+                sorted(button.grant_app_ids),
+                button.label,
+                button.url,
+                button.glyph,
+                button.message_text,
+            ]
             for button in buttons
         ],
     }
@@ -457,11 +584,19 @@ def rich_menu_payload(granted_app_ids: Iterable[str]) -> Dict:
         "areas": [
             {
                 "bounds": cell,
-                "action": {
-                    "type": "uri",
-                    "label": button.label[:20],
-                    "uri": button.url,
-                },
+                "action": (
+                    {
+                        "type": "message",
+                        "label": button.label[:20],
+                        "text": button.message_text,
+                    }
+                    if button.message_text
+                    else {
+                        "type": "uri",
+                        "label": button.label[:20],
+                        "uri": button.url,
+                    }
+                ),
             }
             for button, cell in zip(buttons, cells)
         ],
