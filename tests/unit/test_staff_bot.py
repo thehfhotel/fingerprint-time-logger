@@ -220,13 +220,26 @@ class TestSummonGrammar:
         routed = _route(_group_text(f"น้องคะ {word}"))
         assert routed.command == staff_bot.COMMAND_DIGEST
 
-    @pytest.mark.parametrize("word", ["คำขอ", "คำขอลูกค้า", "guest requests"])
+    @pytest.mark.parametrize(
+        "word",
+        [
+            "คำขอ", "คำขอลูกค้า", "guest requests",
+            "ความคิดเห็น", "ฟีดแบค", "feedback",
+        ],
+    )
     def test_a_command_word_after_the_summon_runs_the_guest_requests(self, word):
         routed = _route(_group_text(f"น้องคะ {word}"))
         assert routed.command == staff_bot.COMMAND_REQUESTS
 
     def test_unrecognised_words_after_the_summon_open_the_palette(self):
         routed = _route(_group_text("น้องคะ ช่วยดูให้หน่อย"))
+        assert routed.command == staff_bot.COMMAND_PALETTE
+
+    def test_feedback_is_only_a_command_as_a_bare_word_after_the_summon(self):
+        # The new "feedback" keyword must match the same way the other five
+        # already do: the WHOLE remainder, never a substring — so ordinary
+        # chatter that happens to contain the word stays ordinary chatter.
+        routed = _route(_group_text("น้องคะ ขอบคุณสำหรับ feedback นะ"))
         assert routed.command == staff_bot.COMMAND_PALETTE
 
     def test_a_self_mention_summons_and_its_span_is_stripped(self):
@@ -258,6 +271,14 @@ class TestSummonGrammar:
         # Reads are open, but the group still has to ASK. Otherwise every
         # mention of งานค้าง in staff chat would make the bot interrupt.
         routed = _route(_group_text("งานค้าง"))
+        assert isinstance(routed, staff_bot.RoutedMessage)
+
+    def test_feedback_mentioned_in_ordinary_group_chatter_is_not_a_command(self):
+        # THE false-trigger case for the new keyword, mirroring
+        # test_nong_without_a_particle_is_ordinary_chat above: no summon, so
+        # this is ordinary chat regardless of what words it contains — the
+        # word "feedback" appearing mid-sentence must never wake the bot.
+        routed = _route(_group_text("ขอบคุณสำหรับ feedback นะ"))
         assert isinstance(routed, staff_bot.RoutedMessage)
 
     def test_a_summon_mid_sentence_does_not_count(self):
@@ -294,11 +315,24 @@ class TestDirectChat:
         routed = _route(_direct_text(word), known={"U-emp"})
         assert routed.command == staff_bot.COMMAND_DIGEST
 
-    @pytest.mark.parametrize("word", ["คำขอ", "คำขอลูกค้า", "guest requests"])
+    @pytest.mark.parametrize(
+        "word",
+        [
+            "คำขอ", "คำขอลูกค้า", "guest requests",
+            "ความคิดเห็น", "ฟีดแบค", "feedback",
+        ],
+    )
     def test_a_bare_guest_requests_word_runs_that_command(self, word):
         routed = _route(_direct_text(word), known={"U-emp"})
         assert routed.command == staff_bot.COMMAND_REQUESTS
         assert routed.source_type == "user"
+
+    def test_feedback_mentioned_in_ordinary_one_to_one_text_opens_the_palette(self):
+        # Same exact-match parity in a 1:1 chat: command_for_words compares
+        # the WHOLE message text, so a sentence merely containing "feedback"
+        # is not the command.
+        routed = _route(_direct_text("ขอบคุณสำหรับ feedback นะ"), known={"U-emp"})
+        assert routed.command == staff_bot.COMMAND_PALETTE
 
     def test_no_summon_is_needed_in_a_one_to_one_chat(self):
         routed = _route(_direct_text("น้องคะ"), known={"U-emp"})
@@ -772,9 +806,9 @@ class TestPalette:
         requests_action = bubble["footer"]["contents"][1]["action"]
         assert requests_action == {
             "type": "postback",
-            "label": "คำขอลูกค้า",
+            "label": "ความคิดเห็นลูกค้า",
             "data": "cmd=requests",
-            "displayText": "คำขอลูกค้า",
+            "displayText": "ความคิดเห็นลูกค้า",
         }
 
     def test_a_coalesced_reply_is_palette_then_digest(self, monkeypatch):
@@ -794,8 +828,8 @@ class TestPalette:
 
 
 # ===========================================================================
-# Guest requests (คำขอลูกค้า) — rendering, build_messages, the ids threaded
-# through for the delivery confirm
+# Guest feedback (ความคิดเห็นลูกค้า) — rendering, build_messages, the ids
+# threaded through for the delivery confirm
 # ===========================================================================
 
 
@@ -852,6 +886,27 @@ class TestRequestsRendering:
         collected = []
         staff_bot.build_messages([staff_bot.COMMAND_REQUESTS], collected)
         assert collected == []
+
+    def test_items_carrying_kind_and_urgent_are_tolerated(self, monkeypatch):
+        # rev 3.1: items[] now carry `kind` ("praise"/"issue"/"request") and
+        # `urgent`. The bot's gate/confirm logic is kind-agnostic — it only
+        # ever reads `id` off an item and relays guest-feedback's own
+        # pre-formatted `text` as-is, so the extra fields must be tolerated
+        # (not crash, not filter, not reshape the text) rather than acted on.
+        payload = _requests_payload(
+            count=2,
+            text="ความคิดเห็นจากผู้เข้าพัก 2 รายการ",
+            items=[
+                {"id": "fb-1", "kind": "praise", "urgent": False},
+                {"id": "fb-2", "kind": "issue", "urgent": True},
+            ],
+        )
+        assert staff_bot.render_requests(payload) == payload["text"]
+        monkeypatch.setattr(guest_feedback_client, "fetch_pending", lambda: payload)
+        collected = []
+        messages = staff_bot.build_messages([staff_bot.COMMAND_REQUESTS], collected)
+        assert messages == [{"type": "text", "text": payload["text"]}]
+        assert collected == ["fb-1", "fb-2"]
 
 
 # ===========================================================================

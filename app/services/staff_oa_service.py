@@ -21,8 +21,9 @@ The Employee Hub lives on a dedicated staff LINE Official Account
 The GROUP/1:1 event forwarder to guest-feedback that used to live here
 (``GUEST_FEEDBACK_LINE_*``, PR #28/#30) is retired as of guest-feedback
 docs/CONTRACTS.md §15 rev 3: the Employee Hub bot
-(app/services/staff_bot.py) now reads and confirms guest requests directly
-via app/services/guest_feedback_client.py instead of guest-feedback relaying
+(app/services/staff_bot.py) now reads and confirms guest feedback (praise,
+issue, request alike, since rev 3.1) directly via
+app/services/guest_feedback_client.py instead of guest-feedback relaying
 LINE events through this app.
 """
 

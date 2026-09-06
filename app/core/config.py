@@ -204,13 +204,14 @@ def get_server_config() -> dict:
 # answers 503 and scripts/staff_oa_sync.py refuses to run. Zero behavior
 # change until both are delivered to the prod host .env, like HFID_*.
 #
-# GUEST REQUESTS READ/CONFIRM SIDE (separate, independently dark). Since
+# GUEST FEEDBACK READ/CONFIRM SIDE (separate, independently dark). Since
 # guest-feedback docs/CONTRACTS.md §15 rev 3 this app is the ONLY responder
-# for guest requests raised on the public feedback site: the staff bot reads
-# and confirms them from guest-feedback server-to-server, rather than
-# guest-feedback holding a LINE token or this webhook relaying events to it
-# (that forwarder, PR #28/#30, is retired). Read via os.getenv() in
-# app/services/guest_feedback_client.py.
+# for guest feedback raised on the public feedback site — rev 3.1 widened the
+# queue from requests-only to every submission kind (praise, issue, request),
+# unchanged here: the staff bot reads and confirms them from guest-feedback
+# server-to-server, rather than guest-feedback holding a LINE token or this
+# webhook relaying events to it (that forwarder, PR #28/#30, is retired).
+# Read via os.getenv() in app/services/guest_feedback_client.py.
 #
 #   GUEST_FEEDBACK_BASE_URL
 #                      Guest-feedback's internal base URL. Production:

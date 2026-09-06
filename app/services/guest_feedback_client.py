@@ -1,9 +1,10 @@
-"""Guest-feedback internal client — the staff bot's guest-requests read side.
+"""Guest-feedback internal client — the staff bot's guest-feedback read side.
 
-The staff bot (app/services/staff_bot.py) answers คำขอลูกค้า with the guest
-requests waiting on a free LINE reply, and also auto-offers them into
-ordinary staff-group chat. Those rows live in the guest-feedback app, not
-here, so this module is the one place that talks to it:
+The staff bot (app/services/staff_bot.py) answers ความคิดเห็นลูกค้า with the
+guest feedback (praise, issue and request alike, since contract rev 3.1)
+waiting on a free LINE reply, and also auto-offers them into ordinary
+staff-group chat. Those rows live in the guest-feedback app, not here, so
+this module is the one place that talks to it:
 
     GET  {GUEST_FEEDBACK_BASE_URL}/api/internal/line/pending
          X-Reader-Secret: {GUEST_FEEDBACK_READER_SECRET}
@@ -16,15 +17,16 @@ Server-to-server over the shared-nginx Docker network (production:
 secret stands in for it, the same shape as HOUSEKEEPING_INTERNAL_URL/TOKEN in
 app/services/housekeeping_client.py. Design authority: guest-feedback
 docs/CONTRACTS.md §15 rev 3 ("Guest requests → staff LINE — the Employee Hub
-bot is the ONLY responder").
+bot is the ONLY responder"), widened by rev 3.1 (2026-09-06) to queue every
+guest submission — praise, issue and request — unchanged in shape here.
 
 FAIL CLOSED, and NEVER RAISE. Either env unset means the feature is dark:
 :func:`fetch_pending` returns None and :func:`confirm_delivered` returns
 False without dialing anything. Every failure mode — dark, timeout,
 connection error, non-2xx, malformed JSON — collapses to that same miss,
 which the bot renders as one fixed Thai line
-("ยังอ่านคำขอลูกค้าไม่ได้ค่ะ ลองใหม่อีกครั้ง"). Neither function ever logs the
-guest's text — only counts, ids and outcomes.
+("ยังอ่านความคิดเห็นลูกค้าไม่ได้ค่ะ ลองใหม่อีกครั้ง"). Neither function ever
+logs the guest's text — only counts, ids and outcomes.
 
 Env is read lazily via ``os.getenv`` on every call, same convention as every
 other secret in this repo (registry comment in app/core/config.py) — an
@@ -62,18 +64,20 @@ def get_reader_secret() -> str:
 
 
 def is_enabled() -> bool:
-    """Whether the guest-requests read is wired up at all (both env set)."""
+    """Whether the guest-feedback read is wired up at all (both env set)."""
     return bool(get_base_url()) and bool(get_reader_secret())
 
 
 def fetch_pending() -> Optional[Dict]:
-    """The pending guest-requests payload, or None when it cannot be had.
+    """The pending guest-feedback payload, or None when it cannot be had.
 
-    None covers every unhappy path on purpose — either env blank, timeout,
-    refused connection, non-2xx, a body that is not a JSON object — because
-    the caller does exactly one thing with all of them (renders the fixed
-    "can't read requests" Thai line). Never raises, never logs the guest's
-    text: only the outcome.
+    Items may be praise, issue or request (``kind``), each optionally
+    ``urgent`` — this client passes the payload through untouched either
+    way. None covers every unhappy path on purpose — either env blank,
+    timeout, refused connection, non-2xx, a body that is not a JSON object —
+    because the caller does exactly one thing with all of them (renders the
+    fixed "can't read feedback" Thai line). Never raises, never logs the
+    guest's text: only the outcome.
     """
     base_url = get_base_url()
     secret = get_reader_secret()
