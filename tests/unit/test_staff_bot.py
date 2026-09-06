@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.api import staff_oa as staff_oa_module
-from app.models.models import Employee
+from app.models.models import Employee, EmployeeAppGrant, StaffBotSlotMark
 from app.services import guest_feedback_client, housekeeping_client, staff_bot
 from app.services import staff_oa_service as service
 
@@ -107,12 +107,16 @@ class _CollectingDispatcher:
     def __init__(self):
         self.commands = []
         self.messages = []
+        self.slots = []
 
     def submit_command(self, command):
         self.commands.append(command)
 
     def submit_message(self, chat_key, reply_token):
         self.messages.append((chat_key, reply_token))
+
+    def submit_slot_digest(self, ref, reply_token, trigger):
+        self.slots.append((ref, reply_token, trigger))
 
 
 @pytest.fixture
@@ -141,16 +145,31 @@ class _Clock:
 # ---------------------------------------------------------------------------
 
 
-def _group_text(text, reply_token="reply-g", message=None, group_id="Cgroup"):
+def _group_text(
+    text,
+    reply_token="reply-g",
+    message=None,
+    group_id="Cgroup",
+    timestamp=None,
+    user_id="Uspeaker",
+):
     payload = {"type": "text", "id": "m1", "text": text}
     if message:
         payload.update(message)
-    return {
+    source = {"type": "group", "groupId": group_id}
+    if user_id:
+        # LINE omits userId entirely for some senders (LINE for PC), which is
+        # exactly the phase-2 case rule 3b exists for.
+        source["userId"] = user_id
+    event = {
         "type": "message",
         "replyToken": reply_token,
-        "source": {"type": "group", "groupId": group_id, "userId": "Uspeaker"},
+        "source": source,
         "message": payload,
     }
+    if timestamp is not None:
+        event["timestamp"] = timestamp
+    return event
 
 
 def _direct_text(text, user_id="U-emp", reply_token="reply-d"):
@@ -1486,3 +1505,803 @@ class TestCommandsAnswerAtOnce:
 
     def test_slot_quiet_is_still_fifteen_seconds_for_phase_two(self):
         assert staff_bot.SLOT_QUIET_SECONDS == 15.0
+
+
+# ===========================================================================
+# PHASE 2 — the slot digest
+# ===========================================================================
+#
+# Four Bangkok windows a day, one งานค้าง digest each, into a GROUP, on a free
+# reply token that piggybacks on whatever the humans were already saying.
+# What these tests protect, in order of how expensive the mistake is:
+#
+#   * ONCE PER SLOT, ACROSS RESTARTS. The mark is a database row; a second
+#     qualifying message, or a fresh process, must not post the digest twice
+#     into HF Family.
+#   * A SCHEDULED POST NEVER SPAMS. Housekeeping dark, a failed send, a stale
+#     pending — all of them delete the mark and post nothing, rather than
+#     dropping an error line into the group four times a day.
+#   * STILL A REPLY, NEVER A PUSH. The slot digest rides an event's reply
+#     token like everything else here (the exploding-`requests` fixtures above
+#     are in force for this section too).
+
+SLOT_DAY = "2026-09-05"
+GROUP = "Cgroup"
+
+
+def _ts(hour, minute=0, second=0, day=5, month=9, year=2026):
+    """What LINE puts in event['timestamp'] — epoch ms — for a Bangkok time."""
+    moment = datetime(year, month, day, hour, minute, second, tzinfo=BANGKOK)
+    return int(moment.timestamp() * 1000)
+
+
+def _ref(slot="morning", group=GROUP, date=SLOT_DAY):
+    return (group, date, slot)
+
+
+@pytest.fixture
+def slot_bot(monkeypatch):
+    """The real dispatcher (so pending state is real), with no event loop."""
+    dispatcher = staff_bot.AsyncioBotDispatcher()
+    dispatcher.debouncer = staff_bot.ReplyDebouncer(scheduler=lambda delay: None)
+    monkeypatch.setattr(staff_bot, "get_dispatcher", lambda: dispatcher)
+    return dispatcher
+
+
+@pytest.fixture
+def staff(test_db):
+    """One reception-grant holder and one employee without that grant."""
+    test_db.add(Employee(
+        badge_number="8001", display_name="reception", is_active=True,
+        is_hidden=False, line_user_id="U-reception",
+    ))
+    test_db.add(EmployeeAppGrant(employee_badge_number="8001", app_id="reception"))
+    test_db.add(Employee(
+        badge_number="8002", display_name="maid", is_active=True,
+        is_hidden=False, line_user_id="U-maid",
+    ))
+    test_db.add(EmployeeAppGrant(employee_badge_number="8002", app_id="housekeeping"))
+    test_db.commit()
+
+
+def _mark(db, slot="morning", group=GROUP, date=SLOT_DAY):
+    db.expire_all()
+    return staff_bot.find_slot_mark(db, (group, date, slot))
+
+
+def _speak(db, *, at, user_id="U-maid", text="ผ้าเช็ดตัวหมดค่ะ", token="reply-g",
+           group=GROUP):
+    """One ordinary group message at a Bangkok time, through the real edge."""
+    return staff_bot.handle_event_detail(
+        _group_text(text, reply_token=token, group_id=group, timestamp=at,
+                    user_id=user_id),
+        db,
+    )
+
+
+class TestSlotWindows:
+    """Classification is on the EVENT's clock, in Bangkok, [start, end)."""
+
+    @pytest.mark.parametrize("hour,minute,second,expected", [
+        (5, 59, 59, None),
+        (6, 0, 0, "morning"),
+        (9, 59, 59, "morning"),
+        (10, 0, 0, None),
+        (11, 59, 59, None),
+        (12, 0, 0, "noon"),
+        (13, 59, 59, "noon"),
+        (14, 0, 0, None),
+        (14, 29, 59, None),
+        (14, 30, 0, "afternoon"),
+        (16, 29, 59, "afternoon"),
+        (16, 30, 0, None),
+        (19, 29, 59, None),
+        (19, 30, 0, "night"),
+        (21, 29, 59, "night"),
+        (21, 30, 0, None),
+        (23, 59, 59, None),
+    ])
+    def test_the_boundaries_are_inclusive_start_exclusive_end(
+        self, hour, minute, second, expected
+    ):
+        slot = staff_bot.slot_for_moment(
+            staff_bot.bangkok_moment(_ts(hour, minute, second))
+        )
+        assert (slot.slot_id if slot else None) == expected
+
+    def test_every_slot_has_the_thai_label_the_owner_asked_for(self):
+        assert [(s.slot_id, s.label) for s in staff_bot.SLOTS] == [
+            ("morning", "เช้า"), ("noon", "เที่ยง"),
+            ("afternoon", "บ่าย"), ("night", "ค่ำ"),
+        ]
+
+    def test_the_date_is_the_bangkok_one_not_utc_s(self):
+        # 06:00 Bangkok is 23:00 UTC the day BEFORE. A UTC date here would
+        # file the morning slot under yesterday and post it twice.
+        assert staff_bot.slot_ref_for_event(GROUP, _ts(6, 0, day=6)) == (
+            GROUP, "2026-09-06", "morning"
+        )
+
+    @pytest.mark.parametrize("timestamp", [None, "", "1757000000000", True, object()])
+    def test_an_unusable_timestamp_is_no_slot_at_all(self, timestamp):
+        assert staff_bot.bangkok_moment(timestamp) is None
+        assert staff_bot.slot_ref_for_event(GROUP, timestamp) is None
+
+    def test_no_slot_without_a_group(self):
+        assert staff_bot.slot_ref_for_event("", _ts(6, 0)) is None
+
+
+class TestSlotTriggers:
+    """Rule 3: who opens a window, and when."""
+
+    def test_reception_opens_the_slot_at_the_very_start(
+        self, slot_bot, staff, test_db
+    ):
+        handled = _speak(test_db, at=_ts(6, 0), user_id="U-reception")
+
+        assert handled.claims_reply_token is True
+        assert handled.command is False
+        mark = _mark(test_db)
+        assert (mark.state, mark.trigger, mark.slot) == ("pending", "reception", "morning")
+        pending = slot_bot.debouncer.pending_for(GROUP)
+        assert pending.commands == {staff_bot.COMMAND_SLOT_DIGEST}
+        assert pending.slot_ref == _ref()
+        assert pending.reply_token == "reply-g"
+
+    def test_a_sender_without_the_grant_does_not_open_it_early(
+        self, slot_bot, staff, test_db
+    ):
+        assert _speak(test_db, at=_ts(6, 30), user_id="U-maid").claims_reply_token is False
+        assert _mark(test_db) is None
+        assert slot_bot.debouncer.pending_for(GROUP) is None
+
+    def test_an_inactive_reception_holder_is_nobody(self, slot_bot, staff, test_db):
+        test_db.query(Employee).filter(Employee.badge_number == "8001").update(
+            {"is_active": False}
+        )
+        test_db.commit()
+        _speak(test_db, at=_ts(6, 0), user_id="U-reception")
+        assert _mark(test_db) is None
+
+    def test_anybody_opens_it_in_the_last_thirty_minutes(
+        self, slot_bot, staff, test_db
+    ):
+        assert _speak(test_db, at=_ts(9, 30), user_id="U-maid").claims_reply_token is True
+        mark = _mark(test_db)
+        assert (mark.state, mark.trigger) == ("pending", "late")
+
+    def test_one_second_before_the_last_thirty_minutes_is_still_too_early(
+        self, slot_bot, staff, test_db
+    ):
+        _speak(test_db, at=_ts(9, 29, 59), user_id="U-maid")
+        assert _mark(test_db) is None
+
+    def test_a_sender_with_no_user_id_triggers_only_when_it_is_late(
+        self, slot_bot, staff, test_db
+    ):
+        # LINE for PC sends no userId: never a reception match, so rule 3b is
+        # the only way this message ever opens a window.
+        _speak(test_db, at=_ts(7, 0), user_id=None)
+        assert _mark(test_db) is None
+
+        assert _speak(test_db, at=_ts(9, 45), user_id=None).claims_reply_token is True
+        assert _mark(test_db).trigger == "late"
+
+    def test_a_second_message_in_the_same_slot_does_not_re_trigger(
+        self, slot_bot, staff, test_db
+    ):
+        _speak(test_db, at=_ts(6, 0), user_id="U-reception")
+        filed_at = _mark(test_db).filed_at
+
+        handled = _speak(test_db, at=_ts(6, 1), user_id="U-reception", token="reply-2")
+
+        assert test_db.query(StaffBotSlotMark).count() == 1
+        assert _mark(test_db).filed_at == filed_at
+        # It still claims the token: the pending reply now holds the newest.
+        assert handled.claims_reply_token is True
+        assert slot_bot.debouncer.pending_for(GROUP).reply_token == "reply-2"
+
+    def test_a_slot_already_sent_is_not_re_opened(self, slot_bot, staff, test_db):
+        staff_bot.mark_slot_sent(test_db, _ref(), trigger="reception")
+        _speak(test_db, at=_ts(9, 45), user_id="U-reception")
+        assert _mark(test_db).state == "sent"
+        assert slot_bot.debouncer.pending_for(GROUP) is None
+
+    def test_each_group_has_its_own_slot(self, slot_bot, staff, test_db):
+        _speak(test_db, at=_ts(6, 0), user_id="U-reception")
+        _speak(test_db, at=_ts(6, 0), user_id="U-reception", group="Cother",
+               token="reply-o")
+
+        assert {m.group_id for m in test_db.query(StaffBotSlotMark).all()} == {
+            GROUP, "Cother"
+        }
+        assert slot_bot.debouncer.pending_for("Cother").slot_ref == _ref(group="Cother")
+
+    def test_the_next_slot_of_the_same_day_is_a_new_window(
+        self, slot_bot, staff, test_db
+    ):
+        _speak(test_db, at=_ts(6, 0), user_id="U-reception")
+        staff_bot.mark_slot_sent(test_db, _ref())
+        _speak(test_db, at=_ts(12, 0), user_id="U-reception", token="reply-n")
+        assert {m.slot for m in test_db.query(StaffBotSlotMark).all()} == {
+            "morning", "noon"
+        }
+
+    def test_a_command_is_not_a_slot_trigger(self, slot_bot, staff, test_db):
+        # Commands are phase 1's business; rule 3 only looks at chat.
+        handled = staff_bot.handle_event_detail(
+            _group_text("น้องคะ งานค้าง", timestamp=_ts(6, 0), user_id="U-reception"),
+            test_db,
+        )
+        assert handled.command is True
+        assert _mark(test_db) is None
+
+    def test_a_photo_never_opens_a_window(self, slot_bot, staff, test_db):
+        staff_bot.handle_event_detail(
+            _group_text("", message={"type": "image"}, timestamp=_ts(6, 0),
+                        user_id="U-reception"),
+            test_db,
+        )
+        assert _mark(test_db) is None
+
+    def test_a_room_never_triggers(self, slot_bot, staff, test_db):
+        event = _group_text("สวัสดี", timestamp=_ts(6, 0), user_id="U-reception")
+        event["source"] = {"type": "room", "roomId": "Rroom", "userId": "U-reception"}
+        staff_bot.handle_event_detail(event, test_db)
+        assert test_db.query(StaffBotSlotMark).count() == 0
+
+    def test_a_one_to_one_chat_never_triggers(self, slot_bot, staff, test_db):
+        event = _direct_text("สวัสดี", user_id="U-reception")
+        event["timestamp"] = _ts(6, 0)
+        staff_bot.handle_event_detail(event, test_db)
+        assert test_db.query(StaffBotSlotMark).count() == 0
+
+    def test_an_event_outside_every_window_triggers_nothing(
+        self, slot_bot, staff, test_db
+    ):
+        _speak(test_db, at=_ts(11, 0), user_id="U-reception")
+        assert test_db.query(StaffBotSlotMark).count() == 0
+
+    def test_the_pending_waits_fifteen_seconds_and_takes_the_newest_token(
+        self, slot_bot, staff, test_db
+    ):
+        _speak(test_db, at=_ts(6, 0), user_id="U-reception", token="tok-1")
+        pending = slot_bot.debouncer.pending_for(GROUP)
+        assert pending.quiet_seconds == staff_bot.SLOT_QUIET_SECONDS == 15.0
+
+        handled = _speak(test_db, at=_ts(6, 0, 5), user_id="U-maid", token="tok-2")
+        assert handled.claims_reply_token is True
+        assert slot_bot.debouncer.pending_for(GROUP).reply_token == "tok-2"
+
+    def test_filing_logs_ids_only_never_text(self, slot_bot, staff, test_db, caplog):
+        with caplog.at_level("INFO"):
+            _speak(test_db, at=_ts(6, 0), user_id="U-reception",
+                   text="ห้อง 204 แอร์เสียค่ะ")
+
+        assert (
+            "staff-bot slot filed: group=Cgroup date=2026-09-05 slot=morning "
+            "trigger=reception" in caplog.text
+        )
+        assert "แอร์เสีย" not in caplog.text
+        assert "U-reception" not in caplog.text
+
+
+class TestSlotMarksSurviveRestarts:
+    def test_a_sent_mark_outlives_the_dispatcher(self, monkeypatch, staff, test_db):
+        first = staff_bot.AsyncioBotDispatcher()
+        first.debouncer = staff_bot.ReplyDebouncer(scheduler=lambda delay: None)
+        monkeypatch.setattr(staff_bot, "get_dispatcher", lambda: first)
+        _speak(test_db, at=_ts(6, 0), user_id="U-reception")
+        staff_bot.mark_slot_sent(test_db, _ref(), trigger="reception")
+
+        # The process restarts: brand new dispatcher, empty debouncer.
+        second = staff_bot.AsyncioBotDispatcher()
+        second.debouncer = staff_bot.ReplyDebouncer(scheduler=lambda delay: None)
+        monkeypatch.setattr(staff_bot, "get_dispatcher", lambda: second)
+        _speak(test_db, at=_ts(9, 45), user_id="U-reception", token="reply-2")
+
+        assert second.debouncer.pending_for(GROUP) is None
+        assert test_db.query(StaffBotSlotMark).count() == 1
+
+    def test_a_pending_left_by_a_dead_process_is_cleaned_and_re_triggerable(
+        self, slot_bot, staff, test_db, caplog
+    ):
+        stale = StaffBotSlotMark(
+            group_id=GROUP, bkk_date=SLOT_DAY, slot="morning", state="pending",
+            filed_at=datetime.utcnow() - timedelta(seconds=200), trigger="reception",
+        )
+        test_db.add(stale)
+        test_db.commit()
+
+        with caplog.at_level("INFO"):
+            handled = _speak(test_db, at=_ts(9, 45), user_id="U-reception",
+                             token="reply-2")
+
+        assert "reason=stale" in caplog.text
+        assert handled.claims_reply_token is True
+        mark = _mark(test_db)
+        assert (mark.state, mark.trigger) == ("pending", "reception")
+        assert mark.filed_at > datetime.utcnow() - timedelta(seconds=30)
+        assert slot_bot.debouncer.pending_for(GROUP).slot_ref == _ref()
+
+    def test_a_fresh_pending_still_holds_the_slot(self, slot_bot, staff, test_db):
+        recent = StaffBotSlotMark(
+            group_id=GROUP, bkk_date=SLOT_DAY, slot="morning", state="pending",
+            filed_at=datetime.utcnow() - timedelta(seconds=30), trigger="reception",
+        )
+        test_db.add(recent)
+        test_db.commit()
+
+        _speak(test_db, at=_ts(9, 45), user_id="U-reception", token="reply-2")
+        assert slot_bot.debouncer.pending_for(GROUP) is None
+        assert _mark(test_db).state == "pending"
+
+    def test_the_database_refuses_two_marks_for_one_slot(self, test_db):
+        from sqlalchemy.exc import IntegrityError
+
+        test_db.add(StaffBotSlotMark(
+            group_id=GROUP, bkk_date=SLOT_DAY, slot="morning", state="pending",
+            filed_at=datetime.utcnow(), trigger="reception",
+        ))
+        test_db.commit()
+        test_db.add(StaffBotSlotMark(
+            group_id=GROUP, bkk_date=SLOT_DAY, slot="morning", state="sent",
+            filed_at=datetime.utcnow(), trigger="late",
+        ))
+        with pytest.raises(IntegrityError):
+            test_db.commit()
+        test_db.rollback()
+
+
+class TestSlotDigestRendering:
+    @pytest.mark.parametrize("slot_id,label", [
+        ("morning", "เช้า"), ("noon", "เที่ยง"),
+        ("afternoon", "บ่าย"), ("night", "ค่ำ"),
+    ])
+    def test_one_prefix_line_then_a_blank_line_then_the_digest(self, slot_id, label):
+        text = staff_bot.render_slot_digest(slot_id, _payload())
+        lines = text.split("\n")
+        assert lines[0] == f"สรุปงานซ่อมค้างประจำรอบ{label}"
+        assert lines[1] == ""
+        assert "\n".join(lines[2:]) == staff_bot.render_digest(_payload())
+        assert not staff_bot._PICTOGRAPH_PATTERN.search(text)
+
+    def test_a_dark_housekeeping_renders_nothing_at_all(self):
+        assert staff_bot.render_slot_digest("morning", None) is None
+        assert staff_bot.render_slot_digest("morning", "nope") is None
+
+    def test_an_unknown_slot_renders_nothing(self):
+        assert staff_bot.render_slot_digest("teatime", _payload()) is None
+
+    def test_only_one_digest_object_rides_a_coalesced_reply(self, monkeypatch):
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        built = staff_bot.build_reply(
+            {staff_bot.COMMAND_SLOT_DIGEST, staff_bot.COMMAND_DIGEST,
+             staff_bot.COMMAND_PALETTE},
+            slot_id="noon",
+        )
+        assert [m["type"] for m in built.messages] == ["flex", "text"]
+        assert built.messages[1]["text"].startswith("สรุปงานซ่อมค้างประจำรอบเที่ยง")
+        assert built.slot_digest_included is True
+
+    def test_the_digest_is_fetched_once_per_reply(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            housekeeping_client, "fetch_digest",
+            lambda: calls.append(1) or _payload(),
+        )
+        staff_bot.build_reply(
+            {staff_bot.COMMAND_SLOT_DIGEST, staff_bot.COMMAND_DIGEST},
+            slot_id="night",
+        )
+        assert len(calls) == 1
+
+    def test_a_scheduled_post_says_nothing_when_housekeeping_is_dark(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: None)
+        built = staff_bot.build_reply({staff_bot.COMMAND_SLOT_DIGEST}, slot_id="morning")
+        assert built.messages == []
+        assert built.slot_digest_included is False
+
+    def test_a_palette_still_rides_along_when_the_slot_digest_is_dark(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: None)
+        built = staff_bot.build_reply(
+            {staff_bot.COMMAND_SLOT_DIGEST, staff_bot.COMMAND_PALETTE},
+            slot_id="morning",
+        )
+        assert [m["type"] for m in built.messages] == ["flex"]
+        assert built.slot_digest_included is False
+
+    def test_a_typed_command_still_gets_its_answer_when_the_slot_is_dark(
+        self, monkeypatch
+    ):
+        # Somebody ASKED. Phase 1's promise (never silence, never a status
+        # code) outranks the slot digest's silence, which is only about
+        # unasked-for posts.
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: None)
+        built = staff_bot.build_reply(
+            {staff_bot.COMMAND_SLOT_DIGEST, staff_bot.COMMAND_DIGEST},
+            slot_id="morning",
+        )
+        assert [m["text"] for m in built.messages] == [
+            staff_bot.DIGEST_UNAVAILABLE_TEXT
+        ]
+        assert built.slot_digest_included is False
+
+    def test_a_plain_digest_is_unchanged_by_phase_two(self, monkeypatch):
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        messages = staff_bot.build_messages({staff_bot.COMMAND_DIGEST})
+        assert messages[0]["text"].startswith("งานซ่อมค้าง 2 งาน")
+
+
+class TestSlotSendOutcome:
+    """The mark is written where the send outcome is known — and nowhere else."""
+
+    def _pending(self, commands, token="tok", ref=None, trigger="reception"):
+        return staff_bot.PendingReply(
+            chat_key=GROUP, commands=set(commands), reply_token=token,
+            slot_ref=ref if ref is not None else _ref(), slot_trigger=trigger,
+        )
+
+    def _file_pending_mark(self, db, trigger="reception"):
+        staff_bot.file_slot_mark(db, _ref(), trigger)
+
+    def test_a_successful_send_marks_the_slot_sent(
+        self, monkeypatch, staff_oa_enabled, test_db
+    ):
+        sent = []
+        monkeypatch.setattr(
+            service, "reply_messages",
+            lambda token, messages: sent.append((token, messages)),
+        )
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        self._file_pending_mark(test_db)
+
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(
+            self._pending([staff_bot.COMMAND_SLOT_DIGEST])
+        ))
+
+        assert sent[0][0] == "tok"
+        assert sent[0][1][0]["text"].startswith("สรุปงานซ่อมค้างประจำรอบเช้า")
+        mark = _mark(test_db)
+        assert (mark.state, mark.trigger) == ("sent", "reception")
+        assert mark.sent_at is not None
+
+    def test_a_dark_housekeeping_sends_nothing_and_drops_the_mark(
+        self, monkeypatch, staff_oa_enabled, test_db, caplog
+    ):
+        sent = []
+        monkeypatch.setattr(
+            service, "reply_messages", lambda token, messages: sent.append(token)
+        )
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: None)
+        self._file_pending_mark(test_db)
+
+        with caplog.at_level("INFO"):
+            asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(
+                self._pending([staff_bot.COMMAND_SLOT_DIGEST])
+            ))
+
+        assert sent == []
+        assert _mark(test_db) is None
+        assert "reason=housekeeping_dark" in caplog.text
+
+    def test_a_failed_send_drops_the_mark(
+        self, monkeypatch, staff_oa_enabled, test_db, caplog
+    ):
+        def _explode(token, messages):
+            raise service.StaffOaApiError("reply messages", 500, "boom")
+
+        monkeypatch.setattr(service, "reply_messages", _explode)
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        self._file_pending_mark(test_db)
+
+        with caplog.at_level("INFO"):
+            asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(
+                self._pending([staff_bot.COMMAND_SLOT_DIGEST])
+            ))
+
+        assert _mark(test_db) is None
+        assert "reason=send_failed" in caplog.text
+
+    def test_a_pending_without_a_token_drops_the_mark(
+        self, monkeypatch, staff_oa_enabled, test_db
+    ):
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        self._file_pending_mark(test_db)
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(
+            self._pending([staff_bot.COMMAND_SLOT_DIGEST], token="")
+        ))
+        assert _mark(test_db) is None
+
+    def test_a_dark_staff_oa_drops_the_mark(self, monkeypatch, test_db):
+        monkeypatch.delenv("STAFF_OA_CHANNEL_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("STAFF_OA_CHANNEL_SECRET", raising=False)
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        self._file_pending_mark(test_db)
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(
+            self._pending([staff_bot.COMMAND_SLOT_DIGEST])
+        ))
+        assert _mark(test_db) is None
+
+    def test_a_command_answered_inside_a_window_covers_the_slot(
+        self, monkeypatch, staff_oa_enabled, test_db
+    ):
+        sent = []
+        monkeypatch.setattr(
+            service, "reply_messages",
+            lambda token, messages: sent.append(messages),
+        )
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+
+        # No mark at all yet: a plain งานค้าง command, answered at 06:05.
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(
+            self._pending([staff_bot.COMMAND_DIGEST])
+        ))
+
+        assert sent[0][0]["text"].startswith("งานซ่อมค้าง 2 งาน")  # no slot prefix
+        mark = _mark(test_db)
+        assert (mark.state, mark.trigger) == ("sent", "command")
+
+    def test_a_command_that_only_got_the_not_connected_line_marks_nothing(
+        self, monkeypatch, staff_oa_enabled, test_db
+    ):
+        # The group was told the system is down, not what is outstanding —
+        # this window has still not had its digest.
+        sent = []
+        monkeypatch.setattr(
+            service, "reply_messages", lambda token, messages: sent.append(messages)
+        )
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: None)
+
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(
+            self._pending([staff_bot.COMMAND_DIGEST])
+        ))
+
+        assert sent[0][0]["text"] == staff_bot.DIGEST_UNAVAILABLE_TEXT
+        assert test_db.query(StaffBotSlotMark).count() == 0
+
+    def test_a_dark_burst_carrying_a_command_drops_the_mark_and_answers(
+        self, monkeypatch, staff_oa_enabled, test_db
+    ):
+        sent = []
+        monkeypatch.setattr(
+            service, "reply_messages", lambda token, messages: sent.append(messages)
+        )
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: None)
+        self._file_pending_mark(test_db)
+
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(
+            self._pending([staff_bot.COMMAND_SLOT_DIGEST, staff_bot.COMMAND_DIGEST])
+        ))
+
+        assert sent[0][0]["text"] == staff_bot.DIGEST_UNAVAILABLE_TEXT
+        # Dropped, and NOT resurrected as 'sent' by the command half.
+        assert test_db.query(StaffBotSlotMark).count() == 0
+
+    def test_a_command_outside_every_window_marks_nothing(
+        self, monkeypatch, staff_oa_enabled, test_db
+    ):
+        monkeypatch.setattr(
+            service, "reply_messages", lambda token, messages: None
+        )
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(
+            staff_bot.PendingReply(
+                chat_key=GROUP, commands={staff_bot.COMMAND_DIGEST},
+                reply_token="tok",
+            )
+        ))
+        assert test_db.query(StaffBotSlotMark).count() == 0
+
+    def test_a_palette_alone_marks_nothing(
+        self, monkeypatch, staff_oa_enabled, test_db
+    ):
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: None)
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(
+            self._pending([staff_bot.COMMAND_PALETTE])
+        ))
+        assert test_db.query(StaffBotSlotMark).count() == 0
+
+
+class TestSlotEndToEnd:
+    """One group message in, one slot-labelled reply out, one 'sent' row."""
+
+    def test_a_reception_message_becomes_a_posted_digest(
+        self, monkeypatch, staff_oa_enabled, staff, test_db
+    ):
+        sent = []
+        monkeypatch.setattr(
+            service, "reply_messages",
+            lambda token, messages: sent.append((token, messages)),
+        )
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        monkeypatch.setattr(staff_bot, "SLOT_QUIET_SECONDS", 0.01)
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            monkeypatch.setattr(staff_bot, "get_dispatcher", lambda: dispatcher)
+            handled = staff_bot.handle_event_detail(
+                _group_text("รับกะแล้วค่ะ", reply_token="tok-1",
+                            timestamp=_ts(19, 30), user_id="U-reception"),
+                test_db,
+            )
+            assert handled.claims_reply_token is True
+            deadline = time.monotonic() + 3
+            while not sent and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+
+        asyncio.run(_scenario())
+
+        assert len(sent) == 1
+        token, messages = sent[0]
+        assert token == "tok-1"
+        assert messages[0]["text"].startswith("สรุปงานซ่อมค้างประจำรอบค่ำ")
+        assert "งานซ่อมค้าง 2 งาน" in messages[0]["text"]
+        mark = _mark(test_db, slot="night")
+        assert (mark.state, mark.trigger) == ("sent", "reception")
+
+
+class TestCommandDuringASlotPending:
+    """Rule 7: the impatient quiet wins, and the reply carries both."""
+
+    def test_a_command_makes_the_waiting_slot_reply_due_at_once(
+        self, slot_bot, staff, test_db
+    ):
+        _speak(test_db, at=_ts(6, 0), user_id="U-reception", token="tok-1")
+        assert slot_bot.debouncer.pending_for(GROUP).quiet_seconds == 15.0
+
+        staff_bot.handle_event_detail(
+            _group_text("น้องคะ งานค้าง", reply_token="tok-2", timestamp=_ts(6, 3),
+                        user_id="U-maid"),
+            test_db,
+        )
+
+        pending = slot_bot.debouncer.pending_for(GROUP)
+        assert pending.quiet_seconds == 0.0
+        assert pending.commands == {
+            staff_bot.COMMAND_SLOT_DIGEST, staff_bot.COMMAND_DIGEST
+        }
+        assert pending.slot_ref == _ref()
+        assert slot_bot.debouncer.next_delay() == 0.0
+        assert [p.reply_token for p in slot_bot.debouncer.pop_due()] == ["tok-2"]
+
+    def test_that_reply_carries_the_slot_labelled_digest_and_marks_it_sent(
+        self, monkeypatch, staff_oa_enabled, test_db
+    ):
+        sent = []
+        monkeypatch.setattr(
+            service, "reply_messages",
+            lambda token, messages: sent.append(messages),
+        )
+        monkeypatch.setattr(housekeeping_client, "fetch_digest", lambda: _payload())
+        staff_bot.file_slot_mark(test_db, _ref(), "reception")
+
+        asyncio.run(staff_bot.AsyncioBotDispatcher()._reply(
+            staff_bot.PendingReply(
+                chat_key=GROUP,
+                commands={staff_bot.COMMAND_SLOT_DIGEST, staff_bot.COMMAND_DIGEST},
+                reply_token="tok", slot_ref=_ref(), slot_trigger="reception",
+            )
+        ))
+
+        texts = [m["text"] for m in sent[0] if m["type"] == "text"]
+        assert len(texts) == 1
+        assert texts[0].startswith("สรุปงานซ่อมค้างประจำรอบเช้า")
+        assert _mark(test_db).state == "sent"
+
+    def test_a_command_in_a_group_carries_the_window_it_landed_in(self):
+        routed = staff_bot.route_event(
+            _group_text("น้องคะ งานค้าง", timestamp=_ts(20, 0)), lambda _u: True
+        )
+        assert routed.slot_ref == (GROUP, SLOT_DAY, "night")
+
+    def test_a_one_to_one_command_carries_no_window(self):
+        event = _direct_text("งานค้าง")
+        event["timestamp"] = _ts(20, 0)
+        routed = staff_bot.route_event(event, lambda _u: True)
+        assert routed.slot_ref is None
+
+
+class TestSlotWebhookIntegration:
+    def test_a_reception_message_in_the_group_files_the_slot_digest(
+        self, test_client, test_db, staff_oa_enabled, slot_bot, staff
+    ):
+        response = _signed_post(test_client, {"events": [
+            _group_text("รับกะแล้วค่ะ", timestamp=_ts(6, 0), user_id="U-reception"),
+        ]})
+
+        assert response.status_code == 200
+        # It is not a COMMAND — the group said nothing to the bot.
+        assert response.json()["bot_commands"] == 0
+        pending = slot_bot.debouncer.pending_for(GROUP)
+        assert pending.commands == {staff_bot.COMMAND_SLOT_DIGEST}
+        assert _mark(test_db).state == "pending"
+
+    def test_ordinary_chatter_early_in_a_window_files_nothing(
+        self, test_client, test_db, staff_oa_enabled, slot_bot, staff
+    ):
+        _signed_post(test_client, {"events": [
+            _group_text("ผ้าหมดค่ะ", timestamp=_ts(6, 30), user_id="U-maid"),
+        ]})
+        assert slot_bot.debouncer.pending_for(GROUP) is None
+        assert test_db.query(StaffBotSlotMark).count() == 0
+
+    def test_a_redelivered_message_never_opens_a_window(
+        self, test_client, test_db, staff_oa_enabled, slot_bot, staff
+    ):
+        event = _group_text("รับกะแล้วค่ะ", timestamp=_ts(6, 0), user_id="U-reception")
+        event["deliveryContext"] = {"isRedelivery": True}
+        _signed_post(test_client, {"events": [event]})
+        assert test_db.query(StaffBotSlotMark).count() == 0
+
+    def test_a_slot_trigger_claims_its_reply_token(
+        self, test_client, test_db, staff_oa_enabled, slot_bot, staff
+    ):
+        # The event relay that once competed for reply tokens is retired
+        # (ADR 0001), but the claim remains the contract any future second
+        # consumer must honour: the message that opened a slot digest owns
+        # its token, so nobody else may spend it.
+        handled = staff_bot.handle_event_detail(
+            _group_text("รับกะแล้วค่ะ", timestamp=_ts(6, 0), user_id="U-reception"),
+            test_db,
+        )
+        assert handled == staff_bot.HandledEvent(command=False, claims_reply_token=True)
+
+
+class TestSlotMarkMigration:
+    """The table the model expects is the table the migration creates."""
+
+    def _migration(self):
+        import importlib.util
+        import pathlib
+
+        path = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / "database" / "migrations" / "versions"
+            / "20260905_000000_staff_bot_slot_marks.py"
+        )
+        spec = importlib.util.spec_from_file_location("slot_marks_migration", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_it_is_chained_onto_the_previous_head(self):
+        module = self._migration()
+        assert module.revision == "20260905_000000"
+        assert module.down_revision == "20260801_000000"
+
+    def test_it_applies_and_rolls_back_on_a_sqlite_database(self):
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+        from sqlalchemy import create_engine, inspect
+
+        module = self._migration()
+        engine = create_engine("sqlite://")
+        with engine.connect() as connection:
+            context = MigrationContext.configure(connection)
+            with Operations.context(context):
+                module.upgrade()
+
+            inspector = inspect(connection)
+            assert "staff_bot_slot_marks" in inspector.get_table_names()
+            assert (
+                {column["name"] for column in
+                 inspector.get_columns("staff_bot_slot_marks")}
+                == {column.name for column in StaffBotSlotMark.__table__.columns}
+            )
+            uniques = {
+                unique["name"]: set(unique["column_names"])
+                for unique in inspector.get_unique_constraints("staff_bot_slot_marks")
+            }
+            assert uniques["uq_staff_bot_slot_mark"] == {
+                "group_id", "bkk_date", "slot"
+            }
+
+            with Operations.context(context):
+                module.downgrade()
+            assert "staff_bot_slot_marks" not in inspect(connection).get_table_names()

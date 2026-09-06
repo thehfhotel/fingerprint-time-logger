@@ -58,6 +58,9 @@ class _NullBotDispatcher:
     def submit_message(self, chat_key, reply_token):
         pass
 
+    def submit_slot_digest(self, ref, reply_token, trigger):
+        pass
+
 
 @pytest.fixture(autouse=True)
 def _isolate_staff_bot(monkeypatch):

@@ -438,3 +438,47 @@ class ApplicationLog(Base):
 
     # Relationships
     device = relationship("Device", foreign_keys=[device_id])
+
+# ============================================================================
+# Staff bot — slot digest marks (2026-09-05, phase 2)
+# ============================================================================
+
+class StaffBotSlotMark(Base):
+    """One "the งานค้าง digest already went into this group this slot" mark.
+
+    The staff bot (app/services/staff_bot.py) posts the digest ONCE per daily
+    slot per LINE group, piggybacking on human traffic so the whole group sees
+    it on a free reply token (ADR 0007 — LINE meters pushes per recipient).
+    "Once" has to survive a container restart, so the mark is a row here and
+    not a dict in memory.
+
+    Two states, and the row is DELETED rather than kept in a third:
+
+      * ``pending`` — filed the moment the slot triggers, before the debounced
+        reply goes out. It reserves the slot so a second qualifying message in
+        the same window does not file a second digest.
+      * ``sent`` — the LINE reply carrying that digest succeeded.
+
+    Anything else (the send failed, housekeeping was dark so nothing was
+    posted, or a ``pending`` older than 120 s left behind by a restart
+    mid-debounce) deletes the row, which lets the next qualifying message in
+    the same window re-trigger. A slot the group never talked in stays
+    unmarked and is simply skipped — silence is by design.
+
+    ``bkk_date`` is the Bangkok calendar date ('YYYY-MM-DD') the event fell
+    on, not UTC: the slots are Bangkok wall-clock windows.
+    """
+    __tablename__ = "staff_bot_slot_marks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(String(64), nullable=False, index=True)
+    bkk_date = Column(String(10), nullable=False)      # 'YYYY-MM-DD', Bangkok
+    slot = Column(String(20), nullable=False)          # morning|noon|afternoon|night
+    state = Column(String(10), nullable=False)         # pending|sent
+    filed_at = Column(DateTime, nullable=False, default=func.now())
+    sent_at = Column(DateTime, nullable=True)
+    trigger = Column(String(20), nullable=False)       # reception|late|command
+
+    __table_args__ = (
+        UniqueConstraint("group_id", "bkk_date", "slot", name="uq_staff_bot_slot_mark"),
+    )

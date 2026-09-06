@@ -303,6 +303,55 @@ the timer, and it fires at the latest **45 s** after the first trigger — reply
 tokens are short lived, so that cap is not optional. Commands filed in the same
 instant for one chat still coalesce into a single reply.
 
+### The slot digest (phase 2)
+
+Four Bangkok windows a day, in **groups only** (rooms and 1:1 chats never have
+one), each carrying the same งานค้าง digest **once**, under one extra line:
+`สรุปงานซ่อมค้างประจำรอบ<เช้า|เที่ยง|บ่าย|ค่ำ>`.
+
+| Slot | Window (Bangkok, start inclusive / end exclusive) | Label |
+|---|---|---|
+| `morning` | 06:00 – 10:00 | เช้า |
+| `noon` | 12:00 – 14:00 | เที่ยง |
+| `afternoon` | 14:30 – 16:30 | บ่าย |
+| `night` | 19:30 – 21:30 | ค่ำ |
+
+The window is decided by the **event's own timestamp** (LINE's epoch-ms
+`timestamp`, converted to Bangkok), not by the server clock at send time.
+
+**What opens a window.** Any ordinary (non-command) text message in the group:
+
+1. from someone whose LINE account maps to an **active employee holding the
+   `reception` grant**, riding the report burst this digest is meant to piggyback
+   on; or
+2. from **anyone**, including a sender LINE gives us no `userId` for (LINE for
+   PC), in the window's **last 30 minutes**.
+
+Nothing else. A window in which the group never speaks is **skipped**; that
+is by design, not a failure. There is no group allowlist.
+
+**Once per slot, across restarts.** The mark is a row in
+`staff_bot_slot_marks` (UNIQUE `group_id, bkk_date, slot`), written `pending`
+the moment the slot is filed and promoted to `sent` when the LINE reply
+succeeds. Every other outcome **deletes** the row so the next qualifying
+message re-triggers: the send failed, housekeeping was dark (a scheduled post
+must never spam `ระบบงานซ่อมยังไม่เชื่อมต่อ` into the group four times a day;
+it says nothing at all instead), or a `pending` older than 120 s was left
+behind by a process that died mid-debounce.
+
+**Interaction with commands.** A command typed while a slot digest is waiting
+wins on timing (quiet 0) and the reply carries the slot-labelled digest with
+it, one digest per reply, never two. And a plain `งานค้าง` answered inside an
+unmarked window marks that slot `sent` too, so no near-duplicate follows a few
+minutes later.
+
+Logs, ids only, INFO: `staff-bot slot filed: group=... date=... slot=...
+trigger=reception|late`, `staff-bot slot sent: ...`, `staff-bot slot dropped:
+... reason=send_failed|housekeeping_dark|stale`.
+
+No new environment variables: the behaviour is live for every group the OA is
+in as soon as this deploys.
+
 ### Privacy rule
 
 The webhook sees every message in the staff group. Non-command chat is
