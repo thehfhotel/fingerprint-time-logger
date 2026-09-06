@@ -270,6 +270,7 @@ LINE meters pushes per recipient"*. Code: `app/services/staff_bot.py`
 | Staff group | the same summon followed by `งานค้าง` (also `งานซ่อมค้าง`, `แจ้งซ่อมค้าง`) | the digest |
 | Staff group | the same summon (or a bare command word) followed by `คำขอ` / `คำขอลูกค้า` / `guest requests` / `ความคิดเห็น` / `ฟีดแบค` / `feedback` | the pending guest feedback |
 | Staff group | any ordinary message, no summon at all, **while guest feedback is pending** | the pending guest feedback (see below) |
+| Staff group | **bare** `แจ้งซ่อม <ห้อง/พื้นที่> <อาการ>`, **no summon** (owner decision 2026-09-06) — unless it STARTS WITH a digest word (`แจ้งซ่อมค้าง`, prefix match — reviewer finding, so "แจ้งซ่อมค้าง 204 ยังไม่มาเลย" stays chat too, not only the bare word alone), the remainder contains a completion phrase (`เสร็จแล้ว`/`เสร็จ`/`แล้วนะ`/`แล้วค่ะ`/`แล้วครับ`/`เรียบร้อย`/`ซ่อมแล้ว`/`แก้แล้ว`/`ทำแล้ว`), or the remainder has no room/area — any of those three stays ordinary chat, silently | the same แจ้งซ่อม ticket flow as the summoned form (see below) |
 | 1:1 chat | `งานค้าง` on its own | the digest |
 | 1:1 chat | `คำขอ` / `คำขอลูกค้า` / `guest requests` / `ความคิดเห็น` / `ฟีดแบค` / `feedback` on its own | a **preview** of the pending guest feedback |
 | 1:1 chat | anything else | the palette bubble |
@@ -383,8 +384,24 @@ hand-edit the host `.env`, every deploy rewrites it.
 ### แจ้งซ่อม from chat (phase 3)
 
 A linked employee raises a ticket without leaving LINE: `แจ้งซ่อม <ห้อง/พื้นที่>
-<อาการ>` after the summon in the group, or bare in a 1:1. Code:
-`app/services/staff_bot.py` (parser, palette buttons, postback handlers),
+<อาการ>` after the summon in the group, bare in a 1:1, or — since 2026-09-06 —
+**bare in the group too**, gated by two safeguards so ordinary chat never
+files a junk ticket: (1) the remainder after `แจ้งซ่อม` must not contain a
+completion/status phrase (`BARE_REPORT_SKIP_PHRASES` — `เสร็จแล้ว`, `เสร็จ`,
+`แล้วนะ`, `แล้วค่ะ`, `แล้วครับ`, `เรียบร้อย`, `ซ่อมแล้ว`, `แก้แล้ว`, `ทำแล้ว`, checked
+as a substring anywhere in the remainder), and (2) it must parse to a room or
+area (`parse_report`) — a bare message that fails either check is left as
+ordinary chat, **silently** (no PARSE_ERROR reply, unlike the summoned form).
+A digest word as a PREFIX of the message (`แจ้งซ่อมค้าง`, not only an exact
+match — reviewer finding, so a digest word followed by more text is caught
+too) is excluded up front and keeps needing a summon, exactly as before. A
+bare report that clears both checks is routed as
+the identical `COMMAND_REPORT` the summoned form produces — same identity
+gate, ticket creation, photo claiming/attach window, confirmation bubble and
+logging — and, being a command, it never counts as slot-trigger chatter
+(`_maybe_file_slot_digest` is not reached for it, same as any other command).
+No new environment variable; live for every group as soon as this deploys.
+Code: `app/services/staff_bot.py` (parser, palette buttons, postback handlers),
 `app/services/housekeeping_client.py` (create/patch/cancel/get/list work
 orders + the photo upload), `app/services/staff_oa_service.fetch_message_content`
 (the one place `api-data.line.me/v2/bot/message/{id}/content` is ever called).
@@ -417,13 +434,14 @@ cap (`ATTACH_WINDOW_HARD_CAP_SECONDS`). The **เพิ่มรูป** button 
 `cmd=addphoto&id=N`) reopens the window on an existing ticket. Only once a
 photo is claimed or arrives inside an open window does the bot fetch its
 bytes (`fetch_message_content`) and upload them
-(`housekeeping_client.upload_photo`) — in the **background**, after the
-confirmation bubble has already been sent, so a slow upload never holds up
-the reply.
+(`housekeeping_client.upload_photo`) — off the request path either way, but
+see "Photo acknowledgements" below for how each of the two cases (claimed at
+creation vs. arriving inside an open window) now differs.
 
-**The confirmation bubble**, replied at once: `รับเรื่องแล้ว #N`, branch,
-location, category, urgency, detail, reporter, photo count, and five
-postback buttons — **แก้หมวด** (a quick-reply of all six categories),
+**The confirmation bubble**, replied once its claimed photos' uploads have
+resolved or timed out (see below): `รับเรื่องแล้ว #N`, branch, location,
+category, urgency, detail, reporter, photo count, and five postback
+buttons — **แก้หมวด** (a quick-reply of all six categories),
 **ด่วน/ไม่ด่วน** (toggles), **เพิ่มรูป**, **ยกเลิก**, **สลับสาขา**. Every
 button's tap is checked against the ticket's `reporterBadge` OR the tapper
 holding the `reception` grant; anyone else gets
@@ -432,6 +450,39 @@ additionally enforces (server-side, relayed verbatim) that only the reporter
 may cancel, only while the ticket is still `new`, and only within 10 minutes
 of creation. The palette's **แจ้งซ่อมใหม่** button (`cmd=report_help`) answers
 a one-line how-to instead of opening anything.
+
+**Photo acknowledgements** (owner request 2026-09-06: "add ack to photos
+sent and received"). Two related but separate behaviors, both free-reply-
+token only — every ack rides a reply to a photo event or an existing pending
+reply, never a push:
+
+- **Photos-first** (rule B): when photos are sent BEFORE `แจ้งซ่อม` and get
+  claimed at ticket creation, the confirmation bubble now WAITS for their
+  uploads — bounded by `CLAIMED_UPLOAD_WAIT_SECONDS` (10 s) — before it is
+  replied, so the bubble's photo row reflects the real outcome instead of
+  just "claimed": `รูป N รูป` for however many finished in time, plus
+  `กำลังแนบอีก M รูป` for however many were still running at the 10 s mark,
+  plus `แนบไม่สำเร็จ F รูป` for any failures, or `ยังไม่มีรูป` when nothing was
+  claimed. The still-running ones are NOT cancelled — they keep uploading in
+  the background exactly as before; when they finish, they produce no ack of
+  their own, because a buffered photo never had a reply token of its own to
+  answer with (silent, by design).
+- **In-window acks** (rule A): a photo that arrives WHILE an order's attach
+  window is open (the "silent attach" case — เพิ่มรูป, or more photos after
+  the ticket already exists) still attaches with no reply of its own at the
+  moment it arrives, but once its upload resolves, the bot now answers on
+  that photo event's own reply token: `แนบรูปเข้า #N แล้ว k รูป (รวม total รูป)`
+  on success (the parenthesis is omitted when the upload's response did not
+  carry a photo count), `แนบรูปไม่สำเร็จ f รูป ลองส่งใหม่อีกครั้งค่ะ (#N)` on
+  failure, or both as two lines when some of a burst succeeded and some
+  failed. Several images sent together arrive as separate events a couple of
+  seconds apart, so this coalesces like any other reply —
+  `PHOTO_ACK_QUIET_SECONDS` (3 s) of quiet, the same 45 s cap as everything
+  else — and a command typed into the same chat during that quiet window
+  wins the impatient race (0 s) and carries the ack along in its own
+  immediate reply. Photos with no ticket to attach to (no attach window
+  open) are never fetched and never acknowledged — they only ever join the
+  90-second buffer.
 
 Housekeeping unreachable at any step: the one fixed line
 `ระบบแจ้งซ่อมยังไม่เชื่อมต่อ ลองใหม่อีกครั้งภายหลัง` — buffered photos are left

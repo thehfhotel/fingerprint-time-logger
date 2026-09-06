@@ -246,6 +246,13 @@ COMMAND_SWITCHPROP = "switchprop"
 # (no palette button, no postback in normal use) but it still carries an
 # order id, so it lives in TICKET_ORDER_POSTBACKS too — see _parse_postback.
 COMMAND_STATUS = "status"
+# Photo acknowledgements (owner request 2026-09-06). NOT typed by anybody and
+# never routed by route_event: it is filed by AsyncioBotDispatcher._reply's
+# background upload tasks via ReplyDebouncer.note_photo_ack, which stashes a
+# small {order_id: {attached, total, failed}} payload on the PendingReply
+# rather than a RoutedCommand (unlike every command above, no two acks in the
+# same order ever look alike, and there is no sender identity to resolve).
+COMMAND_PHOTO_ACK = "photo_ack"
 
 TICKET_COMMANDS = frozenset({
     COMMAND_REPORT, COMMAND_REPORT_HELP, COMMAND_MINE,
@@ -311,6 +318,11 @@ MAX_MESSAGE_CHARS = 5000
 COMMAND_QUIET_SECONDS = 0.0
 SLOT_QUIET_SECONDS = 15.0
 MAX_WAIT_SECONDS = 45.0
+# Photo acknowledgements (owner request 2026-09-06, phase 3 addendum): several
+# images from one send arrive as separate webhook events a couple of seconds
+# apart, so the ack line waits this long for quiet before going out — capped,
+# like every other pending reply, by MAX_WAIT_SECONDS above.
+PHOTO_ACK_QUIET_SECONDS = 3.0
 # The drain loop never sleeps longer than this in one go, so a command that
 # lands in ANOTHER chat with a nearer deadline is at most this late.
 DRAIN_SLICE_SECONDS = 1.0
@@ -699,6 +711,48 @@ def parse_report(text: str) -> Union[ReportDraft, ParseError]:
 
 
 # ---------------------------------------------------------------------------
+# Bare แจ้งซ่อม in a group/room (owner decision 2026-09-06)
+# ---------------------------------------------------------------------------
+
+# Substring hits on the remainder after แจ้งซ่อม that mark ordinary
+# "it's done" chatter rather than a new report — checked BEFORE parse_report,
+# so "แจ้งซ่อม 204 เสร็จแล้ว" never opens a ticket even though it parses fine.
+BARE_REPORT_SKIP_PHRASES = frozenset({
+    "เสร็จแล้ว", "เสร็จ", "แล้วนะ", "แล้วค่ะ", "แล้วครับ",
+    "เรียบร้อย", "ซ่อมแล้ว", "แก้แล้ว", "ทำแล้ว",
+})
+
+
+def _bare_group_report(text: str) -> Optional[str]:
+    """The report text for a bare (un-summoned) แจ้งซ่อม in a group/room, or
+    None to leave the message as ordinary chatter.
+
+    Two safeguards keep ordinary talk from creating junk tickets: a
+    completion/status phrase anywhere in the remainder
+    (:data:`BARE_REPORT_SKIP_PHRASES`), and text that :func:`parse_report`
+    cannot place in a room or area — the bare form stays SILENT on a parse
+    error (unlike the summoned form's PARSE_ERROR_NO_ROOM_TEXT nag). A
+    :data:`DIGEST_WORDS` hit as a PREFIX of the stripped text (reviewer
+    finding, 2026-09-06) — not only an exact match — is excluded up front, so
+    e.g. "แจ้งซ่อมค้าง 204 ยังไม่มาเลย" stays a digest-word message needing a
+    summon rather than silently becoming a ticket; the summoned form is
+    unaffected.
+    """
+    stripped = (text or "").strip()
+    if (
+        any(stripped.startswith(word) for word in DIGEST_WORDS)
+        or not stripped.startswith(REPORT_WORD)
+    ):
+        return None
+    remainder = stripped[len(REPORT_WORD):].strip()
+    if any(phrase in remainder for phrase in BARE_REPORT_SKIP_PHRASES):
+        return None
+    if isinstance(parse_report(remainder), ParseError):
+        return None
+    return remainder
+
+
+# ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
 
@@ -848,12 +902,25 @@ def route_event(
             user_id=chat_key, report_text=report_text, order_id=order_id,
         )
 
-    # Group / room: only a summon is a command. Everything else is staff
-    # talking to each other and is discarded (it may still refresh a pending
-    # reply, which needs no knowledge of what was said).
+    # Group / room: only a summon is a command — EXCEPT a bare แจ้งซ่อม
+    # (owner decision 2026-09-06), gated by the two safeguards in
+    # _bare_group_report. Everything else is staff talking to each other and
+    # is discarded (it may still refresh a pending reply, which needs no
+    # knowledge of what was said).
     remainder = summon_remainder(text, message)
     if remainder is None:
-        return RoutedMessage(chat_key=chat_key, reply_token=reply_token)
+        bare_report_text = _bare_group_report(text)
+        if bare_report_text is None:
+            return RoutedMessage(chat_key=chat_key, reply_token=reply_token)
+        return RoutedCommand(
+            chat_key=chat_key,
+            command=COMMAND_REPORT,
+            reply_token=reply_token,
+            quiet_seconds=quiet_seconds_for(source_type),
+            event_type="message", source_type=source_type,
+            slot_ref=slot_ref, user_id=sender_user_id,
+            report_text=bare_report_text, order_id=None,
+        )
     command, report_text, order_id = (
         (COMMAND_PALETTE, "", None) if remainder == "" else _word_command(remainder)
     )
@@ -1157,6 +1224,11 @@ PHOTO_BUFFER_MAX_CLAIM = 6
 # lets through, but never past the hard cap below.
 ATTACH_WINDOW_SECONDS = 120.0
 ATTACH_WINDOW_HARD_CAP_SECONDS = 300.0
+# Photos-first (owner request 2026-09-06): the confirmation bubble waits for
+# the just-claimed batch's uploads, bounded by this many seconds, before the
+# reply goes out — see AsyncioBotDispatcher._await_claimed_uploads. Never
+# extended past the reporting command's own reply-token life.
+CLAIMED_UPLOAD_WAIT_SECONDS = 10.0
 
 
 @dataclass(frozen=True)
@@ -1376,6 +1448,59 @@ def build_confirmation_bubble(order: Dict, photo_count: int) -> Dict:
     }
 
 
+def _claimed_photo_line(completed: int, failed: int, still_running: int) -> str:
+    """The confirmation bubble's 'รูป' row once the claimed batch's uploads
+    have resolved (rule B) — completed/still-running/failed counts as of the
+    bounded CLAIMED_UPLOAD_WAIT_SECONDS wait in AsyncioBotDispatcher._reply.
+    build_confirmation_bubble's OWN "กำลังแนบ N รูป" (claimed-but-not-yet-
+    uploaded) text is what every SYNCHRONOUS caller of build_reply/
+    build_messages still sees — this only ever runs from that async wait, and
+    only patches the message in place afterwards.
+    """
+    parts: List[str] = []
+    if completed > 0:
+        parts.append(f"รูป {completed} รูป")
+    if still_running > 0:
+        parts.append(f"กำลังแนบอีก {still_running} รูป")
+    if failed > 0:
+        parts.append(f"แนบไม่สำเร็จ {failed} รูป")
+    return " ".join(parts) if parts else "ยังไม่มีรูป"
+
+
+def _patch_confirmation_photo_line(
+    message: Dict, completed: int, failed: int, still_running: int,
+) -> None:
+    """Rewrite a just-built confirmation bubble's 'รูป' row in place (rule B).
+
+    The row is always the last body item build_confirmation_bubble lays down
+    (see its ``_flex_row("รูป", photo_line)`` call) — defensive about shape
+    regardless, since a malformed message here must never crash a reply.
+    """
+    try:
+        rows = message["contents"]["body"]["contents"]
+        rows[-1]["contents"][1]["text"] = _claimed_photo_line(completed, failed, still_running)
+    except (KeyError, IndexError, TypeError):
+        pass
+
+
+def _render_photo_ack_text(order_id, info: Dict) -> Optional[str]:
+    """One photo-ack text object's content for one order (rule A), or None
+    when there is nothing to say (should not happen — an entry is only ever
+    created alongside a success or a failure)."""
+    attached = _as_int(info.get("attached"))
+    failed = _as_int(info.get("failed"))
+    total = info.get("total")
+    lines: List[str] = []
+    if attached > 0:
+        if isinstance(total, int) and total > 0:
+            lines.append(f"แนบรูปเข้า #{order_id} แล้ว {attached} รูป (รวม {total} รูป)")
+        else:
+            lines.append(f"แนบรูปเข้า #{order_id} แล้ว {attached} รูป")
+    if failed > 0:
+        lines.append(f"แนบรูปไม่สำเร็จ {failed} รูป ลองส่งใหม่อีกครั้งค่ะ (#{order_id})")
+    return "\n".join(lines) if lines else None
+
+
 def build_category_chip_message(order_id: int) -> Dict:
     """แก้หมวด's reply: a text carrying quick-reply chips for the six
     categories, each a cmd=setcat&id=N&cat=X postback."""
@@ -1408,12 +1533,23 @@ def _authorized_for_order(action: "RoutedCommand", order: Dict) -> bool:
 
 @dataclass(frozen=True)
 class PendingUpload:
-    """One ticket's just-claimed photos, to be downloaded and uploaded in the
-    background AFTER the confirmation bubble is on its way — never before."""
+    """One ticket's just-claimed photos (photos-first, rule B, 2026-09-06):
+    downloaded and uploaded from AsyncioBotDispatcher._reply, which waits up
+    to CLAIMED_UPLOAD_WAIT_SECONDS for them before the confirmation bubble
+    goes out, patching the bubble's photo row with the real outcome.
+
+    ``message_index`` is this upload's confirmation bubble's position in the
+    reply's message list (set by build_reply — the bubble _create_ticket
+    returns is always the sole message for a successful report action, so it
+    is always the message just appended), letting ``_reply`` find and patch
+    it in place. None for anything build_reply cannot place (should not
+    happen for a real ticket creation, but the patch step checks anyway).
+    """
 
     order_id: int
     message_ids: List[str]
     actor_badge: str = ""
+    message_index: Optional[int] = None
 
 
 def _create_ticket(action: "RoutedCommand") -> Tuple[List[Dict], Optional[PendingUpload]]:
@@ -1662,6 +1798,7 @@ def build_reply(
     slot_id: Optional[str] = None,
     confirmed_request_ids: Optional[List[str]] = None,
     actions: Sequence["RoutedCommand"] = (),
+    photo_acks: Optional[Dict] = None,
 ) -> BuiltReply:
     """Build ONE coalesced reply, in canonical order.
 
@@ -1677,6 +1814,13 @@ def build_reply(
     reply's fetched rows are appended to it, so the caller
     (:meth:`AsyncioBotDispatcher._reply`) can confirm delivery with
     guest-feedback after LINE accepts the reply.
+
+    ``photo_acks`` (rule A, 2026-09-06) — ``{order_id: {attached, failed,
+    total}}`` filed by ``ReplyDebouncer.note_photo_ack`` for photos that
+    attached silently while an order's attach window was open. Rendered right
+    after the COMMAND_ORDER messages above, one text object per order id, in
+    insertion order — same canonical position as the digest/requests objects,
+    before any ticket ``actions`` below.
 
     ``actions`` (phases 3/4) — the RoutedCommand for each ticket action
     (report/report_help/mine/status/fixcat/setcat/toggleurgent/addphoto/
@@ -1718,12 +1862,23 @@ def build_reply(
             if confirmed_request_ids is not None:
                 confirmed_request_ids.extend(_request_ids(payload))
 
+    for order_id, info in (photo_acks or {}).items():
+        text = _render_photo_ack_text(order_id, info)
+        if text:
+            messages.append({"type": "text", "text": text})
+
     pending_uploads: List[PendingUpload] = []
     for action in actions:
+        message_index = len(messages)
         action_messages, upload = _build_ticket_messages(action)
         messages.extend(action_messages)
         if upload is not None:
-            pending_uploads.append(upload)
+            # The bubble _create_ticket returns is always the sole message on
+            # a successful create, so it landed exactly at message_index —
+            # see PendingUpload.message_index and _reply's use of it.
+            pending_uploads.append(replace(
+                upload, message_index=message_index if action_messages else None,
+            ))
 
     return BuiltReply(messages[:MAX_REPLY_MESSAGES], slot_included, digest_available, pending_uploads)
 
@@ -1733,13 +1888,14 @@ def build_messages(
     confirmed_request_ids: Optional[List[str]] = None,
     slot_id: Optional[str] = None,
     actions: Sequence["RoutedCommand"] = (),
+    photo_acks: Optional[Dict] = None,
 ) -> List[Dict]:
     """The message objects for one coalesced reply, in canonical order.
 
     ``confirmed_request_ids`` stays the SECOND positional parameter (the
     guest-feedback call shape); ``slot_id`` selects the slot digest prefix.
     """
-    return build_reply(commands, slot_id, confirmed_request_ids, actions).messages
+    return build_reply(commands, slot_id, confirmed_request_ids, actions, photo_acks).messages
 
 
 # ---------------------------------------------------------------------------
@@ -1770,6 +1926,11 @@ class PendingReply:
     # in arrival order — see build_reply's ``actions`` parameter. A plain
     # command word never appends here; only TICKET_COMMANDS do.
     actions: List["RoutedCommand"] = field(default_factory=list)
+    # Photo acknowledgements (rule A, 2026-09-06): order_id -> {"attached",
+    # "failed", "total"}, accumulated by ReplyDebouncer.note_photo_ack across
+    # every photo that finishes uploading while this reply is pending. See
+    # build_reply's ``photo_acks`` parameter.
+    photo_acks: Dict[int, Dict] = field(default_factory=dict)
 
     def deadline(self, max_wait_seconds: float) -> float:
         """Quiet-timer deadline, capped so the reply token cannot expire."""
@@ -1835,6 +1996,48 @@ class ReplyDebouncer:
             pending.source_type = source_type
         if action is not None:
             pending.actions.append(action)
+        self._notify()
+        return pending
+
+    def note_photo_ack(
+        self,
+        chat_key: str,
+        reply_token: str,
+        order_id: int,
+        attached: int = 0,
+        failed: int = 0,
+        total: Optional[int] = None,
+        quiet_seconds: float = PHOTO_ACK_QUIET_SECONDS,
+    ) -> PendingReply:
+        """Record one photo's finished upload for the ack line (rule A,
+        2026-09-06): create or MERGE INTO this chat's pending reply exactly
+        like :meth:`note_command` — same impatient-quiet-wins rule (a command
+        arriving meanwhile wins the minimum quiet and the ack rides along in
+        that reply), same "newest token wins" rule (so the LAST photo to
+        finish in a burst is what actually gets spent).
+
+        Counts accumulate per order id across every photo that finishes while
+        this reply is still pending (two photos in one burst both call this
+        once each); ``total`` — the upload's own ``photoCount`` — overwrites
+        rather than accumulates, so it always reflects the most recent known
+        total, per the owner's "total from the last upload" rule.
+        """
+        now = self._clock()
+        pending = self._pending.get(chat_key)
+        if pending is None:
+            pending = PendingReply(
+                chat_key=chat_key, first_at=now, quiet_seconds=quiet_seconds,
+            )
+            self._pending[chat_key] = pending
+        pending.commands.add(COMMAND_PHOTO_ACK)
+        pending.reply_token = reply_token
+        pending.last_at = now
+        pending.quiet_seconds = min(pending.quiet_seconds, quiet_seconds)
+        entry = pending.photo_acks.setdefault(order_id, {"attached": 0, "failed": 0, "total": None})
+        entry["attached"] += attached
+        entry["failed"] += failed
+        if total is not None:
+            entry["total"] = total
         self._notify()
         return pending
 
@@ -2104,30 +2307,46 @@ class AsyncioBotDispatcher:
             action=command if command.command in TICKET_COMMANDS else None,
         )
 
-    def spawn_photo_upload(self, order_id: int, message_id: str, actor_badge: str) -> None:
-        """Download + upload ONE claimed photo, off the request path.
+    def spawn_photo_upload(
+        self, order_id: int, message_id: str, actor_badge: str,
+        chat_key: str = "", reply_token: str = "",
+    ) -> None:
+        """Download + upload ONE claimed/attached photo, off the request path.
 
-        Used both for photos claimed at ticket creation (via
-        ``_reply``/``pending_uploads``) and for a photo that arrives while an
-        attach window is already open (silent attach — no reply at all, see
-        ``_maybe_handle_photo``). A missing event loop (a script, a sync
-        test) is a silent no-op: there is nowhere to run this in the
-        background, and a photo that never got claimed via an open loop was
-        never going to be attached synchronously either.
+        Used for a photo that arrives while an attach window is already open
+        (silent attach, see ``_maybe_handle_photo``) — ``chat_key`` and
+        ``reply_token`` there are the photo EVENT's own (rule A, 2026-09-06):
+        once the upload resolves, an ack is filed with THAT token via
+        :meth:`ReplyDebouncer.note_photo_ack`. The claimed-at-creation batch
+        (rule B) does NOT go through this method any more — see
+        ``_await_claimed_uploads``, which waits on it before the confirmation
+        bubble is sent, so a buffered photo never had a token of its own to
+        ack with in the first place.
+
+        A missing event loop (a script, a sync test) is a silent no-op: there
+        is nowhere to run this in the background, and a photo that never got
+        claimed via an open loop was never going to be attached synchronously
+        either.
         """
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        task = loop.create_task(self._upload_one_photo(order_id, message_id, actor_badge))
+        task = loop.create_task(
+            self._upload_one_photo(order_id, message_id, actor_badge, chat_key, reply_token)
+        )
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
-    async def _upload_one_photo(self, order_id: int, message_id: str, actor_badge: str) -> None:
+    async def _do_upload(self, order_id: int, message_id: str, actor_badge: str) -> Optional[Dict]:
+        """Download + upload ONE photo. The upload's own JSON body (carrying
+        ``photoCount``) on success; None on any failure (download or
+        upload) — never raises, so one bad photo cannot take the loop or a
+        pending reply down with it."""
         fetched = await asyncio.to_thread(staff_oa_service.fetch_message_content, message_id)
         if fetched is None:
             logger.warning("staff-bot photo failed: order=%s reason=download", order_id)
-            return
+            return None
         data, content_type = fetched
         mime = content_type or "image/jpeg"
         result = await asyncio.to_thread(
@@ -2135,8 +2354,63 @@ class AsyncioBotDispatcher:
         )
         if result is None or "error" in result:
             logger.warning("staff-bot photo failed: order=%s reason=upload", order_id)
-            return
+            return None
         logger.info("staff-bot photo attached: order=%s", order_id)
+        return result
+
+    async def _upload_one_photo(
+        self, order_id: int, message_id: str, actor_badge: str,
+        chat_key: str = "", reply_token: str = "",
+    ) -> bool:
+        """One attach-window photo (rule A): upload it, then — since this
+        runs as an awaited-to_thread coroutine on a loop TASK, never on a
+        worker thread — file its ack directly, on the event loop, exactly
+        like noting any other command. Returns success, for callers (the
+        claimed batch's bounded wait) that need to know the outcome without
+        an ack ever being filed for it."""
+        result = await self._do_upload(order_id, message_id, actor_badge)
+        success = result is not None
+        if chat_key and reply_token:
+            total = _as_int(result.get("photoCount")) if success and isinstance(result, dict) else None
+            self.debouncer.note_photo_ack(
+                chat_key, reply_token, order_id,
+                attached=1 if success else 0,
+                failed=0 if success else 1,
+                total=total,
+                quiet_seconds=PHOTO_ACK_QUIET_SECONDS,
+            )
+        return success
+
+    async def _await_claimed_uploads(self, upload: "PendingUpload") -> Tuple[int, int, int]:
+        """Rule B (photos-first, 2026-09-06): start the claimed batch's
+        uploads as real loop tasks and wait up to CLAIMED_UPLOAD_WAIT_SECONDS
+        for them, then return (completed, failed, still_running) as of that
+        moment. ``asyncio.shield`` keeps a timeout from cancelling the tasks
+        themselves — one still running at the timeout keeps going in the
+        background exactly like any other spawned upload, it simply produces
+        no ack when it eventually finishes (a buffered photo never had a
+        reply token of its own — see spawn_photo_upload's docstring)."""
+        loop = asyncio.get_running_loop()
+        tasks: List[asyncio.Task] = []
+        for message_id in upload.message_ids:
+            task = loop.create_task(
+                self._upload_one_photo(upload.order_id, message_id, upload.actor_badge)
+            )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+            tasks.append(task)
+        if tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*(asyncio.shield(t) for t in tasks), return_exceptions=True),
+                    timeout=CLAIMED_UPLOAD_WAIT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                pass
+        completed = sum(1 for t in tasks if t.done() and not t.cancelled() and t.exception() is None and t.result())
+        failed = sum(1 for t in tasks if t.done() and not t.cancelled() and (t.exception() is not None or not t.result()))
+        still_running = len(tasks) - completed - failed
+        return completed, failed, still_running
 
     def submit_message(self, chat_key: str, reply_token: str) -> bool:
         return bool(self.debouncer.note_message(chat_key, reply_token))
@@ -2170,8 +2444,28 @@ class AsyncioBotDispatcher:
             # DIFFERENT chat with a nearer deadline would otherwise wait for
             # this one's timer.
             await asyncio.sleep(min(delay, DRAIN_SLICE_SECONDS))
-            for pending in self.debouncer.pop_due():
-                await self._reply(pending)
+            due = self.debouncer.pop_due()
+            if not due:
+                continue
+            # Rule B (photos-first) can make _reply block for up to
+            # CLAIMED_UPLOAD_WAIT_SECONDS while it waits on ITS OWN pending's
+            # claimed-photo uploads. pop_due() can return entries for
+            # DIFFERENT chats in the same tick (their deadlines only need to
+            # fall within DRAIN_SLICE_SECONDS of each other, e.g. two groups
+            # reporting around the same time) — awaiting them one at a time
+            # would let one chat's photo wait sit in front of another chat's
+            # reply and risk expiring that unrelated reply token. Run every
+            # due entry concurrently instead; return_exceptions isolates them
+            # so one chat's failure can never cancel or take down another's.
+            results = await asyncio.gather(
+                *(self._reply(pending) for pending in due), return_exceptions=True
+            )
+            for pending, result in zip(due, results):
+                if isinstance(result, BaseException):
+                    logger.warning(
+                        "staff-bot reply task failed: chat=%s exc=%s",
+                        pending.chat_key, result,
+                    )
 
     async def _reply(self, pending: PendingReply) -> None:
         # A slot digest is the only pending that owns a database row, and the
@@ -2195,7 +2489,7 @@ class AsyncioBotDispatcher:
         try:
             built = await asyncio.to_thread(
                 build_reply, pending.commands, slot_ref[2] if slot_ref else None,
-                request_ids, pending.actions,
+                request_ids, pending.actions, pending.photo_acks,
             )
         except Exception as exc:  # noqa: BLE001 — a reply must never crash the loop
             logger.warning("staff-bot could not build a reply: %s", exc)
@@ -2206,10 +2500,18 @@ class AsyncioBotDispatcher:
         # The ticket (if any) already exists in housekeeping and its photos
         # are already claimed out of the buffer by the time build_reply
         # returns, regardless of whether the LINE reply below succeeds — so
-        # they are uploaded either way rather than lost.
+        # they are uploaded either way rather than lost. Rule B (photos-first,
+        # 2026-09-06): WAIT for them, bounded, so the confirmation bubble
+        # already in ``built.messages`` can be patched with the real outcome
+        # before it goes out — never before ticket creation and never past
+        # CLAIMED_UPLOAD_WAIT_SECONDS, so this stays inside the reporting
+        # command's own reply-token life.
         for upload in built.pending_uploads:
-            for message_id in upload.message_ids:
-                self.spawn_photo_upload(upload.order_id, message_id, upload.actor_badge)
+            completed, failed, still_running = await self._await_claimed_uploads(upload)
+            if upload.message_index is not None and upload.message_index < len(built.messages):
+                _patch_confirmation_photo_line(
+                    built.messages[upload.message_index], completed, failed, still_running,
+                )
 
         if owns_mark and not built.slot_digest_included:
             # Housekeeping was dark or unreachable: the scheduled post says
@@ -2424,10 +2726,12 @@ def _maybe_handle_photo(
     rule: a photo is NEVER downloaded unless it is already tied to a ticket.
 
     A non-linked sender's photo is ignored outright — not buffered, not
-    logged, not counted. A linked sender's photo either attaches silently
-    (an attach window is open for them in this chat: schedule the
-    download+upload in the background, no reply at all) or is buffered as a
-    bare message id (no bytes) for later claiming by a ticket created within
+    logged, not counted, no ack (rule A never applies to it: no order, no
+    fetch). A linked sender's photo either attaches silently (an attach
+    window is open for them in this chat: schedule the download+upload in the
+    background using THIS photo event's own reply token, so the ack rule A
+    adds files against it once the upload resolves) or is buffered as a bare
+    message id (no bytes) for later claiming by a ticket created within
     :data:`PHOTO_BUFFER_TTL_SECONDS`.
     """
     message = event.get("message")
@@ -2446,7 +2750,10 @@ def _maybe_handle_photo(
 
     order_id = get_attach_windows().refresh(routed.chat_key, user_id)
     if order_id is not None:
-        dispatcher.spawn_photo_upload(order_id, message_id, identity.badge)
+        dispatcher.spawn_photo_upload(
+            order_id, message_id, identity.badge,
+            chat_key=routed.chat_key, reply_token=routed.reply_token,
+        )
         return
     get_photo_buffer().add(routed.chat_key, user_id, message_id)
 
