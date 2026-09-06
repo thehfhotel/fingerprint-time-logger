@@ -321,23 +321,26 @@ the bot so a LINE retry cannot double-post.
 ## The staff bot (HF ภายใน)
 
 
-**HF Family (or any group/room) is REPORT-ONLY** (owner policy, 2026-09-06:
-*"command through chat is considered spam in HF Family group... feedback
-should be consolidated and report in reporting style not chat style"*). A
-group never answers a command, of any kind, from anybody — its only voice is
-the four daily **slot reports** (below). Every command, ticket, photo/video
-upload and preview lives in a **1:1 chat**. Design authority: hf-erp ADR
-*"The staff bot answers only with reply tokens; LINE meters pushes per
-recipient"*. Code: `app/services/staff_bot.py` (router, palette, digest,
-requests, debounce), `app/services/housekeeping_client.py` (the แจ้งซ่อม
-read/write) and `app/services/guest_feedback_client.py` (the guest-feedback
-read/confirm).
+**HF Family (or any group/room) is REPORT-ONLY, with ONE command carve-out**
+(owner policy, 2026-09-06: *"command through chat is considered spam in HF
+Family group... feedback should be consolidated and report in reporting style
+not chat style"*; owner, 2026-09-06 evening: *"HF Family should be able to
+get mention and act to create new maintenance ticket still"*). A group never
+answers an ordinary command, of any kind, from anybody — its only voices are
+the four daily **slot reports** (below) and this one @mention ticket
+exception. Every other command, ticket edit and preview lives in a **1:1
+chat**. Design authority: hf-erp ADR *"The staff bot answers only with reply
+tokens; LINE meters pushes per recipient"*. Code: `app/services/staff_bot.py`
+(router, palette, digest, requests, debounce), `app/services/housekeeping_client.py`
+(the แจ้งซ่อม read/write) and `app/services/guest_feedback_client.py` (the
+guest-feedback read/confirm).
 
 ### What to type, and where
 
 | Where | What to type | What comes back |
 |---|---|---|
-| HF Family (any group/room) | anything at all — text, a tap on an old bubble's button, a photo, a video | **nothing.** The message is only a candidate for the scheduled slot report's heartbeat (see "The slot report" below); it is never parsed, never buffered, never acknowledged. |
+| HF Family (any group/room) | `@HF ภายใน แจ้งซ่อม <ห้อง> <อาการ>` (an explicit @mention of the bot whose text after the mention starts with แจ้งซ่อม) + photos/video | the ticket flow (see "แจ้งซ่อม from chat" below), replied as a **compact text line**, not the 1:1 Flex bubble — see "Group is report-only" below |
+| HF Family (any group/room) | anything else — unmentioned text, a mention with other words, a tap on an old bubble's button, a photo, a video | **nothing.** The message is only a candidate for the scheduled slot report's heartbeat (see "The slot report" below); it is never parsed as a command, never acknowledged (a linked sender's photo/video IS still buffered — ids only — in case a mention-report follows it). |
 | 1:1 chat | `งานค้าง` (also `งานซ่อมค้าง`, `แจ้งซ่อมค้าง`) on its own | the digest |
 | 1:1 chat | `คำขอ` / `คำขอลูกค้า` / `guest requests` / `ความคิดเห็น` / `ฟีดแบค` / `feedback` on its own | a **preview** of the pending guest feedback, report-style (see "Guest feedback" below) |
 | 1:1 chat | `แจ้งซ่อม <ห้อง/พื้นที่> <อาการ>` | the ticket flow (see "แจ้งซ่อม from chat" below) |
@@ -348,8 +351,10 @@ read/confirm).
 
 The sender must resolve to an **active** employee via `line_user_id`; an
 unknown account gets the same Q-badge onboarding reply a stranger's `follow`
-gets, and nothing else. There is no summon grammar any more — a group never
-listens for one, and a 1:1 never needed one.
+gets, and nothing else (a stranger's mention-report gets `NOT_LINKED_TEXT`
+instead — see "Group is report-only" below). There is no summon *word*
+grammar any more — a 1:1 never needed one, and a group only ever reacts to
+LINE's own @-mention, never a typed word.
 
 ### Zero metered messages
 
@@ -473,13 +478,17 @@ Both variables ride the deploy (`env_payload` in
 `.github/workflows/build.yml`, passthrough in `docker-compose.yml`); do not
 hand-edit the host `.env`, every deploy rewrites it.
 
-### แจ้งซ่อม from chat (phase 3, 1:1 only since 2026-09-06)
+### แจ้งซ่อม from chat (phase 3, 1:1 only since 2026-09-06; group/room reopened
+that evening via @mention — phase 5)
 
 A linked employee raises a ticket without leaving LINE: `แจ้งซ่อม <ห้อง/พื้นที่>
-<อาการ>`, bare, in a 1:1 chat. Every ticket command — report, addphoto,
-fixcat, setcat, toggleurgent, cancel, switchprop, mine, status — is 1:1 only;
-a group/room event never reaches any of this (see "GROUP/ROOM SOURCES ARE
-REPORT-ONLY" above). Code: `app/services/staff_bot.py` (parser, palette
+<อาการ>`, bare, in a 1:1 chat — or `@HF ภายใน แจ้งซ่อม <ห้อง/พื้นที่> <อาการ>`,
+an explicit @mention of the bot, in a group/room. Every OTHER ticket command —
+addphoto, fixcat, setcat, toggleurgent, cancel, switchprop, mine, status — is
+still 1:1 only; a group/room event never reaches any of those (see "Group is
+report-only" below for the report exception's own rules: identity gate, parse
+error, photo buffer/attach window and the compact confirmation reply). Code:
+`app/services/staff_bot.py` (parser, palette
 buttons, postback handlers), `app/services/housekeeping_client.py`
 (create/patch/cancel/get/list work orders + the photo upload),
 `app/services/staff_oa_service.fetch_message_content` (the one place
@@ -695,24 +704,63 @@ No new environment variables for either of the above — same
 `HOUSEKEEPING_INTERNAL_URL` / `HOUSEKEEPING_STAFF_BOT_TOKEN` /
 `STAFF_OA_CHANNEL_*` pairs as everything else in this section.
 
-### Group is report-only (owner policy, 2026-09-06)
+### Group is report-only, except one @mention command (owner policy,
+2026-09-06, amended that evening)
 
 Superseding phase 3's narrower "group silence" rule (which only suppressed
-two specific ticket-nag replies), the owner's 2026-09-06 decision is
+two specific ticket-nag replies), the owner's 2026-09-06 decision was
 absolute: *"command through chat is considered spam in HF Family group —
-10 people send commands in 1 chat room is bad."* In HF Family (or any
-group/room) the bot's only voice at all is the scheduled slot report — it
-never answers a command, of any kind, from anybody, summoned or bare,
-recognised word or not, text or media, from a stranger or a linked employee
-alike. This is enforced structurally in `route_event` (a group/room message
-event always becomes a plain `RoutedMessage`, never a `RoutedCommand`; a
-group/room postback event always routes to `None`), not by a per-case reply
-suppression — so there is no reply left to drop for phase 3's old
-`PARSE_ERROR_NO_ROOM_TEXT`/`NOT_LINKED_TEXT` cases: a group ticket attempt
-never reaches ticket routing in the first place.
+10 people send commands in 1 chat room is bad."* That evening the owner
+narrowly reopened one command: *"HF Family should be able to get mention and
+act to create new maintenance ticket still."* In HF Family (or any
+group/room) the bot's only voices are the scheduled slot report and this one
+@mention ticket flow — every OTHER command, of any kind, from anybody,
+summoned or bare, recognised word or not, text or media, from a stranger or a
+linked employee alike, is still silently ignored. This is enforced
+structurally in `route_event`: a group/room **postback** event always routes
+to `None` (buttons stay dead there, see below), and a group/room **message**
+event becomes a `RoutedCommand` (`COMMAND_REPORT`) ONLY when it carries an
+explicit self-mention (`message.mention.mentionees[]` with `isSelf: true`)
+whose remainder — the mention span stripped using LINE's own UTF-16
+code-unit offsets, not Python string indices (`_strip_utf16_span`) — is
+แจ้งซ่อม, bare or with a room/symptom; every other message, mentioned or not,
+still becomes a plain `RoutedMessage`.
+
+**The mention-report flow, rule by rule:**
+
+- **Same parser, same ticket.** The text after แจ้งซ่อม is parsed exactly like
+  the 1:1 form (room/area, category, urgent, detail) and creates the same
+  housekeeping work order.
+- **Same identity gate.** An unlinked sender's mention-report gets
+  `NOT_LINKED_TEXT` once, exactly like a 1:1 stranger. A mention with no
+  room/area gets `PARSE_ERROR_NO_ROOM_TEXT` once, exactly like a 1:1 parse
+  error.
+- **Photos are buffered again for a group sender** (ids only, 90 s TTL, never
+  downloaded) so a mention-report can claim media the same sender sent just
+  before it; a ticket created from the mention opens the same 2-minute attach
+  window as 1:1 for media sent right after, and reply-to-media (a quoted
+  message) attaches too. Media from an unlinked sender, or never tied to any
+  ticket, stays unfetched — never buffered, never downloaded.
+- **The confirmation reply is deliberately lean — a compact TEXT, not the
+  1:1 Flex bubble.** Group postbacks stay ignored, so the fixcat/toggleurgent/
+  addphoto/cancel/switchprop buttons on the 1:1 bubble would be dead weight in
+  a group; `build_group_confirmation_text` instead replies one line —
+  `รับเรื่องแล้ว #N · <สาขา> · <ที่> · <หมวด> · <ด่วน|ปกติ> · <รูป/วิดีโอ นับ>` —
+  plus `แก้ไขหรือดูสถานะได้ในแชทส่วนตัวกับ HF ภายใน` pointing the reporter back
+  to their 1:1 chat for anything else (edit, cancel, more photos, status). The
+  same photos-first bounded wait (`CLAIMED_UPLOAD_WAIT_SECONDS`, 10 s) as the
+  1:1 bubble applies first, so the counts shown are real, not a
+  claimed-but-unconfirmed guess. Photo/video acks for the attach window still
+  use the existing coalesced ack lines, unchanged.
+- **Still a command, never a heartbeat.** A mention-report never files or
+  promotes a slot mark and never counts as the slot heartbeat — it is routed
+  as a `RoutedCommand` from the start, so it never reaches
+  `_maybe_file_slot_digest` at all (same structural rule that keeps every
+  other command out of the slot machinery).
 
 **Unaffected in 1:1** — a stranger or a parse error there still gets the
-fixed line, exactly as always. The webhook logs a group/room drop at
+fixed line, exactly as always, via the ordinary (non-mention) `แจ้งซ่อม`
+path. The webhook logs a group/room drop at
 **DEBUG only** (never INFO — a group is told nothing and the log stays
 quiet by default too): `staff-bot group ignored: type=message|postback
 chat=<chat id>` — never the message text, never the sender.

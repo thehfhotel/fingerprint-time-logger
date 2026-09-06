@@ -153,9 +153,17 @@ def _employee(db, badge="7001", line_user_id="U-emp", location=None, name="ส�
 
 
 def _action(command, **overrides):
+    # source_type defaults to "user" (1:1) — since the @mention report
+    # exception (2026-09-06 evening), _create_ticket renders a DIFFERENT
+    # confirmation message for source_type in ("group", "room") (a compact
+    # text, not the Flex bubble — see TestGroupMentionReport below), so tests
+    # that want the ordinary 1:1 Flex-bubble behaviour (the vast majority
+    # here) must not accidentally opt into the group rendering. chat_key
+    # stays "Cgroup" regardless — it is just this file's conventional test
+    # chat id, unrelated to source_type.
     base = dict(
         chat_key="Cgroup", command=command, reply_token="tok",
-        quiet_seconds=0.0, event_type="message", source_type="group",
+        quiet_seconds=0.0, event_type="message", source_type="user",
         user_id="U-emp", identity_known=True, badge="7001",
         display_name="สมชาย", property="hf", is_reception=False,
     )
@@ -181,10 +189,12 @@ def _flatten_texts(node, out=None):
 
 
 def _group_text(text, reply_token="reply-g", group_id="Cgroup", user_id="Uspeaker",
-                 quoted_message_id=None, timestamp=None):
+                 quoted_message_id=None, timestamp=None, mention=None):
     message = {"type": "text", "id": "m1", "text": text}
     if quoted_message_id:
         message["quotedMessageId"] = quoted_message_id
+    if mention is not None:
+        message["mention"] = mention
     event = {
         "type": "message",
         "replyToken": reply_token,
@@ -194,6 +204,37 @@ def _group_text(text, reply_token="reply-g", group_id="Cgroup", user_id="Uspeake
     if timestamp is not None:
         event["timestamp"] = timestamp
     return event
+
+
+def _utf16_len(text: str) -> int:
+    """LINE's own unit for mention index/length — see
+    staff_bot._strip_utf16_span."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _self_mention(text: str, span_text: str, bot_user_id: str = "Ubot") -> dict:
+    """A ``message.mention`` block spanning ``span_text``'s first occurrence
+    in ``text`` — real UTF-16 code-unit index/length, exactly what a LINE
+    webhook payload carries, so a test that puts a supplementary-plane emoji
+    before the mention (a surrogate pair — one Python character, TWO UTF-16
+    units) still computes the offset LINE would actually send."""
+    offset = text.index(span_text)
+    return {"mentionees": [{
+        "index": _utf16_len(text[:offset]), "length": _utf16_len(span_text),
+        "isSelf": True, "userId": bot_user_id,
+    }]}
+
+
+def _mentioned_group_text(body: str, mention_text: str = "@HF ภายใน", prefix: str = "", **kwargs):
+    """A group text event that @-mentions the bot, followed by ``body`` (a
+    space in between when ``body`` is non-empty) — the shape route_event's
+    mention carve-out (rule 1, 2026-09-06 evening) parses. ``prefix`` puts
+    extra text (e.g. an emoji) BEFORE the mention, to exercise the UTF-16
+    offset conversion against a supplementary-plane character earlier in the
+    message."""
+    text = f"{mention_text} {body}" if body else mention_text
+    text = prefix + text
+    return _group_text(text, mention=_self_mention(text, mention_text), **kwargs)
 
 
 def _direct_text(text, user_id="U-emp", reply_token="reply-d", quoted_message_id=None):
@@ -906,13 +947,25 @@ class TestPhotoBuffer:
         staff_bot.handle_event_detail(event, test_db)
         assert dispatcher.photo_uploads == []
 
-    def test_a_photo_in_a_group_is_never_buffered_or_fetched(self, test_db, dispatcher):
-        # Report-only groups (2026-09-06): a group photo is heartbeat only,
-        # never even offered to the photo buffer.
+    def test_a_photo_in_a_group_from_a_linked_sender_is_buffered_again(
+        self, test_db, dispatcher,
+    ):
+        # 2026-09-06 evening (rule 2): the mention-report exception needs a
+        # group photo buffered again, ids only, so a mention just after it
+        # can still claim it — still never downloaded by being buffered.
         _employee(test_db, badge="7001", line_user_id="U-emp")
         staff_bot.handle_event_detail(_image(message_id="img-1"), test_db)
         assert dispatcher.photo_uploads == []
-        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-emp") == []
+        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-emp") == ["img-1"]
+
+    def test_a_group_photo_from_an_unlinked_sender_is_still_never_buffered(
+        self, test_db, dispatcher,
+    ):
+        staff_bot.handle_event_detail(
+            _image(message_id="img-1", user_id="U-stranger"), test_db,
+        )
+        assert dispatcher.photo_uploads == []
+        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-stranger") == []
 
 
 class TestAttachWindow:
@@ -1000,16 +1053,16 @@ class TestAttachWindow:
         )
         assert dispatcher.photo_upload_tokens == [(55, "U-emp", "reply-i")]
 
-    def test_an_open_window_never_attaches_a_group_photo(self, test_db, dispatcher):
-        # Report-only groups (2026-09-06): even with an attach window open
-        # for this (chat, user), a GROUP photo is still heartbeat only — the
-        # window itself can only ever have been opened by a 1:1 ticket
-        # command, so this is defense in depth, not a reachable production
-        # path today.
+    def test_an_open_window_attaches_a_group_photo_since_the_mention_exception(
+        self, test_db, dispatcher,
+    ):
+        # 2026-09-06 evening (rule 2): a group ticket's attach window (opened
+        # by a mention-report) now attaches silently, exactly like 1:1 — the
+        # window can only ever have been opened by that ticket command.
         _employee(test_db, badge="7001", line_user_id="U-emp")
         staff_bot.get_attach_windows().open("Cgroup", "U-emp", 55)
         staff_bot.handle_event_detail(_image(message_id="img-1"), test_db)
-        assert dispatcher.photo_uploads == []
+        assert dispatcher.photo_uploads == [(55, "img-1", "7001")]
 
 
 # ===========================================================================
@@ -2007,12 +2060,23 @@ class TestVideoBuffering:
         assert dispatcher.photo_uploads == []
         assert staff_bot.get_photo_buffer().claim("U-stranger", "U-stranger") == []
 
-    def test_a_video_in_a_group_is_never_buffered_or_fetched(self, test_db, dispatcher):
-        # Report-only groups (2026-09-06): a group video is heartbeat only.
+    def test_a_video_in_a_group_from_a_linked_sender_is_buffered_again(
+        self, test_db, dispatcher,
+    ):
+        # 2026-09-06 evening (rule 2): same reversal as the photo case above.
         _employee(test_db, badge="7001", line_user_id="U-emp")
         staff_bot.handle_event_detail(_video(message_id="vid-1"), test_db)
         assert dispatcher.photo_uploads == []
-        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-emp") == []
+        assert staff_bot.get_photo_buffer().claim_detailed("Cgroup", "U-emp") == [("vid-1", "video")]
+
+    def test_a_group_video_from_an_unlinked_sender_is_still_never_buffered(
+        self, test_db, dispatcher,
+    ):
+        staff_bot.handle_event_detail(
+            _video(message_id="vid-1", user_id="U-stranger"), test_db,
+        )
+        assert dispatcher.photo_uploads == []
+        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-stranger") == []
 
 
 class TestPhotoBufferKinds:
@@ -2334,11 +2398,13 @@ class TestCountsRendering:
 
 class TestGroupReportOnly:
     """GROUP/ROOM SOURCES ARE REPORT-ONLY (owner policy, 2026-09-06 —
-    "command through chat is considered spam in HF Family group"). A group
-    or room never answers a command any more, of any kind, from anybody —
-    the only thing it ever hears is the slot report (test_staff_bot.py's
-    TestSlotWindows/TestSlotTriggers cover that heartbeat rule itself, kept
-    exactly as it was)."""
+    "command through chat is considered spam in HF Family group"), WITH ONE
+    EXPLICIT COMMAND CARVE-OUT since that same evening: an @mention that
+    files a แจ้งซ่อม ticket (see TestGroupMentionReport below). Everything
+    else in a group or room still never answers a command, of any kind, from
+    anybody — the only other thing it ever hears is the slot report
+    (test_staff_bot.py's TestSlotWindows/TestSlotTriggers cover that
+    heartbeat rule itself, kept exactly as it was)."""
 
     def test_the_same_no_room_text_in_1_1_still_gets_the_parse_error_reply(
         self, test_db, dispatcher,
@@ -2398,17 +2464,25 @@ class TestGroupReportOnly:
         assert handled.command is False
         assert dispatcher.commands == []
 
-    def test_group_image_is_not_buffered_and_never_fetched(self, test_db, dispatcher):
+    def test_group_image_from_a_linked_sender_is_buffered_for_a_possible_mention_report(
+        self, test_db, dispatcher,
+    ):
+        # 2026-09-06 evening (rule 2): reversed from "never" — a linked
+        # sender's group image is buffered again (ids only, never
+        # downloaded) so a mention-report just after it can still claim it.
         _employee(test_db, badge="7001", line_user_id="U-emp")
         staff_bot.handle_event_detail(_image(message_id="img-1"), test_db)
         assert dispatcher.photo_uploads == []
-        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-emp") == []
+        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-emp") == ["img-1"]
 
-    def test_group_video_is_not_buffered_and_never_fetched(self, test_db, dispatcher):
-        _employee(test_db, badge="7001", line_user_id="U-emp")
-        staff_bot.handle_event_detail(_video(message_id="vid-1"), test_db)
+    def test_group_image_from_an_unlinked_sender_is_still_never_buffered(
+        self, test_db, dispatcher,
+    ):
+        staff_bot.handle_event_detail(
+            _image(message_id="img-1", user_id="U-stranger"), test_db,
+        )
         assert dispatcher.photo_uploads == []
-        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-emp") == []
+        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-stranger") == []
 
     def test_a_group_image_from_reception_still_files_the_slot_heartbeat(
         self, test_db, dispatcher,
@@ -2447,3 +2521,279 @@ class TestGroupReportOnly:
         )
         assert handled.command is False
         assert dispatcher.commands == []
+
+
+# ===========================================================================
+# The @mention report exception (owner, 2026-09-06 evening): "HF Family
+# should be able to get mention and act to create new maintenance ticket
+# still." Same parser/identity gate/photo buffer/attach window as 1:1
+# แจ้งซ่อม (TestCreateTicket etc. above) — only the routing TRIGGER (an
+# explicit self-mention, not merely being typed in a group) and the
+# confirmation REPLY (a compact text, not the Flex bubble) differ. See
+# TestGroupReportOnly above for the group-silence rule this carves ONE
+# exception out of, and test_staff_bot.py's TestMentionReportCarveOut for the
+# route_event-level mention parsing (including the UTF-16 offset math).
+# ===========================================================================
+
+class TestGroupMentionReport:
+    def _order(self, **overrides):
+        order = {
+            "id": 128, "property": "hf", "propertyLabel": "HF",
+            "locationKind": "room", "roomNo": "204", "commonArea": None,
+            "location": "ห้อง 204", "category": "aircon", "categoryLabel": "แอร์",
+            "urgent": True, "detailText": "แอร์ไม่เย็น", "status": "new",
+            "statusLabel": "รอช่าง", "reporterBadge": "7001", "reporterName": "สมชาย",
+            "createdAt": "2026-09-06T09:00:00.000Z", "updatedAt": "2026-09-06T09:00:00.000Z",
+            "ageDays": 0, "photoCount": 0,
+        }
+        order.update(overrides)
+        return order
+
+    # -- routing (webhook level) -----------------------------------------
+
+    def test_mention_with_report_word_creates_a_ticket_with_the_parsed_fields(
+        self, test_db, dispatcher, monkeypatch,
+    ):
+        captured = {}
+
+        def _create(payload):
+            captured.update(payload)
+            return {"order": self._order()}
+
+        monkeypatch.setattr(housekeeping_client, "create_work_order", _create)
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        event = _mentioned_group_text("แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp")
+        handled = staff_bot.handle_event_detail(event, test_db)
+
+        assert handled.command is True
+        assert len(dispatcher.commands) == 1
+        routed = dispatcher.commands[0]
+        assert routed.command == staff_bot.COMMAND_REPORT
+        assert routed.report_text == "204 แอร์ไม่เย็น"
+        assert routed.identity_known is True
+        assert routed.badge == "7001"
+
+        messages = staff_bot.build_messages([], actions=[routed])
+        assert captured["room_no"] == "204"
+        assert captured["detail_text"] == "แอร์ไม่เย็น"
+        assert messages == [staff_bot.build_group_confirmation_text(self._order(), photo_count=0, video_count=0)]
+
+    @pytest.mark.parametrize("body", ["งานค้าง", ""])
+    def test_mention_with_other_text_or_bare_never_becomes_a_command(
+        self, body, test_db, dispatcher,
+    ):
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        event = _mentioned_group_text(body, user_id="U-emp")
+        handled = staff_bot.handle_event_detail(event, test_db)
+        assert handled.command is False
+        assert dispatcher.commands == []
+
+    def test_report_word_with_no_self_mention_is_still_only_a_heartbeat(
+        self, test_db, dispatcher,
+    ):
+        # แจ้งซ่อม typed bare in the group, with no @mention — unchanged
+        # heartbeat-only chat; the slot still triggers for a reception
+        # sender's message, exactly as before the carve-out.
+        _employee(test_db, badge="9001", line_user_id="U-reception")
+        test_db.add(EmployeeAppGrant(employee_badge_number="9001", app_id="reception"))
+        test_db.commit()
+        moment = datetime(2026, 9, 5, 6, 0, 0, tzinfo=BANGKOK)
+        timestamp = int(moment.timestamp() * 1000)
+        event = _group_text(
+            "แจ้งซ่อม 204 แอร์เสีย", user_id="U-reception", timestamp=timestamp,
+        )
+        handled = staff_bot.handle_event_detail(event, test_db)
+        assert handled.command is False
+        assert dispatcher.commands == []
+        assert dispatcher.slots
+
+    def test_group_postback_is_still_ignored_with_the_carve_out_in_place(
+        self, test_db, dispatcher,
+    ):
+        event = _postback("cmd=report", group=True, user_id="U-emp")
+        handled = staff_bot.handle_event_detail(event, test_db)
+        assert handled.command is False
+        assert dispatcher.commands == []
+
+    # -- identity / parse gates (same fixed lines as 1:1) -----------------
+
+    def test_an_unlinked_mentioner_gets_not_linked_text_once(self, test_db, dispatcher):
+        event = _mentioned_group_text("แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-stranger")
+        staff_bot.handle_event_detail(event, test_db)
+        routed = dispatcher.commands[0]
+        assert routed.identity_known is False
+        messages = staff_bot.build_messages([], actions=[routed])
+        assert messages == [{"type": "text", "text": staff_bot.NOT_LINKED_TEXT}]
+
+    def test_no_room_or_area_gets_the_parse_error_once(self, test_db, dispatcher, monkeypatch):
+        def _boom(payload):
+            raise AssertionError("create_work_order must not be called on a parse error")
+
+        monkeypatch.setattr(housekeeping_client, "create_work_order", _boom)
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        event = _mentioned_group_text("แจ้งซ่อม แอร์เสีย", user_id="U-emp")
+        staff_bot.handle_event_detail(event, test_db)
+        routed = dispatcher.commands[0]
+        messages = staff_bot.build_messages([], actions=[routed])
+        assert messages == [{"type": "text", "text": staff_bot.PARSE_ERROR_NO_ROOM_TEXT}]
+
+    # -- media: buffer before, attach window after -----------------------
+
+    def test_media_buffered_before_the_mention_is_claimed_and_the_window_opens(
+        self, test_db, dispatcher, monkeypatch,
+    ):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        # A photo sent just before the mention, from the same linked sender —
+        # buffered (rule 2), ids only, never downloaded.
+        staff_bot.handle_event_detail(_image(message_id="img-1", user_id="U-emp"), test_db)
+
+        event = _mentioned_group_text("แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp")
+        staff_bot.handle_event_detail(event, test_db)
+        routed = dispatcher.commands[0]
+        built = staff_bot.build_reply([], actions=[routed])
+
+        assert len(built.pending_uploads) == 1
+        upload = built.pending_uploads[0]
+        assert upload.order_id == 128
+        assert upload.message_ids == ["img-1"]
+        assert upload.patch_kind == "group_confirmation"
+        assert staff_bot.get_attach_windows().active_order("Cgroup", "U-emp") == 128
+
+    def test_media_sent_right_after_the_mention_attaches_via_the_window(
+        self, test_db, dispatcher, monkeypatch,
+    ):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        event = _mentioned_group_text("แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp")
+        staff_bot.handle_event_detail(event, test_db)
+        routed = dispatcher.commands[0]
+        staff_bot.build_reply([], actions=[routed])  # opens the attach window
+
+        staff_bot.handle_event_detail(_image(message_id="img-2", user_id="U-emp"), test_db)
+        assert dispatcher.photo_uploads == [(128, "img-2", "7001")]
+
+    def test_quoted_media_on_a_mention_report_attaches(self, test_db, dispatcher, monkeypatch):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        event = _mentioned_group_text(
+            "แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp", quoted_message_id="quoted-1",
+        )
+        staff_bot.handle_event_detail(event, test_db)
+        routed = dispatcher.commands[0]
+        assert routed.quoted_message_id == "quoted-1"
+        built = staff_bot.build_reply([], actions=[routed])
+        assert built.pending_uploads[0].message_ids == ["quoted-1"]
+        assert built.pending_uploads[0].kinds == {"quoted-1": "quoted"}
+
+    def test_group_media_from_an_unlinked_sender_never_buffers(self, test_db, dispatcher, monkeypatch):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        staff_bot.handle_event_detail(_image(message_id="img-1", user_id="U-stranger"), test_db)
+        assert staff_bot.get_photo_buffer().claim("Cgroup", "U-stranger") == []
+        assert dispatcher.photo_uploads == []
+
+    # -- confirmation reply: compact text, not the Flex bubble ------------
+
+    def test_the_confirmation_is_a_compact_text_with_the_exact_format(
+        self, test_db, dispatcher, monkeypatch,
+    ):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        event = _mentioned_group_text("แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp")
+        staff_bot.handle_event_detail(event, test_db)
+        routed = dispatcher.commands[0]
+        messages = staff_bot.build_messages([], actions=[routed])
+
+        assert len(messages) == 1
+        message = messages[0]
+        assert message["type"] == "text"
+        assert message["text"] == (
+            "รับเรื่องแล้ว #128 · HF · ห้อง 204 · แอร์ · ด่วน · ยังไม่มีรูป\n"
+            "แก้ไขหรือดูสถานะได้ในแชทส่วนตัวกับ HF ภายใน"
+        )
+        # Never the Flex bubble with (dead, ignored-in-a-group) buttons.
+        assert "contents" not in message
+
+    def test_the_settled_wait_shows_real_counts_in_the_compact_text(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        monkeypatch.setattr(service, "fetch_message_content", lambda mid: (b"x", "image/jpeg"))
+        monkeypatch.setattr(
+            housekeeping_client, "upload_photo",
+            lambda *a, **k: {"photoId": 1, "photoCount": 2},
+        )
+        staff_bot.get_photo_buffer().add("Cgroup", "U-emp", "img-1")
+        staff_bot.get_photo_buffer().add("Cgroup", "U-emp", "img-2")
+
+        sent = []
+        monkeypatch.setattr(
+            service, "reply_messages",
+            lambda token, messages: sent.append((token, messages)),
+        )
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.submit_command(_action(
+                staff_bot.COMMAND_REPORT, source_type="group", reply_token="tok-1",
+                quiet_seconds=0.0, report_text="204 แอร์ไม่เย็น",
+            ))
+            await _wait_until(lambda: bool(sent))
+            await asyncio.sleep(0.2)
+
+        asyncio.run(_scenario())
+
+        assert len(sent) == 1
+        _, messages = sent[0]
+        assert messages[0]["type"] == "text"
+        assert "รูป 2 รูป" in messages[0]["text"]
+        assert "แก้ไขหรือดูสถานะได้ในแชทส่วนตัวกับ HF ภายใน" in messages[0]["text"]
+
+    def test_photo_acks_for_the_attach_window_use_the_existing_coalesced_lines(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        # Rule 3(b): the photo/video ack the attach window produces once a
+        # group ticket exists is unchanged — the same coalesced ack line as
+        # 1:1 (_render_photo_ack_text), not something bespoke to the group.
+        monkeypatch.setattr(service, "fetch_message_content", lambda mid: (b"x", "image/jpeg"))
+        monkeypatch.setattr(
+            housekeeping_client, "upload_photo",
+            lambda *a, **k: {"photoId": 1, "photoCount": 1},
+        )
+        sent = []
+        monkeypatch.setattr(
+            service, "reply_messages",
+            lambda token, messages: sent.append((token, messages)),
+        )
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            staff_bot.get_attach_windows().open("Cgroup", "U-emp", 55)
+            dispatcher.spawn_photo_upload(
+                55, "img-1", "7001", chat_key="Cgroup", reply_token="tok-ack", kind="image",
+            )
+            # The ack waits PHOTO_ACK_QUIET_SECONDS (3 s) of quiet before it
+            # fires — give the poll real margin past that.
+            await _wait_until(lambda: bool(sent), timeout=6.0)
+
+        asyncio.run(_scenario())
+        assert len(sent) == 1
+        _, messages = sent[0]
+        assert any(
+            t == "แนบรูปเข้า #55 แล้ว 1 รูป (รวม 1 ไฟล์)" for t in _flatten_texts(messages)
+        )
+
+    # -- never a slot mark -------------------------------------------------
+
+    def test_no_slot_mark_from_a_mention_report(self, test_db, dispatcher, monkeypatch):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        moment = datetime(2026, 9, 5, 6, 0, 0, tzinfo=BANGKOK)
+        timestamp = int(moment.timestamp() * 1000)
+        event = _mentioned_group_text(
+            "แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp", timestamp=timestamp,
+        )
+        handled = staff_bot.handle_event_detail(event, test_db)
+        assert handled.command is True
+        assert dispatcher.slots == []
+        assert test_db.query(StaffBotSlotMark).count() == 0
