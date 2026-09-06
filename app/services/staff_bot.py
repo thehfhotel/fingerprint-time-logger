@@ -31,6 +31,16 @@ bearing here and must survive every future edit:
    message text, never a photo, never who said it. That is a privacy
    commitment to staff, enforced at the top of :func:`handle_event`.
 
+PHASE 2 (2026-09-05) adds the SLOT DIGEST: four daily Bangkok windows in which
+the งานค้าง digest is posted into a GROUP exactly once, piggybacking on
+whatever the humans were already saying so it still rides a free reply token.
+It is the one thing here that waits — SLOT_QUIET_SECONDS of quiet, so it never
+races reception's report burst — and the one thing that keeps state in the
+database (``staff_bot_slot_marks``), because "once per slot" has to survive a
+restart. A window nobody talks in is skipped, and a window in which
+housekeeping is dark posts NOTHING: a scheduled message must never spam an
+error line into HF Family. See "Slot digest" below and hf-erp ADR 0007.
+
 PLAIN THAI, NO EMOJI, in every bot-facing string (house rule, same as
 staff_oa_menu / hk_escalation_service). Anything human-typed that reaches a
 message goes through :func:`strip_pictographs` first.
@@ -52,13 +62,15 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Callable, Dict, List, Optional, Sequence, Set, Union
+from datetime import datetime, timedelta, timezone
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 from urllib.parse import parse_qs
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.models.models import Employee
+from app.core import database
+from app.models.models import Employee, EmployeeAppGrant, StaffBotSlotMark
 from app.services import housekeeping_client, staff_oa_service
 from app.utils.timezone import BANGKOK_TZ
 
@@ -110,6 +122,11 @@ COMMAND_PALETTE = "palette"
 COMMAND_DIGEST = "digest"
 COMMAND_ONBOARDING = "onboarding"
 
+# Phase 2. NOT a command anybody can type: it is filed by the slot rules
+# below when the bot decides this group's window is due. It renders the same
+# digest as COMMAND_DIGEST, under a "สรุปงานซ่อมค้างประจำรอบ..." line.
+COMMAND_SLOT_DIGEST = "slot_digest"
+
 # Words that run the digest directly, with or without a summon in front.
 DIGEST_WORDS = frozenset({"งานค้าง", "งานซ่อมค้าง", "แจ้งซ่อมค้าง"})
 
@@ -143,6 +160,123 @@ def quiet_seconds_for(source_type: str) -> float:
     """Quiet time before a COMMAND reply — zero everywhere, see above."""
     del source_type  # one rule for groups, rooms and 1:1
     return COMMAND_QUIET_SECONDS
+
+
+# ---------------------------------------------------------------------------
+# Slot digest — the four daily windows (phase 2)
+# ---------------------------------------------------------------------------
+
+# Inclusive start, EXCLUSIVE end, Bangkok wall clock. 09:59:59 is still the
+# morning slot; 10:00:00 is no slot at all. The windows are the owner's
+# (2026-09-05): they sit where reception is already reporting.
+@dataclass(frozen=True)
+class Slot:
+    """One daily window: ``[start, end)`` in Bangkok local time."""
+
+    slot_id: str
+    label: str
+    start_second: int   # seconds from Bangkok midnight, inclusive
+    end_second: int     # seconds from Bangkok midnight, exclusive
+
+    @property
+    def late_second(self) -> int:
+        """When rule (b) opens: the last LATE_TRIGGER_SECONDS of the window."""
+        return self.end_second - LATE_TRIGGER_SECONDS
+
+
+def _hm(hour: int, minute: int = 0) -> int:
+    return hour * 3600 + minute * 60
+
+
+# The last stretch of a window in which ANY message triggers the digest —
+# including one from a sender with no userId (LINE for PC), who can never be
+# resolved to a reception grant. Without this a quiet-until-late window would
+# be skipped even though the group is plainly awake.
+LATE_TRIGGER_SECONDS = 30 * 60
+
+SLOTS: Tuple[Slot, ...] = (
+    Slot("morning", "เช้า", _hm(6), _hm(10)),
+    Slot("noon", "เที่ยง", _hm(12), _hm(14)),
+    Slot("afternoon", "บ่าย", _hm(14, 30), _hm(16, 30)),
+    Slot("night", "ค่ำ", _hm(19, 30), _hm(21, 30)),
+)
+
+SLOTS_BY_ID: Dict[str, Slot] = {slot.slot_id: slot for slot in SLOTS}
+
+# The one line that tells the group this digest arrived on a schedule rather
+# than because somebody asked. Plain Thai, no emoji, like everything else.
+SLOT_DIGEST_PREFIX = "สรุปงานซ่อมค้างประจำรอบ{label}"
+
+# The app grant whose holder's first message opens a slot: reception is the
+# one role reliably at a screen in every window, and their report burst is
+# exactly the traffic this digest is meant to ride.
+RECEPTION_APP_ID = "reception"
+
+TRIGGER_RECEPTION = "reception"
+TRIGGER_LATE = "late"
+# Not a trigger anybody can cause on purpose: the mark a plain งานค้าง command
+# leaves behind when its digest lands inside an unmarked window, so the slot
+# does not post a near-duplicate a minute later.
+TRIGGER_COMMAND = "command"
+
+STATE_PENDING = "pending"
+STATE_SENT = "sent"
+
+# A 'pending' older than this was filed by a process that died mid-debounce:
+# nothing will ever send it, so it is deleted and the window re-opens. Chosen
+# above MAX_WAIT_SECONDS (45 s) with room to spare — a live pending can never
+# be this old.
+STALE_PENDING_SECONDS = 120.0
+
+# (group_id, bkk_date, slot_id) — the primary key of a slot mark, carried on a
+# pending reply so the send outcome knows which row to promote or delete.
+SlotRef = Tuple[str, str, str]
+
+
+def bangkok_moment(timestamp_ms) -> Optional[datetime]:
+    """LINE's event ``timestamp`` (epoch ms, UTC) as Bangkok local time.
+
+    None for anything that is not a usable epoch — an event we cannot place on
+    the clock is an event that cannot open a slot.
+    """
+    if isinstance(timestamp_ms, bool) or not isinstance(timestamp_ms, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc).astimezone(
+            BANGKOK_TZ
+        )
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _second_of_day(moment: datetime) -> int:
+    return moment.hour * 3600 + moment.minute * 60 + moment.second
+
+
+def slot_for_moment(moment: Optional[datetime]) -> Optional[Slot]:
+    """The slot this Bangkok datetime falls in, or None between windows."""
+    if moment is None:
+        return None
+    second = _second_of_day(moment)
+    for slot in SLOTS:
+        if slot.start_second <= second < slot.end_second:
+            return slot
+    return None
+
+
+def slot_ref_for_event(group_id: str, timestamp_ms) -> Optional[SlotRef]:
+    """``(group_id, 'YYYY-MM-DD', slot_id)`` for an event, or None.
+
+    The date is the BANGKOK calendar date of the event, never UTC's — a
+    19:30-21:30 window would otherwise straddle two dates every night.
+    """
+    if not group_id:
+        return None
+    moment = bangkok_moment(timestamp_ms)
+    slot = slot_for_moment(moment)
+    if slot is None:
+        return None
+    return (group_id, moment.strftime("%Y-%m-%d"), slot.slot_id)
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +381,11 @@ class RoutedCommand:
     quiet_seconds: float
     event_type: str
     source_type: str
+    # The slot mark this reply may promote to 'sent' — set for a slot digest
+    # (the mark it filed) and for a plain command in a group that lands inside
+    # an open window (rule 7: a งานค้าง answer covers the slot, so the slot
+    # must not post a near-duplicate afterwards). None everywhere else.
+    slot_ref: Optional[SlotRef] = None
 
 
 @dataclass(frozen=True)
@@ -293,6 +432,12 @@ def route_event(
     chat_key = _chat_key(source)
     event_type = event.get("type")
     reply_token = event.get("replyToken") or ""
+    # Which slot (if any) this event falls in. Groups only: rooms and 1:1
+    # chats have no slot digest at all.
+    slot_ref = (
+        slot_ref_for_event(chat_key, event.get("timestamp"))
+        if source_type == "group" else None
+    )
 
     if event_type == "join":
         # Learn the group id — the ONLY thing this event is good for, and the
@@ -310,6 +455,7 @@ def route_event(
             chat_key=chat_key, command=command, reply_token=reply_token,
             quiet_seconds=quiet_seconds_for(source_type),
             event_type="postback", source_type=source_type,
+            slot_ref=slot_ref,
         )
 
     if event_type != "message":
@@ -354,6 +500,7 @@ def route_event(
         reply_token=reply_token,
         quiet_seconds=quiet_seconds_for(source_type),
         event_type="message", source_type=source_type,
+        slot_ref=slot_ref,
     )
 
 
@@ -516,23 +663,86 @@ def render_digest(payload: Optional[Dict], now: Optional[datetime] = None) -> st
     return _fit(lines)
 
 
-def build_messages(commands: Sequence[str]) -> List[Dict]:
-    """The message objects for one coalesced reply, in canonical order."""
+def render_slot_digest(slot_id: str, payload: Optional[Dict]) -> Optional[str]:
+    """The slot digest text, or None when there is nothing to post.
+
+    None is the whole of the "housekeeping is dark" rule: a digest somebody
+    ASKED for says "ระบบงานซ่อมยังไม่เชื่อมต่อ ..." (they are owed an answer),
+    but a scheduled post nobody asked for stays silent rather than dropping an
+    error line into HF Family every window. The caller deletes the slot mark
+    when this returns None, so the window re-triggers on the next message.
+    """
+    slot = SLOTS_BY_ID.get(slot_id or "")
+    if slot is None or not isinstance(payload, dict):
+        return None
+    return (
+        SLOT_DIGEST_PREFIX.format(label=slot.label)
+        + "\n\n"
+        + render_digest(payload)
+    )
+
+
+@dataclass(frozen=True)
+class BuiltReply:
+    """The message objects for one reply, plus what became of the slot digest.
+
+    ``slot_digest_included`` is False when a slot digest was asked for and
+    housekeeping had nothing to give — the caller needs to tell that apart
+    from a successful post, because only one of the two leaves a mark.
+    ``digest_available`` is False when the reply carries the fixed "not
+    connected" line instead of real rows, which is NOT a digest this window
+    can be considered to have had.
+    """
+
+    messages: List[Dict]
+    slot_digest_included: bool = False
+    digest_available: bool = False
+
+
+def build_reply(commands: Sequence[str], slot_id: Optional[str] = None) -> BuiltReply:
+    """Build ONE coalesced reply, in canonical order.
+
+    At most one digest object per reply: a slot digest and a plain digest in
+    the same burst are the same rows twice over. The slot digest takes the
+    digest position and carries the "สรุปงานซ่อมค้างประจำรอบ..." line; the
+    plain digest is dropped — UNLESS housekeeping is dark, in which case the
+    slot digest renders nothing and a digest somebody actually typed still
+    gets its fixed Thai "not connected" line. A palette asked for in the same
+    burst always rides along.
+    """
     wanted = set(commands)
     messages: List[Dict] = []
+    slot_included = False
+    digest_available = False
     for command in COMMAND_ORDER:
-        if command not in wanted:
-            continue
-        if command == COMMAND_ONBOARDING:
+        if command == COMMAND_ONBOARDING and command in wanted:
             messages.append({"type": "text", "text": ONBOARDING_REPLY_TEXT})
-        elif command == COMMAND_PALETTE:
+        elif command == COMMAND_PALETTE and command in wanted:
             messages.append(palette_message())
         elif command == COMMAND_DIGEST:
-            messages.append({
-                "type": "text",
-                "text": render_digest(housekeeping_client.fetch_digest()),
-            })
-    return messages[:MAX_REPLY_MESSAGES]
+            # The digest position, shared by both digest kinds. One fetch:
+            # the two would otherwise disagree with each other in the same
+            # reply, and it is a network round trip inside a reply token's
+            # lifetime.
+            if COMMAND_SLOT_DIGEST not in wanted and COMMAND_DIGEST not in wanted:
+                continue
+            payload = housekeeping_client.fetch_digest()
+            digest_available = isinstance(payload, dict)
+            if COMMAND_SLOT_DIGEST in wanted:
+                text = render_slot_digest(slot_id, payload)
+                if text is not None:
+                    messages.append({"type": "text", "text": text})
+                    slot_included = True
+                    continue
+                if COMMAND_DIGEST not in wanted:
+                    continue  # scheduled + dark: say nothing at all
+            messages.append({"type": "text", "text": render_digest(payload)})
+    return BuiltReply(messages[:MAX_REPLY_MESSAGES], slot_included, digest_available)
+
+
+def build_messages(commands: Sequence[str], slot_id: Optional[str] = None) -> List[Dict]:
+    """The message objects for one coalesced reply, in canonical order."""
+    return build_reply(commands, slot_id).messages
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +759,12 @@ class PendingReply:
     first_at: float = 0.0
     last_at: float = 0.0
     quiet_seconds: float = COMMAND_QUIET_SECONDS
+    # The slot mark this reply will promote to 'sent' (or delete) once the
+    # send outcome is known. See RoutedCommand.slot_ref.
+    slot_ref: Optional[SlotRef] = None
+    # What opened that slot (reception|late), carried only so the mark can be
+    # rewritten faithfully in the corner where its row went missing.
+    slot_trigger: str = TRIGGER_COMMAND
 
     def deadline(self, max_wait_seconds: float) -> float:
         """Quiet-timer deadline, capped so the reply token cannot expire."""
@@ -583,17 +799,26 @@ class ReplyDebouncer:
         command: str,
         reply_token: str,
         quiet_seconds: float = COMMAND_QUIET_SECONDS,
+        slot_ref: Optional[SlotRef] = None,
     ) -> PendingReply:
         """Record a command: create or MERGE INTO this chat's pending reply."""
         now = self._clock()
         pending = self._pending.get(chat_key)
         if pending is None:
-            pending = PendingReply(chat_key=chat_key, first_at=now)
+            pending = PendingReply(
+                chat_key=chat_key, first_at=now, quiet_seconds=quiet_seconds,
+            )
             self._pending[chat_key] = pending
         pending.commands.add(command)
         pending.reply_token = reply_token
         pending.last_at = now
-        pending.quiet_seconds = quiet_seconds
+        # The IMPATIENT one wins. A slot digest waits 15 s for the group to
+        # settle, but a command typed while it waits is answered at once (0 s)
+        # — and the reply it triggers carries the slot digest with it, which is
+        # why the two coalesce instead of racing.
+        pending.quiet_seconds = min(pending.quiet_seconds, quiet_seconds)
+        if slot_ref is not None:
+            pending.slot_ref = slot_ref
         self._notify()
         return pending
 
@@ -649,6 +874,191 @@ class ReplyDebouncer:
 
 
 # ---------------------------------------------------------------------------
+# Slot marks — the only persistent state the bot keeps
+# ---------------------------------------------------------------------------
+
+def _utcnow() -> datetime:
+    """Naive UTC, the storage convention everywhere in this repo."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def find_slot_mark(db: Session, ref: SlotRef) -> Optional[StaffBotSlotMark]:
+    """The mark for one (group, Bangkok date, slot), or None."""
+    group_id, bkk_date, slot_id = ref
+    return (
+        db.query(StaffBotSlotMark)
+        .filter(
+            StaffBotSlotMark.group_id == group_id,
+            StaffBotSlotMark.bkk_date == bkk_date,
+            StaffBotSlotMark.slot == slot_id,
+        )
+        .first()
+    )
+
+
+def _delete_mark(db: Session, mark: StaffBotSlotMark, ref: SlotRef, reason: str) -> None:
+    db.delete(mark)
+    db.commit()
+    logger.info(
+        "staff-bot slot dropped: group=%s date=%s slot=%s reason=%s",
+        ref[0], ref[1], ref[2], reason,
+    )
+
+
+def has_reception_grant(db: Session, line_user_id: str) -> bool:
+    """Whether this LINE account is an ACTIVE employee holding `reception`.
+
+    One query: line_user_id -> badge_number -> EmployeeAppGrant. The same
+    fact staff_oa_service.grants_for_badge answers, without the intermediate
+    round trip and without loading grants nobody asked about.
+    """
+    if not line_user_id:
+        return False
+    return (
+        db.query(EmployeeAppGrant.id)
+        .join(Employee, Employee.badge_number == EmployeeAppGrant.employee_badge_number)
+        .filter(
+            Employee.line_user_id == line_user_id,
+            Employee.is_active == True,  # noqa: E712
+            EmployeeAppGrant.app_id == RECEPTION_APP_ID,
+        )
+        .first()
+        is not None
+    )
+
+
+def evaluate_slot_trigger(
+    db: Session,
+    group_id: str,
+    timestamp_ms,
+    sender_user_id: str,
+) -> Optional[Tuple[SlotRef, str]]:
+    """Should this non-command group message open its slot? Rule 3 of phase 2.
+
+    Returns ``(slot_ref, trigger)`` when the digest should be filed, else
+    None. Order matters and is the owner's:
+
+      a. an unmarked slot + a message from a `reception` grant holder — the
+         report burst this digest is designed to ride;
+      b. otherwise an unmarked slot in its last 30 minutes + ANY message,
+         including one from a sender LINE gives us no userId for (LINE for
+         PC), because a window about to close is worth more than a perfect
+         attribution;
+      c. otherwise nothing — the group's chat is none of the bot's business.
+
+    A 'pending' mark older than STALE_PENDING_SECONDS belonged to a process
+    that died mid-debounce; it is deleted here (and the window re-opens)
+    before any of the above is applied.
+    """
+    ref = slot_ref_for_event(group_id, timestamp_ms)
+    if ref is None:
+        return None
+
+    mark = find_slot_mark(db, ref)
+    if mark is not None:
+        if mark.state == STATE_PENDING and _is_stale(mark):
+            _delete_mark(db, mark, ref, "stale")
+        else:
+            return None  # already filed or already sent: once per slot
+
+    if has_reception_grant(db, sender_user_id):
+        return ref, TRIGGER_RECEPTION
+
+    moment = bangkok_moment(timestamp_ms)
+    slot = SLOTS_BY_ID[ref[2]]
+    if moment is not None and _second_of_day(moment) >= slot.late_second:
+        return ref, TRIGGER_LATE
+    return None
+
+
+def _is_stale(mark: StaffBotSlotMark) -> bool:
+    filed_at = mark.filed_at
+    if not isinstance(filed_at, datetime):
+        return True  # no idea when it was filed: do not let it wedge the slot
+    return (_utcnow() - filed_at) > timedelta(seconds=STALE_PENDING_SECONDS)
+
+
+def file_slot_mark(db: Session, ref: SlotRef, trigger: str) -> bool:
+    """Reserve the slot: write the 'pending' mark. False if somebody beat us.
+
+    The UNIQUE(group_id, bkk_date, slot) index is the real guard — two webhook
+    deliveries can be in flight at once — so a collision here is a normal
+    outcome, not an error: the other one owns the slot.
+    """
+    group_id, bkk_date, slot_id = ref
+    mark = StaffBotSlotMark(
+        group_id=group_id, bkk_date=bkk_date, slot=slot_id,
+        state=STATE_PENDING, filed_at=_utcnow(), trigger=trigger,
+    )
+    db.add(mark)
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.debug("staff-bot slot already filed by another delivery")
+        return False
+    logger.info(
+        "staff-bot slot filed: group=%s date=%s slot=%s trigger=%s",
+        group_id, bkk_date, slot_id, trigger,
+    )
+    return True
+
+
+def mark_slot_sent(db: Session, ref: SlotRef, trigger: str = TRIGGER_COMMAND) -> None:
+    """The digest for this slot went out: promote (or write) the 'sent' mark.
+
+    ``trigger`` is only used when there is no row yet — the case where a plain
+    งานค้าง command answered inside an unmarked window and thereby covered the
+    slot (rule 7), so no scheduled near-duplicate follows it.
+    """
+    group_id, bkk_date, slot_id = ref
+    mark = find_slot_mark(db, ref)
+    if mark is None:
+        mark = StaffBotSlotMark(
+            group_id=group_id, bkk_date=bkk_date, slot=slot_id,
+            filed_at=_utcnow(), trigger=trigger,
+        )
+        db.add(mark)
+    mark.state = STATE_SENT
+    mark.sent_at = _utcnow()
+    db.commit()
+    logger.info(
+        "staff-bot slot sent: group=%s date=%s slot=%s",
+        group_id, bkk_date, slot_id,
+    )
+
+
+def drop_slot_mark(db: Session, ref: SlotRef, reason: str) -> None:
+    """Nothing was posted after all: delete the mark so the window re-opens."""
+    mark = find_slot_mark(db, ref)
+    if mark is None:
+        return
+    _delete_mark(db, mark, ref, reason)
+
+
+def _in_own_session(action: Callable[[Session], None]) -> None:
+    """Run one short mark write on a session of our own.
+
+    A pending reply outlives the request that filed it by up to 45 s, so the
+    request-scoped session from ``Depends(get_db)`` is long closed by the time
+    the send outcome is known. Same shape as staff_oa_provision: open, write,
+    close — and never raise into the drain loop, because a bookkeeping failure
+    must not cost the group its digest.
+    """
+    db = database.SessionLocal()
+    try:
+        action(db)
+    except Exception as exc:  # noqa: BLE001 — bookkeeping, not the message
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning("staff-bot could not record a slot mark: %s", exc)
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # asyncio adapter — the only part that touches a loop or the network
 # ---------------------------------------------------------------------------
 
@@ -669,10 +1079,19 @@ class AsyncioBotDispatcher:
         self.debouncer.note_command(
             command.chat_key, command.command, command.reply_token,
             quiet_seconds=command.quiet_seconds,
+            slot_ref=command.slot_ref,
         )
 
     def submit_message(self, chat_key: str, reply_token: str) -> bool:
         return bool(self.debouncer.note_message(chat_key, reply_token))
+
+    def submit_slot_digest(self, ref: SlotRef, reply_token: str, trigger: str) -> None:
+        """File this group's slot digest, to go out after the chat settles."""
+        pending = self.debouncer.note_command(
+            ref[0], COMMAND_SLOT_DIGEST, reply_token,
+            quiet_seconds=SLOT_QUIET_SECONDS, slot_ref=ref,
+        )
+        pending.slot_trigger = trigger
 
     # -- internals ---------------------------------------------------------
     def _wake(self, delay: float) -> None:
@@ -699,6 +1118,13 @@ class AsyncioBotDispatcher:
                 await self._reply(pending)
 
     async def _reply(self, pending: PendingReply) -> None:
+        # A slot digest is the only pending that owns a database row, and the
+        # row's fate is decided here — the one place where the send outcome is
+        # known. Sent: promote to 'sent'. Anything else at all: delete it, so
+        # the next qualifying message in the same window tries again.
+        slot_ref = pending.slot_ref
+        owns_mark = slot_ref is not None and COMMAND_SLOT_DIGEST in pending.commands
+
         if not staff_oa_service.is_enabled():
             # Fail closed. The webhook already answers 503 while the OA
             # credentials are missing, so this is unreachable in production —
@@ -706,20 +1132,64 @@ class AsyncioBotDispatcher:
             # send attempt against a dark channel must never leave this
             # process.
             logger.debug("staff-bot reply skipped: the staff OA is dark")
+            if owns_mark:
+                await self._drop_mark(slot_ref, "send_failed")
             return
         try:
-            messages = await asyncio.to_thread(build_messages, pending.commands)
+            built = await asyncio.to_thread(
+                build_reply, pending.commands, slot_ref[2] if slot_ref else None,
+            )
         except Exception as exc:  # noqa: BLE001 — a reply must never crash the loop
             logger.warning("staff-bot could not build a reply: %s", exc)
+            if owns_mark:
+                await self._drop_mark(slot_ref, "send_failed")
             return
-        if not messages or not pending.reply_token:
+
+        if owns_mark and not built.slot_digest_included:
+            # Housekeeping was dark or unreachable: the scheduled post says
+            # nothing (never an error line into the group) and the slot
+            # re-opens. Anything else in the burst — a palette, a digest
+            # somebody actually typed — still goes out below.
+            await self._drop_mark(slot_ref, "housekeeping_dark")
+            owns_mark = False
+
+        if not built.messages or not pending.reply_token:
+            if owns_mark:
+                await self._drop_mark(slot_ref, "send_failed")
             return
         try:
             await asyncio.to_thread(
-                staff_oa_service.reply_messages, pending.reply_token, messages
+                staff_oa_service.reply_messages, pending.reply_token, built.messages
             )
         except Exception as exc:  # noqa: BLE001 — LINE hiccup, not our problem
             logger.warning("staff-bot reply failed: %s", exc)
+            if owns_mark:
+                await self._drop_mark(slot_ref, "send_failed")
+            return
+
+        if owns_mark:
+            await self._mark_sent(slot_ref, trigger=pending.slot_trigger)
+        elif (
+            slot_ref is not None
+            and COMMAND_DIGEST in pending.commands
+            and built.digest_available
+        ):
+            # Rule 7: a งานค้าง answer that landed inside an open window IS
+            # this slot's digest. Mark it so the slot does not post a
+            # near-duplicate a few minutes later. Only when it carried REAL
+            # rows — the "ระบบงานซ่อมยังไม่เชื่อมต่อ" line told the group
+            # nothing, and a window that saw only that is still owed a digest.
+            await self._mark_sent(slot_ref, trigger=TRIGGER_COMMAND)
+
+    async def _mark_sent(self, ref: SlotRef, trigger: str) -> None:
+        await asyncio.to_thread(
+            _in_own_session, lambda db: mark_slot_sent(db, ref, trigger)
+        )
+
+    async def _drop_mark(self, ref: SlotRef, reason: str) -> None:
+        await asyncio.to_thread(
+            _in_own_session, lambda db: drop_slot_mark(db, ref, reason)
+        )
 
 
 _dispatcher = AsyncioBotDispatcher()
@@ -768,6 +1238,43 @@ class HandledEvent:
 _NOT_HANDLED = HandledEvent(command=False, claims_reply_token=False)
 
 
+def _maybe_file_slot_digest(
+    event: Dict,
+    routed: RoutedMessage,
+    db: Session,
+    dispatcher,
+) -> bool:
+    """File the slot digest if this group message opens a window. Rule 3.
+
+    Groups only — a room or a 1:1 has no slot digest — and text only: a photo
+    or a sticker refreshes a pending reply (that is ``routed``'s job) but is
+    not the kind of traffic a scheduled post rides in on. Nothing here reads,
+    keeps or logs what was said; the message is a heartbeat and a sender id,
+    which is all rule 3 needs.
+    """
+    source = event.get("source")
+    if not isinstance(source, dict) or source.get("type") != "group":
+        return False
+    if event.get("type") != "message":
+        return False
+    message = event.get("message")
+    if not isinstance(message, dict) or message.get("type") != "text":
+        return False
+    if not routed.reply_token:
+        return False
+
+    triggered = evaluate_slot_trigger(
+        db, routed.chat_key, event.get("timestamp"), source.get("userId") or "",
+    )
+    if triggered is None:
+        return False
+    ref, trigger = triggered
+    if not file_slot_mark(db, ref, trigger):
+        return False
+    dispatcher.submit_slot_digest(ref, routed.reply_token, trigger)
+    return True
+
+
 def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
     """Route ONE webhook event into the debouncer.
 
@@ -798,7 +1305,13 @@ def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
     dispatcher = get_dispatcher()
     if isinstance(routed, RoutedMessage):
         refreshed = bool(dispatcher.submit_message(routed.chat_key, routed.reply_token))
-        return HandledEvent(command=False, claims_reply_token=refreshed)
+        # Ordinary group chat is still the bot's cue for the SLOT digest: the
+        # message is discarded (nothing about it is read, kept or logged), but
+        # its clock and its sender decide whether this window is now due.
+        filed = _maybe_file_slot_digest(event, routed, db, dispatcher)
+        return HandledEvent(
+            command=False, claims_reply_token=refreshed or filed,
+        )
 
     logger.info(
         "staff-bot command: event=%s source=%s chat=%s",
