@@ -19,10 +19,12 @@ do not cross files without a shared conftest:
   * DISCARD BEFORE LOGGING — no message text, no photo bytes, no message id
     is ever written to a log line.
 """
+import asyncio
 import base64
 import hashlib
 import hmac
 import json
+import time
 
 import pytest
 
@@ -98,6 +100,16 @@ class _Clock:
         self.now += seconds
 
 
+async def _wait_until(predicate, timeout=3.0):
+    """Poll a no-arg predicate for real background asyncio work (a spawned
+    upload task, the debounce drain loop) — the same shape as the existing
+    asyncio-dispatcher tests' inline deadline loops, factored out because the
+    photo-ack tests below need it more than once."""
+    deadline = time.monotonic() + timeout
+    while not predicate() and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+
+
 class _CollectingDispatcher:
     """Records what the router files — mirrors test_staff_bot.py's, plus the
     one phase-3 method."""
@@ -107,6 +119,7 @@ class _CollectingDispatcher:
         self.messages = []
         self.slots = []
         self.photo_uploads = []
+        self.photo_upload_tokens = []
 
     def submit_command(self, command):
         self.commands.append(command)
@@ -117,8 +130,12 @@ class _CollectingDispatcher:
     def submit_slot_digest(self, ref, reply_token, trigger):
         self.slots.append((ref, reply_token, trigger))
 
-    def spawn_photo_upload(self, order_id, message_id, actor_badge):
+    def spawn_photo_upload(self, order_id, message_id, actor_badge, chat_key="", reply_token=""):
+        # chat_key/reply_token (rule A, 2026-09-06) are recorded separately so
+        # the existing 3-tuple assertions in TestAttachWindow/TestPhotoBuffer
+        # stay exactly as they were.
         self.photo_uploads.append((order_id, message_id, actor_badge))
+        self.photo_upload_tokens.append((order_id, chat_key, reply_token))
 
 
 @pytest.fixture
@@ -428,6 +445,71 @@ class TestReportRouting:
         assert routed.quiet_seconds == staff_bot.COMMAND_QUIET_SECONDS == 0.0
 
 
+# ===========================================================================
+# Bare แจ้งซ่อม in a group/room (owner decision 2026-09-06)
+# ===========================================================================
+
+class TestBareGroupReport:
+    def test_bare_group_report_routes_exactly_like_the_summoned_form(self):
+        summoned = staff_bot.route_event(
+            _group_text("น้องคะ แจ้งซ่อม 204 แอร์ไม่เย็น ด่วน"), lambda u: True,
+        )
+        bare = staff_bot.route_event(
+            _group_text("แจ้งซ่อม 204 แอร์ไม่เย็น ด่วน"), lambda u: True,
+        )
+        assert bare.command == summoned.command == staff_bot.COMMAND_REPORT
+        assert bare.report_text == summoned.report_text == "204 แอร์ไม่เย็น ด่วน"
+        assert bare.quiet_seconds == staff_bot.COMMAND_QUIET_SECONDS == 0.0
+
+    @pytest.mark.parametrize("text", ["แจ้งซ่อมแล้วนะ", "แจ้งซ่อม ไฟดับ"])
+    def test_bare_report_with_no_room_is_silent_chatter(self, text):
+        routed = staff_bot.route_event(_group_text(text), lambda u: True)
+        assert isinstance(routed, staff_bot.RoutedMessage)
+
+    @pytest.mark.parametrize("phrase", sorted(staff_bot.BARE_REPORT_SKIP_PHRASES))
+    def test_each_skip_phrase_with_a_room_is_silent_chatter(self, phrase):
+        routed = staff_bot.route_event(_group_text(f"แจ้งซ่อม 204 {phrase}"), lambda u: True)
+        assert isinstance(routed, staff_bot.RoutedMessage)
+
+    def test_digest_word_bare_in_group_is_still_chatter(self):
+        routed = staff_bot.route_event(_group_text("แจ้งซ่อมค้าง"), lambda u: True)
+        assert isinstance(routed, staff_bot.RoutedMessage)
+
+    @pytest.mark.parametrize("word", sorted(staff_bot.DIGEST_WORDS))
+    def test_a_digest_word_prefix_with_trailing_text_is_still_chatter(self, word):
+        # Reviewer finding: a digest word followed by MORE text (not just the
+        # bare word on its own) must stay chatter too — a PREFIX match, not
+        # only an exact one. Regression for "แจ้งซ่อมค้าง 204 ยังไม่มาเลย" once
+        # silently becoming a ticket.
+        routed = staff_bot.route_event(_group_text(f"{word} 204 ยังไม่มาเลย"), lambda u: True)
+        assert isinstance(routed, staff_bot.RoutedMessage)
+
+    def test_summoned_form_with_no_room_is_still_a_command(self):
+        # The summon form is unchanged: unlike the bare form, a parse error
+        # is still a command (and its reply still nags for a room), not
+        # silence.
+        routed = staff_bot.route_event(_group_text("น้องคะ แจ้งซ่อม แอร์เสีย"), lambda u: True)
+        assert routed.command == staff_bot.COMMAND_REPORT
+        messages = staff_bot.build_messages([], actions=[routed])
+        assert messages == [{"type": "text", "text": staff_bot.PARSE_ERROR_NO_ROOM_TEXT}]
+
+    def test_the_skip_phrase_filter_does_not_apply_to_1_1(self):
+        # Rule 2: the safeguard is bare-GROUP-only. A 1:1 "...เสร็จแล้ว" is
+        # still a plain แจ้งซ่อม with that text in the detail.
+        routed = staff_bot.route_event(_direct_text("แจ้งซ่อม 204 เสร็จแล้ว"), lambda u: True)
+        assert routed.command == staff_bot.COMMAND_REPORT
+        assert routed.report_text == "204 เสร็จแล้ว"
+
+    @pytest.mark.parametrize("text", ["แจ้งซ่อมแล้วนะ", "แจ้งซ่อม ไฟดับ", "แจ้งซ่อม 204 เสร็จแล้ว"])
+    def test_webhook_bare_chatter_gets_no_command_and_no_reply(
+        self, text, test_client, test_db, staff_oa_enabled, dispatcher,
+    ):
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        response = _signed_post(test_client, {"events": [_group_text(text, user_id="U-emp")]})
+        assert response.status_code == 200
+        assert dispatcher.commands == []
+
+
 class TestPostbackRouting:
     def test_fixcat_carries_the_order_id(self):
         routed = staff_bot.route_event(_postback("cmd=fixcat&id=128"), lambda u: True)
@@ -525,6 +607,19 @@ class TestNotLinkedGate:
         routed = dispatcher.commands[0]
         assert routed.command == staff_bot.COMMAND_REPORT
         assert routed.identity_known is False
+
+    def test_webhook_bare_group_report_from_a_non_employee_is_not_linked(
+        self, test_client, test_db, staff_oa_enabled, dispatcher,
+    ):
+        _signed_post(test_client, {"events": [_group_text(
+            "แจ้งซ่อม 204 แอร์เสีย", user_id="U-stranger",
+        )]})
+        assert len(dispatcher.commands) == 1
+        routed = dispatcher.commands[0]
+        assert routed.command == staff_bot.COMMAND_REPORT
+        assert routed.identity_known is False
+        messages = staff_bot.build_messages([], actions=[routed])
+        assert messages == [{"type": "text", "text": staff_bot.NOT_LINKED_TEXT}]
 
 
 # ===========================================================================
@@ -702,6 +797,95 @@ class TestCreateTicket:
 
 
 # ===========================================================================
+# Photos-first: the confirmation bubble waits (bounded) for the claimed
+# batch's uploads (owner request 2026-09-06, rule B)
+# ===========================================================================
+
+class TestPhotosFirstBoundedWait:
+    """Unlike TestCreateTicket above (which calls build_reply/build_messages
+    directly, synchronously, and always sees the "claimed but not yet
+    uploaded" กำลังแนบ N รูป line — that stays exactly as it was), these drive
+    the real AsyncioBotDispatcher so the bounded wait in
+    ``_await_claimed_uploads`` actually runs and patches the bubble in
+    place before the reply is sent — the existing async-dispatcher tests'
+    pattern (submit, poll for a sent reply)."""
+
+    def _order(self):
+        return {
+            "id": 9, "propertyLabel": "HF", "location": "ห้อง 204",
+            "categoryLabel": "แอร์", "urgent": False, "detailText": "แอร์ไม่เย็น",
+            "reporterName": "สมชาย",
+        }
+
+    def _submit_report_and_wait(self, sent):
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.submit_command(_action(
+                staff_bot.COMMAND_REPORT, reply_token="tok-1", quiet_seconds=0.0,
+                report_text="204 แอร์ไม่เย็น",
+            ))
+            await _wait_until(lambda: bool(sent))
+            # Let any still-running background upload finish inside this same
+            # loop, so nothing is torn down mid-flight at asyncio.run's exit.
+            await asyncio.sleep(0.4)
+        asyncio.run(_scenario())
+
+    def test_bubble_shows_the_completed_count_when_uploads_finish_within_the_wait(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        monkeypatch.setattr(service, "fetch_message_content", lambda mid: (b"x", "image/jpeg"))
+        monkeypatch.setattr(housekeeping_client, "upload_photo", lambda *a, **k: {"photoId": 1, "photoCount": 2})
+        staff_bot.get_photo_buffer().add("Cgroup", "U-emp", "img-1")
+        staff_bot.get_photo_buffer().add("Cgroup", "U-emp", "img-2")
+
+        sent = []
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: sent.append((token, messages)))
+        self._submit_report_and_wait(sent)
+
+        assert len(sent) == 1
+        _, messages = sent[0]
+        assert "รูป 2 รูป" in _flatten_texts(messages[0])
+
+    def test_bubble_shows_the_still_running_count_when_an_upload_times_out(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(staff_bot, "CLAIMED_UPLOAD_WAIT_SECONDS", 0.05)
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+
+        def _slow_fetch(message_id):
+            time.sleep(0.3)  # slower than the (shrunk) bounded wait above
+            return (b"x", "image/jpeg")
+
+        monkeypatch.setattr(service, "fetch_message_content", _slow_fetch)
+        monkeypatch.setattr(housekeeping_client, "upload_photo", lambda *a, **k: {"photoId": 1, "photoCount": 1})
+        staff_bot.get_photo_buffer().add("Cgroup", "U-emp", "img-1")
+
+        sent = []
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: sent.append((token, messages)))
+        self._submit_report_and_wait(sent)
+
+        assert len(sent) == 1
+        _, messages = sent[0]
+        assert "กำลังแนบอีก 1 รูป" in _flatten_texts(messages[0])
+
+    def test_bubble_shows_the_failed_count_on_an_upload_failure(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(housekeeping_client, "create_work_order", lambda payload: {"order": self._order()})
+        monkeypatch.setattr(service, "fetch_message_content", lambda mid: None)  # download fails
+        staff_bot.get_photo_buffer().add("Cgroup", "U-emp", "img-1")
+
+        sent = []
+        monkeypatch.setattr(service, "reply_messages", lambda token, messages: sent.append((token, messages)))
+        self._submit_report_and_wait(sent)
+
+        assert len(sent) == 1
+        _, messages = sent[0]
+        assert "แนบไม่สำเร็จ 1 รูป" in _flatten_texts(messages[0])
+
+
+# ===========================================================================
 # Photo buffer + attach window
 # ===========================================================================
 
@@ -838,6 +1022,147 @@ class TestAttachWindow:
         _employee(test_db, badge="7001", line_user_id="U-emp")
         staff_bot.handle_event_detail(_image(), test_db)
         assert staff_bot.get_attach_windows().active_order("Cgroup", "U-emp") is None
+
+    def test_an_attached_photo_is_spawned_with_its_own_event_reply_token(
+        self, test_db, dispatcher,
+    ):
+        # Wiring for rule A (2026-09-06): the photo EVENT's own reply token
+        # (not whatever token some other pending reply currently holds) is
+        # what note_photo_ack will later file the ack with.
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        staff_bot.get_attach_windows().open("Cgroup", "U-emp", 55)
+        staff_bot.handle_event_detail(_image(message_id="img-1", reply_token="reply-i"), test_db)
+        assert dispatcher.photo_upload_tokens == [(55, "Cgroup", "reply-i")]
+
+
+# ===========================================================================
+# Photo acknowledgements (owner request 2026-09-06, rule A): a photo that
+# attaches silently while an order's attach window is open gets a free-token
+# ack once its upload resolves, coalesced with PHOTO_ACK_QUIET_SECONDS of
+# quiet. These drive the REAL AsyncioBotDispatcher (spawn_photo_upload is
+# where the ack is actually filed), the same async-helper shape as
+# TestPhotosFirstBoundedWait and test_staff_bot.py's TestAsyncioDispatcher.
+# ===========================================================================
+
+class TestPhotoAck:
+    def test_two_in_window_photos_produce_one_ack_line_with_the_last_total_and_newest_token(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        upload_results = iter([
+            {"photoId": 1, "photoCount": 3},
+            {"photoId": 2, "photoCount": 4},
+        ])
+        monkeypatch.setattr(service, "fetch_message_content", lambda mid: (b"x", "image/jpeg"))
+        monkeypatch.setattr(housekeeping_client, "upload_photo", lambda *a, **k: next(upload_results))
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+
+            def _acked(n):
+                return lambda: (
+                    (pending := dispatcher.debouncer.pending_for("Cgroup")) is not None
+                    and pending.photo_acks.get(55, {}).get("attached") == n
+                )
+
+            dispatcher.spawn_photo_upload(55, "img-1", "7001", chat_key="Cgroup", reply_token="tok-1")
+            await _wait_until(_acked(1))
+            # Sent strictly after the first finishes, so it is unambiguously
+            # the NEWEST photo — this is what "ack uses the newest photo
+            # token" is asserting below.
+            dispatcher.spawn_photo_upload(55, "img-2", "7001", chat_key="Cgroup", reply_token="tok-2")
+            await _wait_until(_acked(2))
+            return dispatcher.debouncer.pending_for("Cgroup")
+
+        pending = asyncio.run(_scenario())
+        assert pending is not None
+        assert pending.photo_acks[55] == {"attached": 2, "failed": 0, "total": 4}
+        assert pending.reply_token == "tok-2"
+        messages = staff_bot.build_messages([], actions=[], photo_acks=pending.photo_acks)
+        assert messages == [{"type": "text", "text": "แนบรูปเข้า #55 แล้ว 2 รูป (รวม 4 รูป)"}]
+
+    def test_one_success_and_one_failure_produce_two_lines(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        monkeypatch.setattr(
+            service, "fetch_message_content",
+            lambda mid: (b"x", "image/jpeg") if mid == "img-ok" else None,
+        )
+        monkeypatch.setattr(housekeeping_client, "upload_photo", lambda *a, **k: {"photoId": 1, "photoCount": 1})
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.spawn_photo_upload(55, "img-ok", "7001", chat_key="Cgroup", reply_token="tok-1")
+            dispatcher.spawn_photo_upload(55, "img-bad", "7001", chat_key="Cgroup", reply_token="tok-2")
+            await _wait_until(lambda: (
+                (pending := dispatcher.debouncer.pending_for("Cgroup")) is not None
+                and pending.photo_acks.get(55, {}).get("attached") == 1
+                and pending.photo_acks.get(55, {}).get("failed") == 1
+            ))
+            return dispatcher.debouncer.pending_for("Cgroup")
+
+        pending = asyncio.run(_scenario())
+        text = staff_bot.build_messages([], actions=[], photo_acks=pending.photo_acks)[0]["text"]
+        assert text == (
+            "แนบรูปเข้า #55 แล้ว 1 รูป (รวม 1 รูป)\n"
+            "แนบรูปไม่สำเร็จ 1 รูป ลองส่งใหม่อีกครั้งค่ะ (#55)"
+        )
+
+    def test_a_command_typed_during_the_ack_quiet_rides_in_the_same_reply(
+        self, monkeypatch, staff_oa_enabled,
+    ):
+        sent = []
+        monkeypatch.setattr(
+            service, "reply_messages",
+            lambda token, messages: sent.append((token, messages)),
+        )
+        monkeypatch.setattr(service, "fetch_message_content", lambda mid: (b"x", "image/jpeg"))
+        monkeypatch.setattr(housekeeping_client, "upload_photo", lambda *a, **k: {"photoId": 1, "photoCount": 1})
+
+        async def _scenario():
+            dispatcher = staff_bot.AsyncioBotDispatcher()
+            dispatcher.spawn_photo_upload(55, "img-1", "7001", chat_key="Cgroup", reply_token="tok-ack")
+            await _wait_until(lambda: (
+                (pending := dispatcher.debouncer.pending_for("Cgroup")) is not None
+                and staff_bot.COMMAND_PHOTO_ACK in pending.commands
+            ))
+            # A command lands in the SAME chat while the 3 s ack quiet is
+            # still ticking: the impatient one (0 s) wins and both ride the
+            # same reply, on the command's own (newest) token.
+            dispatcher.submit_command(staff_bot.RoutedCommand(
+                chat_key="Cgroup", command=staff_bot.COMMAND_PALETTE,
+                reply_token="tok-cmd", quiet_seconds=0.0,
+                event_type="message", source_type="group",
+            ))
+            await _wait_until(lambda: bool(sent))
+
+        asyncio.run(_scenario())
+        assert len(sent) == 1
+        token, messages = sent[0]
+        assert token == "tok-cmd"
+        assert any(m.get("type") == "flex" for m in messages)  # the palette
+        assert any(
+            t == "แนบรูปเข้า #55 แล้ว 1 รูป (รวม 1 รูป)" for t in _flatten_texts(messages)
+        )
+
+    def test_a_buffered_photo_with_no_attach_window_never_fetches_or_acks(
+        self, test_db, monkeypatch,
+    ):
+        # Rule A only ever applies to a photo already tied to a ticket (an
+        # open attach window) — a plain buffered photo is never fetched, and
+        # a chat with no command already pending gets no PendingReply at all.
+        fetch_calls = []
+        monkeypatch.setattr(
+            service, "fetch_message_content",
+            lambda mid: fetch_calls.append(mid) or (b"x", "image/jpeg"),
+        )
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        dispatcher = staff_bot.AsyncioBotDispatcher()
+        monkeypatch.setattr(staff_bot, "get_dispatcher", lambda: dispatcher)
+
+        staff_bot.handle_event_detail(_image(message_id="img-1"), test_db)
+
+        assert fetch_calls == []
+        assert dispatcher.debouncer.pending_for("Cgroup") is None
 
 
 # ===========================================================================
@@ -1312,6 +1637,64 @@ class TestTicketWebhookIntegration:
         _employee(test_db, badge="7001", line_user_id="U-emp")
         response = _signed_post(test_client, {"events": [
             _group_text("น้องคะ แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp"),
+        ]})
+        assert response.status_code == 200
+        assert test_db.query(StaffBotSlotMark).count() == 0
+
+    def test_bare_report_creates_a_ticket_and_the_command_is_immediate(
+        self, test_client, test_db, staff_oa_enabled, dispatcher, monkeypatch,
+    ):
+        # Rule 1c: a bare group report is a RoutedCommand indistinguishable
+        # (bar its user_id) from the summoned form, so everything downstream
+        # — identity, ticket creation, photo claiming — is unchanged.
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        captured = {}
+
+        def _create(payload):
+            captured.update(payload)
+            return {"order": {
+                "id": 128, "property": "hf", "propertyLabel": "HF",
+                "locationKind": "room", "roomNo": "204", "commonArea": None,
+                "location": "ห้อง 204", "category": "aircon", "categoryLabel": "แอร์",
+                "urgent": True, "detailText": "แอร์ไม่เย็น ด่วน", "status": "new",
+                "statusLabel": "รอช่าง", "reporterBadge": "7001", "reporterName": "สมชาย",
+                "createdAt": "2026-09-06T09:00:00.000Z",
+                "updatedAt": "2026-09-06T09:00:00.000Z",
+                "ageDays": 0, "photoCount": 0,
+            }}
+
+        monkeypatch.setattr(housekeeping_client, "create_work_order", _create)
+        staff_bot.get_photo_buffer().add("Cgroup", "U-emp", "img-1")
+
+        response = _signed_post(test_client, {"events": [
+            _group_text("แจ้งซ่อม 204 แอร์ไม่เย็น ด่วน", user_id="U-emp"),
+        ]})
+        assert response.status_code == 200
+        assert len(dispatcher.commands) == 1
+        routed = dispatcher.commands[0]
+        assert routed.command == staff_bot.COMMAND_REPORT
+        assert routed.report_text == "204 แอร์ไม่เย็น ด่วน"
+        assert routed.identity_known is True
+        assert routed.badge == "7001"
+        assert routed.quiet_seconds == 0.0
+
+        # Ticket creation and photo attaching, exactly as the summoned form
+        # (TestCreateTicket) already exercises via build_reply.
+        built = staff_bot.build_reply([], actions=[routed])
+        assert captured["room_no"] == "204"
+        assert captured["urgent"] is True
+        assert len(built.pending_uploads) == 1
+        assert built.pending_uploads[0].order_id == 128
+        assert built.pending_uploads[0].message_ids == ["img-1"]
+
+    def test_a_bare_report_inside_a_slot_window_never_marks_the_slot(
+        self, test_client, test_db, staff_oa_enabled, dispatcher,
+    ):
+        from app.models.models import StaffBotSlotMark
+
+        _employee(test_db, badge="7001", line_user_id="U-emp")
+        response = _signed_post(test_client, {"events": [
+            _group_text("แจ้งซ่อม 204 แอร์ไม่เย็น", user_id="U-emp"),
         ]})
         assert response.status_code == 200
         assert test_db.query(StaffBotSlotMark).count() == 0
