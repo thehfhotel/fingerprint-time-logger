@@ -20,9 +20,10 @@ app/services/staff_bot.py, which debounces them and answers with a free reply
 token. Follow handling is byte-for-byte what it was; the bot never pushes, and
 non-command chat is discarded before anything is logged.
 
-The bot is also the ONLY responder for guest requests raised on the public
-guest-feedback site (guest-feedback docs/CONTRACTS.md §15 rev 3): it reads
-and confirms them from guest-feedback itself
+The bot is also the ONLY responder for guest feedback raised on the public
+guest-feedback site (guest-feedback docs/CONTRACTS.md §15 rev 3, widened by
+rev 3.1 to every submission kind — praise, issue, request): it reads and
+confirms them from guest-feedback itself
 (app/services/guest_feedback_client.py) rather than guest-feedback holding
 any LINE credentials or relaying events here. The event-forwarding relay this
 webhook used to run (PR #28/#30) is retired along with it.

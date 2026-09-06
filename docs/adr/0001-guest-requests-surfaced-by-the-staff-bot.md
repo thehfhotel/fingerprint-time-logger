@@ -77,3 +77,19 @@ Consequences of "one responder":
   per failure mode; never log guest text) extend unchanged to guest requests.
 - The known 1:1-reply-token limitation from rev 2 is moot: there is no second
   sender left to starve of tokens.
+
+## Amendment — 2026-09-06
+
+guest-feedback contract **rev 3.1** (owner decision 2026-09-06): the queue
+now carries all feedback kinds; keywords and copy widened; logic unchanged.
+
+Concretely: `items[]` gained `kind` (`praise`/`issue`/`request`) and
+`urgent`; the pending JSON's pre-formatted `text` header changed from a
+requests-only count to `ความคิดเห็นจากผู้เข้าพัก {n} รายการ`. The staff bot
+still relays `text` as-is and does not branch on `kind` or `urgent` — the
+read/confirm/reply-token/1:1-preview rules above are unchanged. Only the
+bot's own strings widened to match: `REQUEST_WORDS` gained `ความคิดเห็น` /
+`ฟีดแบค` / `feedback` alongside the three original words; the palette button
+and its guest-feedback-pending/unavailable lines were reworded from
+"คำขอลูกค้า" to "ความคิดเห็นลูกค้า" phrasing (`app/services/staff_bot.py`,
+`app/services/guest_feedback_client.py`).

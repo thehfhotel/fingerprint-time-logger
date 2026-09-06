@@ -11,8 +11,8 @@ tools from grant-driven **Role Menus**; this repo hosts the machinery:
 | Menu image renderer (PIL, HF One palette, bundled Thai font) | `app/services/staff_oa_images.py` |
 | Credentials, webhook signature, LINE API client, relink helper | `app/services/staff_oa_service.py` |
 | Follow-event webhook | `app/api/staff_oa.py` → `POST /api/public/staff-oa/webhook` |
-| Staff bot (HF ภายใน): digest, guest requests, palette, debounce | `app/services/staff_bot.py` |
-| Guest-requests read/confirm (guest-feedback docs/CONTRACTS.md §15 rev 3) | `app/services/guest_feedback_client.py` |
+| Staff bot (HF ภายใน): digest, guest feedback, palette, debounce | `app/services/staff_bot.py` |
+| Guest-feedback read/confirm (guest-feedback docs/CONTRACTS.md §15 rev 3, widened by rev 3.1) | `app/services/guest_feedback_client.py` |
 | **Automatic per-employee provisioning (create menu + link/unlink)** | `app/services/staff_oa_provision.py` |
 | Idempotent menu/link sync (dry-run by default) | `scripts/staff_oa_sync.py` |
 | Offline image preview | `scripts/staff_oa_render_menus.py` |
@@ -260,7 +260,7 @@ Design authority: hf-erp ADR *"The staff bot answers only with reply tokens;
 LINE meters pushes per recipient"*. Code: `app/services/staff_bot.py`
 (router, palette, digest, requests, debounce),
 `app/services/housekeeping_client.py` (the แจ้งซ่อม read) and
-`app/services/guest_feedback_client.py` (the guest-requests read/confirm).
+`app/services/guest_feedback_client.py` (the guest-feedback read/confirm).
 
 ### Summoning it
 
@@ -268,13 +268,13 @@ LINE meters pushes per recipient"*. Code: `app/services/staff_bot.py`
 |---|---|---|
 | Staff group | `น้องคะ` / `น้องค่ะ` / `น้องครับ` / `น้องคับ` (a space after น้อง is fine), or @-mention the OA | the palette bubble |
 | Staff group | the same summon followed by `งานค้าง` (also `งานซ่อมค้าง`, `แจ้งซ่อมค้าง`) | the digest |
-| Staff group | the same summon (or a bare command word) followed by `คำขอ` / `คำขอลูกค้า` / `guest requests` | the pending guest requests |
-| Staff group | any ordinary message, no summon at all, **while guest requests are pending** | the pending guest requests (see below) |
+| Staff group | the same summon (or a bare command word) followed by `คำขอ` / `คำขอลูกค้า` / `guest requests` / `ความคิดเห็น` / `ฟีดแบค` / `feedback` | the pending guest feedback |
+| Staff group | any ordinary message, no summon at all, **while guest feedback is pending** | the pending guest feedback (see below) |
 | 1:1 chat | `งานค้าง` on its own | the digest |
-| 1:1 chat | `คำขอ` / `คำขอลูกค้า` / `guest requests` on its own | a **preview** of the pending guest requests |
+| 1:1 chat | `คำขอ` / `คำขอลูกค้า` / `guest requests` / `ความคิดเห็น` / `ฟีดแบค` / `feedback` on its own | a **preview** of the pending guest feedback |
 | 1:1 chat | anything else | the palette bubble |
 | anywhere | tapping the palette's **งานค้าง แจ้งซ่อม** button (`cmd=digest`) | the digest |
-| anywhere | tapping the palette's **คำขอลูกค้า** button (`cmd=requests`) | the pending guest requests |
+| anywhere | tapping the palette's **ความคิดเห็นลูกค้า** button (`cmd=requests`) | the pending guest feedback |
 
 `น้อง` without one of the four particles is ordinary chat — "น้องเอาข้าวไหม"
 never wakes the bot. In a 1:1 chat the sender must resolve to an **active**
@@ -380,36 +380,43 @@ Both variables ride the deploy (`env_payload` in
 `.github/workflows/build.yml`, passthrough in `docker-compose.yml`); do not
 hand-edit the host `.env`, every deploy rewrites it.
 
-## Guest requests (คำขอลูกค้า)
+## Guest feedback (ความคิดเห็นลูกค้า)
 
 Since guest-feedback `docs/CONTRACTS.md` §15 rev 3 ("the Employee Hub bot is
-the ONLY responder"), the staff bot is the sole sender for guest requests
+the ONLY responder"), the staff bot is the sole sender for guest feedback
 raised on the public feedback site. Earlier revisions had guest-feedback hold
 its own LINE token, then (PR #28/#30) had this webhook relay LINE events to
 it fire-and-forget — both are retired. The bot now reads and confirms guest
-requests from guest-feedback itself, server-to-server, and answers only with
-its own reply tokens, exactly like the housekeeping digest above.
+feedback from guest-feedback itself, server-to-server, and answers only with
+its own reply tokens, exactly like the housekeeping digest above. Rev 3.1
+(2026-09-06) widened the queue from requests-only to **every** guest
+submission — praise, issue and request alike — and every one of them is
+relayed to the staff group on the bot's next free reply token, same as
+before.
 
 | | |
 |---|---|
 | Code | `app/services/guest_feedback_client.py` (`fetch_pending`, `confirm_delivered`); command handling in `app/services/staff_bot.py` |
 | Read | `GET {GUEST_FEEDBACK_BASE_URL}/api/internal/line/pending` — `X-Reader-Secret: <GUEST_FEEDBACK_READER_SECRET>`, 2 s timeout |
 | Confirm | `POST {GUEST_FEEDBACK_BASE_URL}/api/internal/line/delivered` — `{"ids": [...], "method": "reply"}` |
-| Contract of record | guest-feedback `docs/CONTRACTS.md` §15 rev 3 |
+| Contract of record | guest-feedback `docs/CONTRACTS.md` §15 rev 3, widened by rev 3.1 |
 
-**The command.** `คำขอ` / `คำขอลูกค้า` / `guest requests` (with or without a
-summon in a group; on its own in a 1:1) and the palette's **คำขอลูกค้า**
-button (`cmd=requests`) all render guest-feedback's own pre-formatted `text`
-as-is when `count > 0`, `"ยังไม่มีคำขอที่รอส่งค่ะ"` when the read succeeds with
-nothing pending, and `"ยังอ่านคำขอลูกค้าไม่ได้ค่ะ ลองใหม่อีกครั้ง"` on any
-failure (either env unset, timeout, non-2xx, malformed body) — the bot never
-shows a status code and never goes silent.
+**The command.** `คำขอ` / `คำขอลูกค้า` / `guest requests` / `ความคิดเห็น` /
+`ฟีดแบค` / `feedback` (with or without a summon in a group; on its own in a
+1:1) and the palette's **ความคิดเห็นลูกค้า** button (`cmd=requests`) all
+render guest-feedback's own pre-formatted `text` as-is when `count > 0`,
+`"ยังไม่มีความคิดเห็นใหม่ค่ะ"` when the read succeeds with nothing pending, and
+`"ยังอ่านความคิดเห็นลูกค้าไม่ได้ค่ะ ลองใหม่อีกครั้ง"` on any failure (either env
+unset, timeout, non-2xx, malformed body) — the bot never shows a status code
+and never goes silent. Items carry `kind` (`praise`/`issue`/`request`) and
+`urgent`, but the bot relays guest-feedback's pre-formatted `text` unchanged
+and does not branch on either field — the gate/confirm logic is kind-agnostic.
 
 **Group auto-offer.** Unlike the digest, a **plain group message with no
 summon at all** also triggers this command — but only when guest-feedback
 reports something pending. Every non-summon group message checks (through
 `staff_bot.PendingRequestsGate`, cached **10 s per chat** so ordinary chatter
-cannot hammer the endpoint); if pending requests exist, that message becomes
+cannot hammer the endpoint); if pending feedback exists, that message becomes
 a `COMMAND_REQUESTS` reply under the same immediate-answer rule as any other
 command (`COMMAND_QUIET_SECONDS = 0`). A summon is unaffected either way — it
 already produces a command before this check ever runs.
@@ -420,7 +427,7 @@ privately, not the group being told. Confirmation only follows a reply that
 went to a **group or room**.
 
 **Delivery confirm.** Once LINE has **accepted** a group/room reply that
-included the guest-requests text, the bot calls `confirm_delivered` with the
+included the guest-feedback text, the bot calls `confirm_delivered` with the
 feedback ids from the same fetch that rendered the text — marking those rows
 delivered on guest-feedback's side so they are not offered again. A reply
 LINE rejects, or a 1:1 reply, never confirms anything.
@@ -432,8 +439,8 @@ GUEST_FEEDBACK_BASE_URL=http://feedback:4080
 GUEST_FEEDBACK_READER_SECRET=<shared with guest-feedback's LINE_READER_SECRET>
 ```
 
-**Either empty/unset ⇒ dark**: nothing is dialed, and every guest-requests
-read answers the fixed "ยังอ่านคำขอลูกค้าไม่ได้ค่ะ ..." line. The URL is not a
+**Either empty/unset ⇒ dark**: nothing is dialed, and every guest-feedback
+read answers the fixed "ยังอ่านความคิดเห็นลูกค้าไม่ได้ค่ะ ..." line. The URL is not a
 secret (container-to-container, no Cloudflare Access in the path) and has
 **no built-in default** (unlike `HOUSEKEEPING_INTERNAL_URL`); it rides the
 deploy as the GitHub **variable** `GUEST_FEEDBACK_BASE_URL`, the secret as the
