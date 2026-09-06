@@ -206,11 +206,15 @@ def _route(event, known=()):
 
 class TestGroupIsReportOnly:
     """GROUP/ROOM SOURCES ARE REPORT-ONLY (owner policy, 2026-09-06 —
-    "command through chat is considered spam in HF Family group"). A group
-    never answers a command any more, of any kind — summoned or bare, a
-    recognised word or not, text or media. The only thing a group ever hears
-    is the slot report (TestSlotWindows/TestSlotTriggers/TestSlotDigestRendering
-    below, unaffected)."""
+    "command through chat is considered spam in HF Family group"), WITH ONE
+    EXPLICIT COMMAND CARVE-OUT since that same evening — an @mention that
+    files a แจ้งซ่อม ticket (see TestMentionReportCarveOut below and
+    tests/unit/test_staff_bot_tickets.py's TestGroupMentionReport for the
+    ticket-flow coverage). Every OTHER group/room message still never answers
+    a command, of any kind — summoned by a plain word, a recognised digest/
+    mine word, or bare. The only other thing a group ever hears is the slot
+    report (TestSlotWindows/TestSlotTriggers/TestSlotDigestRendering below,
+    unaffected)."""
 
     @pytest.mark.parametrize("text", [
         "น้องคะ", "น้อง คะ", "น้องครับ", "น้องเอาข้าวไหม",
@@ -218,13 +222,16 @@ class TestGroupIsReportOnly:
         "น้องคะ ช่วยดูให้หน่อย", "พรุ่งนี้เข้ากี่โมง",
     ])
     def test_every_kind_of_group_text_is_only_ever_a_message(self, text):
+        # None of these carry a self-mention at all, so the carve-out never
+        # even applies to them — a plain summon WORD ("น้องคะ") is not an
+        # @-mention and never was.
         routed = _route(_group_text(text))
         assert isinstance(routed, staff_bot.RoutedMessage)
 
-    def test_a_self_mention_is_also_only_ever_a_message(self):
-        # The @-mention summon grammar is gone along with every other group
-        # command path — an @-mention of the bot in a group is now ordinary
-        # chatter like anything else.
+    def test_a_self_mention_with_a_non_report_remainder_is_only_a_message(self):
+        # The carve-out is narrow: an @-mention of the bot whose remainder is
+        # anything OTHER than แจ้งซ่อม (here, งานค้าง) stays ordinary chatter,
+        # exactly like unmentioned text.
         text = "@HF ภายใน งานค้าง"
         routed = _route(_group_text(text, message={"mention": {"mentionees": [
             {"index": 0, "length": 9, "isSelf": True, "userId": "Ubot"},
@@ -256,6 +263,125 @@ class TestGroupIsReportOnly:
             _postback("cmd=digest", source={"type": "room", "roomId": "R1"}),
             lambda u: True,
         ) is None
+
+
+def _self_mentionees(index=0, length=9, bot_user_id="Ubot"):
+    return {"mentionees": [{"index": index, "length": length, "isSelf": True, "userId": bot_user_id}]}
+
+
+class TestMentionReportCarveOut:
+    """The ONE command a group/room still answers (owner, 2026-09-06
+    evening: "HF Family should be able to get mention and act to create new
+    maintenance ticket still") — route_event level only; the ticket-flow
+    coverage (identity gate, photo buffer/attach window, the compact
+    confirmation reply) lives in test_staff_bot_tickets.py's
+    TestGroupMentionReport."""
+
+    def test_a_self_mention_with_report_word_routes_as_a_command(self):
+        text = "@HF ภายใน แจ้งซ่อม 204 แอร์ไม่เย็น"
+        routed = _route(_group_text(
+            text, user_id="U-emp", message={"mention": _self_mentionees()},
+        ))
+        assert isinstance(routed, staff_bot.RoutedCommand)
+        assert routed.command == staff_bot.COMMAND_REPORT
+        assert routed.report_text == "204 แอร์ไม่เย็น"
+        assert routed.chat_key == "Cgroup"
+        assert routed.user_id == "U-emp"
+        assert routed.source_type == "group"
+        assert routed.quoted_message_id == ""
+
+    def test_a_self_mention_in_a_room_also_routes_as_a_command(self):
+        event = {
+            "type": "message", "replyToken": "reply-r",
+            "source": {"type": "room", "roomId": "R1", "userId": "U-emp"},
+            "message": {
+                "type": "text", "id": "m1", "text": "@HF ภายใน แจ้งซ่อม 204 แอร์ไม่เย็น",
+                "mention": _self_mentionees(),
+            },
+        }
+        routed = _route(event)
+        assert isinstance(routed, staff_bot.RoutedCommand)
+        assert routed.command == staff_bot.COMMAND_REPORT
+        assert routed.chat_key == "R1"
+        assert routed.source_type == "room"
+
+    def test_a_bare_self_mention_with_no_report_word_is_only_a_message(self):
+        # Remainder is empty after stripping the mention — rule 1's "empty"
+        # case, ignored exactly like งานค้าง.
+        text = "@HF ภายใน"
+        routed = _route(_group_text(
+            text, message={"mention": _self_mentionees()},
+        ))
+        assert isinstance(routed, staff_bot.RoutedMessage)
+
+    def test_a_report_word_without_any_self_mention_is_only_a_message(self):
+        # แจ้งซ่อม typed bare, no mention object at all — still heartbeat-only
+        # chat, exactly as before the carve-out.
+        routed = _route(_group_text("แจ้งซ่อม 204 แอร์เสีย"))
+        assert isinstance(routed, staff_bot.RoutedMessage)
+
+    def test_mentioning_someone_else_not_the_bot_is_only_a_message(self):
+        # isSelf False (or absent) — a mention of a fellow staff member, not
+        # the bot — never triggers the carve-out, whatever the remainder is.
+        text = "@สมชาย แจ้งซ่อม 204 แอร์เสีย"
+        routed = _route(_group_text(text, message={"mention": {"mentionees": [
+            {"index": 0, "length": 6, "isSelf": False, "userId": "U-somchai"},
+        ]}}))
+        assert isinstance(routed, staff_bot.RoutedMessage)
+
+    def test_quoted_media_on_a_mention_report_is_carried_onto_the_command(self):
+        text = "@HF ภายใน แจ้งซ่อม 204 แอร์ไม่เย็น"
+        routed = _route(_group_text(text, message={
+            "mention": _self_mentionees(), "quotedMessageId": "quoted-1",
+        }))
+        assert routed.quoted_message_id == "quoted-1"
+
+    def test_a_mention_report_carries_no_order_id(self):
+        # Unlike the postback-driven ticket commands, a mention-report never
+        # names an existing order.
+        text = "@HF ภายใน แจ้งซ่อม 204 แอร์ไม่เย็น"
+        routed = _route(_group_text(text, message={"mention": _self_mentionees()}))
+        assert routed.order_id is None
+
+    # -- UTF-16 offset conversion (rule 1) -------------------------------
+
+    def test_self_mention_span_reads_the_first_isself_entry(self):
+        message = {"mention": _self_mentionees(index=3, length=9)}
+        assert staff_bot._self_mention_span(message) == (3, 9)
+
+    def test_self_mention_span_is_none_without_a_mention_object(self):
+        assert staff_bot._self_mention_span({"text": "hi"}) is None
+
+    def test_self_mention_span_is_none_when_no_entry_is_self(self):
+        message = {"mention": {"mentionees": [
+            {"index": 0, "length": 6, "isSelf": False, "userId": "U-x"},
+        ]}}
+        assert staff_bot._self_mention_span(message) is None
+
+    def test_strip_utf16_span_handles_a_surrogate_pair_before_the_mention(self):
+        # "\U0001F525" (fire emoji) is ONE Python character but TWO UTF-16
+        # code units — a naive text[:index] + text[index+length:] slice using
+        # LINE's index/length as Python indices would cut into the mention
+        # text itself instead of around it. index=2 is where the mention
+        # (LINE's own UTF-16 count) actually starts; using it as a raw
+        # Python index would incorrectly start the cut at "F" of "@HF ...".
+        text = "\U0001F525@HF ภายใน แจ้งซ่อม 204"
+        stripped = staff_bot._strip_utf16_span(text, 2, 9)
+        assert stripped == "\U0001F525 แจ้งซ่อม 204"
+        # The naive (wrong) approach this guards against corrupts the text:
+        naive = text[:2] + text[2 + 9:]
+        assert naive != stripped
+
+    def test_strip_utf16_span_leaves_text_unchanged_on_an_out_of_range_span(self):
+        assert staff_bot._strip_utf16_span("hi", 50, 5) == "hi"
+
+    def test_strip_utf16_span_handles_a_supplementary_character_inside_the_remainder(self):
+        # The emoji lands AFTER the removed span this time — proves the tail
+        # slice (``units[end:]``) round-trips a surrogate pair correctly too,
+        # not just the head slice the test above covers.
+        text = "@HF ภายใน \U0001F525 แจ้งซ่อม 204"
+        stripped = staff_bot._strip_utf16_span(text, 0, 9)
+        assert stripped == " \U0001F525 แจ้งซ่อม 204"
 
 
 # ===========================================================================

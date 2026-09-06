@@ -1,7 +1,8 @@
 """HF ภายใน — the staff LINE bot: command router, rendering, debounce.
 
 The Employee Hub's Official Account is now also a BOT. In the all-staff LINE
-group (HF Family) it is a REPORT-ONLY heartbeat (see policy note below); a
+group (HF Family) it is a REPORT-ONLY heartbeat with ONE command carve-out —
+an explicit @mention that files a แจ้งซ่อม ticket (see policy note below); a
 1:1 chat gets every command — palette, digest, guest feedback, ticket intake,
 status. This module is everything between the webhook and the reply: the
 command router, the Flex palette, the digest/report text, and the debounce
@@ -35,14 +36,29 @@ bearing here and must survive every future edit:
 GROUP/ROOM SOURCES ARE REPORT-ONLY (owner policy, 2026-09-06 — "command
 through chat is considered spam in HF Family group... feedback is not
 considered spam... feedback should be consolidated and report in reporting
-style not chat style"). A group or room never answers a command any more:
-text (summoned or bare, any word), a postback from an old confirmation
-bubble, and media are never turned into a command, never buffered, never
-acknowledged — see :func:`route_event`, which returns a plain
-:class:`RoutedMessage` (never a :class:`RoutedCommand`) for a group/room
-message and ``None`` for a group/room postback. The ONLY thing a group or
-room ever hears from this bot is the SLOT REPORT below. Every other command,
-ticket, photo/video and preview in this module is 1:1 only.
+style not chat style"), WITH ONE EXPLICIT COMMAND CARVE-OUT (owner, 2026-09-06
+evening — "HF Family should be able to get mention and act to create new
+maintenance ticket still"). A group or room still never answers an ordinary
+command: text (summoned or bare, any word), a postback from an old
+confirmation bubble, and media are never turned into a command, never
+buffered as a ticket claim on their own, never acknowledged — see
+:func:`route_event`, which returns a plain :class:`RoutedMessage` (never a
+:class:`RoutedCommand`) for ordinary group/room text and media, and ``None``
+for a group/room postback. The ONE exception: an explicit @-mention of the
+bot (``message.mention.mentionees[]`` carrying ``isSelf: true``) whose
+remainder — the mention span stripped, LINE's own UTF-16 code-unit offsets
+converted safely (:func:`_strip_utf16_span`) — is แจ้งซ่อม (bare or with a
+room/symptom) routes as :data:`COMMAND_REPORT`, exactly like the 1:1 form:
+same parser, same identity/NOT_LINKED gate, same photo buffer (buffered again
+for group/room senders so a mention just after a photo burst can still claim
+it) and 2-minute attach window — only the confirmation reply differs, a
+compact TEXT line (:func:`build_group_confirmation_text`) rather than the
+Flex bubble with (dead, ignored-in-a-group) postback buttons, pointing the
+reporter at the 1:1 chat for anything else. Any OTHER mention remainder
+(empty, งานค้าง, anything else) is ignored exactly like unmentioned chat. The
+ONLY things a group or room ever hear from this bot are the SLOT REPORT below
+and this one ticket confirmation/NOT_LINKED/parse-error line. Every other
+command, ticket edit and preview in this module stays 1:1 only.
 
 PHASE 2 (2026-09-05) adds the SLOT REPORT: four daily Bangkok windows in which
 a report is posted into a GROUP exactly once, piggybacking on whatever the
@@ -83,6 +99,15 @@ or one plain-text line when there are none or housekeeping is dark. 'สถา�
 the edit postbacks (reporter or a `reception`-grant holder) with its own 404
 line — this is a READ, and never changes a ticket's status; that stays on
 the reception board in every phase.
+
+PHASE 5 (2026-09-06 evening) reopens ONE command in the group: the @mention
+แจ้งซ่อม carve-out described above. It reuses phase 3's parser, identity gate,
+photo buffer and attach window verbatim (:func:`_create_ticket` branches only
+on ``action.source_type`` for which confirmation message to send) — nothing
+about ticket creation itself is group-specific, only that a mention is now
+how a group message can BECOME a COMMAND_REPORT at all (see
+:func:`route_event`), and that its reply is deliberately lean (rule 3 of the
+owner's message: no Flex buttons, since a group postback stays ignored).
 
 PLAIN THAI, NO EMOJI, in every bot-facing string (house rule, same as
 staff_oa_menu / hk_escalation_service). Anything human-typed that reaches a
@@ -211,6 +236,11 @@ STATUS_NOT_FOUND_FMT = "ไม่พบงาน #{id} ค่ะ"
 ADDPHOTO_PROMPT_FMT = "ส่งรูปหรือวิดีโอมาได้เลยค่ะ (ภายใน 2 นาที) #{id}"
 CANCEL_SUCCESS_FMT = "ยกเลิก #{id} แล้วค่ะ"
 FIXCAT_PROMPT_FMT = "เลือกหมวดใหม่ของ #{id}"
+
+# The @mention report exception's confirmation (owner, 2026-09-06 evening): a
+# compact TEXT reply, not the Flex bubble with buttons — group postbacks stay
+# ignored, so buttons there would be dead. See build_group_confirmation_text.
+GROUP_CONFIRMATION_FOLLOWUP_TEXT = "แก้ไขหรือดูสถานะได้ในแชทส่วนตัวกับ HF ภายใน"
 
 # VIDEO (2026-09-06). message.type == "video" is buffered/claimed/attached
 # exactly like an image; the one difference is LINE's server-side transcode,
@@ -786,6 +816,53 @@ def _chat_key(source: Dict) -> str:
     return source.get("userId") or ""
 
 
+# Group/room @mention exception (owner, 2026-09-06 evening): a self-mention
+# lets a group message become the one command carve-out, COMMAND_REPORT.
+def _self_mention_span(message: Dict) -> Optional[Tuple[int, int]]:
+    """The (index, length) of the bot's OWN mention in a text message's
+    ``mention.mentionees[]`` (LINE's ``isSelf: true`` flag), or None when
+    there is none — no mention object, an empty/malformed mentionees list, or
+    no entry with ``isSelf`` true. Both numbers are LINE's own UTF-16 CODE
+    UNIT offsets (see :func:`_strip_utf16_span`), never Python string
+    indices. The first isSelf entry wins; LINE never sends more than one."""
+    mention = message.get("mention")
+    if not isinstance(mention, dict):
+        return None
+    mentionees = mention.get("mentionees")
+    if not isinstance(mentionees, list):
+        return None
+    for mentionee in mentionees:
+        if not isinstance(mentionee, dict) or mentionee.get("isSelf") is not True:
+            continue
+        index, length = mentionee.get("index"), mentionee.get("length")
+        if isinstance(index, int) and isinstance(length, int) and index >= 0 and length >= 0:
+            return index, length
+    return None
+
+
+def _strip_utf16_span(text: str, index: int, length: int) -> str:
+    """``text`` with the UTF-16 code-unit span ``[index, index+length)``
+    removed — the mention itself, leaving the words around it.
+
+    LINE's mention ``index``/``length`` count UTF-16 CODE UNITS, not Python
+    characters: a supplementary-plane character (many emoji) is ONE Python
+    character but TWO UTF-16 units, so a plain ``text[:index] + text[index+length:]``
+    slice drifts as soon as such a character appears anywhere before the
+    mention. Round-tripping through UTF-16LE bytes (a fixed 2 bytes per code
+    unit, surrogate pairs included) keeps the offsets exact regardless of
+    what came before. A span LINE never actually sends (out of range,
+    reversed) leaves the text unchanged rather than raising or mangling it.
+    """
+    units = text.encode("utf-16-le")
+    start, end = index * 2, (index + length) * 2
+    if start < 0 or end > len(units) or start > end:
+        return text
+    try:
+        return (units[:start] + units[end:]).decode("utf-16-le")
+    except UnicodeDecodeError:
+        return text
+
+
 def route_event(
     event: Dict,
     is_known_user: Callable[[str], bool],
@@ -839,15 +916,38 @@ def route_event(
     if not chat_key or not reply_token:
         return None
 
+    message = event.get("message")
+
     if source_type in ("group", "room"):
-        # GROUP/ROOM SOURCES ARE REPORT-ONLY (owner policy 2026-09-06): every
-        # message here — text (summoned or bare, any word) or media alike —
-        # is only a candidate for the slot heartbeat (_maybe_file_slot_digest,
-        # driven by handle_event_detail from this same RoutedMessage), never
-        # a command. See handle_event_detail for the DEBUG log this produces.
+        # GROUP/ROOM SOURCES ARE REPORT-ONLY (owner policy 2026-09-06: "command
+        # through chat is considered spam") — WITH ONE EXCEPTION (owner,
+        # 2026-09-06 evening: "HF Family should be able to get mention and act
+        # to create new maintenance ticket still"). An explicit @-mention of
+        # the bot (``message.mention.mentionees[]`` carries ``isSelf: true``)
+        # whose remainder — the mention span stripped — is แจ้งซ่อม (bare or
+        # with a room/symptom) is routed as COMMAND_REPORT, exactly like the
+        # 1:1 form. Any other mention remainder (empty, งานค้าง, anything
+        # else) and every non-mentioned message — text (summoned or bare, any
+        # word) or media alike — stay a plain RoutedMessage: only a candidate
+        # for the slot heartbeat (_maybe_file_slot_digest, driven by
+        # handle_event_detail from this same RoutedMessage), never a command.
+        # See handle_event_detail for the DEBUG log a non-command produces.
+        if isinstance(message, dict) and message.get("type") == "text":
+            span = _self_mention_span(message)
+            if span is not None:
+                remainder = _strip_utf16_span(message.get("text") or "", *span).strip()
+                if remainder == REPORT_WORD or remainder.startswith(REPORT_WORD):
+                    return RoutedCommand(
+                        chat_key=chat_key, command=COMMAND_REPORT,
+                        reply_token=reply_token,
+                        quiet_seconds=quiet_seconds_for(source_type),
+                        event_type="message", source_type=source_type,
+                        user_id=sender_user_id,
+                        report_text=remainder[len(REPORT_WORD):].strip(),
+                        quoted_message_id=message.get("quotedMessageId") or "",
+                    )
         return RoutedMessage(chat_key=chat_key, reply_token=reply_token)
 
-    message = event.get("message")
     if not isinstance(message, dict) or message.get("type") != "text":
         # A photo/sticker/anything else is still a message in this chat, so
         # it restarts the quiet timer — it just never becomes a command.
@@ -1593,6 +1693,61 @@ def _patch_confirmation_photo_line(
         pass
 
 
+def build_group_confirmation_text(order: Dict, photo_count: int, video_count: int = 0) -> Dict:
+    """The @mention report exception's confirmation (owner, 2026-09-06
+    evening) — a compact TEXT message, not :func:`build_confirmation_bubble`'s
+    Flex bubble: group postback buttons are dead (group postbacks stay
+    ignored), so a report filed by mention gets one lean line plus a pointer
+    to the 1:1 chat for anything else.
+
+    ``order`` is the same OrderView build_confirmation_bubble takes (human
+    text fields stripped of pictographs here too). ``photo_count``/
+    ``video_count`` are the just-CLAIMED counts at creation, same as the
+    bubble's; the photos-first bounded wait (CLAIMED_UPLOAD_WAIT_SECONDS)
+    still applies before this ever reaches LINE, so what a mention-reporter
+    actually sees is the settled outcome — see
+    :func:`_patch_group_confirmation_text`, which rebuilds this text
+    wholesale once that wait resolves rather than patching a value in place
+    (there is no Flex row to index into here).
+    """
+    order_id = order.get("id")
+    urgency_text = "ด่วน" if order.get("urgent") else "ปกติ"
+    headline = " · ".join(part for part in (
+        f"รับเรื่องแล้ว #{order_id}",
+        strip_pictographs(order.get("propertyLabel")),
+        strip_pictographs(order.get("location")),
+        strip_pictographs(order.get("categoryLabel")),
+        urgency_text,
+        _media_counts_text(photo_count, video_count),
+    ) if part)
+    return {"type": "text", "text": headline + "\n" + GROUP_CONFIRMATION_FOLLOWUP_TEXT}
+
+
+def _patch_group_confirmation_text(
+    message: Dict, order: Dict,
+    photo_completed: int, photo_failed: int, photo_running: int,
+    video_completed: int = 0, video_failed: int = 0, video_running: int = 0,
+) -> None:
+    """Rewrite a just-built group confirmation text with the real, settled
+    media counts (rule B, same bounded wait as the 1:1 bubble).
+    ``photo_failed``/``photo_running``/``video_failed``/``video_running`` are
+    accepted (same signature as :func:`_patch_confirmation_photo_line`) but
+    otherwise unused: this lean line only ever shows what actually attached,
+    same spirit as
+    rule 3's "keep it lean" (a failure or a still-running upload is visible
+    in full in the reporter's own 1:1 chat, which this line already points
+    at). Rebuilds the whole text via :func:`build_group_confirmation_text`
+    rather than patching a substring in place — there is no stable delimiter
+    to patch around once photo AND video counts can each be present or not.
+    """
+    try:
+        message["text"] = build_group_confirmation_text(
+            order, photo_count=photo_completed, video_count=video_completed,
+        )["text"]
+    except (KeyError, TypeError):
+        pass
+
+
 def _render_photo_ack_text(order_id, info: Dict) -> Optional[str]:
     """One photo-ack text object's content for one order (rule A), or None
     when there is nothing to say (should not happen — an entry is only ever
@@ -1689,14 +1844,30 @@ class PendingUpload:
     # "image" — every existing caller that never populates this field
     # (nothing but plain buffered photos) behaves exactly as before.
     kinds: Dict[str, str] = field(default_factory=dict)
-    # True (default, every existing caller): message_index names a Flex
-    # confirmation bubble, patched via _patch_confirmation_photo_line. False:
-    # a plain text ack (เพิ่มรูป-with-quote, 2026-09-06 — see
-    # _addphoto_with_quote), patched via _patch_addphoto_ack_text instead.
-    is_bubble: bool = True
+    # Which patch function _reply runs once the bounded wait resolves —
+    # "bubble" (default, every 1:1 report/edit): message_index names a Flex
+    # confirmation bubble, patched via _patch_confirmation_photo_line.
+    # "addphoto_ack": a plain text ack (เพิ่มรูป-with-quote — see
+    # _addphoto_with_quote), patched via _patch_addphoto_ack_text.
+    # "group_confirmation" (the @mention report exception, 2026-09-06
+    # evening): the compact group text, patched via
+    # _patch_group_confirmation_text — see ``group_order`` below.
+    patch_kind: str = "bubble"
+    # The OrderView a "group_confirmation" patch rebuilds its text from
+    # (build_group_confirmation_text needs the order fields, not just
+    # counts — there is no Flex row to index into and patch in place). Unused
+    # for every other patch_kind.
+    group_order: Optional[Dict] = None
 
 
 def _create_ticket(action: "RoutedCommand") -> Tuple[List[Dict], Optional[PendingUpload]]:
+    """แจ้งซ่อม (1:1) OR its group/room @mention exception (owner, 2026-09-06
+    evening, rule 3a): same parse/create/claim logic either way — only the
+    confirmation MESSAGE differs, a Flex bubble with edit buttons in 1:1
+    (:func:`build_confirmation_bubble`) versus a compact text pointing back
+    at the 1:1 chat in a group/room (:func:`build_group_confirmation_text`,
+    group postback buttons are dead there)."""
+    is_group = action.source_type in ("group", "room")
     draft = parse_report(action.report_text)
     if isinstance(draft, ParseError):
         return [{"type": "text", "text": draft.message}], None
@@ -1754,7 +1925,11 @@ def _create_ticket(action: "RoutedCommand") -> Tuple[List[Dict], Optional[Pendin
         if claimed:
             upload = PendingUpload(
                 order_id=order_id, message_ids=claimed, actor_badge=action.badge, kinds=kinds,
+                patch_kind="group_confirmation" if is_group else "bubble",
+                group_order=order if is_group else None,
             )
+    if is_group:
+        return [build_group_confirmation_text(order, photo_count=photo_count, video_count=video_count)], upload
     return [build_confirmation_bubble(order, photo_count=photo_count, video_count=video_count)], upload
 
 
@@ -1930,7 +2105,7 @@ def _addphoto_with_quote(action: "RoutedCommand") -> Tuple[List[Dict], Optional[
         actor_badge=action.badge,
         kinds={action.quoted_message_id: "quoted"},
         message_index=0,
-        is_bubble=False,
+        patch_kind="addphoto_ack",
     )
     return [placeholder], upload
 
@@ -2965,10 +3140,12 @@ class AsyncioBotDispatcher:
             counts = await self._await_claimed_uploads(upload)
             if upload.message_index is not None and upload.message_index < len(built.messages):
                 message = built.messages[upload.message_index]
-                if upload.is_bubble:
-                    _patch_confirmation_photo_line(message, *counts)
-                else:
+                if upload.patch_kind == "group_confirmation":
+                    _patch_group_confirmation_text(message, upload.group_order or {}, *counts)
+                elif upload.patch_kind == "addphoto_ack":
                     _patch_addphoto_ack_text(message, upload.order_id, *counts)
+                else:
+                    _patch_confirmation_photo_line(message, *counts)
 
         if owns_mark and not built.slot_digest_included:
             # Housekeeping was dark or unreachable: the scheduled post says
@@ -3183,13 +3360,17 @@ def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
     chat id — never text, never a photo, never the speaker.
 
     GROUP/ROOM SOURCES ARE REPORT-ONLY (owner policy 2026-09-06: "command
-    through chat is considered spam in HF Family group"). route_event already
-    never returns a RoutedCommand for a group/room event — this function's
-    only remaining group/room-specific job is the DEBUG-only ignored-event
-    log (never INFO: a group/room is never told anything about a command it
-    tried) and skipping the photo buffer/attach-window paths (a group photo
-    or video is heartbeat only, see ``_maybe_file_slot_digest``, and is never
-    fetched).
+    through chat is considered spam in HF Family group"), WITH ONE EXCEPTION —
+    the @mention report carve-out (owner, 2026-09-06 evening) — that
+    route_event already resolves into a RoutedCommand of its own; this
+    function's only remaining group/room-specific job for an ordinary
+    RoutedMessage is the DEBUG-only ignored-event log (never INFO: a group/
+    room is never told anything about a command it tried). The photo buffer/
+    attach-window path (``_maybe_handle_photo``) now runs for group/room
+    messages too, exactly like 1:1 (rule 2, 2026-09-06 evening): a linked
+    sender's photo/video is buffered (ids only, never downloaded) so a
+    mention-report just after it can still claim it, and attaches silently
+    once a mention-report's attach window is open.
     """
     if not isinstance(event, dict):
         return _NOT_HANDLED
@@ -3228,17 +3409,15 @@ def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
         # its clock and its sender decide whether this window is now due.
         filed = _maybe_file_slot_digest(event, routed, db, dispatcher)
         if source_type in ("group", "room"):
-            # Report-only: never buffer/attach a group photo or video (a
-            # group photo is heartbeat only, never fetched), never log at
-            # INFO — this is the whole of what a group message is worth here.
+            # Report-only, still — never logged at INFO; a group/room is
+            # never told anything about a command it tried.
             logger.debug(
                 "staff-bot group ignored: type=message chat=%s", routed.chat_key,
             )
-        else:
-            # Phase 3: an image from a linked sender either attaches silently
-            # (an open window) or joins the photo buffer — never downloaded
-            # here.
-            _maybe_handle_photo(event, routed, db, dispatcher)
+        # An image/video from a linked sender either attaches silently (an
+        # open attach window — 1:1 always, group/room since the mention
+        # carve-out) or joins the photo buffer — never downloaded here.
+        _maybe_handle_photo(event, routed, db, dispatcher)
         refreshed = bool(dispatcher.submit_message(routed.chat_key, routed.reply_token))
         return HandledEvent(
             command=False, claims_reply_token=refreshed or filed,
