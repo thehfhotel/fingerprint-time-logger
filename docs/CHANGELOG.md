@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-09-05
+
+### 🚨 Fixed - ZK Sync Alerting & Session Eviction Handling
+
+Root-caused two Slack pages today to brief ZK reader session evictions (any second TCP client on port 4370 — even a bare port probe — evicts our live-capture session; self-heals via catch-up, no data lost). See [docs/incidents/2026-09-05-zk-session-evictions.md](incidents/2026-09-05-zk-session-evictions.md).
+
+- **Paging threshold**: Slack now pages `@winut.hf` only after `ZK_SYNC_PAGE_AFTER_FAILURES` (default 2) *consecutive* failed 5-min status checks, not the first one — a single check landing mid-eviction no longer wakes anyone up.
+- **Degraded note**: new non-paging Slack message when `ZK_KICK_DEGRADED_THRESHOLD` (default 3) or more evictions land in the trailing 60 minutes, rate-limited to once/hour — surfaces extended self-healing episodes that were previously invisible.
+- **Eviction backoff**: after a live-capture eviction, the reader client now waits `ZK_KICK_BACKOFF_SECONDS` (default 5s, doubling to a 60s cap while evictions keep recurring within 120s of each other) before reconnecting, instead of retrying immediately.
+- `stream_kicks_last_hour` added to the cached device status for visibility without grepping logs.
+- New env vars (with docker-compose/.env.example plumbing): `ZK_SYNC_PAGE_AFTER_FAILURES`, `ZK_KICK_BACKOFF_SECONDS`, `ZK_KICK_DEGRADED_THRESHOLD`.
+
 ## [3.0.0] - 2025-01-18
 
 ### 🎉 Major Release - Manual Employee Management & QR Check-in Enhancements

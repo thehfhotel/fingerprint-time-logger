@@ -280,6 +280,224 @@ def test_shutdown_exits_thread_within_5s():
 # ---------------------------------------------------------------------------
 
 
+class _FakeConn:
+    """Minimal stand-in for a pyzk conn — just enough for _stream/_run tests
+    that don't need the full ZKTecoSimulator plumbing."""
+
+    def __init__(self, events=None, raise_exc: Exception | None = None):
+        self._events = events or []
+        self._raise_exc = raise_exc
+        self.end_live_capture = False
+
+    def live_capture(self, new_timeout=2):
+        for event in self._events:
+            yield event
+        if self._raise_exc is not None:
+            raise self._raise_exc
+
+    def disconnect(self):
+        pass
+
+
+def test_stream_returns_true_and_records_kick_on_eviction():
+    """live_capture raising (an eviction) -> _stream returns True and one
+    kick is recorded."""
+    session = _new_session()
+    conn = _FakeConn(raise_exc=RuntimeError("cant' reg events 0"))
+
+    died = session._stream(conn)
+
+    assert died is True
+    assert session.stream_kicks_in(3600.0) == 1
+    assert session._needs_catch_up is True
+
+
+def test_stream_returns_false_and_records_nothing_on_clean_end():
+    """live_capture ending normally (shutdown / op queued) -> _stream
+    returns False and records no kick."""
+    session = _new_session()
+    session._shutdown.set()  # makes _should_break True on the first event
+    conn = _FakeConn(events=[None])
+
+    died = session._stream(conn)
+
+    assert died is False
+    assert session.stream_kicks_in(3600.0) == 0
+
+
+# ---------------------------------------------------------------------------
+# stream_kicks_in window + pruning
+# ---------------------------------------------------------------------------
+
+
+def test_stream_kicks_in_counts_only_within_window(monkeypatch):
+    session = _new_session()
+    fake_now = {"t": 1000.0}
+    monkeypatch.setattr(zk_session_module.time, "monotonic", lambda: fake_now["t"])
+
+    session._record_stream_kick()  # t=1000
+    fake_now["t"] = 1000.0 + 200.0  # a kick well outside the 120s window, but...
+    session._record_stream_kick()  # t=1200
+
+    # Window of 60s from "now" (t=1200) should only see the second kick.
+    assert session.stream_kicks_in(60.0) == 1
+    # Window of 1000s should see both.
+    assert session.stream_kicks_in(1000.0) == 2
+
+
+def test_stream_kicks_in_prunes_stamps_older_than_history(monkeypatch):
+    session = _new_session()
+    fake_now = {"t": 1000.0}
+    monkeypatch.setattr(zk_session_module.time, "monotonic", lambda: fake_now["t"])
+
+    session._record_stream_kick()  # t=1000
+    assert session.stream_kicks_in(3600.0) == 1
+
+    # Jump forward past _KICK_HISTORY_SECONDS (3600s).
+    fake_now["t"] = 1000.0 + 3600.0 + 1.0
+    assert session.stream_kicks_in(3600.0) == 0
+    assert len(session._kick_times) == 0
+
+
+def test_module_level_stream_kicks_in_delegates_to_singleton(monkeypatch):
+    calls = {}
+
+    def fake(window_seconds=3600.0):
+        calls["window"] = window_seconds
+        return 42
+
+    monkeypatch.setattr(zk_session_module.zk_session, "stream_kicks_in", fake)
+    assert zk_session_module.stream_kicks_in(60.0) == 42
+    assert calls["window"] == 60.0
+
+
+# ---------------------------------------------------------------------------
+# _record_stream_kick backoff progression
+# ---------------------------------------------------------------------------
+
+
+def test_record_stream_kick_backoff_progression(monkeypatch):
+    session = _new_session()
+    fake_now = {"t": 0.0}
+    monkeypatch.setattr(zk_session_module.time, "monotonic", lambda: fake_now["t"])
+    base = zk_session_module._KICK_BACKOFF_BASE_SECONDS
+    cap = zk_session_module._KICK_BACKOFF_MAX_SECONDS
+    window = zk_session_module._KICK_CONSECUTIVE_WINDOW_SECONDS
+
+    # First (isolated) kick -> base.
+    session._record_stream_kick()
+    assert session._kick_backoff == base
+
+    # Second kick within the consecutive window -> doubles.
+    fake_now["t"] += window / 2
+    session._record_stream_kick()
+    assert session._kick_backoff == base * 2
+
+    # Keep kicking within the window until it caps.
+    while session._kick_backoff < cap:
+        fake_now["t"] += window / 2
+        session._record_stream_kick()
+    assert session._kick_backoff == cap
+
+    # One more within-window kick stays capped, never exceeds it.
+    fake_now["t"] += window / 2
+    session._record_stream_kick()
+    assert session._kick_backoff == cap
+
+    # A quiet gap (> window) resets to base.
+    fake_now["t"] += window + 1.0
+    session._record_stream_kick()
+    assert session._kick_backoff == base
+
+
+# ---------------------------------------------------------------------------
+# _run backoff wait behavior
+# ---------------------------------------------------------------------------
+
+
+def test_run_waits_on_backoff_after_died_stream_with_empty_queue():
+    """After a died stream with nothing queued, _run calls
+    self._shutdown.wait(self._kick_backoff) — never time.sleep — and that
+    call is what ends the loop (simulating shutdown firing during backoff)."""
+    session = _new_session()
+    session._kick_backoff = 7.0
+    wait_calls = []
+
+    def fake_connect_with_log(phase):
+        return _FakeConn()
+
+    def fake_stream(conn):
+        return True  # died
+
+    def fake_disconnect_quiet(conn, phase):
+        pass
+
+    def fake_wait(timeout=None):
+        wait_calls.append(timeout)
+        if timeout == 7.0:
+            session._shutdown.set()
+            return True
+        return False  # the 2.0s startup grace wait
+
+    with patch.object(session, "_connect_with_log", side_effect=fake_connect_with_log), \
+         patch.object(session, "_stream", side_effect=fake_stream), \
+         patch.object(session, "_disconnect_quiet", side_effect=fake_disconnect_quiet), \
+         patch.object(session._shutdown, "wait", side_effect=fake_wait):
+        session._run()
+
+    assert wait_calls == [2.0, 7.0]
+
+
+def test_run_does_not_wait_on_backoff_when_ops_queued():
+    """A died stream with ops queued must NOT consume the kick backoff wait
+    — the ops phase's own 1s pause covers it, and the 5-min job needs the
+    thread free to drain the queue promptly."""
+    session = _new_session()
+    session._kick_backoff = 30.0
+    backoff_wait_calls = []
+    iterations = {"n": 0}
+
+    def fake_connect_with_log(phase):
+        return _FakeConn()
+
+    def fake_stream(conn):
+        return True  # died
+
+    def fake_disconnect_quiet(conn, phase):
+        pass
+
+    def fake_wait(timeout=None):
+        # Only the kick backoff call passes exactly the configured backoff;
+        # record it distinctly so we can assert it never happens.
+        if timeout == 30.0:
+            backoff_wait_calls.append(timeout)
+        return False
+
+    # Queue one op so `_op_queue.empty()` is False on the first pass, then
+    # let the drain (mocked) consume it and shut down on the second pass.
+    def fake_drain_op_queue(conn):
+        iterations["n"] += 1
+        session._shutdown.set()
+        return 1
+
+    with patch.object(session, "_connect_with_log", side_effect=fake_connect_with_log), \
+         patch.object(session, "_stream", side_effect=fake_stream), \
+         patch.object(session, "_disconnect_quiet", side_effect=fake_disconnect_quiet), \
+         patch.object(session._shutdown, "wait", side_effect=fake_wait), \
+         patch.object(session, "_drain_op_queue", side_effect=fake_drain_op_queue), \
+         patch("time.sleep"):
+        session._op_queue.put(_OpEnvelopeStub())
+        session._run()
+
+    assert backoff_wait_calls == []
+    assert iterations["n"] == 1
+
+
+class _OpEnvelopeStub:
+    """Just needs to exist in the queue; _drain_op_queue is mocked so its
+    .op/.future are never touched."""
+
+
 def test_submit_completes_during_streaming():
     session = _new_session()
     mock_conn = _make_live_conn()

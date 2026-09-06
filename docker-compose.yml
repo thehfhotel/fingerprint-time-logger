@@ -106,6 +106,20 @@ services:
       - ZK_STARTUP_RETRY_MINUTES=${ZK_STARTUP_RETRY_MINUTES:-3}
       - ZK_CATCHUP_LOOKBACK_HOURS=${ZK_CATCHUP_LOOKBACK_HOURS:-48}
       - ZK_EXPECTED_UTC_OFFSET_MINUTES=${ZK_EXPECTED_UTC_OFFSET_MINUTES:-420}
+      # Eviction-alerting trio, added for incident 2026-09-05 (reader session
+      # repeatedly stolen by another TCP client; see
+      # docs/incidents/2026-09-05-zk-session-evictions.md). Defaults match
+      # the in-code fallbacks. An env var not listed here never reaches the
+      # container no matter what's in the host .env — this is that lesson
+      # applied up front. PAGE_AFTER_FAILURES: consecutive failed 5-min
+      # checks before a paging Slack alert. KICK_DEGRADED_THRESHOLD:
+      # evictions in the trailing 60 min that trigger a non-paging
+      # "degraded" note (rate-limited to 1/hour). KICK_BACKOFF_SECONDS: base
+      # wait after an eviction before reconnecting (doubles on repeat
+      # evictions within 120s, capped at 60s).
+      - ZK_SYNC_PAGE_AFTER_FAILURES=${ZK_SYNC_PAGE_AFTER_FAILURES:-2}
+      - ZK_KICK_DEGRADED_THRESHOLD=${ZK_KICK_DEGRADED_THRESHOLD:-3}
+      - ZK_KICK_BACKOFF_SECONDS=${ZK_KICK_BACKOFF_SECONDS:-5}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/fingerprintlogs/health"]
