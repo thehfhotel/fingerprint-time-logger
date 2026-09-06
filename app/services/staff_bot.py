@@ -1,10 +1,11 @@
 """HF ภายใน — the staff LINE bot: command router, rendering, debounce.
 
-The Employee Hub's Official Account is now also a BOT. It is summoned in the
-all-staff LINE group (HF Family) or talked to 1:1, and it answers with the
-open แจ้งซ่อม digest that the housekeeping app owns. This module is everything
-between the webhook and the reply: the summon grammar, the command router,
-the Flex palette, the digest text, and the debounce state machine.
+The Employee Hub's Official Account is now also a BOT. In the all-staff LINE
+group (HF Family) it is a REPORT-ONLY heartbeat (see policy note below); a
+1:1 chat gets every command — palette, digest, guest feedback, ticket intake,
+status. This module is everything between the webhook and the reply: the
+command router, the Flex palette, the digest/report text, and the debounce
+state machine.
 
 DESIGN AUTHORITY: hf-erp ADR "The staff bot answers only with reply tokens;
 LINE meters pushes per recipient" (2026-09-05). Three of its rules are load
@@ -21,46 +22,65 @@ bearing here and must survive every future edit:
    first line talks over the next four. So a command does not reply
    immediately: it opens a PENDING entry, and every later message in that
    chat refreshes the entry's reply token and restarts the quiet timer. The
-   reply goes out after 15 s of quiet in a group (2 s in 1:1), and at the
-   latest 45 s after the first trigger — LINE's reply tokens are short
-   lived, so the cap is not optional. Two commands in one burst coalesce
-   into ONE reply carrying both messages.
+   reply goes out after 15 s of quiet for a scheduled slot report (2 s for a
+   1:1 command), and at the latest 45 s after the first trigger — LINE's
+   reply tokens are short lived, so the cap is not optional. Two commands in
+   one burst coalesce into ONE reply carrying both messages.
 3. DISCARD BEFORE LOGGING. The webhook sees all of HF Family's traffic.
    Non-command chat is dropped without a log line of any kind, and a command
    logs only the event type, the source type and the chat id — never the
    message text, never a photo, never who said it. That is a privacy
    commitment to staff, enforced at the top of :func:`handle_event`.
 
-PHASE 2 (2026-09-05) adds the SLOT DIGEST: four daily Bangkok windows in which
-the งานค้าง digest is posted into a GROUP exactly once, piggybacking on
-whatever the humans were already saying so it still rides a free reply token.
-It is the one thing here that waits — SLOT_QUIET_SECONDS of quiet, so it never
-races reception's report burst — and the one thing that keeps state in the
-database (``staff_bot_slot_marks``), because "once per slot" has to survive a
-restart. A window nobody talks in is skipped, and a window in which
-housekeeping is dark posts NOTHING: a scheduled message must never spam an
-error line into HF Family. See "Slot digest" below and hf-erp ADR 0007.
+GROUP/ROOM SOURCES ARE REPORT-ONLY (owner policy, 2026-09-06 — "command
+through chat is considered spam in HF Family group... feedback is not
+considered spam... feedback should be consolidated and report in reporting
+style not chat style"). A group or room never answers a command any more:
+text (summoned or bare, any word), a postback from an old confirmation
+bubble, and media are never turned into a command, never buffered, never
+acknowledged — see :func:`route_event`, which returns a plain
+:class:`RoutedMessage` (never a :class:`RoutedCommand`) for a group/room
+message and ``None`` for a group/room postback. The ONLY thing a group or
+room ever hears from this bot is the SLOT REPORT below. Every other command,
+ticket, photo/video and preview in this module is 1:1 only.
 
-PHASE 3 (2026-09-06) adds TICKET INTAKE: a linked employee types แจ้งซ่อม
-<room/area> <symptom> (a summon prefix in a group, bare in 1:1) and the bot
-creates a work order in housekeeping over the internal door
-(app/services/housekeeping_client.py), replies a confirmation bubble at
-once, and uploads any photos the sender sent in the same burst in the
-BACKGROUND (never blocking the reply). Postbacks on that bubble
-(fixcat/setcat/toggleurgent/addphoto/cancel/switchprop) let the reporter (or
-a `reception`-grant holder) edit or cancel while housekeeping still allows
-it. A photo is NEVER downloaded unless it is tied to a ticket — either
-claimed at creation (buffered message ids only, 90 s TTL, no bytes, no log)
-or received while that ticket's attach window is open (120 s, refreshed per
-photo, hard capped at 5 min). See docs/EMPLOYEE_HUB_SETUP.md and hf-erp
+PHASE 2 (2026-09-05) adds the SLOT REPORT: four daily Bangkok windows in which
+a report is posted into a GROUP exactly once, piggybacking on whatever the
+humans were already saying (any message counts as the heartbeat — text,
+sticker, photo, video; report-only groups never read what was said) so it
+still rides a free reply token. It is the one thing here that waits —
+SLOT_QUIET_SECONDS of quiet, so it never races reception's report burst — and
+the one thing that keeps state in the database (``staff_bot_slot_marks``),
+because "once per slot" has to survive a restart. A window nobody talks in is
+skipped. Consolidated 2026-09-06 (owner: "feedback should be consolidated and
+report in reporting style"): the report carries TWO sections — (a) the
+existing งานค้าง maintenance digest, (b) pending guest feedback, rendered as
+one line per item (:func:`render_feedback_section`) rather than chat prose —
+either section is simply omitted when its own source is dark/unreachable or
+has nothing to say, and the whole report posts nothing only when BOTH are
+empty, so a scheduled message never spams an error line into HF Family but
+also never drops real content it does have. See "Slot digest" below and
+hf-erp ADR 0007.
+
+PHASE 3 (2026-09-06) adds TICKET INTAKE, 1:1 only: a linked employee types
+แจ้งซ่อม <room/area> <symptom> and the bot creates a work order in
+housekeeping over the internal door (app/services/housekeeping_client.py),
+replies a confirmation bubble at once, and uploads any photos the sender sent
+in the same burst in the BACKGROUND (never blocking the reply). Postbacks on
+that bubble (fixcat/setcat/toggleurgent/addphoto/cancel/switchprop) let the
+reporter (or a `reception`-grant holder) edit or cancel while housekeeping
+still allows it. A photo is NEVER downloaded unless it is tied to a ticket —
+either claimed at creation (buffered message ids only, 90 s TTL, no bytes, no
+log) or received while that ticket's attach window is open (120 s, refreshed
+per photo, hard capped at 5 min). See docs/EMPLOYEE_HUB_SETUP.md and hf-erp
 docs/staff-bot-plan.md ("Locked interface (phases 3 and 4)").
 
-PHASE 4 (2026-09-06) adds STATUS: งานของฉัน (palette button or the bare word)
-answers a Flex carousel of the tapper's own active tickets (<= 10, newest
-first, each with เพิ่มรูป/ยกเลิก buttons riding the phase-3 postbacks), or one
-plain-text line when there are none or housekeeping is dark. 'สถานะ <id>' /
-'งาน <id>' answers the same ticket as one bubble, gated exactly like the
-edit postbacks (reporter or a `reception`-grant holder) with its own 404
+PHASE 4 (2026-09-06) adds STATUS, 1:1 only: งานของฉัน (palette button or the
+bare word) answers a Flex carousel of the tapper's own active tickets (<= 10,
+newest first, each with เพิ่มรูป/ยกเลิก buttons riding the phase-3 postbacks),
+or one plain-text line when there are none or housekeeping is dark. 'สถานะ
+<id>' / 'งาน <id>' answers the same ticket as one bubble, gated exactly like
+the edit postbacks (reporter or a `reception`-grant holder) with its own 404
 line — this is a READ, and never changes a ticket's status; that stays on
 the reception board in every phase.
 
@@ -80,14 +100,15 @@ GUEST FEEDBACK (ความคิดเห็นลูกค้า): since gues
 the sole sender for guest feedback raised on the public feedback site.
 Rev 3.1 (2026-09-06) widened the queue from requests-only to every guest
 submission — praise, issue and request alike, tagged ``kind`` and
-``urgent`` in the pending JSON — but the bot's read/confirm/reply-token
-logic is kind-agnostic and did not change. It reads and confirms feedback
-from guest-feedback (never holds it, never owns a queue) and answers only
-with reply tokens, exactly like the housekeeping digest above. A group
-message — summoned or not — auto-offers the pending list when one exists;
-a 1:1 request renders the identical text as a PREVIEW and never confirms
-delivery, so pending rows are not silently consumed by someone checking
-privately.
+``urgent`` in the pending JSON. It reads and confirms feedback from
+guest-feedback (never holds it, never owns a queue) and answers only with
+reply tokens, exactly like the housekeeping digest above. Consolidated into
+the slot report (2026-09-06, see above) rather than chat-triggered: there is
+no more group auto-offer on plain chatter — the ONLY place a group ever sees
+pending feedback is section (b) of its own scheduled slot report, after
+which the carried ids are confirmed delivered. A 1:1 ความคิดเห็นลูกค้า renders
+the identical report-style section as a PREVIEW and never confirms delivery,
+so pending rows are not silently consumed by someone checking privately.
 
 TESTABILITY: :class:`ReplyDebouncer` is a pure state machine — an injectable
 clock, an injectable scheduler, no I/O, no timers — so the debounce rules are
@@ -185,9 +206,26 @@ MINE_ALT_TEXT = "งานของฉัน"
 STATUS_FORBIDDEN_TEXT = "ดูได้เฉพาะงานของตัวเองค่ะ"
 STATUS_NOT_FOUND_FMT = "ไม่พบงาน #{id} ค่ะ"
 
-ADDPHOTO_PROMPT_FMT = "ส่งรูปมาได้เลยค่ะ (ภายใน 2 นาที) #{id}"
+# Updated 2026-09-06 (reply-to-media): a bare quote-less เพิ่มรูป/postback now
+# invites a video as well as a photo.
+ADDPHOTO_PROMPT_FMT = "ส่งรูปหรือวิดีโอมาได้เลยค่ะ (ภายใน 2 นาที) #{id}"
 CANCEL_SUCCESS_FMT = "ยกเลิก #{id} แล้วค่ะ"
 FIXCAT_PROMPT_FMT = "เลือกหมวดใหม่ของ #{id}"
+
+# VIDEO (2026-09-06). message.type == "video" is buffered/claimed/attached
+# exactly like an image; the one difference is LINE's server-side transcode,
+# which must finish before the bytes are downloadable at all.
+VIDEO_TRANSCODE_WAIT_SECONDS = 90.0
+VIDEO_BYTES_MAX = 60 * 1024 * 1024
+# A video's transcode can outlive a 60 s-ish LINE reply token. Past this many
+# seconds of an IN-WINDOW video event, the "processing" line is filed on that
+# event's own (about-to-expire) token instead of waiting for the real outcome
+# — the eventual real ack is then silent, see AsyncioBotDispatcher.
+VIDEO_ACK_DEADLINE_SECONDS = 40.0
+
+VIDEO_TRANSCODE_FAILED_FMT = "วิดีโอประมวลผลไม่สำเร็จ ลองส่งใหม่อีกครั้งค่ะ (#{id})"
+VIDEO_OVERSIZE_FMT = "วิดีโอใหญ่เกินไป (สูงสุด 60 MB) (#{id})"
+VIDEO_PROCESSING_FMT = "วิดีโอกำลังประมวลผล จะแนบให้เมื่อพร้อมค่ะ (#{id})"
 
 # Guest-feedback dark, unreachable, or refusing — the same fail-closed rule
 # as the digest above, one fixed Thai line.
@@ -195,10 +233,17 @@ REQUESTS_UNAVAILABLE_TEXT = "ยังอ่านความคิดเห็
 # Reachable, but nothing is waiting.
 REQUESTS_NONE_TEXT = "ยังไม่มีความคิดเห็นใหม่ค่ะ"
 
-# How long a "no pending guest feedback" (or "yes") answer from guest-feedback
-# is trusted before asking again, per chat — group chatter must not hammer
-# the endpoint on every single message.
-REQUESTS_AUTO_TRIGGER_CACHE_SECONDS = 10.0
+# ความคิดเห็นลูกค้า report section (b, 2026-09-06 consolidation): header,
+# per-item line format, kind labels, the branch short form (matches
+# guest-feedback's own src/shared/locations.ts branchShort), the display cap
+# and how a comment/tags line is trimmed.
+FEEDBACK_SECTION_HEADER_FMT = "ความคิดเห็นลูกค้า ({n} รายการ)"
+FEEDBACK_KIND_LABELS: Dict[str, str] = {
+    "praise": "คำชม", "issue": "ปัญหา", "request": "คำขอ",
+}
+FEEDBACK_BRANCH_LABELS: Dict[str, str] = {"hf": "HF", "hfville": "HF Ville"}
+FEEDBACK_SECTION_LINE_CAP = 15
+FEEDBACK_LINE_TEXT_MAX_CHARS = 80
 
 THAI_MONTH_ABBREVIATIONS = (
     "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
@@ -209,11 +254,6 @@ THAI_MONTH_ABBREVIATIONS = (
 # ---------------------------------------------------------------------------
 # Grammar
 # ---------------------------------------------------------------------------
-
-# "น้องคะ" / "น้อง ครับ" ... — the summon in a group chat. Anchored at the
-# start and the particle is REQUIRED, which is what keeps ordinary chat about
-# a น้อง (e.g. "น้องเอาข้าวไหม") from waking the bot.
-SUMMON_PATTERN = re.compile(r"^น้อง\s*(?:คะ|ค่ะ|ครับ|คับ)")
 
 COMMAND_PALETTE = "palette"
 COMMAND_DIGEST = "digest"
@@ -296,6 +336,12 @@ MINE_WORD = "งานของฉัน"
 # words above (so งานของฉัน / งานค้าง / แจ้งซ่อมค้าง always win first) and
 # before the แจ้งซ่อม prefix.
 _STATUS_WORD_PATTERN = re.compile(r"^(?:สถานะ|งาน)\s+(\d{1,10})$")
+
+# 'เพิ่มรูป <id>' / 'เพิ่มรูป #<id>' (reply-to-media, 2026-09-06) — bare in a
+# group/room (no summon needed, same footing as แจ้งซ่อม's bare form) and in
+# 1:1, and after a summon. A strict whole-string match, like the สถานะ/งาน
+# pattern above, so it is never mistaken for ordinary chat.
+_ADDPHOTO_WORD_PATTERN = re.compile(r"^เพิ่มรูป\s*#?(\d{1,10})$")
 
 # Canonical order of the message objects in one coalesced reply.
 COMMAND_ORDER = (COMMAND_ONBOARDING, COMMAND_PALETTE, COMMAND_DIGEST, COMMAND_REQUESTS)
@@ -486,54 +532,6 @@ def strip_pictographs(text: Optional[str]) -> str:
 # Summon grammar
 # ---------------------------------------------------------------------------
 
-def _strip_self_mentions(text: str, message: Dict) -> Optional[str]:
-    """Remove the bot's own @-mention spans, or None when it was not mentioned.
-
-    LINE gives each mentionee an ``index``/``length`` into the message text,
-    and marks the bot's own mention with ``isSelf``. Spans are removed back to
-    front so earlier indices stay valid.
-    """
-    mention = message.get("mention")
-    if not isinstance(mention, dict):
-        return None
-    mentionees = mention.get("mentionees")
-    if not isinstance(mentionees, list):
-        return None
-
-    spans = []
-    for mentionee in mentionees:
-        if not isinstance(mentionee, dict) or not mentionee.get("isSelf"):
-            continue
-        index = mentionee.get("index")
-        length = mentionee.get("length")
-        if isinstance(index, int) and isinstance(length, int) and length >= 0:
-            spans.append((index, length))
-    if not spans:
-        return None
-
-    remainder = text
-    for index, length in sorted(spans, reverse=True):
-        remainder = remainder[:index] + remainder[index + length:]
-    return remainder.strip()
-
-
-def summon_remainder(text: str, message: Optional[Dict] = None) -> Optional[str]:
-    """What the summoner said AFTER summoning, or None if this was not a summon.
-
-    Two ways to summon in a group: the น้อง + particle opener, or an
-    @-mention of the bot. An empty string means "summoned, said nothing
-    else" — which is a palette, not a miss, so the caller must distinguish
-    ``""`` from ``None``.
-    """
-    stripped = (text or "").strip()
-    match = SUMMON_PATTERN.match(stripped)
-    if match:
-        return stripped[match.end():].strip()
-    if isinstance(message, dict):
-        return _strip_self_mentions(text or "", message)
-    return None
-
-
 def _word_command(words: str) -> Tuple[str, str, Optional[int]]:
     """(command, report_text, order_id) for a stripped remainder of speech.
 
@@ -555,6 +553,9 @@ def _word_command(words: str) -> Tuple[str, str, Optional[int]]:
     status_match = _STATUS_WORD_PATTERN.match(stripped)
     if status_match:
         return COMMAND_STATUS, "", int(status_match.group(1))
+    addphoto_match = _ADDPHOTO_WORD_PATTERN.match(stripped)
+    if addphoto_match:
+        return COMMAND_ADDPHOTO, "", int(addphoto_match.group(1))
     if stripped == REPORT_WORD or stripped.startswith(REPORT_WORD):
         return COMMAND_REPORT, stripped[len(REPORT_WORD):].strip(), None
     return COMMAND_PALETTE, "", None
@@ -711,48 +712,6 @@ def parse_report(text: str) -> Union[ReportDraft, ParseError]:
 
 
 # ---------------------------------------------------------------------------
-# Bare แจ้งซ่อม in a group/room (owner decision 2026-09-06)
-# ---------------------------------------------------------------------------
-
-# Substring hits on the remainder after แจ้งซ่อม that mark ordinary
-# "it's done" chatter rather than a new report — checked BEFORE parse_report,
-# so "แจ้งซ่อม 204 เสร็จแล้ว" never opens a ticket even though it parses fine.
-BARE_REPORT_SKIP_PHRASES = frozenset({
-    "เสร็จแล้ว", "เสร็จ", "แล้วนะ", "แล้วค่ะ", "แล้วครับ",
-    "เรียบร้อย", "ซ่อมแล้ว", "แก้แล้ว", "ทำแล้ว",
-})
-
-
-def _bare_group_report(text: str) -> Optional[str]:
-    """The report text for a bare (un-summoned) แจ้งซ่อม in a group/room, or
-    None to leave the message as ordinary chatter.
-
-    Two safeguards keep ordinary talk from creating junk tickets: a
-    completion/status phrase anywhere in the remainder
-    (:data:`BARE_REPORT_SKIP_PHRASES`), and text that :func:`parse_report`
-    cannot place in a room or area — the bare form stays SILENT on a parse
-    error (unlike the summoned form's PARSE_ERROR_NO_ROOM_TEXT nag). A
-    :data:`DIGEST_WORDS` hit as a PREFIX of the stripped text (reviewer
-    finding, 2026-09-06) — not only an exact match — is excluded up front, so
-    e.g. "แจ้งซ่อมค้าง 204 ยังไม่มาเลย" stays a digest-word message needing a
-    summon rather than silently becoming a ticket; the summoned form is
-    unaffected.
-    """
-    stripped = (text or "").strip()
-    if (
-        any(stripped.startswith(word) for word in DIGEST_WORDS)
-        or not stripped.startswith(REPORT_WORD)
-    ):
-        return None
-    remainder = stripped[len(REPORT_WORD):].strip()
-    if any(phrase in remainder for phrase in BARE_REPORT_SKIP_PHRASES):
-        return None
-    if isinstance(parse_report(remainder), ParseError):
-        return None
-    return remainder
-
-
-# ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
 
@@ -784,6 +743,11 @@ class RoutedCommand:
     report_text: str = ""
     order_id: Optional[int] = None
     category: Optional[str] = None
+    # Reply-to-media (2026-09-06): the LINE message id this event QUOTED
+    # (``message.quotedMessageId``), or "" when it was not a reply. Only ever
+    # meaningful on COMMAND_REPORT and COMMAND_ADDPHOTO — see
+    # _create_ticket/_addphoto_with_quote.
+    quoted_message_id: str = ""
     # Resolved once, at route time (handle_event_detail has the db session;
     # by the time a debounced reply fires — up to 45 s later — that session
     # is long closed). identity_known False means NOT_LINKED_TEXT is the
@@ -841,12 +805,6 @@ def route_event(
     chat_key = _chat_key(source)
     event_type = event.get("type")
     reply_token = event.get("replyToken") or ""
-    # Which slot (if any) this event falls in. Groups only: rooms and 1:1
-    # chats have no slot digest at all.
-    slot_ref = (
-        slot_ref_for_event(chat_key, event.get("timestamp"))
-        if source_type == "group" else None
-    )
 
     if event_type == "join":
         # Learn the group id — the ONLY thing this event is good for, and the
@@ -859,6 +817,12 @@ def route_event(
     if event_type == "postback":
         if not chat_key or not reply_token:
             return None
+        if source_type in ("group", "room"):
+            # GROUP/ROOM SOURCES ARE REPORT-ONLY (owner policy 2026-09-06): a
+            # postback from an old confirmation bubble is never turned into a
+            # command there any more — see handle_event_detail for the DEBUG
+            # log this drop produces.
+            return None
         parsed = _parse_postback(event.get("postback"))
         if parsed is None:
             return None
@@ -866,7 +830,7 @@ def route_event(
             chat_key=chat_key, command=parsed.command, reply_token=reply_token,
             quiet_seconds=quiet_seconds_for(source_type),
             event_type="postback", source_type=source_type,
-            slot_ref=slot_ref, user_id=sender_user_id,
+            user_id=sender_user_id,
             order_id=parsed.order_id, category=parsed.category,
         )
 
@@ -875,6 +839,14 @@ def route_event(
     if not chat_key or not reply_token:
         return None
 
+    if source_type in ("group", "room"):
+        # GROUP/ROOM SOURCES ARE REPORT-ONLY (owner policy 2026-09-06): every
+        # message here — text (summoned or bare, any word) or media alike —
+        # is only a candidate for the slot heartbeat (_maybe_file_slot_digest,
+        # driven by handle_event_detail from this same RoutedMessage), never
+        # a command. See handle_event_detail for the DEBUG log this produces.
+        return RoutedMessage(chat_key=chat_key, reply_token=reply_token)
+
     message = event.get("message")
     if not isinstance(message, dict) or message.get("type") != "text":
         # A photo/sticker/anything else is still a message in this chat, so
@@ -882,56 +854,29 @@ def route_event(
         return RoutedMessage(chat_key=chat_key, reply_token=reply_token)
 
     text = message.get("text") or ""
+    # Reply-to-media (2026-09-06): LINE carries the quoted message's id here
+    # when this text event was a reply to an earlier message. "" when it was
+    # not a reply — see RoutedCommand.quoted_message_id.
+    quoted_message_id = message.get("quotedMessageId") or ""
 
-    if source_type == "user":
-        # 1:1. Reads are open but the bot only talks to people it knows; a
-        # stranger gets the onboarding pointer instead of a menu.
-        if not is_known_user(chat_key):
-            return RoutedCommand(
-                chat_key=chat_key, command=COMMAND_ONBOARDING,
-                reply_token=reply_token,
-                quiet_seconds=quiet_seconds_for(source_type),
-                event_type="message", source_type=source_type,
-            )
-        command, report_text, order_id = _word_command(text)
+    # 1:1 only from here (group/room already returned above). Reads are open
+    # but the bot only talks to people it knows; a stranger gets the
+    # onboarding pointer instead of a menu.
+    if not is_known_user(chat_key):
         return RoutedCommand(
-            chat_key=chat_key, command=command,
+            chat_key=chat_key, command=COMMAND_ONBOARDING,
             reply_token=reply_token,
             quiet_seconds=quiet_seconds_for(source_type),
             event_type="message", source_type=source_type,
-            user_id=chat_key, report_text=report_text, order_id=order_id,
         )
-
-    # Group / room: only a summon is a command — EXCEPT a bare แจ้งซ่อม
-    # (owner decision 2026-09-06), gated by the two safeguards in
-    # _bare_group_report. Everything else is staff talking to each other and
-    # is discarded (it may still refresh a pending reply, which needs no
-    # knowledge of what was said).
-    remainder = summon_remainder(text, message)
-    if remainder is None:
-        bare_report_text = _bare_group_report(text)
-        if bare_report_text is None:
-            return RoutedMessage(chat_key=chat_key, reply_token=reply_token)
-        return RoutedCommand(
-            chat_key=chat_key,
-            command=COMMAND_REPORT,
-            reply_token=reply_token,
-            quiet_seconds=quiet_seconds_for(source_type),
-            event_type="message", source_type=source_type,
-            slot_ref=slot_ref, user_id=sender_user_id,
-            report_text=bare_report_text, order_id=None,
-        )
-    command, report_text, order_id = (
-        (COMMAND_PALETTE, "", None) if remainder == "" else _word_command(remainder)
-    )
+    command, report_text, order_id = _word_command(text)
     return RoutedCommand(
-        chat_key=chat_key,
-        command=command,
+        chat_key=chat_key, command=command,
         reply_token=reply_token,
         quiet_seconds=quiet_seconds_for(source_type),
         event_type="message", source_type=source_type,
-        slot_ref=slot_ref, user_id=sender_user_id, report_text=report_text,
-        order_id=order_id,
+        user_id=chat_key, report_text=report_text, order_id=order_id,
+        quoted_message_id=quoted_message_id,
     )
 
 
@@ -1157,23 +1102,114 @@ def render_digest(payload: Optional[Dict], now: Optional[datetime] = None) -> st
     return _fit(lines)
 
 
-def render_slot_digest(slot_id: str, payload: Optional[Dict]) -> Optional[str]:
-    """The slot digest text, or None when there is nothing to post.
+def _feedback_kind_label(kind) -> str:
+    """praise/issue/request -> Thai label; any other kind -> its raw value
+    (guest-feedback contract §15.7: "map any other kind to its raw value")."""
+    if isinstance(kind, str) and kind in FEEDBACK_KIND_LABELS:
+        return FEEDBACK_KIND_LABELS[kind]
+    return str(kind) if kind is not None else ""
 
-    None is the whole of the "housekeeping is dark" rule: a digest somebody
-    ASKED for says "ระบบงานซ่อมยังไม่เชื่อมต่อ ..." (they are owed an answer),
-    but a scheduled post nobody asked for stays silent rather than dropping an
-    error line into HF Family every window. The caller deletes the slot mark
-    when this returns None, so the window re-triggers on the next message.
+
+def _feedback_branch_label(branch) -> str:
+    """hf/hfville -> "HF"/"HF Ville" (matches guest-feedback's own
+    src/shared/locations.ts branchShort); any other value -> itself."""
+    if isinstance(branch, str) and branch in FEEDBACK_BRANCH_LABELS:
+        return FEEDBACK_BRANCH_LABELS[branch]
+    return branch if isinstance(branch, str) else ""
+
+
+def _feedback_short_text(item: Dict) -> str:
+    """The tag words and the guest's own comment, pictographs stripped and
+    capped at :data:`FEEDBACK_LINE_TEXT_MAX_CHARS` — the item's ``tagsTh``
+    (already Thai-labelled by guest-feedback) joined by ", ", plus an
+    optional quoted comment, mirroring guest-feedback's own itemLine
+    (src/server/line.ts) without the branch/location/time it already carries
+    elsewhere in this line."""
+    tags = item.get("tagsTh")
+    tags_text = ", ".join(t for t in tags if isinstance(t, str)) if isinstance(tags, list) else ""
+    comment = item.get("comment")
+    comment_text = comment.strip() if isinstance(comment, str) else ""
+    if tags_text and comment_text:
+        combined = f'{tags_text} — "{comment_text}"'
+    else:
+        combined = tags_text or comment_text
+    combined = strip_pictographs(combined)
+    return combined[:FEEDBACK_LINE_TEXT_MAX_CHARS]
+
+
+def _feedback_item_line(item: Dict) -> str:
+    """'<ด่วน ><kind label> · <branch/room or area> · <short text>' — one
+    pending guest-feedback row (§15.7 rev 3.1 consolidation, 2026-09-06)."""
+    kind_label = _feedback_kind_label(item.get("kind"))
+    branch_label = _feedback_branch_label(item.get("branch"))
+    location = item.get("locationLabelTh")
+    location_text = " ".join(
+        part for part in (branch_label, location if isinstance(location, str) else "") if part
+    )
+    short_text = _feedback_short_text(item)
+    line = " · ".join(part for part in (kind_label, location_text, short_text) if part)
+    return f"ด่วน {line}" if item.get("urgent") else line
+
+
+def render_feedback_section(payload: Optional[Dict]) -> Optional[str]:
+    """Section (b) of the report — 'ความคิดเห็นลูกค้า (n รายการ)' plus one line
+    per pending item, capped at :data:`FEEDBACK_SECTION_LINE_CAP` lines then
+    'และอีก m รายการ' — or None when there is nothing to show: guest-feedback
+    dark/unreachable (``payload`` not a dict) or reachable with zero pending.
+    None is a real answer here, not a miss: :func:`render_slot_digest` omits
+    the section entirely on it (a scheduled report must not carry a "none"
+    line), while :func:`render_requests` (the 1:1 preview) maps it to its own
+    fixed unavailable/none text instead.
+    """
+    if not isinstance(payload, dict):
+        return None
+    count = _as_int(payload.get("count"))
+    if count <= 0:
+        return None
+    raw_items = payload.get("items")
+    items = [item for item in raw_items if isinstance(item, dict)] if isinstance(raw_items, list) else []
+    shown = items[:FEEDBACK_SECTION_LINE_CAP]
+    lines = [FEEDBACK_SECTION_HEADER_FMT.format(n=count)]
+    lines.extend(_feedback_item_line(item) for item in shown)
+    remaining = count - len(shown)
+    if remaining > 0:
+        lines.append(f"และอีก {remaining} รายการ")
+    return "\n".join(lines)
+
+
+def render_slot_digest(
+    slot_id: str, payload: Optional[Dict], feedback_payload: Optional[Dict] = None,
+) -> Optional[str]:
+    """The slot REPORT text (consolidated 2026-09-06), or None when there is
+    nothing to post.
+
+    Two sections, either or both present: (a) the existing maintenance
+    digest, unchanged text, under the "สรุปงานซ่อมค้างประจำรอบ..." line — only
+    when housekeeping actually answered; (b) :func:`render_feedback_section`
+    — only when guest-feedback has something pending. Housekeeping dark AND
+    feedback dark/empty is the only case with nothing at all to say: None is
+    the whole of that rule — a digest somebody ASKED for says
+    "ระบบงานซ่อมยังไม่เชื่อมต่อ ..." (they are owed an answer), but a scheduled
+    post nobody asked for stays silent rather than dropping an error line
+    into HF Family every window; a scheduled post that DOES have real content
+    (feedback pending even while housekeeping is dark) must still go out,
+    with only the section that has something to say. The caller deletes the
+    slot mark when this returns None, so the window re-triggers on the next
+    message. The combined text is still capped at LINE's message limit via
+    :func:`_fit`, same as the maintenance section always was on its own.
     """
     slot = SLOTS_BY_ID.get(slot_id or "")
-    if slot is None or not isinstance(payload, dict):
+    if slot is None:
         return None
-    return (
-        SLOT_DIGEST_PREFIX.format(label=slot.label)
-        + "\n\n"
-        + render_digest(payload)
-    )
+    sections: List[str] = []
+    if isinstance(payload, dict):
+        sections.append(SLOT_DIGEST_PREFIX.format(label=slot.label) + "\n\n" + render_digest(payload))
+    feedback_section = render_feedback_section(feedback_payload)
+    if feedback_section is not None:
+        sections.append(feedback_section)
+    if not sections:
+        return None
+    return _fit("\n\n".join(sections).split("\n"))
 
 
 # ---------------------------------------------------------------------------
@@ -1235,6 +1271,7 @@ CLAIMED_UPLOAD_WAIT_SECONDS = 10.0
 class _BufferedPhoto:
     message_id: str
     at: float  # the injectable clock's reading when it arrived
+    kind: str = "image"  # "image" | "video" (2026-09-06)
 
 
 class PhotoBuffer:
@@ -1264,22 +1301,34 @@ class PhotoBuffer:
         self._store: Dict[Tuple[str, str], List[_BufferedPhoto]] = {}
         self._lock = threading.Lock()
 
-    def add(self, chat_key: str, user_id: str, message_id: str) -> None:
+    def add(self, chat_key: str, user_id: str, message_id: str, kind: str = "image") -> None:
         key = (chat_key, user_id)
         with self._lock:
             now = self._clock()
             fresh = [p for p in self._store.get(key, []) if now - p.at <= self._ttl_seconds]
-            fresh.append(_BufferedPhoto(message_id=message_id, at=now))
+            fresh.append(_BufferedPhoto(message_id=message_id, at=now, kind=kind))
             self._store[key] = fresh
 
     def claim(self, chat_key: str, user_id: str,
               max_count: int = PHOTO_BUFFER_MAX_CLAIM) -> List[str]:
-        """Pop up to ``max_count`` still-fresh buffered ids, oldest first."""
+        """Pop up to ``max_count`` still-fresh buffered ids, oldest first.
+
+        Ids only — see :meth:`claim_detailed` for the (id, kind) pairs a
+        caller that needs to tell photos from videos apart (ticket creation)
+        should use instead. Kept exactly as it was (plain id list) so every
+        caller and test that only ever cared about ids is unaffected.
+        """
+        return [message_id for message_id, _kind in self.claim_detailed(chat_key, user_id, max_count)]
+
+    def claim_detailed(self, chat_key: str, user_id: str,
+                        max_count: int = PHOTO_BUFFER_MAX_CLAIM) -> List[Tuple[str, str]]:
+        """Pop up to ``max_count`` still-fresh buffered (id, kind) pairs,
+        oldest first — kind is "image" or "video"."""
         key = (chat_key, user_id)
         with self._lock:
             now = self._clock()
             fresh = [p for p in self._store.pop(key, []) if now - p.at <= self._ttl_seconds]
-            return [p.message_id for p in fresh[:max_count]]
+            return [(p.message_id, p.kind) for p in fresh[:max_count]]
 
 
 @dataclass
@@ -1395,12 +1444,48 @@ def _postback_button(label: str, data: str, style: str = "secondary") -> Dict:
     }
 
 
-def build_confirmation_bubble(order: Dict, photo_count: int) -> Dict:
+def _media_counts_text(photo_count: int, video_count: int) -> str:
+    """'รูป k รูป · วิดีโอ v คลิป' — the settled counts row shared by the
+    งานของฉัน/สถานะ bubble (:func:`_mine_bubble`) and, via
+    :func:`_claimed_photo_line`, the confirmation bubble once a claimed
+    batch's uploads have resolved. Omits a zero part; 'ยังไม่มีรูป' when both
+    are zero (video support, 2026-09-06 — images and videos are counted
+    separately everywhere)."""
+    parts: List[str] = []
+    if photo_count > 0:
+        parts.append(f"รูป {photo_count} รูป")
+    if video_count > 0:
+        parts.append(f"วิดีโอ {video_count} คลิป")
+    return " · ".join(parts) if parts else "ยังไม่มีรูป"
+
+
+def _claiming_line(photo_count: int, video_count: int) -> str:
+    """The confirmation bubble's 'รูป' row for a batch CLAIMED but not yet
+    uploaded — 'กำลังแนบ 2 รูป', 'กำลังแนบ 1 คลิป', 'กำลังแนบ 2 รูป 1 คลิป', or
+    'ยังไม่มีรูป' when nothing was claimed."""
+    parts: List[str] = []
+    if photo_count > 0:
+        parts.append(f"{photo_count} รูป")
+    if video_count > 0:
+        parts.append(f"{video_count} คลิป")
+    return f"กำลังแนบ {' '.join(parts)}" if parts else "ยังไม่มีรูป"
+
+
+def _media_row_label(video_count: int) -> str:
+    """The bubble/mine row label (cleanup, 2026-09-06 review): 'ไฟล์' when any
+    video is present, else the original 'รูป'."""
+    return "ไฟล์" if video_count > 0 else "รูป"
+
+
+def build_confirmation_bubble(order: Dict, photo_count: int, video_count: int = 0) -> Dict:
     """The 'รับเรื่องแล้ว #N' Flex bubble, for a create OR any later edit.
 
     ``order`` is an OrderView (housekeeping already computed propertyLabel/
     location/categoryLabel — this function never re-derives them). Human text
     fields are stripped of pictographs on the way in, same as the digest.
+    ``photo_count``/``video_count`` are the just-CLAIMED (not yet uploaded)
+    counts at ticket creation; see :func:`_patch_confirmation_photo_line` for
+    the settled-outcome rewrite once those uploads resolve.
     """
     order_id = order.get("id")
     title = f"รับเรื่องแล้ว #{order_id}"
@@ -1408,7 +1493,7 @@ def build_confirmation_bubble(order: Dict, photo_count: int) -> Dict:
     urgency_text = "ด่วน" if urgent else "ปกติ"
     toggle_label = "ไม่ด่วน" if urgent else "ด่วน"
     detail = strip_pictographs(order.get("detailText")) or "-"
-    photo_line = f"กำลังแนบ {photo_count} รูป" if photo_count > 0 else "ยังไม่มีรูป"
+    photo_line = _claiming_line(photo_count, video_count)
 
     return {
         "type": "flex",
@@ -1431,7 +1516,7 @@ def build_confirmation_bubble(order: Dict, photo_count: int) -> Dict:
                     },
                     _flex_row("รายละเอียด", detail),
                     _flex_row("ผู้แจ้ง", strip_pictographs(order.get("reporterName"))),
-                    _flex_row("รูป", photo_line),
+                    _flex_row(_media_row_label(video_count), photo_line),
                 ],
             },
             "footer": {
@@ -1448,37 +1533,62 @@ def build_confirmation_bubble(order: Dict, photo_count: int) -> Dict:
     }
 
 
-def _claimed_photo_line(completed: int, failed: int, still_running: int) -> str:
+def _claimed_photo_line(
+    photo_completed: int, photo_failed: int, photo_running: int,
+    video_completed: int = 0, video_failed: int = 0, video_running: int = 0,
+) -> str:
     """The confirmation bubble's 'รูป' row once the claimed batch's uploads
     have resolved (rule B) — completed/still-running/failed counts as of the
-    bounded CLAIMED_UPLOAD_WAIT_SECONDS wait in AsyncioBotDispatcher._reply.
-    build_confirmation_bubble's OWN "กำลังแนบ N รูป" (claimed-but-not-yet-
+    bounded CLAIMED_UPLOAD_WAIT_SECONDS wait in AsyncioBotDispatcher._reply,
+    photos and videos counted separately (video support, 2026-09-06).
+    build_confirmation_bubble's OWN "กำลังแนบ..." (claimed-but-not-yet-
     uploaded) text is what every SYNCHRONOUS caller of build_reply/
     build_messages still sees — this only ever runs from that async wait, and
-    only patches the message in place afterwards.
+    only patches the message in place afterwards. A still-running count that
+    is PURELY photos keeps the original "...N รูป" wording (unchanged from
+    before video support); any video in the mix says "...N ไฟล์".
     """
     parts: List[str] = []
-    if completed > 0:
-        parts.append(f"รูป {completed} รูป")
+    if photo_completed > 0:
+        parts.append(f"รูป {photo_completed} รูป")
+    if video_completed > 0:
+        parts.append(f"วิดีโอ {video_completed} คลิป")
+    still_running = photo_running + video_running
     if still_running > 0:
-        parts.append(f"กำลังแนบอีก {still_running} รูป")
-    if failed > 0:
-        parts.append(f"แนบไม่สำเร็จ {failed} รูป")
+        if photo_running > 0 and video_running == 0:
+            parts.append(f"กำลังแนบอีก {photo_running} รูป")
+        else:
+            parts.append(f"กำลังแนบอีก {still_running} ไฟล์")
+    if photo_failed > 0:
+        parts.append(f"แนบไม่สำเร็จ {photo_failed} รูป")
+    if video_failed > 0:
+        parts.append(f"แนบวิดีโอไม่สำเร็จ {video_failed} คลิป")
     return " ".join(parts) if parts else "ยังไม่มีรูป"
 
 
 def _patch_confirmation_photo_line(
-    message: Dict, completed: int, failed: int, still_running: int,
+    message: Dict,
+    photo_completed: int, photo_failed: int, photo_running: int,
+    video_completed: int = 0, video_failed: int = 0, video_running: int = 0,
 ) -> None:
     """Rewrite a just-built confirmation bubble's 'รูป' row in place (rule B).
 
     The row is always the last body item build_confirmation_bubble lays down
-    (see its ``_flex_row("รูป", photo_line)`` call) — defensive about shape
-    regardless, since a malformed message here must never crash a reply.
+    (see its ``_flex_row(_media_row_label(...), photo_line)`` call) —
+    defensive about shape regardless, since a malformed message here must
+    never crash a reply. The row's LABEL is also rewritten here (not only its
+    value): a quoted attachment's kind is not known until this settles, so a
+    quote that turns out to be a video must still end up under 'ไฟล์', not
+    the 'รูป' label the claiming-time render guessed.
     """
     try:
         rows = message["contents"]["body"]["contents"]
-        rows[-1]["contents"][1]["text"] = _claimed_photo_line(completed, failed, still_running)
+        video_seen = video_completed + video_failed + video_running > 0
+        rows[-1]["contents"][0]["text"] = _media_row_label(1 if video_seen else 0)
+        rows[-1]["contents"][1]["text"] = _claimed_photo_line(
+            photo_completed, photo_failed, photo_running,
+            video_completed, video_failed, video_running,
+        )
     except (KeyError, IndexError, TypeError):
         pass
 
@@ -1486,18 +1596,41 @@ def _patch_confirmation_photo_line(
 def _render_photo_ack_text(order_id, info: Dict) -> Optional[str]:
     """One photo-ack text object's content for one order (rule A), or None
     when there is nothing to say (should not happen — an entry is only ever
-    created alongside a success or a failure)."""
-    attached = _as_int(info.get("attached"))
-    failed = _as_int(info.get("failed"))
+    created alongside a success, a failure or a specific video note).
+
+    Photos and videos are counted (and worded) separately, 2026-09-06:
+    ``attached``/``failed`` stay the PHOTO counts (unchanged keys, so a
+    photo-only ack's dict shape is exactly what it always was);
+    ``video_attached``/``video_failed`` are the video counts. ``total`` —
+    photoCount + videoCount from the most recent upload response — is
+    rendered once, as "(รวม T ไฟล์)", after whichever attach line(s) apply.
+    ``notes`` carries specific, already-Thai one-off lines (a video's
+    transcode-failed/oversize reason, or the "still processing" line filed at
+    the VIDEO_ACK_DEADLINE_SECONDS mark) verbatim.
+    """
+    photo_attached = _as_int(info.get("attached"))
+    photo_failed = _as_int(info.get("failed"))
+    video_attached = _as_int(info.get("video_attached"))
+    video_failed = _as_int(info.get("video_failed"))
     total = info.get("total")
     lines: List[str] = []
-    if attached > 0:
+
+    attach_parts: List[str] = []
+    if photo_attached > 0:
+        attach_parts.append(f"แนบรูปเข้า #{order_id} แล้ว {photo_attached} รูป")
+    if video_attached > 0:
+        attach_parts.append(f"แนบวิดีโอเข้า #{order_id} แล้ว {video_attached} คลิป")
+    if attach_parts:
+        line = " ".join(attach_parts)
         if isinstance(total, int) and total > 0:
-            lines.append(f"แนบรูปเข้า #{order_id} แล้ว {attached} รูป (รวม {total} รูป)")
-        else:
-            lines.append(f"แนบรูปเข้า #{order_id} แล้ว {attached} รูป")
-    if failed > 0:
-        lines.append(f"แนบรูปไม่สำเร็จ {failed} รูป ลองส่งใหม่อีกครั้งค่ะ (#{order_id})")
+            line += f" (รวม {total} ไฟล์)"
+        lines.append(line)
+
+    if photo_failed > 0:
+        lines.append(f"แนบรูปไม่สำเร็จ {photo_failed} รูป ลองส่งใหม่อีกครั้งค่ะ (#{order_id})")
+    if video_failed > 0:
+        lines.append(f"แนบวิดีโอไม่สำเร็จ {video_failed} คลิป ลองส่งใหม่อีกครั้งค่ะ (#{order_id})")
+    lines.extend(info.get("notes") or [])
     return "\n".join(lines) if lines else None
 
 
@@ -1550,6 +1683,17 @@ class PendingUpload:
     message_ids: List[str]
     actor_badge: str = ""
     message_index: Optional[int] = None
+    # (2026-09-06) message_id -> "image" | "video" | "quoted" ("quoted": a
+    # reply-to-media id whose kind is not known until its content is fetched
+    # — see AsyncioBotDispatcher._do_upload). Missing keys default to
+    # "image" — every existing caller that never populates this field
+    # (nothing but plain buffered photos) behaves exactly as before.
+    kinds: Dict[str, str] = field(default_factory=dict)
+    # True (default, every existing caller): message_index names a Flex
+    # confirmation bubble, patched via _patch_confirmation_photo_line. False:
+    # a plain text ack (เพิ่มรูป-with-quote, 2026-09-06 — see
+    # _addphoto_with_quote), patched via _patch_addphoto_ack_text instead.
+    is_bubble: bool = True
 
 
 def _create_ticket(action: "RoutedCommand") -> Tuple[List[Dict], Optional[PendingUpload]]:
@@ -1581,17 +1725,37 @@ def _create_ticket(action: "RoutedCommand") -> Tuple[List[Dict], Optional[Pendin
     order = result.get("order") or {}
     order_id = order.get("id")
     claimed: List[str] = []
+    kinds: Dict[str, str] = {}
+    photo_count = 0
+    video_count = 0
     upload: Optional[PendingUpload] = None
     if isinstance(order_id, int):
-        claimed = get_photo_buffer().claim(action.chat_key, action.user_id)
+        for message_id, kind in get_photo_buffer().claim_detailed(action.chat_key, action.user_id):
+            claimed.append(message_id)
+            kinds[message_id] = kind
+            if kind == "video":
+                video_count += 1
+            else:
+                photo_count += 1
+        if action.quoted_message_id:
+            # Reply-to-media (2026-09-06): whoever originally sent the
+            # quoted message, attached to THIS new ticket. Its kind is not
+            # known until fetched — counted as a photo for this pre-upload
+            # display only; the bubble is repatched with the real kind once
+            # the bounded wait resolves.
+            claimed.append(action.quoted_message_id)
+            kinds[action.quoted_message_id] = "quoted"
+            photo_count += 1
         get_attach_windows().open(action.chat_key, action.user_id, order_id)
         logger.info(
             "staff-bot ticket created: chat=%s order=%s photos=%s",
             action.chat_key, order_id, len(claimed),
         )
         if claimed:
-            upload = PendingUpload(order_id=order_id, message_ids=claimed, actor_badge=action.badge)
-    return [build_confirmation_bubble(order, photo_count=len(claimed))], upload
+            upload = PendingUpload(
+                order_id=order_id, message_ids=claimed, actor_badge=action.badge, kinds=kinds,
+            )
+    return [build_confirmation_bubble(order, photo_count=photo_count, video_count=video_count)], upload
 
 
 def _cancel_ticket(action: "RoutedCommand") -> Tuple[List[Dict], None]:
@@ -1624,7 +1788,11 @@ def _patch_ticket(action: "RoutedCommand", order: Dict) -> Tuple[List[Dict], Non
         return [{"type": "text", "text": result["error"]}], None
     logger.info("staff-bot ticket edited: order=%s field=%s", action.order_id, field_name)
     new_order = result.get("order") or {}
-    bubble = build_confirmation_bubble(new_order, photo_count=_as_int(new_order.get("photoCount")))
+    bubble = build_confirmation_bubble(
+        new_order,
+        photo_count=_as_int(new_order.get("photoCount")),
+        video_count=_as_int(new_order.get("videoCount")),
+    )
     return [bubble], None
 
 
@@ -1648,7 +1816,12 @@ def _mine_bubble(order: Dict) -> Dict:
                 _flex_row("หมวด", strip_pictographs(order.get("categoryLabel"))),
                 _flex_row("สถานะ", strip_pictographs(order.get("statusLabel"))),
                 _flex_row("อายุ", _age_text(_as_int(order.get("ageDays")))),
-                _flex_row("รูป", str(_as_int(order.get("photoCount")))),
+                _flex_row(
+                    _media_row_label(_as_int(order.get("videoCount"))),
+                    _media_counts_text(
+                        _as_int(order.get("photoCount")), _as_int(order.get("videoCount")),
+                    ),
+                ),
             ],
         },
         "footer": {
@@ -1733,11 +1906,60 @@ def _build_ticket_messages(action: "RoutedCommand") -> Tuple[List[Dict], Optiona
     if action.command == COMMAND_FIXCAT:
         return [build_category_chip_message(action.order_id)], None
     if action.command == COMMAND_ADDPHOTO:
+        if action.quoted_message_id:
+            return _addphoto_with_quote(action)
         get_attach_windows().open(action.chat_key, action.user_id, action.order_id)
         return [{"type": "text", "text": ADDPHOTO_PROMPT_FMT.format(id=action.order_id)}], None
     if action.command == COMMAND_CANCEL:
         return _cancel_ticket(action)
     return _patch_ticket(action, order)  # setcat / toggleurgent / switchprop
+
+
+def _addphoto_with_quote(action: "RoutedCommand") -> Tuple[List[Dict], Optional[PendingUpload]]:
+    """เพิ่มรูป #N as a REPLY to an earlier message (reply-to-media,
+    2026-09-06): the quoted media is fetched and attached the same way a
+    claimed-at-creation batch is (rule B) — a bounded CLAIMED_UPLOAD_WAIT_SECONDS
+    wait, then the reply is patched with the real ack line. Authorization
+    (reporter or `reception`) is already checked by the caller before this
+    runs, same as every other order-naming ticket command.
+    """
+    placeholder = {"type": "text", "text": ADDPHOTO_PROMPT_FMT.format(id=action.order_id)}
+    upload = PendingUpload(
+        order_id=action.order_id,
+        message_ids=[action.quoted_message_id],
+        actor_badge=action.badge,
+        kinds={action.quoted_message_id: "quoted"},
+        message_index=0,
+        is_bubble=False,
+    )
+    return [placeholder], upload
+
+
+def _patch_addphoto_ack_text(
+    message: Dict, order_id,
+    photo_completed: int, photo_failed: int, photo_running: int,
+    video_completed: int = 0, video_failed: int = 0, video_running: int = 0,
+) -> None:
+    """Rewrite เพิ่มรูป-with-quote's placeholder text with the real outcome,
+    once its single quoted attachment's bounded wait resolves. Reuses
+    :func:`_render_photo_ack_text`'s wording (the same "แนบรูปเข้า/แนบวิดีโอเข้า/
+    แนบ...ไม่สำเร็จ" lines rule A uses) so a quoted attach and an in-window
+    attach read identically. Still running past the bounded wait (should be
+    rare — a single item almost always resolves well inside
+    CLAIMED_UPLOAD_WAIT_SECONDS) leaves the original prompt line in place
+    rather than showing nothing.
+    """
+    if photo_completed > 0 or video_completed > 0 or photo_failed > 0 or video_failed > 0:
+        text = _render_photo_ack_text(order_id, {
+            "attached": photo_completed, "failed": photo_failed,
+            "video_attached": video_completed, "video_failed": video_failed,
+            "total": None,
+        })
+        if text:
+            try:
+                message["text"] = text
+            except TypeError:
+                pass
 
 
 @dataclass(frozen=True)
@@ -1762,22 +1984,25 @@ class BuiltReply:
 
 
 def render_requests(payload: Optional[Dict]) -> str:
-    """The ความคิดเห็นลูกค้า text for the guest-feedback pending JSON
-    (praise, issue and request alike — the queue is kind-agnostic).
+    """The 1:1 ความคิดเห็นลูกค้า PREVIEW: the same report-style section (b)
+    text (header + lines) :func:`render_slot_digest` carries in a group,
+    built from guest-feedback's pending JSON (praise, issue and request
+    alike — the queue is kind-agnostic) rather than guest-feedback's own
+    chat-style ``text`` (2026-09-06 consolidation).
 
-    ``None`` (either env unset, timeout, non-2xx, malformed body — see
+    Not a dict (either env unset, timeout, non-2xx, malformed body — see
     guest_feedback_client.fetch_pending) renders the one fixed Thai line:
     staff are told the read failed, never given a status code and never left
     guessing at silence. A reachable read with nothing waiting gets its own
-    plain line; otherwise guest-feedback's own ``text`` (already formatted,
-    already Thai) is printed as-is — this bot does not reshape it.
+    plain line. This is a PREVIEW — the caller never confirms delivery for it
+    (see AsyncioBotDispatcher._reply's group/room-only confirm gate).
     """
-    if payload is None:
+    if not isinstance(payload, dict):
         return REQUESTS_UNAVAILABLE_TEXT
     if _as_int(payload.get("count")) <= 0:
         return REQUESTS_NONE_TEXT
-    text = payload.get("text")
-    return text if isinstance(text, str) else REQUESTS_UNAVAILABLE_TEXT
+    section = render_feedback_section(payload)
+    return section if section is not None else REQUESTS_UNAVAILABLE_TEXT
 
 
 def _request_ids(payload: Optional[Dict]) -> List[str]:
@@ -1848,13 +2073,19 @@ def build_reply(
             payload = housekeeping_client.fetch_digest()
             digest_available = isinstance(payload, dict)
             if COMMAND_SLOT_DIGEST in wanted:
-                text = render_slot_digest(slot_id, payload)
+                # Guest feedback consolidated into the slot report
+                # (2026-09-06): fetched only for the SLOT digest, never for a
+                # plain typed/tapped งานค้าง — see render_slot_digest.
+                feedback_payload = guest_feedback_client.fetch_pending()
+                text = render_slot_digest(slot_id, payload, feedback_payload)
                 if text is not None:
                     messages.append({"type": "text", "text": text})
                     slot_included = True
+                    if confirmed_request_ids is not None:
+                        confirmed_request_ids.extend(_request_ids(feedback_payload))
                     continue
                 if COMMAND_DIGEST not in wanted:
-                    continue  # scheduled + dark: say nothing at all
+                    continue  # scheduled + nothing at all to say: stay silent
             messages.append({"type": "text", "text": render_digest(payload)})
         elif command == COMMAND_REQUESTS and command in wanted:
             payload = guest_feedback_client.fetch_pending()
@@ -2004,23 +2235,35 @@ class ReplyDebouncer:
         chat_key: str,
         reply_token: str,
         order_id: int,
+        kind: str = "image",
         attached: int = 0,
         failed: int = 0,
         total: Optional[int] = None,
+        note: Optional[str] = None,
         quiet_seconds: float = PHOTO_ACK_QUIET_SECONDS,
     ) -> PendingReply:
-        """Record one photo's finished upload for the ack line (rule A,
-        2026-09-06): create or MERGE INTO this chat's pending reply exactly
-        like :meth:`note_command` — same impatient-quiet-wins rule (a command
-        arriving meanwhile wins the minimum quiet and the ack rides along in
-        that reply), same "newest token wins" rule (so the LAST photo to
-        finish in a burst is what actually gets spent).
+        """Record one photo (or video, 2026-09-06)'s finished upload for the
+        ack line (rule A): create or MERGE INTO this chat's pending reply
+        exactly like :meth:`note_command` — same impatient-quiet-wins rule (a
+        command arriving meanwhile wins the minimum quiet and the ack rides
+        along in that reply), same "newest token wins" rule (so the LAST
+        photo to finish in a burst is what actually gets spent).
 
-        Counts accumulate per order id across every photo that finishes while
-        this reply is still pending (two photos in one burst both call this
-        once each); ``total`` — the upload's own ``photoCount`` — overwrites
-        rather than accumulates, so it always reflects the most recent known
-        total, per the owner's "total from the last upload" rule.
+        Counts accumulate per order id across every photo/video that finishes
+        while this reply is still pending; ``total`` — the upload's own
+        photoCount + videoCount — overwrites rather than accumulates, so it
+        always reflects the most recent known total, per the owner's "total
+        from the last upload" rule.
+
+        ``kind="image"`` (the default, and every call site before video
+        support) increments the original ``attached``/``failed`` keys
+        UNCHANGED — a photo-only order's entry is exactly the same dict shape
+        it always was. ``kind="video"`` increments separate
+        ``video_attached``/``video_failed`` keys instead, added to the entry
+        only once a video actually touches it. ``note`` (a video's specific
+        transcode-failed/oversize/still-processing line, already Thai and
+        already formatted) is appended verbatim rather than counted, so it
+        renders as its own line instead of inflating a generic count.
         """
         now = self._clock()
         pending = self._pending.get(chat_key)
@@ -2034,10 +2277,16 @@ class ReplyDebouncer:
         pending.last_at = now
         pending.quiet_seconds = min(pending.quiet_seconds, quiet_seconds)
         entry = pending.photo_acks.setdefault(order_id, {"attached": 0, "failed": 0, "total": None})
-        entry["attached"] += attached
-        entry["failed"] += failed
+        if kind == "video":
+            entry["video_attached"] = entry.get("video_attached", 0) + attached
+            entry["video_failed"] = entry.get("video_failed", 0) + failed
+        else:
+            entry["attached"] += attached
+            entry["failed"] += failed
         if total is not None:
             entry["total"] = total
+        if note:
+            entry.setdefault("notes", []).append(note)
         self._notify()
         return pending
 
@@ -2309,12 +2558,13 @@ class AsyncioBotDispatcher:
 
     def spawn_photo_upload(
         self, order_id: int, message_id: str, actor_badge: str,
-        chat_key: str = "", reply_token: str = "",
+        chat_key: str = "", reply_token: str = "", kind: str = "image",
     ) -> None:
-        """Download + upload ONE claimed/attached photo, off the request path.
+        """Download + upload ONE claimed/attached photo (or video, 2026-09-06),
+        off the request path.
 
-        Used for a photo that arrives while an attach window is already open
-        (silent attach, see ``_maybe_handle_photo``) — ``chat_key`` and
+        Used for a photo/video that arrives while an attach window is already
+        open (silent attach, see ``_maybe_handle_photo``) — ``chat_key`` and
         ``reply_token`` there are the photo EVENT's own (rule A, 2026-09-06):
         once the upload resolves, an ack is filed with THAT token via
         :meth:`ReplyDebouncer.note_photo_ack`. The claimed-at-creation batch
@@ -2322,6 +2572,10 @@ class AsyncioBotDispatcher:
         ``_await_claimed_uploads``, which waits on it before the confirmation
         bubble is sent, so a buffered photo never had a token of its own to
         ack with in the first place.
+
+        ``kind="video"`` routes through :meth:`_upload_video_with_deadline`
+        instead of the plain path, because a video's LINE-side transcode can
+        outlive this event's reply token (VIDEO_ACK_DEADLINE_SECONDS).
 
         A missing event loop (a script, a sync test) is a silent no-op: there
         is nowhere to run this in the background, and a photo that never got
@@ -2332,94 +2586,295 @@ class AsyncioBotDispatcher:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        task = loop.create_task(
-            self._upload_one_photo(order_id, message_id, actor_badge, chat_key, reply_token)
-        )
+        if kind == "video":
+            task = loop.create_task(
+                self._upload_video_with_deadline(order_id, message_id, actor_badge, chat_key, reply_token)
+            )
+        else:
+            task = loop.create_task(
+                self._upload_one_photo(order_id, message_id, actor_badge, chat_key, reply_token, kind=kind)
+            )
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
-    async def _do_upload(self, order_id: int, message_id: str, actor_badge: str) -> Optional[Dict]:
-        """Download + upload ONE photo. The upload's own JSON body (carrying
-        ``photoCount``) on success; None on any failure (download or
-        upload) — never raises, so one bad photo cannot take the loop or a
-        pending reply down with it."""
-        fetched = await asyncio.to_thread(staff_oa_service.fetch_message_content, message_id)
-        if fetched is None:
-            logger.warning("staff-bot photo failed: order=%s reason=download", order_id)
-            return None
-        data, content_type = fetched
-        mime = content_type or "image/jpeg"
+    async def _do_upload(
+        self, order_id: int, message_id: str, actor_badge: str, kind: str = "image",
+    ) -> Tuple[Optional[Dict], Optional[str], str]:
+        """Download + upload ONE photo/video. Returns ``(result, reason,
+        resolved_kind)``:
+
+        - ``result`` — the upload's own JSON body (carrying ``photoCount``/
+          ``videoCount``) on success; None on any failure.
+        - ``reason`` — None on success, else one of "download", "upload",
+          "transcode" (video only) or "oversize" (video only).
+        - ``resolved_kind`` — "image" or "video". For ``kind="image"``/
+          ``"video"`` this just echoes back; for ``kind="quoted"``
+          (reply-to-media, 2026-09-06 — a quoted message whose type is not
+          known ahead of time) it is determined from the fetched
+          Content-Type, defaulting to "image" when that cannot be told
+          either (an unrecognised/failed fetch — counted as a plain photo
+          failure, same wording as any other failed attach).
+
+        Never raises, so one bad photo/video cannot take the loop or a
+        pending reply down with it.
+
+        VIDEO (kind="video"): LINE must finish server-side transcoding before
+        the bytes are downloadable at all, so this waits for that first
+        (staff_oa_service.wait_for_transcoding, bounded by
+        VIDEO_TRANSCODE_WAIT_SECONDS), then downloads capped at
+        VIDEO_BYTES_MAX. Deviation from a literal reading of the spec: LINE's
+        transcoding-status endpoint is only meaningful for a message LINE
+        itself flagged as needing transcoding, so a QUOTED message (kind=
+        "quoted", where the type is not known up front) is fetched directly
+        without a transcoding wait — if LINE has not finished processing it
+        yet, the plain fetch fails and the attach is counted as a generic
+        failure rather than the specific "still processing" line. This is
+        documented in the deviations list.
+        """
+        if kind == "video":
+            transcoded = await asyncio.to_thread(
+                staff_oa_service.wait_for_transcoding, message_id, VIDEO_TRANSCODE_WAIT_SECONDS,
+            )
+            if not transcoded:
+                logger.warning("staff-bot photo failed: order=%s reason=transcode", order_id)
+                return None, "transcode", "video"
+            try:
+                fetched = await asyncio.to_thread(
+                    staff_oa_service.fetch_message_content, message_id, VIDEO_BYTES_MAX,
+                )
+            except staff_oa_service.ContentTooLarge:
+                logger.warning("staff-bot photo failed: order=%s reason=oversize", order_id)
+                return None, "oversize", "video"
+            if fetched is None:
+                logger.warning("staff-bot photo failed: order=%s reason=download", order_id)
+                return None, "download", "video"
+            data, content_type = fetched
+            mime = content_type if content_type in ("video/mp4", "video/quicktime") else "video/mp4"
+            resolved_kind = "video"
+        elif kind == "quoted":
+            # Cleanup (2026-09-06 review): a quoted message's kind is not
+            # known ahead of the fetch, so it is fetched capped at
+            # VIDEO_BYTES_MAX — never unbounded — same as a declared video.
+            try:
+                fetched = await asyncio.to_thread(
+                    staff_oa_service.fetch_message_content, message_id, VIDEO_BYTES_MAX,
+                )
+            except staff_oa_service.ContentTooLarge:
+                logger.warning("staff-bot photo failed: order=%s reason=oversize", order_id)
+                return None, "oversize", "video"
+            if fetched is None:
+                logger.warning("staff-bot photo failed: order=%s reason=download", order_id)
+                return None, "download", "image"
+            data, content_type = fetched
+            content_type = content_type or ""
+            if content_type.startswith("video/"):
+                mime = content_type if content_type in ("video/mp4", "video/quicktime") else "video/mp4"
+                resolved_kind = "video"
+            elif content_type.startswith("image/"):
+                mime = content_type
+                resolved_kind = "image"
+            else:
+                # Quoted content that is neither image/* nor video/* (a
+                # quoted text message, LINE answering 4xx, etc.) — a plain
+                # failed attach, same as any other download miss.
+                logger.warning("staff-bot photo failed: order=%s reason=download", order_id)
+                return None, "download", "image"
+        else:
+            fetched = await asyncio.to_thread(staff_oa_service.fetch_message_content, message_id)
+            if fetched is None:
+                logger.warning("staff-bot photo failed: order=%s reason=download", order_id)
+                return None, "download", "image"
+            data, content_type = fetched
+            mime = content_type or "image/jpeg"
+            resolved_kind = "image"
+
         result = await asyncio.to_thread(
             housekeeping_client.upload_photo, order_id, data, mime, actor_badge
         )
         if result is None or "error" in result:
             logger.warning("staff-bot photo failed: order=%s reason=upload", order_id)
-            return None
+            return None, "upload", resolved_kind
         logger.info("staff-bot photo attached: order=%s", order_id)
-        return result
+        return result, None, resolved_kind
 
     async def _upload_one_photo(
         self, order_id: int, message_id: str, actor_badge: str,
-        chat_key: str = "", reply_token: str = "",
-    ) -> bool:
-        """One attach-window photo (rule A): upload it, then — since this
-        runs as an awaited-to_thread coroutine on a loop TASK, never on a
-        worker thread — file its ack directly, on the event loop, exactly
-        like noting any other command. Returns success, for callers (the
-        claimed batch's bounded wait) that need to know the outcome without
-        an ack ever being filed for it."""
-        result = await self._do_upload(order_id, message_id, actor_badge)
+        chat_key: str = "", reply_token: str = "", kind: str = "image",
+    ) -> Tuple[bool, str]:
+        """One attach-window photo/video (rule A) OR one claimed-batch item
+        (rule B, called without chat_key/reply_token — no ack of its own):
+        upload it, then — since this runs as an awaited-to_thread coroutine
+        on a loop TASK, never on a worker thread — file its ack directly, on
+        the event loop, exactly like noting any other command. Returns
+        ``(success, resolved_kind)``, for callers (the claimed batch's
+        bounded wait) that need to know the outcome without an ack ever
+        being filed for it.
+
+        A video-specific failure (transcode/oversize) files its own note
+        line instead of the generic count (see note_photo_ack); any other
+        video failure ("other" in the spec) counts as a plain video failure,
+        the video-worded parallel of the existing photo failure line — see
+        the deviations list for why this is worded for video rather than
+        reusing the photo string verbatim.
+        """
+        result, reason, resolved_kind = await self._do_upload(order_id, message_id, actor_badge, kind=kind)
         success = result is not None
         if chat_key and reply_token:
-            total = _as_int(result.get("photoCount")) if success and isinstance(result, dict) else None
+            total: Optional[int] = None
+            note: Optional[str] = None
+            failed = 0 if success else 1
+            if success and isinstance(result, dict):
+                total = _as_int(result.get("photoCount")) + _as_int(result.get("videoCount"))
+            elif not success and resolved_kind == "video":
+                if reason == "transcode":
+                    note = VIDEO_TRANSCODE_FAILED_FMT.format(id=order_id)
+                    failed = 0
+                elif reason == "oversize":
+                    note = VIDEO_OVERSIZE_FMT.format(id=order_id)
+                    failed = 0
             self.debouncer.note_photo_ack(
-                chat_key, reply_token, order_id,
+                chat_key, reply_token, order_id, kind=resolved_kind,
                 attached=1 if success else 0,
-                failed=0 if success else 1,
+                failed=failed,
                 total=total,
+                note=note,
                 quiet_seconds=PHOTO_ACK_QUIET_SECONDS,
             )
-        return success
+        return success, resolved_kind
 
-    async def _await_claimed_uploads(self, upload: "PendingUpload") -> Tuple[int, int, int]:
+    async def _upload_video_with_deadline(
+        self, order_id: int, message_id: str, actor_badge: str,
+        chat_key: str, reply_token: str,
+    ) -> None:
+        """An IN-WINDOW video (rule A): a transcode can outlive this event's
+        (roughly 60 s-ish) reply token, so this races the upload against
+        VIDEO_ACK_DEADLINE_SECONDS. Still running at the deadline: file the
+        "กำลังประมวลผล" note now, on this about-to-expire token, and let the
+        upload keep going in the background — its eventual real outcome is
+        SILENT (no further ack; a later reply token was never reserved for
+        it). Finishes within the deadline: file the normal ack right away, on
+        this same token, exactly like any other in-window attach.
+        """
+        loop = asyncio.get_running_loop()
+        upload_task = loop.create_task(
+            self._do_upload(order_id, message_id, actor_badge, kind="video")
+        )
+        self._background_tasks.add(upload_task)
+        upload_task.add_done_callback(self._background_tasks.discard)
+        try:
+            result, reason, _resolved_kind = await asyncio.wait_for(
+                asyncio.shield(upload_task), timeout=VIDEO_ACK_DEADLINE_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            self.debouncer.note_photo_ack(
+                chat_key, reply_token, order_id, kind="video",
+                note=VIDEO_PROCESSING_FMT.format(id=order_id),
+                quiet_seconds=PHOTO_ACK_QUIET_SECONDS,
+            )
+            return
+
+        success = result is not None
+        total: Optional[int] = None
+        note: Optional[str] = None
+        failed = 0 if success else 1
+        if success and isinstance(result, dict):
+            total = _as_int(result.get("photoCount")) + _as_int(result.get("videoCount"))
+        elif not success:
+            if reason == "transcode":
+                note = VIDEO_TRANSCODE_FAILED_FMT.format(id=order_id)
+                failed = 0
+            elif reason == "oversize":
+                note = VIDEO_OVERSIZE_FMT.format(id=order_id)
+                failed = 0
+        self.debouncer.note_photo_ack(
+            chat_key, reply_token, order_id, kind="video",
+            attached=1 if success else 0,
+            failed=failed,
+            total=total,
+            note=note,
+            quiet_seconds=PHOTO_ACK_QUIET_SECONDS,
+        )
+
+    async def _await_claimed_uploads(
+        self, upload: "PendingUpload",
+    ) -> Tuple[int, int, int, int, int, int]:
         """Rule B (photos-first, 2026-09-06): start the claimed batch's
         uploads as real loop tasks and wait up to CLAIMED_UPLOAD_WAIT_SECONDS
-        for them, then return (completed, failed, still_running) as of that
-        moment. ``asyncio.shield`` keeps a timeout from cancelling the tasks
+        for them, then return ``(photo_completed, photo_failed, photo_running,
+        video_completed, video_failed, video_running)`` as of that moment —
+        photos and videos counted separately (video support, 2026-09-06).
+        ``asyncio.shield`` keeps a timeout from cancelling the tasks
         themselves — one still running at the timeout keeps going in the
-        background exactly like any other spawned upload, it simply produces
-        no ack when it eventually finishes (a buffered photo never had a
-        reply token of its own — see spawn_photo_upload's docstring)."""
+        background exactly like any other spawned upload (a video's transcode
+        wait, VIDEO_TRANSCODE_WAIT_SECONDS, routinely outlives this bounded
+        wait, CLAIMED_UPLOAD_WAIT_SECONDS), it simply produces no ack when it
+        eventually finishes (a buffered photo/video never had a reply token
+        of its own — see spawn_photo_upload's docstring)."""
         loop = asyncio.get_running_loop()
-        tasks: List[asyncio.Task] = []
+        tasks: List[Tuple[asyncio.Task, str]] = []
         for message_id in upload.message_ids:
+            declared_kind = (upload.kinds or {}).get(message_id, "image")
             task = loop.create_task(
-                self._upload_one_photo(upload.order_id, message_id, upload.actor_badge)
+                self._upload_one_photo(upload.order_id, message_id, upload.actor_badge, kind=declared_kind)
             )
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
-            tasks.append(task)
+            tasks.append((task, declared_kind))
         if tasks:
             try:
                 await asyncio.wait_for(
-                    asyncio.gather(*(asyncio.shield(t) for t in tasks), return_exceptions=True),
+                    asyncio.gather(*(asyncio.shield(t) for t, _ in tasks), return_exceptions=True),
                     timeout=CLAIMED_UPLOAD_WAIT_SECONDS,
                 )
             except asyncio.TimeoutError:
                 pass
-        completed = sum(1 for t in tasks if t.done() and not t.cancelled() and t.exception() is None and t.result())
-        failed = sum(1 for t in tasks if t.done() and not t.cancelled() and (t.exception() is not None or not t.result()))
-        still_running = len(tasks) - completed - failed
-        return completed, failed, still_running
+
+        photo_completed = photo_failed = photo_running = 0
+        video_completed = video_failed = video_running = 0
+        for task, declared_kind in tasks:
+            if task.done() and not task.cancelled() and task.exception() is None:
+                success, resolved_kind = task.result()
+                bucket_kind = resolved_kind or declared_kind
+                if bucket_kind == "video":
+                    if success:
+                        video_completed += 1
+                    else:
+                        video_failed += 1
+                else:
+                    if success:
+                        photo_completed += 1
+                    else:
+                        photo_failed += 1
+            elif task.done() and not task.cancelled():
+                # An exception escaped _upload_one_photo — should not happen,
+                # but stay defensive: count it as a failure of its declared
+                # kind rather than crash the wait.
+                if declared_kind == "video":
+                    video_failed += 1
+                else:
+                    photo_failed += 1
+            else:
+                if declared_kind == "video":
+                    video_running += 1
+                else:
+                    photo_running += 1
+        return photo_completed, photo_failed, photo_running, video_completed, video_failed, video_running
 
     def submit_message(self, chat_key: str, reply_token: str) -> bool:
         return bool(self.debouncer.note_message(chat_key, reply_token))
 
     def submit_slot_digest(self, ref: SlotRef, reply_token: str, trigger: str) -> None:
-        """File this group's slot digest, to go out after the chat settles."""
+        """File this group's slot digest, to go out after the chat settles.
+
+        ``source_type="group"`` (a slot digest is structurally always a
+        group's own — rooms and 1:1 chats have no slot digest at all) is what
+        lets the guest-feedback confirm-delivered gate in :meth:`_reply` fire
+        for a slot report that carried section (b), same as it always has for
+        a group/room reply.
+        """
         pending = self.debouncer.note_command(
             ref[0], COMMAND_SLOT_DIGEST, reply_token,
-            quiet_seconds=SLOT_QUIET_SECONDS, slot_ref=ref,
+            quiet_seconds=SLOT_QUIET_SECONDS, slot_ref=ref, source_type="group",
         )
         pending.slot_trigger = trigger
 
@@ -2507,11 +2962,13 @@ class AsyncioBotDispatcher:
         # CLAIMED_UPLOAD_WAIT_SECONDS, so this stays inside the reporting
         # command's own reply-token life.
         for upload in built.pending_uploads:
-            completed, failed, still_running = await self._await_claimed_uploads(upload)
+            counts = await self._await_claimed_uploads(upload)
             if upload.message_index is not None and upload.message_index < len(built.messages):
-                _patch_confirmation_photo_line(
-                    built.messages[upload.message_index], completed, failed, still_running,
-                )
+                message = built.messages[upload.message_index]
+                if upload.is_bubble:
+                    _patch_confirmation_photo_line(message, *counts)
+                else:
+                    _patch_addphoto_ack_text(message, upload.order_id, *counts)
 
         if owns_mark and not built.slot_digest_included:
             # Housekeeping was dark or unreachable: the scheduled post says
@@ -2550,14 +3007,15 @@ class AsyncioBotDispatcher:
             await self._mark_sent(slot_ref, trigger=TRIGGER_COMMAND)
 
         # Confirm delivery only once LINE has ACCEPTED the reply, and only
-        # for a group/room: a 1:1 ความคิดเห็นลูกค้า answer is a preview and must
-        # never consume the rows it showed (guest-feedback docs/CONTRACTS.md
-        # §15 rev 3).
-        if (
-            COMMAND_REQUESTS in pending.commands
-            and request_ids
-            and pending.source_type in ("group", "room")
-        ):
+        # for a group/room: a 1:1 ความคิดเห็นลูกค้า preview must never consume
+        # the rows it showed (guest-feedback docs/CONTRACTS.md §15 rev 3).
+        # ``request_ids`` is populated by build_reply in exactly two places —
+        # COMMAND_REQUESTS (always source_type "user" now: report-only groups
+        # never route that command any more) and COMMAND_SLOT_DIGEST's
+        # section (b) (always source_type "group", see submit_slot_digest) —
+        # so the source-type check alone is what decides "preview or real
+        # delivery" for both.
+        if request_ids and pending.source_type in ("group", "room"):
             await asyncio.to_thread(
                 guest_feedback_client.confirm_delivered, request_ids
             )
@@ -2597,69 +3055,6 @@ def is_linked_employee(db: Session, line_user_id: str) -> bool:
         )
         .first()
         is not None
-    )
-
-
-class PendingRequestsGate:
-    """Caches "does guest-feedback have anything pending" per chat.
-
-    Group chatter of any kind is a candidate to auto-offer ความคิดเห็นลูกค้า
-    into (guest-feedback docs/CONTRACTS.md §15 rev 3, widened by rev 3.1 to
-    every feedback kind), but every ordinary message checking guest-feedback
-    would hammer it. A TTL cache keyed by chat_key
-    answers from the last real check for
-    :data:`REQUESTS_AUTO_TRIGGER_CACHE_SECONDS`, injectable clock so tests
-    need not sleep.
-    """
-
-    def __init__(
-        self,
-        clock: Callable[[], float] = time.monotonic,
-        ttl_seconds: float = REQUESTS_AUTO_TRIGGER_CACHE_SECONDS,
-        fetch: Callable[[], Optional[Dict]] = guest_feedback_client.fetch_pending,
-    ):
-        self._clock = clock
-        self._ttl_seconds = ttl_seconds
-        self._fetch = fetch
-        self._cache: Dict[str, tuple] = {}  # chat_key -> (expires_at, has_pending)
-
-    def has_pending(self, chat_key: str) -> bool:
-        now = self._clock()
-        cached = self._cache.get(chat_key)
-        if cached is not None and cached[0] > now:
-            return cached[1]
-        payload = self._fetch()
-        has_pending = isinstance(payload, dict) and _as_int(payload.get("count")) > 0
-        self._cache[chat_key] = (now + self._ttl_seconds, has_pending)
-        return has_pending
-
-
-_requests_gate = PendingRequestsGate()
-
-
-def get_requests_gate() -> PendingRequestsGate:
-    """The process-wide guest-feedback cache (a seam tests replace wholesale)."""
-    return _requests_gate
-
-
-def _maybe_upgrade_to_requests(routed: RoutedMessage, event: Dict) -> Routed:
-    """A non-summon GROUP/ROOM message becomes COMMAND_REQUESTS when guest-
-    feedback has something pending — a summon is untouched (it never reaches
-    here as a RoutedMessage) and a 1:1 never reaches here at all (route_event
-    always turns a 1:1 text message into a command)."""
-    source = event.get("source")
-    source_type = (source or {}).get("type") or ""
-    if source_type not in ("group", "room"):
-        return routed
-    if not get_requests_gate().has_pending(routed.chat_key):
-        return routed
-    return RoutedCommand(
-        chat_key=routed.chat_key,
-        command=COMMAND_REQUESTS,
-        reply_token=routed.reply_token,
-        quiet_seconds=quiet_seconds_for(source_type),
-        event_type=event.get("type") or "message",
-        source_type=source_type,
     )
 
 
@@ -2722,8 +3117,9 @@ def _maybe_handle_photo(
     db: Session,
     dispatcher,
 ) -> None:
-    """Buffer or silently attach one image message. Phase 3's core privacy
-    rule: a photo is NEVER downloaded unless it is already tied to a ticket.
+    """Buffer or silently attach one image OR video message (video support
+    2026-09-06). Phase 3's core privacy rule: a photo is NEVER downloaded
+    unless it is already tied to a ticket.
 
     A non-linked sender's photo is ignored outright — not buffered, not
     logged, not counted, no ack (rule A never applies to it: no order, no
@@ -2735,8 +3131,10 @@ def _maybe_handle_photo(
     :data:`PHOTO_BUFFER_TTL_SECONDS`.
     """
     message = event.get("message")
-    if not isinstance(message, dict) or message.get("type") != "image":
+    message_type = message.get("type") if isinstance(message, dict) else None
+    if message_type not in ("image", "video"):
         return
+    kind = "video" if message_type == "video" else "image"
     source = event.get("source")
     user_id = (source or {}).get("userId") or ""
     if not user_id:
@@ -2753,9 +3151,10 @@ def _maybe_handle_photo(
         dispatcher.spawn_photo_upload(
             order_id, message_id, identity.badge,
             chat_key=routed.chat_key, reply_token=routed.reply_token,
+            kind=kind,
         )
         return
-    get_photo_buffer().add(routed.chat_key, user_id, message_id)
+    get_photo_buffer().add(routed.chat_key, user_id, message_id, kind=kind)
 
 
 def _enrich_ticket_command(routed: RoutedCommand, db: Session) -> RoutedCommand:
@@ -2781,10 +3180,16 @@ def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
 
     The privacy rule lives here: nothing is logged until an event has been
     recognised as a command, and then only its type, its source type and the
-    chat id — never text, never a photo, never the speaker. The one piece of
-    I/O route_event itself may not do — checking guest-feedback for pending
-    ความคิดเห็นลูกค้า so plain group chat can auto-offer them — happens here,
-    right after routing, so route_event stays pure.
+    chat id — never text, never a photo, never the speaker.
+
+    GROUP/ROOM SOURCES ARE REPORT-ONLY (owner policy 2026-09-06: "command
+    through chat is considered spam in HF Family group"). route_event already
+    never returns a RoutedCommand for a group/room event — this function's
+    only remaining group/room-specific job is the DEBUG-only ignored-event
+    log (never INFO: a group/room is never told anything about a command it
+    tried) and skipping the photo buffer/attach-window paths (a group photo
+    or video is heartbeat only, see ``_maybe_file_slot_digest``, and is never
+    fetched).
     """
     if not isinstance(event, dict):
         return _NOT_HANDLED
@@ -2802,8 +3207,17 @@ def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
             logger.info("staff-bot joined group %s", group_id)
         return _NOT_HANDLED
 
+    source = event.get("source")
+    source_type = source.get("type") if isinstance(source, dict) else ""
+    event_type = event.get("type")
+
     routed = route_event(event, lambda user_id: is_linked_employee(db, user_id))
     if routed is None:
+        if source_type in ("group", "room") and event_type == "postback":
+            logger.debug(
+                "staff-bot group ignored: type=postback chat=%s",
+                _chat_key(source) if isinstance(source, dict) else "",
+            )
         return _NOT_HANDLED
 
     dispatcher = get_dispatcher()
@@ -2813,14 +3227,18 @@ def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
         # message is discarded (nothing about it is read, kept or logged), but
         # its clock and its sender decide whether this window is now due.
         filed = _maybe_file_slot_digest(event, routed, db, dispatcher)
-        # Phase 3: an image from a linked sender either attaches silently (an
-        # open window) or joins the photo buffer — never downloaded here.
-        _maybe_handle_photo(event, routed, db, dispatcher)
-        # ...and, independently, the moment to auto-offer pending guest
-        # requests (ADR 0001): a plain message may become a command here. A
-        # slot filed above coalesces into that command's immediate reply.
-        routed = _maybe_upgrade_to_requests(routed, event)
-    if isinstance(routed, RoutedMessage):
+        if source_type in ("group", "room"):
+            # Report-only: never buffer/attach a group photo or video (a
+            # group photo is heartbeat only, never fetched), never log at
+            # INFO — this is the whole of what a group message is worth here.
+            logger.debug(
+                "staff-bot group ignored: type=message chat=%s", routed.chat_key,
+            )
+        else:
+            # Phase 3: an image from a linked sender either attaches silently
+            # (an open window) or joins the photo buffer — never downloaded
+            # here.
+            _maybe_handle_photo(event, routed, db, dispatcher)
         refreshed = bool(dispatcher.submit_message(routed.chat_key, routed.reply_token))
         return HandledEvent(
             command=False, claims_reply_token=refreshed or filed,

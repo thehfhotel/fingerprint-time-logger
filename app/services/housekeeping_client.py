@@ -61,6 +61,10 @@ REQUEST_TIMEOUT_SECONDS = 5
 # The photo upload carries the image bytes themselves; give it more room than
 # the JSON calls above (same allowance the ticket asks for).
 PHOTO_UPLOAD_TIMEOUT_SECONDS = 15
+# A video is far larger and the upload itself (not just LINE's transcode) can
+# simply take longer to push through — a video mime gets this instead
+# (cleanup, 2026-09-06 review).
+VIDEO_UPLOAD_TIMEOUT_SECONDS = 60
 
 # The one line shown when housekeeping is dark/unreachable for a write or a
 # read-one call — never a status code, never a raw exception.
@@ -216,19 +220,32 @@ def create_work_order(payload: Dict) -> Optional[Dict]:
 
 
 def upload_photo(order_id, data: bytes, mime: str, actor_badge: str) -> Optional[Dict]:
-    """POST .../work-orders/{id}/photos — raw image bytes, actor badge header.
+    """POST .../work-orders/{id}/photos — raw bytes (image OR video,
+    2026-09-06), actor badge header. ``mime`` is passed straight through as
+    the request's Content-Type — the caller (staff_bot.py) resolves the real
+    mime (image/jpeg, video/mp4, video/quicktime, ...) before calling this,
+    and it is also what picks the timeout below.
 
-    15 s timeout: this call carries the image bytes themselves, not just a
-    JSON body. 201 ``{"photoId": ..., "photoCount": ...}`` on success;
-    ``{"error": ...}`` on a 400/404/409 (unknown order, done/cancelled,
-    wrong content type); None when housekeeping cannot be reached at all.
+    This call carries the media bytes themselves, not just a JSON body, so it
+    gets more room than the JSON calls above: :data:`PHOTO_UPLOAD_TIMEOUT_SECONDS`
+    (15 s) for an image mime, :data:`VIDEO_UPLOAD_TIMEOUT_SECONDS` (60 s) for a
+    ``video/*`` mime — a video is both larger and slower to push through
+    (cleanup, 2026-09-06 review). 201 ``{"photoId": ..., "photoCount": ...,
+    "videoCount": ...}`` on success — the caller reads both counts (a video
+    message still returns a "photoId" per the route's existing shape);
+    ``{"error": ...}`` on a 400/404/409 (unknown order, done/cancelled, wrong
+    content type, oversize); None when housekeeping cannot be reached at all.
     """
+    timeout = (
+        VIDEO_UPLOAD_TIMEOUT_SECONDS if (mime or "").startswith("video/")
+        else PHOTO_UPLOAD_TIMEOUT_SECONDS
+    )
     return _call(
         "POST", f"{WORK_ORDERS_PATH}/{order_id}/photos",
         data=data,
         extra_headers={"Content-Type": mime or "application/octet-stream",
                        "X-Actor-Badge": actor_badge},
-        timeout=PHOTO_UPLOAD_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
 
 

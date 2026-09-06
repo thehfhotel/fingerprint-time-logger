@@ -33,6 +33,7 @@ import hmac
 import logging
 import os
 import threading
+import time
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import requests
@@ -285,17 +286,44 @@ def reply_text_message(reply_token: str, text: str) -> None:
     ))
 
 
-def fetch_message_content(message_id: str) -> Optional[Tuple[bytes, str]]:
-    """A message's binary content (a photo the staff bot decided to keep).
+class ContentTooLarge(Exception):
+    """:func:`fetch_message_content` aborted a streamed download because the
+    body exceeded ``max_bytes`` (video support, 2026-09-06). Raised only when
+    ``max_bytes`` is given — every caller that never passes it (every photo
+    call, from before video support) is unaffected."""
+
+
+# LINE's server-side transcode status values (video support, 2026-09-06) —
+# see :func:`wait_for_transcoding`.
+_TRANSCODE_SUCCEEDED = "succeeded"
+_TRANSCODE_PROCESSING = "processing"
+
+
+def fetch_message_content(
+    message_id: str, max_bytes: Optional[int] = None,
+) -> Optional[Tuple[bytes, str]]:
+    """A message's binary content (a photo/video the staff bot decided to
+    keep).
 
     GET {DATA API}/v2/bot/message/{id}/content — the only place in the repo
     this URL appears; the staff bot (app/services/staff_bot.py) calls it
-    exactly once per CLAIMED photo (a buffered image tied to a ticket, or one
-    that arrives while a ticket's attach window is open), never for a photo
-    it only buffered. Returns ``(bytes, content_type)`` or None on ANY
-    failure — dark channel, unknown/expired message id, timeout, connection
-    error — never raises. The caller logs only the order id and "download"
-    on a miss; nothing here logs the message id or any byte of the image.
+    exactly once per CLAIMED photo/video (one buffered/quoted and tied to a
+    ticket, or one that arrives while a ticket's attach window is open),
+    never for one it only buffered. Returns ``(bytes, content_type)`` or None
+    on ANY plain failure — dark channel, unknown/expired message id, timeout,
+    connection error — never raises for those. The caller logs only the
+    order id and "download" on a miss; nothing here logs the message id or
+    any byte of the content.
+
+    ``max_bytes`` (video support, 2026-09-06): streams the body
+    (``stream=True``) instead of buffering it whole, and raises
+    :class:`ContentTooLarge` the moment the running total exceeds it —
+    letting the video pipeline stop reading (and free the partial buffer)
+    without ever holding more than ~``max_bytes`` in memory, and without
+    collapsing "too large" into the same silent None as every other miss (the
+    staff bot renders a specific "วิดีโอใหญ่เกินไป" line for it). ``None``
+    (the default, every photo call) keeps the original one-shot
+    ``response.content`` read.
     """
     if not is_enabled() or not message_id:
         return None
@@ -303,6 +331,7 @@ def fetch_message_content(message_id: str) -> Optional[Tuple[bytes, str]]:
         response = requests.get(
             f"{LINE_DATA_API_BASE}/v2/bot/message/{message_id}/content",
             headers=_auth_headers(), timeout=_REQUEST_TIMEOUT_SECONDS,
+            stream=max_bytes is not None,
         )
     except Exception:  # noqa: BLE001 — a photo miss, not a crash
         return None
@@ -312,7 +341,68 @@ def fetch_message_content(message_id: str) -> Optional[Tuple[bytes, str]]:
     headers = getattr(response, "headers", None)
     if headers is not None:
         content_type = headers.get("Content-Type", "") or ""
-    return response.content, content_type
+
+    if max_bytes is None:
+        return response.content, content_type
+
+    chunks: List[bytes] = []
+    total = 0
+    try:
+        for chunk in response.iter_content(chunk_size=1024 * 256):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > max_bytes:
+                raise ContentTooLarge(f"{message_id} exceeded {max_bytes} bytes")
+            chunks.append(chunk)
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001 — best-effort cleanup only
+                pass
+    return b"".join(chunks), content_type
+
+
+def wait_for_transcoding(message_id: str, timeout_seconds: float) -> bool:
+    """Poll LINE's server-side transcode status for a video message until it
+    succeeds, fails, or ``timeout_seconds`` elapses (video support,
+    2026-09-06).
+
+    GET {DATA API}/v2/bot/message/{id}/content/transcoding -> ``{"status":
+    "processing"|"succeeded"|"failed"}``, polled every 3 s. Returns True the
+    moment ``status`` is "succeeded"; False on "failed", on the timeout, on
+    any non-2xx/malformed response, or when the feature is dark — never
+    raises. The content itself (GET .../content) is only fetchable once this
+    returns True.
+    """
+    if not is_enabled() or not message_id:
+        return False
+    poll_interval_seconds = 3.0
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            response = requests.get(
+                f"{LINE_DATA_API_BASE}/v2/bot/message/{message_id}/content/transcoding",
+                headers=_auth_headers(), timeout=_REQUEST_TIMEOUT_SECONDS,
+            )
+        except Exception:  # noqa: BLE001 — a transcoding miss, not a crash
+            return False
+        if response.status_code // 100 != 2:
+            return False
+        try:
+            body = response.json()
+        except Exception:  # noqa: BLE001 — malformed body is just another miss
+            return False
+        status = body.get("status") if isinstance(body, dict) else None
+        if status == _TRANSCODE_SUCCEEDED:
+            return True
+        if status != _TRANSCODE_PROCESSING:
+            return False  # "failed", or anything unrecognised
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll_interval_seconds)
 
 
 def reply_messages(reply_token: str, messages: Sequence[Dict]) -> None:
