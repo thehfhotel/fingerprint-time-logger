@@ -771,6 +771,47 @@ echo "Database size: $(ls -lh attendance.db)"
 echo "Services: $(ps aux | grep -E '(uvicorn|dashboard)' | grep -v grep)"
 ```
 
+### ZK reader: "TCP packet invalid" bursts / "unpack requires a buffer of 8 bytes"
+
+**Symptoms:**
+- A paging Slack message in `#zk-time-sync`, e.g. `🚨 ZK Sync FAILED 2 consecutive checks since 20:21 - Main Fingerprint Device: TCP packet invalid`
+- In the container journal (`docker logs fingerprint-time-logger` / `journalctl CONTAINER_NAME=fingerprint-time-logger`), a burst of:
+  ```
+  WARNING:app.services.zk_session:[zk_session] live_capture error (continuing): error('unpack requires a buffer of 8 bytes')
+  WARNING:app.services.zk_session:[zk_session.stream] disconnect error: TCP packet invalid
+  WARNING:app.services.zk_session:[zk_session] catch_up failed (will retry next cycle): ZKNetworkError('TCP packet invalid')
+  ```
+
+**What it means:**
+
+The ZKTeco reader allows exactly one TCP session on port 4370. Any *other* TCP client that connects to the device — even a bare port probe with no ZK protocol traffic — evicts our live-capture session. `unpack requires a buffer of 8 bytes` is the live-capture socket read hitting the truncated/garbage reply from the eviction; `TCP packet invalid` is every reconnect attempt landing while the device is still in its post-eviction confused state. This is not our code failing and not the device being down.
+
+The client self-heals: it reconnects with a backoff (`ZK_KICK_BACKOFF_SECONDS`, doubling up to a cap while evictions keep recurring, resetting after a quiet gap — see `app/services/zk_session.py`), then does a full catch-up read of the device's attendance buffer. Live punches during the eviction window are not lost — they are recovered by that catch-up (`new=0` in the log once the buffer matches what we already have; a nonzero `new=` means it just backfilled real punches). Typical full cycle is well under a minute per eviction.
+
+**How to confirm:**
+```bash
+# Signature lines for a given window (primary confirmation)
+journalctl CONTAINER_NAME=fingerprint-time-logger --since "16:00" --until "16:30" \
+  | grep -E "unpack requires a buffer of 8 bytes|TCP packet invalid"
+
+# Eviction rate the app itself is tracking, read directly from the cache
+# inside the container — do NOT curl /api/private/devices/status for this:
+# that route is mounted behind `Depends(require_cf_access)` in
+# app/main_unified.py, which enforces a Cloudflare Access JWT for EVERY
+# caller including localhost/in-container, so a plain curl 401s and
+# `jq .data.stream_kicks_last_hour` prints `null` — indistinguishable from
+# "zero kicks" during a real incident.
+docker exec fingerprint-time-logger python -c "from app.services.device_cache_service import device_cache_service; s = device_cache_service.get_raw('device_status') or {}; print('stream_kicks_last_hour =', s.get('stream_kicks_last_hour'))"
+```
+`stream_kicks_last_hour` is populated by the 5-minute status/time job (`app/services/background_scheduler.py`) from `zk_session.stream_kicks_in()`. The HTTP route (`/api/private/devices/status`) also carries this field in its JSON, but only for a caller that can pass Cloudflare Access — use the `docker exec` command above for a direct, CF-Access-free read.
+
+**When to act:**
+- A **non-paging "degraded" Slack note** ("⚠️ ZK reader session evicted N× in the last 60 min") means ≥`ZK_KICK_DEGRADED_THRESHOLD` (default 3) evictions in the trailing hour — informational, rate-limited to once/hour. No action needed unless it keeps repeating for hours.
+- A **paging alert** means ≥`ZK_SYNC_PAGE_AFTER_FAILURES` (default 2) *consecutive* 5-minute status checks actually failed — i.e. the device was unreachable across two full poll cycles, not just caught mid-eviction once. That's worth investigating as a real outage (device power/network, not just a session kick).
+- If either keeps firing for hours rather than clearing within a few minutes, escalate — see the root fix below and the incident writeup.
+
+**Root fix (not yet applied):** restrict inbound TCP/4370 on `192.168.100.209` to the evergreen host (`192.168.100.228`) only, via switch/AP ACL or a firewall rule on the device's segment — this is the only way to stop a second client from evicting our session in the first place. Full details, timeline, and evidence: [docs/incidents/2026-09-05-zk-session-evictions.md](incidents/2026-09-05-zk-session-evictions.md).
+
 ### Support Checklist
 When requesting help, provide:
 - [ ] Error messages from logs

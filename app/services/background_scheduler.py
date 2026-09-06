@@ -17,7 +17,19 @@ Jobs:
                                   separate device round trips / teardowns
                                   of the live_capture stream every 5 min;
                                   now one). Also the job that replaces
-                                  `zk-time-sync/sync_service.py`.
+                                  `zk-time-sync/sync_service.py`. Since the
+                                  2026-09-05 eviction incident, also reads
+                                  `zk_session.stream_kicks_in()` (live-capture
+                                  session evictions in the trailing hour),
+                                  stashes it on the cached `device_status`,
+                                  and — on every path, including both success
+                                  branches and the failure branch — sends a
+                                  non-paging Slack "degraded" note once
+                                  evictions in that window reach
+                                  `ZK_KICK_DEGRADED_THRESHOLD`. Paging itself
+                                  still only fires after
+                                  `ZK_SYNC_PAGE_AFTER_FAILURES` consecutive
+                                  failed 5-min checks (see slack_notifier).
   * `refresh_attendance_summary` — every 5 min, pure-DB cache refresh.
   * `import_attendance`          — every AUTO_IMPORT_INTERVAL_MINUTES
                                   (default 30), delegates to
@@ -90,6 +102,16 @@ _STARTUP_RETRY_MINUTES = float(os.getenv("ZK_STARTUP_RETRY_MINUTES", "3"))
 _STAFF_OA_RECONCILE_MINUTES = float(
     os.getenv("STAFF_OA_RECONCILE_INTERVAL_MINUTES", "60")
 )
+
+# Live-capture session evictions ("kicks") in the trailing 60 min at or
+# above this count trigger a non-paging Slack "degraded" note (rate-limited
+# to one per hour by slack_notifier itself). Incident 2026-09-05: another
+# TCP client repeatedly stole the reader's one-and-only session, which
+# self-healed every time (catch-up backfilled the missed punches) but only
+# showed up in Slack as two isolated pages roughly 40 min apart with the
+# actual condition invisible in between — this makes the flapping visible
+# without paging on it.
+_KICK_DEGRADED_THRESHOLD = int(os.getenv("ZK_KICK_DEGRADED_THRESHOLD", "3"))
 
 
 class BackgroundSchedulerService:
@@ -317,7 +339,14 @@ class BackgroundSchedulerService:
         status = result.get("status") or {"connected": False}
         time_info = result.get("time") or {"success": False}
 
+        # Called through the module (not imported as a bare name) so tests
+        # can monkeypatch `zk_session.stream_kicks_in` without reaching into
+        # this module's globals.
+        kicks = zk_session.stream_kicks_in(3600.0)
+        status["stream_kicks_last_hour"] = kicks
+
         device_cache_service.set("device_status", status)
+        self._maybe_notify_degraded(kicks)
 
         # "users" is None when the device op failed — leave the existing
         # device_users cache entry alone rather than clobbering it with an
@@ -375,6 +404,19 @@ class BackgroundSchedulerService:
         }
         device_cache_service.set("device_time", cache_payload)
         slack_notifier.notify_sync_result(sync_result)
+
+    def _maybe_notify_degraded(self, kicks: int) -> None:
+        """Non-paging heads-up when the live-capture session is being
+        evicted repeatedly. Never allowed to break the job: slack_notifier
+        also rate-limits internally, but a notifier exception (webhook
+        down, etc.) must not stop status/time caching from having already
+        happened above."""
+        if kicks < _KICK_DEGRADED_THRESHOLD:
+            return
+        try:
+            slack_notifier.notify_degraded(kicks, 60)
+        except Exception as exc:
+            logger.warning(f"[scheduler.refresh_status_and_time] degraded notify failed: {exc}")
 
     async def _import_attendance(
         self, initial: bool = False, on_demand: bool = False, full: bool = False

@@ -9,11 +9,19 @@ the K40's single-TCP-session limit is respected.
 
 External callers MUST go through `zk_session.submit(...)` or the
 module-level convenience wrappers. No other code path may import pyzk.
+
+The K40 allows exactly one TCP session; any other client connecting to it
+evicts ours mid-stream ("kick"). `_stream` reports whether it ended via
+such an eviction, `_run` backs off (growing, capped) before reconnecting
+so two clients don't ping-pong the device, and `stream_kicks_in` exposes a
+rolling eviction count so `background_scheduler` can raise a non-paging
+"degraded" Slack note when kicks are frequent.
 """
 
 from __future__ import annotations
 
 import asyncio
+import collections
 import logging
 import os
 import queue
@@ -34,6 +42,19 @@ _BANGKOK_TZ = timezone(timedelta(hours=7))
 _LIVE_CAPTURE_IDLE_SECONDS = float(os.getenv("ZK_LIVE_CAPTURE_TIMEOUT", "2"))
 _BACKOFF_MIN_SECONDS = 5.0
 _BACKOFF_MAX_SECONDS = 60.0
+
+# The K40 allows exactly one TCP session. ANY new connection to the device —
+# even a bare port probe from unrelated tooling — evicts the live_capture
+# session mid-stream, which used to make the daemon reconnect immediately
+# and ping-pong against whatever else is hitting the reader. These knobs add
+# a short, growing backoff after an eviction ("kick") before reconnecting,
+# and a rolling count of kicks so the scheduler can surface a non-paging
+# "degraded" signal when evictions are frequent (see background_scheduler.py
+# and slack_notifier.notify_degraded).
+_KICK_BACKOFF_BASE_SECONDS = float(os.getenv("ZK_KICK_BACKOFF_SECONDS", "5"))
+_KICK_BACKOFF_MAX_SECONDS = 60.0
+_KICK_CONSECUTIVE_WINDOW_SECONDS = 120.0
+_KICK_HISTORY_SECONDS = 3600.0
 
 
 def _bangkok_naive_to_utc_naive(ts: datetime) -> datetime:
@@ -99,6 +120,18 @@ class ZkSession:
         # swallowed live_capture error; cleared once a catch-up fetch
         # succeeds. See `_run`'s Phase A.
         self._needs_catch_up = True
+
+        # Eviction ("kick") tracking — see the _KICK_* constants above.
+        # `_kick_times` holds monotonic timestamps of recent evictions,
+        # pruned to _KICK_HISTORY_SECONDS on read; `_kick_backoff` is the
+        # current wait `_run` uses after a died stream, growing while
+        # evictions repeat close together and resetting after a quiet gap.
+        # Both are touched from the session thread today, but guarded by a
+        # lock since `stream_kicks_in` is a public read called from the
+        # scheduler's thread pool.
+        self._kick_times: "collections.deque[float]" = collections.deque()
+        self._kick_backoff: float = _KICK_BACKOFF_BASE_SECONDS
+        self._kick_lock = threading.Lock()
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -262,10 +295,27 @@ class ZkSession:
                     logger.warning(
                         f"[zk_session] catch_up failed (will retry next cycle): {exc!r}"
                     )
-            self._stream(stream_conn)
+            died = self._stream(stream_conn)
             self._disconnect_quiet(stream_conn, "stream")
             if self._shutdown.is_set():
                 break
+
+            # An eviction with nothing queued means no other work needs
+            # this thread right now — back off before reconnecting so a
+            # second TCP client (another probe, another container) doesn't
+            # get immediately evicted right back, ping-ponging the device.
+            # Use `_shutdown.wait` (never `time.sleep`) so a shutdown mid-
+            # backoff still exits promptly. When ops ARE queued, skip the
+            # wait entirely — the 5-min job depends on the ops phase (with
+            # its own 1s pause below) staying responsive.
+            if died and self._op_queue.empty():
+                kicks = self.stream_kicks_in(3600.0)
+                logger.warning(
+                    f"[zk_session] stream evicted (kicks last hour={kicks}); "
+                    f"backing off {self._kick_backoff:.0f}s before reconnect"
+                )
+                if self._shutdown.wait(self._kick_backoff):
+                    break
 
             # Phase B — ops session on a fresh conn. pyzk's live_capture
             # cleanup is not bit-clean (leftover event bytes confuse the
@@ -304,7 +354,13 @@ class ZkSession:
         except Exception as disc_exc:
             logger.warning(f"[zk_session.{phase}] disconnect error: {disc_exc}")
 
-    def _stream(self, conn: Any) -> None:
+    def _stream(self, conn: Any) -> bool:
+        """Run live_capture until it ends. Returns True when it ended via an
+        exception — an eviction ("kick"): another TCP client took the
+        device's one session out from under us — and False when it ended
+        normally (shutdown or an op got queued, both handled by
+        `_should_break` setting `conn.end_live_capture`). `_run` uses the
+        return value to decide whether to back off before reconnecting."""
         logger.info("[zk_session] streaming via live_capture")
         try:
             for event in conn.live_capture(new_timeout=_LIVE_CAPTURE_IDLE_SECONDS):
@@ -331,9 +387,41 @@ class ZkSession:
             # nothing else to reconcile them until the next disruption.
             logger.warning(f"[zk_session] live_capture error (continuing): {exc!r}")
             self._needs_catch_up = True
+            self._record_stream_kick()
+            return True
+        return False
 
     def _should_break(self, conn: Any) -> bool:
         return self._shutdown.is_set() or not self._op_queue.empty()
+
+    def _record_stream_kick(self) -> None:
+        """Record an eviction and adjust the reconnect backoff. Evictions
+        that land within _KICK_CONSECUTIVE_WINDOW_SECONDS of the previous
+        one double the backoff (capped); a quiet gap resets it to base —
+        this is what stops two clients from ping-ponging the device while
+        staying quick to recover from a single one-off kick."""
+        now = time.monotonic()
+        with self._kick_lock:
+            if self._kick_times and (now - self._kick_times[-1]) < _KICK_CONSECUTIVE_WINDOW_SECONDS:
+                self._kick_backoff = min(self._kick_backoff * 2, _KICK_BACKOFF_MAX_SECONDS)
+            else:
+                self._kick_backoff = _KICK_BACKOFF_BASE_SECONDS
+            self._kick_times.append(now)
+            cutoff = now - _KICK_HISTORY_SECONDS
+            while self._kick_times and self._kick_times[0] < cutoff:
+                self._kick_times.popleft()
+
+    def stream_kicks_in(self, window_seconds: float = 3600.0) -> int:
+        """Count evictions in the trailing `window_seconds`, pruning stamps
+        older than _KICK_HISTORY_SECONDS as a side effect so the deque
+        doesn't grow unbounded across a long-lived process."""
+        now = time.monotonic()
+        with self._kick_lock:
+            history_cutoff = now - _KICK_HISTORY_SECONDS
+            while self._kick_times and self._kick_times[0] < history_cutoff:
+                self._kick_times.popleft()
+            window_cutoff = now - window_seconds
+            return sum(1 for ts in self._kick_times if ts >= window_cutoff)
 
     def _drain_op_queue(self, conn: Any) -> int:
         count = 0
@@ -691,6 +779,10 @@ def _describe_exc(exc: BaseException) -> str:
     if s:
         return s
     return f"{type(exc).__name__}()"
+
+
+def stream_kicks_in(window_seconds: float = 3600.0) -> int:
+    return zk_session.stream_kicks_in(window_seconds)
 
 
 def get_status() -> dict:
