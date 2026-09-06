@@ -87,9 +87,11 @@ Bursts track periods of active development/deploy activity on the network, not a
 | Reception PC (front2, `.222`) | Not the cause | No ZK software installed; no sockets to the device at check time (checked 20:29). |
 | HF Ville hosts | **Not verified** | SSH attempt timed out; owner declined a retry. Open item. |
 
-## Identity of the external TCP client: **unknown**
+## Identity of the external TCP client: **a monitoring container on evergreen**
 
-Candidates, none confirmed: another ZK client (ZKTeco PC/phone app somewhere on the LAN), a host running port/host discovery, a verification/monitoring tool, or an HF Ville-side instance pointed at the compose-default `ZKTECO_HOST`. The LAN is switched, so evergreen cannot see other hosts' traffic — identifying the client needs the switch/AP client table, a mirror port, or an ACL that logs drops (see Follow-ups).
+Owner-confirmed 2026-09-06: a **monitoring container on evergreen** health-checks the ZK device by opening a TCP connection to `192.168.100.209:4370` on an interval. Because the reader allows only one session, each health check evicts the app's live-capture stream. The container runs intermittently, which is why evictions arrive in bursts (monitor up → evictions; monitor down → quiet, e.g. 2026-09-03/04 had zero) and why a sweep of evergreen on 2026-09-06 (~08:30, while it was down) found nothing connected to `:4370`.
+
+The earlier "human opening a ZKTeco attendance app at shift changes" guess was **wrong** — nobody interacts with such an app. The shift-change *timing* was just when the monitor happened to be running. Ruled out along the way: the owner's laptop, other Claude/dev sessions, the reception PC, an HF Ville-side instance, and a network-wide scanner (see "What was ruled out").
 
 ## Alert behaviour: before vs. after
 
@@ -112,10 +114,10 @@ Candidates, none confirmed: another ZK client (ZKTeco PC/phone app somewhere on 
 ## Follow-ups (not in this PR)
 
 1. **Network (the actual root fix)**: restrict TCP/4370 on `192.168.100.209` to evergreen (`192.168.100.228`) only, via switch/AP ACL or a firewall rule on the device's segment. Log drops so the external client can finally be identified.
-2. Ask reception/HR who was at the reader or using a ZK-compatible app during `16:16–16:20` and `19:52–20:28` on 2026-09-05.
+2. **Fix the evergreen monitor (the real root cause)**: repoint the monitoring container's ZK health check away from a raw `:4370` connection to the app's cached status instead — the app exposes device health and `stream_kicks_last_hour` via `device_cache_service` (and its `/health` endpoint), refreshed every 5 minutes, so the monitor can report reader health without taking the reader's one session. This removes the eviction at source; the network ACL in item 1 then becomes a backstop.
 3. Consider a cheaper post-eviction catch-up — today's re-sync re-reads the full ~30k-record device buffer on every single eviction, which is most of the ~45 s recovery cost.
 
-**UPDATE 2026-09-06 — shift-change lead for follow-up #2.** Evictions continued past this writeup and past this PR's fix deploying, clustering at staff arrival/departure windows rather than running continuously: a burst at 21:14–21:30 on 2026-09-05 (evening departure window) and another at 07:08–07:09 on 2026-09-06 (Sunday morning arrival window), with a quiet overnight gap between them. None of these bursts fired a Slack page — the 5-minute check kept landing between bursts, exactly the under-reporting this PR's paging fix addresses, and confirms the fix's degraded-note path (not the page path) is the right signal for this pattern going forward. The timing points at a human-driven client — someone opening a ZKTeco attendance PC/phone app to pull attendance at shift changes — rather than a fixed-interval monitor or automated discovery tool. Concrete next step for follow-up #2: ask who pulls attendance around 07:00–09:00 and 16:00–21:00.
+**UPDATE 2026-09-06 — root cause found (supersedes the earlier "shift-change" guess).** Evictions continued past this writeup and past this PR's fix deploying, in bursts (21:14–21:30 on 2026-09-05, 07:08–07:39 on 2026-09-06) with quiet gaps between them and overnight. None fired a Slack page — the 5-minute check kept landing between bursts, exactly the under-reporting this PR's paging fix addresses, which confirms the degraded-note path (not the page path) is the right signal for this pattern. The owner then confirmed the cause: **a monitoring container on evergreen that health-checks the ZK device by connecting to `:4370` on an interval**. It was down when this session searched evergreen, which is why the search came up empty and why the bursts are intermittent (monitor up = evictions, monitor down = quiet). This supersedes the earlier guess of a human opening an attendance app — nobody interacts with one. Fix is follow-up #2 above.
 
 ---
 
