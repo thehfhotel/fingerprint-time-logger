@@ -71,19 +71,23 @@ message goes through :func:`strip_pictographs` first.
 FAIL CLOSED: with HOUSEKEEPING_STAFF_BOT_TOKEN unset the digest read is dark
 and the bot says one fixed Thai line rather than guessing or going quiet
 (see app/services/housekeeping_client.py). The same rule covers the guest
-requests read: with either GUEST_FEEDBACK_BASE_URL or
-GUEST_FEEDBACK_READER_SECRET unset, คำขอลูกค้า answers its own fixed Thai line
-(see app/services/guest_feedback_client.py).
+feedback read: with either GUEST_FEEDBACK_BASE_URL or
+GUEST_FEEDBACK_READER_SECRET unset, ความคิดเห็นลูกค้า answers its own fixed
+Thai line (see app/services/guest_feedback_client.py).
 
-GUEST REQUESTS (คำขอลูกค้า): since guest-feedback docs/CONTRACTS.md §15 rev 3
-("the Employee Hub bot is the ONLY responder"), this bot is also the sole
-sender for guest requests raised on the public feedback site. It reads and
-confirms them from guest-feedback (never holds them, never owns a queue) and
-answers only with reply tokens, exactly like the housekeeping digest above.
-A group message — summoned or not — auto-offers the pending list when one
-exists; a 1:1 request renders the identical text as a PREVIEW and never
-confirms delivery, so pending rows are not silently consumed by someone
-checking privately.
+GUEST FEEDBACK (ความคิดเห็นลูกค้า): since guest-feedback docs/CONTRACTS.md
+§15 rev 3 ("the Employee Hub bot is the ONLY responder"), this bot is also
+the sole sender for guest feedback raised on the public feedback site.
+Rev 3.1 (2026-09-06) widened the queue from requests-only to every guest
+submission — praise, issue and request alike, tagged ``kind`` and
+``urgent`` in the pending JSON — but the bot's read/confirm/reply-token
+logic is kind-agnostic and did not change. It reads and confirms feedback
+from guest-feedback (never holds it, never owns a queue) and answers only
+with reply tokens, exactly like the housekeeping digest above. A group
+message — summoned or not — auto-offers the pending list when one exists;
+a 1:1 request renders the identical text as a PREVIEW and never confirms
+delivery, so pending rows are not silently consumed by someone checking
+privately.
 
 TESTABILITY: :class:`ReplyDebouncer` is a pure state machine — an injectable
 clock, an injectable scheduler, no I/O, no timers — so the debounce rules are
@@ -135,8 +139,8 @@ PALETTE_TITLE = "HF ภายใน"
 PALETTE_BODY = "มีอะไรให้ช่วยคะ"
 PALETTE_BUTTON_LABEL = "งานค้าง แจ้งซ่อม"
 PALETTE_BUTTON_DISPLAY_TEXT = "งานค้าง"
-PALETTE_REQUESTS_BUTTON_LABEL = "คำขอลูกค้า"
-PALETTE_REQUESTS_BUTTON_DISPLAY_TEXT = "คำขอลูกค้า"
+PALETTE_REQUESTS_BUTTON_LABEL = "ความคิดเห็นลูกค้า"
+PALETTE_REQUESTS_BUTTON_DISPLAY_TEXT = "ความคิดเห็นลูกค้า"
 # Phase 3/4 additions to the same palette bubble (existing two buttons kept).
 PALETTE_REPORT_BUTTON_LABEL = "แจ้งซ่อมใหม่"
 PALETTE_REPORT_BUTTON_DISPLAY_TEXT = "แจ้งซ่อมใหม่"
@@ -187,11 +191,11 @@ FIXCAT_PROMPT_FMT = "เลือกหมวดใหม่ของ #{id}"
 
 # Guest-feedback dark, unreachable, or refusing — the same fail-closed rule
 # as the digest above, one fixed Thai line.
-REQUESTS_UNAVAILABLE_TEXT = "ยังอ่านคำขอลูกค้าไม่ได้ค่ะ ลองใหม่อีกครั้ง"
+REQUESTS_UNAVAILABLE_TEXT = "ยังอ่านความคิดเห็นลูกค้าไม่ได้ค่ะ ลองใหม่อีกครั้ง"
 # Reachable, but nothing is waiting.
-REQUESTS_NONE_TEXT = "ยังไม่มีคำขอที่รอส่งค่ะ"
+REQUESTS_NONE_TEXT = "ยังไม่มีความคิดเห็นใหม่ค่ะ"
 
-# How long a "no pending guest requests" (or "yes") answer from guest-feedback
+# How long a "no pending guest feedback" (or "yes") answer from guest-feedback
 # is trusted before asking again, per chat — group chatter must not hammer
 # the endpoint on every single message.
 REQUESTS_AUTO_TRIGGER_CACHE_SECONDS = 10.0
@@ -260,8 +264,16 @@ TICKET_ORDER_POSTBACKS = frozenset({
 # Words that run the digest directly, with or without a summon in front.
 DIGEST_WORDS = frozenset({"งานค้าง", "งานซ่อมค้าง", "แจ้งซ่อมค้าง"})
 
-# Words that ask for the guest-requests list directly.
-REQUEST_WORDS = frozenset({"คำขอ", "คำขอลูกค้า", "guest requests"})
+# Words that ask for the guest-feedback list directly — the queue is
+# kind-agnostic (praise, issue and request alike), so words for any of the
+# three kinds all resolve to the same command. Matched as the WHOLE remainder
+# (group, after the summon) or the WHOLE message text (1:1) — see
+# command_for_words — never as a substring, so e.g. "feedback" inside
+# ordinary chatter ("ขอบคุณสำหรับ feedback นะ") is not a command.
+REQUEST_WORDS = frozenset({
+    "คำขอ", "คำขอลูกค้า", "guest requests",
+    "ความคิดเห็น", "ฟีดแบค", "feedback",
+})
 
 # แจ้งซ่อม is a PREFIX command (the room/symptom follows); the others above
 # are exact words. Checked only after the exact-word tables above, so
@@ -1614,7 +1626,8 @@ class BuiltReply:
 
 
 def render_requests(payload: Optional[Dict]) -> str:
-    """The คำขอลูกค้า text for the guest-feedback pending JSON.
+    """The ความคิดเห็นลูกค้า text for the guest-feedback pending JSON
+    (praise, issue and request alike — the queue is kind-agnostic).
 
     ``None`` (either env unset, timeout, non-2xx, malformed body — see
     guest_feedback_client.fetch_pending) renders the one fixed Thai line:
@@ -1724,7 +1737,7 @@ def build_messages(
     """The message objects for one coalesced reply, in canonical order.
 
     ``confirmed_request_ids`` stays the SECOND positional parameter (the
-    guest-requests call shape); ``slot_id`` selects the slot digest prefix.
+    guest-feedback call shape); ``slot_id`` selects the slot digest prefix.
     """
     return build_reply(commands, slot_id, confirmed_request_ids, actions).messages
 
@@ -1750,7 +1763,7 @@ class PendingReply:
     # rewritten faithfully in the corner where its row went missing.
     slot_trigger: str = TRIGGER_COMMAND
     # "group" / "room" / "user" — which the first command in this burst came
-    # from. Used only to gate the guest-requests delivery confirm: a group or
+    # from. Used only to gate the guest-feedback delivery confirm: a group or
     # room reply confirms, a 1:1 reply is a preview and never does.
     source_type: str = ""
     # Phase 3: the RoutedCommand for each ticket action noted in this burst,
@@ -2235,7 +2248,7 @@ class AsyncioBotDispatcher:
             await self._mark_sent(slot_ref, trigger=TRIGGER_COMMAND)
 
         # Confirm delivery only once LINE has ACCEPTED the reply, and only
-        # for a group/room: a 1:1 คำขอลูกค้า answer is a preview and must
+        # for a group/room: a 1:1 ความคิดเห็นลูกค้า answer is a preview and must
         # never consume the rows it showed (guest-feedback docs/CONTRACTS.md
         # §15 rev 3).
         if (
@@ -2286,11 +2299,12 @@ def is_linked_employee(db: Session, line_user_id: str) -> bool:
 
 
 class PendingRequestsGate:
-    """Caches "does guest-feedback have pending guest requests" per chat.
+    """Caches "does guest-feedback have anything pending" per chat.
 
-    Group chatter of any kind is a candidate to auto-offer คำขอลูกค้า into
-    (guest-feedback docs/CONTRACTS.md §15 rev 3), but every ordinary message
-    checking guest-feedback would hammer it. A TTL cache keyed by chat_key
+    Group chatter of any kind is a candidate to auto-offer ความคิดเห็นลูกค้า
+    into (guest-feedback docs/CONTRACTS.md §15 rev 3, widened by rev 3.1 to
+    every feedback kind), but every ordinary message checking guest-feedback
+    would hammer it. A TTL cache keyed by chat_key
     answers from the last real check for
     :data:`REQUESTS_AUTO_TRIGGER_CACHE_SECONDS`, injectable clock so tests
     need not sleep.
@@ -2322,7 +2336,7 @@ _requests_gate = PendingRequestsGate()
 
 
 def get_requests_gate() -> PendingRequestsGate:
-    """The process-wide guest-requests cache (a seam tests replace wholesale)."""
+    """The process-wide guest-feedback cache (a seam tests replace wholesale)."""
     return _requests_gate
 
 
@@ -2462,8 +2476,8 @@ def handle_event_detail(event: Dict, db: Session) -> HandledEvent:
     recognised as a command, and then only its type, its source type and the
     chat id — never text, never a photo, never the speaker. The one piece of
     I/O route_event itself may not do — checking guest-feedback for pending
-    คำขอลูกค้า so plain group chat can auto-offer them — happens here, right
-    after routing, so route_event stays pure.
+    ความคิดเห็นลูกค้า so plain group chat can auto-offer them — happens here,
+    right after routing, so route_event stays pure.
     """
     if not isinstance(event, dict):
         return _NOT_HANDLED
