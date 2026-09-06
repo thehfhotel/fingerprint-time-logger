@@ -319,7 +319,7 @@ one), each carrying the same งานค้าง digest **once**, under one ex
 The window is decided by the **event's own timestamp** (LINE's epoch-ms
 `timestamp`, converted to Bangkok), not by the server clock at send time.
 
-**What opens a window.** Any ordinary (non-command) text message in the group:
+**What opens a window.** Any ordinary (non-command) message in the group, of any kind (text, sticker, photo, video, location; owner rule 2026-09-06: stickers count):
 
 1. from someone whose LINE account maps to an **active employee holding the
    `reception` grant**, riding the report burst this digest is meant to piggyback
@@ -379,6 +379,93 @@ a 401 or a 503 produces. Staff never see a status code, and never silence.
 Both variables ride the deploy (`env_payload` in
 `.github/workflows/build.yml`, passthrough in `docker-compose.yml`); do not
 hand-edit the host `.env`, every deploy rewrites it.
+
+### แจ้งซ่อม from chat (phase 3)
+
+A linked employee raises a ticket without leaving LINE: `แจ้งซ่อม <ห้อง/พื้นที่>
+<อาการ>` after the summon in the group, or bare in a 1:1. Code:
+`app/services/staff_bot.py` (parser, palette buttons, postback handlers),
+`app/services/housekeeping_client.py` (create/patch/cancel/get/list work
+orders + the photo upload), `app/services/staff_oa_service.fetch_message_content`
+(the one place `api-data.line.me/v2/bot/message/{id}/content` is ever called).
+
+**Identity.** The sender must resolve to an **active** employee via
+`line_user_id`, in the group and in 1:1 alike; a stranger gets one fixed line
+(`ยังไม่รู้จักบัญชีนี้ค่ะ กรุณาเชื่อมบัญชี LINE กับ HF ID ก่อนแจ้งซ่อม`) and
+nothing is created. The employee's `location` picks the property (`HF` →
+`hf`, `HF_VILLE` → `hfville`, unset → `hf`, correctable afterwards with the
+confirmation bubble's **สลับสาขา** button).
+
+**Parsing.** Room: the first 3–4 digit token, alone or after `ห้อง` (`204`,
+`ห้อง 204`, `1204`). No room number → an area keyword (`ล็อบบี้`/`lobby` →
+lobby, `ทางเดิน`/`โถง` → corridor, `สระ` → pool, `ครัว` → kitchen,
+`ซักรีด`/`ซักผ้า` → laundry, `ด้านนอก`/`ข้างนอก`/`ลานจอด`/`ที่จอดรถ`/`สวน` →
+outside). Neither → one fixed line asking for the room number; nothing is
+created. Category by keyword priority (aircon, tv, plumbing, electric,
+furniture, else other — see `_CATEGORY_KEYWORDS` for the exact word lists).
+`ด่วน` anywhere in the text sets urgent. The detail text is everything except
+the room token, pictographs stripped, capped at 200 characters.
+
+**Photos — never downloaded unless tied to a ticket.** Every image from a
+linked sender is recorded as a bare **message id**, nothing else (no bytes,
+no log line), for 90 seconds (`PHOTO_BUFFER_TTL_SECONDS`), keyed per
+(chat, sender). Creating a ticket claims up to 6 of that sender's fresh
+buffered ids in that chat and opens a 2-minute **attach window**
+(`ATTACH_WINDOW_SECONDS`) for (chat, sender) → order id — every photo that
+window lets through refreshes it, but it can never live past a 5-minute hard
+cap (`ATTACH_WINDOW_HARD_CAP_SECONDS`). The **เพิ่มรูป** button (or postback
+`cmd=addphoto&id=N`) reopens the window on an existing ticket. Only once a
+photo is claimed or arrives inside an open window does the bot fetch its
+bytes (`fetch_message_content`) and upload them
+(`housekeeping_client.upload_photo`) — in the **background**, after the
+confirmation bubble has already been sent, so a slow upload never holds up
+the reply.
+
+**The confirmation bubble**, replied at once: `รับเรื่องแล้ว #N`, branch,
+location, category, urgency, detail, reporter, photo count, and five
+postback buttons — **แก้หมวด** (a quick-reply of all six categories),
+**ด่วน/ไม่ด่วน** (toggles), **เพิ่มรูป**, **ยกเลิก**, **สลับสาขา**. Every
+button's tap is checked against the ticket's `reporterBadge` OR the tapper
+holding the `reception` grant; anyone else gets
+`แก้ได้เฉพาะผู้แจ้งค่ะ` and the housekeeping call is never made. `ยกเลิก`
+additionally enforces (server-side, relayed verbatim) that only the reporter
+may cancel, only while the ticket is still `new`, and only within 10 minutes
+of creation. The palette's **แจ้งซ่อมใหม่** button (`cmd=report_help`) answers
+a one-line how-to instead of opening anything.
+
+Housekeeping unreachable at any step: the one fixed line
+`ระบบแจ้งซ่อมยังไม่เชื่อมต่อ ลองใหม่อีกครั้งภายหลัง` — buffered photos are left
+untouched (they simply age out after 90 s) and nothing is half-created.
+
+Logs, ids only, INFO: `staff-bot ticket created: chat=... order=... photos=N`,
+`staff-bot ticket edited: order=... field=...`, `staff-bot ticket cancelled:
+order=...`, `staff-bot photo attached: order=...`, `staff-bot photo failed:
+order=... reason=download|upload`. No message text, no photo byte and no LINE
+message id is ever written to a log line.
+
+No new environment variables — this rides the same `HOUSEKEEPING_INTERNAL_URL`
+/ `HOUSEKEEPING_STAFF_BOT_TOKEN` pair as the digest above, against the same
+internal door's additional routes.
+
+### งานของฉัน / สถานะ (phase 4)
+
+The palette's **งานของฉัน** button (`cmd=mine`) and the bare word งานของฉัน
+answer a Flex carousel of the tapper's own active tickets, newest first, at
+most 10 bubbles (`housekeeping_client.list_work_orders(badge, active=True,
+limit=10)`) — same identity gate as แจ้งซ่อม (`NOT_LINKED_TEXT` for a
+stranger). Each bubble is `#id · <location>`, หมวด, สถานะ, อายุ (วันนี้ / n
+วัน) and รูป n, with the same เพิ่มรูป/ยกเลิก postback buttons phase 3's
+confirmation bubble uses. Nothing outstanding answers with one plain line
+(`ไม่มีงานแจ้งซ่อมที่ค้างอยู่ค่ะ`); housekeeping dark answers the same fixed
+"not connected" line as every other write/read here.
+
+`สถานะ <id>` / `งาน <id>` (a strict "word, one space, digits" match — not a
+prefix, so ordinary chat starting with งาน is never mistaken for it) answers
+the same ticket as a single bubble, gated exactly like the edit postbacks:
+the reporter or a `reception`-grant holder gets the bubble
+(`ดูได้เฉพาะงานของตัวเองค่ะ` otherwise), an unknown id answers
+`ไม่พบงาน #N ค่ะ`. This is a READ — no button or command in this chat ever
+changes a ticket's status; that stays on the reception board in every phase.
 
 ## Guest requests (คำขอลูกค้า)
 
