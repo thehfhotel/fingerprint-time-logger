@@ -5,23 +5,33 @@ Thai font that makes rendering deterministic on any machine.
 
 WHICH BUTTON COUNTS ARE REAL, AND WHICH NEED SYNTHETIC BUTTONS
 --------------------------------------------------------------
-The real table is 6 buttons since รายงานแม่บ้าน arrived (2026-09-02):
-แม่บ้าน / แจ้งซ่อม / สต๊อกของ / รับของมาส่ง behind `housekeeping`, สถานะห้อง
-behind `reception`, and the SHARED report tile revealed by either. So the
-real variants are `base` (ZERO buttons, nothing to render at all),
-`base+reception` (2), `base+housekeeping` (5) and
-`base+housekeeping+reception` (6 — LINE's cap, exactly reached).
+The table has 8 rows since 2026-09-06: แม่บ้าน / แจ้งซ่อม / สต๊อกของ /
+รับของมาส่ง behind `housekeeping`, สถานะห้อง / งานซ่อมค้าง behind
+`reception`, and TWO shared tiles revealed by either grant — the report tile
+(รายงานแม่บ้าน) and, since the SAME day's owner decision "let maid mark fix
+done too", จัดการงานซ่อม (the outstanding-maintenance queue page). Both
+สถานะห้อง and งานซ่อมค้าง carry ``hidden_by_grant_app_ids={"housekeeping"}``
+(the same reasoning twice: a housekeeping+reception holder already has a
+better tile for the same job via แม่บ้าน / จัดการงานซ่อม respectively), so the
+row count and the SHOWN button count are no longer the same number for
+either variant that includes `housekeeping` — the real variants are `base`
+(ZERO buttons, nothing to render at all), `base+reception` (4, since
+งานซ่อมค้าง then จัดการงานซ่อม joined the same day), `base+housekeeping` (6,
+since จัดการงานซ่อม's widening put a maid-only variant on LINE's cap for the
+first time) and `base+housekeeping+reception` (6 — LINE's cap, exactly
+reached: สถานะห้อง and งานซ่อมค้าง both hidden, จัดการงานซ่อม shown in one of
+their places).
 
-That covers both canvases and both of the layouts anyone can actually be
-handed: one row of 2, and the two-row 3+2 and 3+3. Note 6 stopped needing
-synthetic buttons on 2026-09-02 and 4 (the 2+2 split) started: the counts no
-grant set can produce are now 1, 3 and 4. They are still live production
-code — ``menu_size()`` switches on the button count and ``menu_rows()`` lays
-4/5/6 out as 2+2 / 3+2 / 3+3 — and one MenuButton row leaving or arriving
-re-shuffles which counts are reachable, so the fixtures DERIVE the
-unreachable set from the real table instead of listing it.
-``TestFixturePremise`` asserts that derivation, so these tests can never
-quietly stop covering a layout.
+That covers both canvases and both two-row layouts anyone can actually be
+handed: the 2+2 split and 3+3. The counts no grant set can produce are 1, 2,
+3 and 5. They are still live production code — ``menu_size()`` switches on
+the button count and ``menu_rows()`` lays 4/5/6 out as 2+2 / 3+2 / 3+3 — and
+one MenuButton row (or hide rule) leaving or arriving re-shuffles which
+counts are reachable, so the fixtures DERIVE the unreachable set from what
+the real grants actually SHOW (not from ``len(MENU_BUTTONS)``, which no
+longer equals the biggest real variant) — see ``REAL_VARIANT_BUTTON_COUNTS``
+below. ``TestFixturePremise`` asserts that derivation, so these tests can
+never quietly stop covering a layout.
 
 The empty base is why nothing here renders ``buttons_for(set())``: there is
 no image for a variant with no buttons, ``menu_size(0)`` raises, and the
@@ -55,15 +65,20 @@ LINE_BUTTON_CAP = 6
 HALF_HEIGHT_CANVAS = (2500, 843)   # 1-3 buttons, one row
 FULL_HEIGHT_CANVAS = (2500, 1686)  # 4-6 buttons, two rows
 
-# Every button is either base or revealed by a grant in MENU_GRANT_APP_IDS,
-# so the whole table IS the biggest variant the real table can produce
-# (5 today: 4 housekeeping + 1 reception, base being empty).
-MAX_REAL_BUTTON_COUNT = len(MENU_BUTTONS)
+# Was ``len(MENU_BUTTONS)`` — true only while every row was actually SHOWN
+# together. That stopped holding on 2026-09-06: สถานะห้อง and งานซ่อมค้าง
+# both carry ``hidden_by_grant_app_ids={"housekeeping"}``, so the table has 8
+# rows but the biggest variant anyone is actually SHOWN (both grants) is
+# still 6. ``buttons_for(MENU_GRANT_APP_IDS)`` is what a real employee
+# holding every menu-relevant grant actually sees, so it — not the row
+# count — is the biggest real variant.
+MAX_REAL_BUTTON_COUNT = len(buttons_for(MENU_GRANT_APP_IDS))
 
 # The two real grants, and the button counts each reveals ALONE. Named rather
-# than inlined because several tests below turn on the difference between "the
-# maid menu" (5) and "the biggest menu anyone can hold" (6) — a distinction
-# that did not exist while one grant owned every button.
+# than inlined because several tests below turn on the maid menu and the
+# both-grants menu — even though จัดการงานซ่อม's widening (2026-09-06) means
+# they are now the SAME number (6), the two are still built from different
+# grant sets and worth telling apart by name.
 HOUSEKEEPING_BUTTON_COUNT = len(buttons_for({"housekeeping"}))
 RECEPTION_BUTTON_COUNT = len(buttons_for({"reception"}))
 
@@ -79,9 +94,11 @@ REAL_VARIANT_BUTTON_COUNTS = frozenset(
 ) - {0}
 
 # The layouts that exist in production code but that no grant set reaches, so
-# their only coverage is the fixtures below. 1, 3 and 4 today — note 4 (the
-# 2+2 split) only joined this set on 2026-09-02, when the maid menu grew from
-# four tiles to five.
+# their only coverage is the fixtures below. 1, 2, 3 and 5 today — 3 joined
+# this set on 2026-09-06 morning when จัดการงานซ่อม took the reception-only
+# variant from 3 tiles to 4 (the 2+2 split), and 5 joined it the SAME
+# afternoon when จัดการงานซ่อม was widened into a shared tile: the maid menu
+# jumped straight from 5 to 6, leaving nothing that stops at 5 either.
 UNREACHABLE_BUTTON_COUNTS = tuple(
     count
     for count in range(1, LINE_BUTTON_CAP + 1)
@@ -141,14 +158,15 @@ def _with_glyph(button, glyph):
 
 
 def _report_button():
-    """The one SHARED tile in the real table (รายงานแม่บ้าน).
+    """One of the two SHARED tiles in the real table — รายงานแม่บ้าน.
 
-    Found by its grant set rather than by label or URL, so it keeps being
-    found if either is edited — and so this file states the property that
-    makes it the shared tile.
+    Found by label rather than "the shared tile" now that จัดการงานซ่อม is
+    also shared (2026-09-06): a grant-set filter would return two rows and
+    no longer identify either uniquely.
     """
-    shared = [b for b in MENU_BUTTONS if len(b.grant_app_ids) > 1]
-    assert len(shared) == 1, "expected exactly one shared tile"
+    shared = [b for b in MENU_BUTTONS if b.label == "รายงานแม่บ้าน"]
+    assert len(shared) == 1, "expected exactly one รายงานแม่บ้าน row"
+    assert len(shared[0].grant_app_ids) > 1, "รายงานแม่บ้าน must still be shared"
     return shared[0]
 
 
@@ -194,37 +212,53 @@ class TestFixturePremise:
         assert menu_size(MAX_REAL_BUTTON_COUNT) == FULL_HEIGHT_CANVAS
 
     def test_the_real_table_spans_both_canvases(self):
-        # `reception` reaches the half-height canvas (2 tiles), `housekeeping`
-        # the two-row one (5) — so the real table covers both without padding,
-        # as it has since 2026-09-01.
-        assert RECEPTION_BUTTON_COUNT == 2
-        assert HOUSEKEEPING_BUTTON_COUNT == 5
-        assert menu_size(RECEPTION_BUTTON_COUNT) == HALF_HEIGHT_CANVAS
+        # `reception` reaches the two-row canvas (4 tiles since
+        # จัดการงานซ่อม, 2026-09-06), `housekeeping` also two-row (6, since
+        # the same day's widening) — so the real table covers the full-height
+        # canvas and no longer touches the half-height one at all; only the
+        # padded fixtures below still exercise it.
+        assert RECEPTION_BUTTON_COUNT == 4
+        assert HOUSEKEEPING_BUTTON_COUNT == 6
+        assert menu_size(RECEPTION_BUTTON_COUNT) == FULL_HEIGHT_CANVAS
         assert menu_size(HOUSEKEEPING_BUTTON_COUNT) == FULL_HEIGHT_CANVAS
 
-    def test_the_shared_tile_is_why_the_counts_do_not_add_up(self):
-        # 5 + 2 = 7, but the both-grants menu is SIX: รายงานแม่บ้าน is one row
-        # revealed by either grant, so it is counted once in the union. If a
-        # future edit duplicates it into two rows, this goes red here — before
-        # the both-grants variant silently becomes a 7-button one LINE refuses.
+    def test_the_shared_and_hidden_tiles_are_why_the_counts_do_not_add_up(self):
+        # 6 + 4 = 10, but the both-grants menu is SIX: รายงานแม่บ้าน and
+        # จัดการงานซ่อม are each one row revealed by either grant (counted
+        # once in the union, not twice), and both สถานะห้อง and งานซ่อมค้าง
+        # are hidden entirely once `housekeeping` is also held (แม่บ้าน /
+        # จัดการงานซ่อม already cover the same ground with full access). If a
+        # future edit duplicates a shared row or drops a hide, this goes red
+        # here — before the both-grants variant silently becomes a 7-button
+        # one LINE refuses.
         shared = [
             button for button in MENU_BUTTONS
             if len(button.grant_app_ids) > 1
         ]
-        assert len(shared) == 1
+        assert len(shared) == 2
+        assert {b.label for b in shared} == {"รายงานแม่บ้าน", "จัดการงานซ่อม"}
+        hidden_in_both = [
+            button for button in buttons_for({"reception"})
+            if button not in buttons_for(MENU_GRANT_APP_IDS)
+        ]
+        assert len(hidden_in_both) == 2
+        assert {b.label for b in hidden_in_both} == {"สถานะห้อง", "งานซ่อมค้าง"}
         assert (
-            HOUSEKEEPING_BUTTON_COUNT + RECEPTION_BUTTON_COUNT - len(shared)
+            HOUSEKEEPING_BUTTON_COUNT + RECEPTION_BUTTON_COUNT
+            - len(shared) - len(hidden_in_both)
             == MAX_REAL_BUTTON_COUNT
         )
 
     def test_the_unreachable_counts_are_the_ones_no_grant_set_produces(self):
-        # Derived, not listed — the module docstring's claim, asserted. 4 is
-        # in here since 2026-09-02 and 6 left it the same day; both were the
-        # other way round the day before.
+        # Derived, not listed — the module docstring's claim, asserted. 3
+        # joined the unreachable set on 2026-09-06 morning when จัดการงานซ่อม
+        # took `reception` alone from 3 tiles (after งานซ่อมค้าง) to 4; 5
+        # joined it the same afternoon when จัดการงานซ่อม was widened into a
+        # shared tile and the maid menu jumped straight from 5 to 6.
         assert REAL_VARIANT_BUTTON_COUNTS == {
             RECEPTION_BUTTON_COUNT, HOUSEKEEPING_BUTTON_COUNT, MAX_REAL_BUTTON_COUNT
         }
-        assert UNREACHABLE_BUTTON_COUNTS == (1, 3, 4)
+        assert UNREACHABLE_BUTTON_COUNTS == (1, 2, 3, 5)
 
     @pytest.mark.parametrize("button_count", UNREACHABLE_BUTTON_COUNTS)
     def test_the_fixture_mints_counts_the_real_table_cannot(self, button_count):
@@ -265,27 +299,31 @@ class TestRenderMenuImage:
     def test_housekeeping_menu_renders_full_height_png(self):
         # This test has followed the maid menu up and down: full height when
         # the variant was 5 buttons, half when the 2026-08-14 re-scope cut it
-        # to 2, and full again since รับของมาส่ง made it 4 (2026-08-17). It is
-        # no longer the ONLY real variant with an image — that stopped being
-        # true on 2026-09-01 — so it is pinned against the maid grant's own
-        # count rather than the whole table's. Still the only variant that
-        # exercises the broom/wrench/box/tray glyphs together.
+        # to 2, and full again since รับของมาส่ง made it 4 (2026-08-17), then
+        # 5 (รายงานแม่บ้าน, 2026-09-02) and 6 (จัดการงานซ่อม widened into a
+        # shared tile, 2026-09-06). It is no longer the ONLY real variant with
+        # an image — that stopped being true on 2026-09-01 — so it is pinned
+        # against the maid grant's own count rather than the whole table's.
+        # Still the only variant that exercises the broom/box/tray glyphs
+        # together.
         png_bytes, image = _render_and_open({"housekeeping"})
         assert len(buttons_for({"housekeeping"})) == HOUSEKEEPING_BUTTON_COUNT
         assert image.format == "PNG"
         assert image.size == FULL_HEIGHT_CANVAS
         assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
 
-    def test_reception_menu_renders_half_height_png(self):
-        # The reception variant is two real tiles (สถานะห้อง and the shared
-        # report tile), so it still renders on the single-row canvas. Its
-        # glyphs — clipboard and photo_sheet — are drawn by nothing else, so
-        # this is where either raising at render time would surface as more
-        # than the registry sweep at the bottom of the file.
+    def test_reception_menu_renders_full_height_png(self):
+        # The reception variant is four real tiles since 2026-09-06:
+        # สถานะห้อง, the shared report tile, งานซ่อมค้าง (message action), and
+        # จัดการงานซ่อม (uri) — the first real variant to use the 2+2 layout.
+        # Its glyphs — clipboard, photo_sheet, wrench_list, and the reused
+        # wrench — are drawn by nothing else but the maid menu (wrench), so
+        # this is where any of them raising at render time would surface as
+        # more than the registry sweep at the bottom of the file.
         png_bytes, image = _render_and_open({"reception"})
-        assert len(buttons_for({"reception"})) == RECEPTION_BUTTON_COUNT == 2
+        assert len(buttons_for({"reception"})) == RECEPTION_BUTTON_COUNT == 4
         assert image.format == "PNG"
-        assert image.size == HALF_HEIGHT_CANVAS
+        assert image.size == FULL_HEIGHT_CANVAS
         assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
 
     def test_both_grants_render_the_six_button_menu(self):
@@ -303,10 +341,12 @@ class TestRenderMenuImage:
 
     @pytest.mark.parametrize("button_count", (4, 5, 6))
     def test_full_height_canvas_renders_png_within_lines_cap(self, button_count):
-        # 5 is the REAL maid menu and 6 the REAL both-grants menu since
-        # 2026-09-02, so _buttons_of_count() takes them straight from the
-        # table; only 4 (the 2+2 split) is a count no grant set produces any
-        # more, and it is live layout code either way.
+        # 4 (reception) and 6 (the maid menu and both-grants alike) are real
+        # variants; 5 is not any more — จัดการงานซ่อม's widening (2026-09-06)
+        # skipped the maid menu straight from 5 to 6 — so 5 is padded with a
+        # synthetic button via _buttons_of_count(). This test predates that
+        # distinction and stays as a direct, non-grant-driven check of the
+        # 2+2 / 3+2 / 3+3 layout code itself.
         png_bytes, image = _render(_buttons_of_count(button_count))
         assert image.format == "PNG"
         assert image.size == FULL_HEIGHT_CANVAS

@@ -36,32 +36,85 @@ same sentence (owner directive 2026-08-14: "for maid to notify reception of
 cleaning progress and maid inventory"). It is still not a general employee
 launcher. **Every button is behind a grant** — there are no base buttons:
 
-| Button | URL | Needs grant |
+| Button | URL / action | Needs grant |
 |---|---|---|
 | แม่บ้าน (cleaning board) | https://hotel.thehfhotel.org/hk | `housekeeping` |
 | แจ้งซ่อม (breakage report) | https://housekeeping.thehfhotel.org/staff/report | `housekeeping` |
 | สต๊อกของ (stock count / purchase request) | https://housekeeping.thehfhotel.org/staff/stock | `housekeeping` |
 | รับของมาส่ง (receive a delivery) | https://housekeeping.thehfhotel.org/staff/receive | `housekeeping` |
-| สถานะห้อง (room status, read-only) | https://hotel.thehfhotel.org/hk | `reception` |
+| สถานะห้อง (room status, read-only) | https://hotel.thehfhotel.org/hk — **hidden when `housekeeping` is also held** | `reception` |
 | รายงานแม่บ้าน (daily room report) | https://hotel.thehfhotel.org/hk/report | `housekeeping` **or** `reception` |
+| งานซ่อมค้าง (outstanding maintenance, chat report) | message action `งานค้าง` → staff bot report (no web page) — **hidden when `housekeeping` is also held** | `reception` |
+| จัดการงานซ่อม (outstanding maintenance, queue page) | https://housekeeping.thehfhotel.org/staff/queue | `housekeeping` **or** `reception` |
 
-Four variants exist: `base` (**0 buttons**), `base+reception` (2),
-`base+housekeeping` (5) and `base+housekeeping+reception` (6). LINE caps a
-rich menu at 6 buttons, so as of 2026-09-02 the maximal variant sits exactly
-ON the cap — **there is no headroom left.** A seventh tool cannot be a seventh
-tile: it needs one removed, or two merged behind one tile. Adding a row to
-`MENU_BUTTONS` anyway does not fail loudly at deploy time — the over-cap
-guards in `scripts/staff_oa_sync.py` and `app/services/staff_oa_provision.py`
-would UNLINK everyone holding both grants (the owner included) and log a
-warning.
+Four variants exist: `base` (**0 buttons**), `base+reception` (**4**, since
+งานซ่อมค้าง and จัดการงานซ่อม joined 2026-09-06), `base+housekeeping` (**6**,
+since จัดการงานซ่อม was widened the same day to admit maids too — "let maid
+mark fix done too") and `base+housekeeping+reception` (6). LINE caps a rich
+menu at 6 buttons, so both non-empty variants that touch `housekeeping` sit
+exactly ON the cap — **there is no headroom left.** A ninth tool cannot be a
+ninth tile: it needs one removed, or two merged behind one tile. Adding a
+row to `MENU_BUTTONS` anyway does not fail loudly at deploy time — the
+over-cap guards in `scripts/staff_oa_sync.py` and
+`app/services/staff_oa_provision.py` would UNLINK everyone holding both
+grants (the owner included) and log a warning.
 
-**รายงานแม่บ้าน is a SHARED tile** — one row in `MENU_BUTTONS` revealed by
-either grant (`MenuButton.also_grant_app_ids`), because a room report is
-two-sided: the maid files it (status code, equipment exceptions, 1–4 photos)
-and reception verifies it with 1–4 photos of their own, or returns it with a
-canned reason. Both halves are the same screen. An employee holding both
-grants sees it **once**, not twice — that is what the one-row model
-guarantees, and what two rows would have got wrong.
+**How งานซ่อมค้าง and จัดการงานซ่อม fit onto a menu already at the cap
+(2026-09-06):** neither added a row that had to render on the both-grants
+canvas — each took over a slot that a hide rule freed up.
+`MenuButton.hidden_by_grant_app_ids` on สถานะห้อง (`{"housekeeping"}`) means
+that tile is dropped for anyone who ALSO holds `housekeeping`, because
+แม่บ้าน already opens the identical `/hk` board for them with full write
+access — the read-only duplicate was a wasted slot on a full canvas.
+งานซ่อมค้าง took that freed slot first, that same morning, also carrying its
+own `hidden_by_grant_app_ids={"housekeeping"}` from the start — a
+housekeeping+reception holder never needed the read-only chat report either,
+since แม่บ้าน already gave them full write access to the same board. Then the
+owner decided to launch a SECOND tool the same day — จัดการงานซ่อม, a `uri`
+tile opening the actual queue page. It first carried the identical hide, but
+the owner widened it hours later ("let maid mark fix done too"): the queue
+page itself was updated to admit the `housekeeping` grant as well as
+`reception`, so maids now need this launcher too, and it became a SHARED
+tile (`also_grant_app_ids={"housekeeping"}`) rather than a hidden one. So the
+both-grants variant still renders exactly six tiles: the four maid tools,
+รายงานแม่บ้าน, and จัดการงานซ่อม, with both สถานะห้อง and งานซ่อมค้าง hidden —
+that employee reaches the queue page directly instead of the read-only chat
+report. A `reception`-only employee is unaffected by either hide (no
+`housekeeping` grant to trigger them) and keeps all four tiles: สถานะห้อง,
+รายงานแม่บ้าน, งานซ่อมค้าง, and จัดการงานซ่อม — the Hub's first real use of
+the 2+2 layout. A `housekeeping`-only maid, previously capped at five tiles,
+now also gets จัดการงานซ่อม as her sixth, reaching LINE's cap the same way
+the both-grants variant does.
+
+งานซ่อมค้าง itself is a `message` rich-menu action rather than `uri` —
+reception's web board is Google-IdP-gated and cannot open inside LINE's
+in-app browser at all (the same dead end Reimbursement and payroll hit, see
+below), so the tile instead sends the text `งานค้าง` into the 1:1 chat,
+which the staff bot (`app/services/staff_bot.py`, already live) answers with
+the outstanding-maintenance report. A message action is also free of LINE's
+proactive-push quota — see "Mind the push cap" below — since tapping it is
+the user initiating the exchange, not the bot pushing to them. จัดการงานซ่อม
+is a plain `uri` tile: `housekeeping.thehfhotel.org/staff/queue` is on this
+app's own Cloudflare Access setup and does not hit the same in-app-browser
+dead end works.thehfhotel.org does, so it opens directly — it is where the
+work actually gets claimed and closed, not merely read. It reuses the
+existing `wrench` glyph (the "go act" mark แจ้งซ่อม already wears) rather
+than minting a new one, since the two maintenance tiles now sitting side by
+side needed their glyphs to read as "report" (`wrench_list`, still) vs. "go
+do the work" (`wrench`).
+
+**รายงานแม่บ้าน and จัดการงานซ่อม are SHARED tiles** — one row each in
+`MENU_BUTTONS`, revealed by either grant (`MenuButton.also_grant_app_ids`).
+รายงานแม่บ้าน is shared because a room report is two-sided: the maid files it
+(status code, equipment exceptions, 1–4 photos) and reception verifies it
+with 1–4 photos of their own, or returns it with a canned reason. Both halves
+are the same screen. จัดการงานซ่อม is shared for the same shape of reason,
+widened onto it 2026-09-06 ("let maid mark fix done too"): housekeeping's own
+`/staff/queue` page now admits the `housekeeping` grant as well as
+`reception`, so a maid claims and closes a repair from the same page
+reception uses to manage the queue. An employee holding both grants sees
+either tile **once**, not twice — that is what the one-row model guarantees,
+and what two rows would have got wrong.
 
 **สถานะห้อง and แม่บ้าน open the same board.** That is deliberate: `reception`
 is a READ-ONLY viewer on `/hk`. new-hotel's `hk_access` middleware admits
@@ -69,14 +122,26 @@ either grant, but the write verbs (`POST .../cleaning`,
 `POST .../linen-shortage`) require `housekeeping` and answer a reception-only
 identity with a 403; `GET /api/hk/me` returns `canReport: false` so the UI
 hides the reporting controls. The UI hiding is UX — **the server is the
-enforcement.** An employee holding both grants is full-access and simply sees
-six tiles, two of which point at the same board.
+enforcement.**
 
-The same argument covers รายงานแม่บ้าน, which both grants open: new-hotel
-enforces the roles server-side per verb — submitting a report is maid-only
-(the `canReport: true` side), verify and return are reception-only, and a maid
-who also holds `reception` still cannot verify her own work. The tile is a
-launcher, never an authorization.
+An employee holding both grants does NOT see both tiles, though — since
+2026-09-06 สถานะห้อง is hidden the moment `housekeeping` is also held
+(`hidden_by_grant_app_ids={"housekeeping"}`), because แม่บ้าน already opens
+that same board with full write access and a second, read-only tile pointing
+at it would be a wasted slot on a menu at LINE's cap. A `reception`-only
+employee still gets สถานะห้อง; a `housekeeping`-holder never needed it in
+the first place. งานซ่อมค้าง carries the identical hide, for the identical
+reason on a different tool: once จัดการงานซ่อม is shared (above) a
+housekeeping+reception employee reaches the same queue page with full write
+access, so the read-only chat report is dropped in favor of it — a
+`reception`-only employee still gets both tiles side by side.
+
+The same argument covers รายงานแม่บ้าน and จัดการงานซ่อม, which both grants
+now open: new-hotel enforces the roles server-side per verb — submitting a
+report is maid-only (the `canReport: true` side), verify and return are
+reception-only, and a maid who also holds `reception` still cannot verify her
+own work; housekeeping.thehfhotel.org/staff/queue admits either grant on the
+server side the same way. The tile is a launcher, never an authorization.
 
 ### `base` is deliberately empty — no-menu semantics
 
@@ -98,9 +163,10 @@ deletion. Reversing it opens a window where the channel default names a
 deleted menu.
 
 The `>6-button` guard in `staff_oa_sync.py` is unrelated to this and stays.
-It is insurance: nothing a real employee can hold overflows LINE's 6-button
-cap today (max variant is 2 buttons), but any future button can put us back
-there.
+It is no longer comfortable insurance: the maximal real variant
+(`base+housekeeping+reception`) sits exactly ON LINE's 6-button cap today,
+so the margin before a real employee overflows it is a single `MenuButton`
+row (or a hide rule being removed) rather than several.
 
 **Consequence when applying:** issuing `housekeeping` grants and running
 `staff_oa_sync.py --apply` should happen in ONE operation. Applying the

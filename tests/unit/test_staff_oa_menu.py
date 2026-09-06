@@ -28,10 +28,48 @@ both attach photos) and both halves live on the same /hk/report screen. That
 is what ``MenuButton.also_grant_app_ids`` exists for, and the property this
 file pins hardest is that a holder of BOTH grants sees it exactly ONCE.
 
-The four reachable variants are now base (0 buttons), base+reception (2),
-base+housekeeping (5, the 3+2 layout) and base+housekeeping+reception (6 —
-LINE's cap, exactly reached, 3+3). There is no headroom left: a seventh tile
-would have to replace one, not join them.
+Scope note (2026-09-06, chat report): งานซ่อมค้าง (outstanding maintenance)
+is the first ``message_text`` tile — a LINE ``message`` action, not ``uri``,
+because its board cannot open inside LINE's in-app browser at all. It PAYS
+for its own row by hiding another one: สถานะห้อง now carries
+``hidden_by_grant_app_ids={"housekeeping"}``, because a housekeeping+reception
+holder already has full write access to that same board via แม่บ้าน, so the
+read-only duplicate is dropped and งานซ่อมค้าง takes its slot.
+``TestHiddenByGrantModel`` and ``TestMessageActionTiles`` pin the two new
+mechanisms; the rest of this file's existing tests were updated in place for
+the new counts and orders rather than duplicated, since the old numbers are
+simply no longer true.
+
+Scope note (2026-09-06, web queue — SAME DAY, owner decision "launch both"):
+จัดการงานซ่อม joins right after งานซ่อมค้าง, a plain ``uri`` tile opening
+housekeeping.thehfhotel.org/staff/queue — the page where the work actually
+gets done, as opposed to งานซ่อมค้าง's read-only chat report. It reuses the
+existing ``wrench`` glyph rather than minting a new one (the page is where
+work gets done — the same "go act" mark แจ้งซ่อม wears). It first carried its
+own ``hidden_by_grant_app_ids={"housekeeping"}``, the same reasoning
+สถานะห้อง already used.
+
+Scope note (2026-09-06, SAME DAY, owner: "let maid mark fix done too"):
+housekeeping's own ``/staff/queue`` page was widened to admit the
+`housekeeping` grant as well as `reception`, so จัดการงานซ่อม became a SHARED
+tile (``also_grant_app_ids={"housekeeping"}``) instead of a hidden one — a
+maid needs the queue launcher exactly as much as reception does, the same
+shape รายงานแม่บ้าน already uses. งานซ่อมค้าง picked up the hide instead
+(``hidden_by_grant_app_ids={"housekeeping"}``): a housekeeping+reception
+holder now reaches the queue page directly via จัดการงานซ่อม, so the
+read-only chat report is the redundant one. Two rows now hide behind
+`housekeeping` (สถานะห้อง and งานซ่อมค้าง), so the both-grants variant stays
+at SIX — MENU_BUTTONS grew to 8 rows, but nobody real is ever shown more than
+6 at once.
+
+The four reachable variants are now base (0 buttons), base+reception (4:
+สถานะห้อง, รายงานแม่บ้าน, งานซ่อมค้าง, จัดการงานซ่อม — the first real use of
+the 2+2 layout), base+housekeeping (6, the 3+3 layout — จัดการงานซ่อม's
+widening put a maid-only variant at the cap for the first time) and
+base+housekeeping+reception (6 — LINE's cap, exactly reached, 3+3: the four
+maid tiles, รายงานแม่บ้าน, and จัดการงานซ่อม, with both สถานะห้อง and
+งานซ่อมค้าง hidden). There is no headroom left: a seventh tile would have to
+replace one, not join them.
 
 BASE IS EMPTY, AND THAT IS THE CONTRACT
 ---------------------------------------
@@ -75,6 +113,17 @@ HK_BOARD_URL = "https://hotel.thehfhotel.org/hk"
 # server-side by new-hotel, not by which tile they tapped.
 HK_REPORT_URL = "https://hotel.thehfhotel.org/hk/report"
 REPORT_LABEL = "รายงานแม่บ้าน"
+
+# งานซ่อมค้าง (2026-09-06) — the first message-action tile: no URL, tapping
+# it sends this text into the 1:1 chat for the staff bot to answer.
+OUTSTANDING_LABEL = "งานซ่อมค้าง"
+OUTSTANDING_MESSAGE_TEXT = "งานค้าง"
+
+# จัดการงานซ่อม (2026-09-06, same day, owner decision "launch both") — a
+# plain uri tile opening the housekeeping queue page itself, as opposed to
+# งานซ่อมค้าง's read-only chat report.
+QUEUE_LABEL = "จัดการงานซ่อม"
+QUEUE_URL = "https://housekeeping.thehfhotel.org/staff/queue"
 
 
 def _real_variants():
@@ -204,7 +253,7 @@ class TestMenuButtonsForGrants:
             b.url for b in buttons
         ]
 
-    def test_housekeeping_grant_alone_yields_five_buttons(self):
+    def test_housekeeping_grant_alone_yields_six_buttons(self):
         # The count has tracked every scope change this menu has had: 4 with
         # clock-in + แม่บ้าน, 3 after clock-in went, 2 while แม่บ้าน was
         # deferred, 3 again once it was back (2026-08-14), and 4 since
@@ -222,35 +271,50 @@ class TestMenuButtonsForGrants:
         # count moved even though that tile is SHARED, because `housekeeping`
         # is its home grant — a maid reaches it whether or not anyone in
         # reception exists.
+        #
+        # Six since จัดการงานซ่อม was widened to a shared tile (2026-09-06,
+        # "let maid mark fix done too") — housekeeping.thehfhotel.org's queue
+        # page itself now admits the `housekeeping` grant, so a maid gets the
+        # launcher too, at the very tail of the table. QUEUE_LABEL, not
+        # OUTSTANDING_LABEL: งานซ่อมค้าง's home grant is `reception` alone, so
+        # a maid without `reception` never picks it up.
         buttons = menu.buttons_for({MENU_GRANT})
-        assert len(buttons) == 5
+        assert len(buttons) == 6
         assert [b.label for b in buttons] == [
             "แม่บ้าน",
             "แจ้งซ่อม",
             "สต๊อกของ",
             "รับของมาส่ง",
             REPORT_LABEL,
+            QUEUE_LABEL,
         ]
         assert all(MENU_GRANT in b.grant_app_ids for b in buttons)
         assert "สถานะห้อง" not in [b.label for b in buttons]
+        assert OUTSTANDING_LABEL not in [b.label for b in buttons]
         assert menu.menu_size(len(buttons)) == (menu.MENU_WIDTH, menu.MENU_HEIGHT_FULL)
-        assert menu.menu_rows(len(buttons)) == (3, 2)
+        assert menu.menu_rows(len(buttons)) == (3, 3)
 
-    def test_reception_grant_reveals_the_board_and_the_report(self):
+    def test_reception_grant_reveals_the_board_the_report_and_two_maintenance_tiles(self):
         # Was test_reception_grant_reveals_exactly_the_room_status_tile, when
-        # the grant carried one tile. It carries TWO since 2026-09-02: the
-        # room-status board it reads, and the report screen it must reach to
-        # verify or return what the maids filed — the shared tile.
+        # the grant carried one tile, then
+        # test_reception_grant_reveals_the_board_and_the_report once
+        # รายงานแม่บ้าน joined it (2026-09-02), then
+        # test_reception_grant_reveals_the_board_the_report_and_outstanding_work
+        # at three once งานซ่อมค้าง joined (2026-09-06 morning). Four since the
+        # SAME day's owner decision to launch both the chat report AND a web
+        # page: จัดการงานซ่อม, a plain uri tile onto the queue page itself.
         #
         # What has not changed is the gate: a reception-only identity must
         # still NOT pick up the maid tiles. แจ้งซ่อม / สต๊อกของ / รับของมาส่ง
         # are write surfaces in the housekeeping app, and the read-only-ness of
-        # the two tiles it DOES get is a property of new-hotel's server-side
+        # the board tiles it DOES get is a property of new-hotel's server-side
         # role checks, not of the URLs themselves.
         buttons = menu.buttons_for({RECEPTION_GRANT})
-        assert [b.label for b in buttons] == ["สถานะห้อง", REPORT_LABEL]
+        assert [b.label for b in buttons] == [
+            "สถานะห้อง", REPORT_LABEL, OUTSTANDING_LABEL, QUEUE_LABEL,
+        ]
 
-        board, report = buttons
+        board, report, outstanding, queue = buttons
         assert board.url == HK_BOARD_URL
         assert board.grant_app_ids == frozenset({RECEPTION_GRANT})
         assert board.glyph == "clipboard"
@@ -259,9 +323,19 @@ class TestMenuButtonsForGrants:
         assert report.grant_app_ids == frozenset({MENU_GRANT, RECEPTION_GRANT})
         assert report.glyph == "photo_sheet"
 
-        # Two buttons ⇒ still the single-row canvas.
-        assert menu.menu_size(len(buttons)) == (menu.MENU_WIDTH, menu.MENU_HEIGHT_HALF)
-        assert menu.menu_rows(len(buttons)) == (2,)
+        assert outstanding.url == ""
+        assert outstanding.message_text == OUTSTANDING_MESSAGE_TEXT
+        assert outstanding.grant_app_ids == frozenset({RECEPTION_GRANT})
+        assert outstanding.glyph == "wrench_list"
+
+        assert queue.url == QUEUE_URL
+        assert queue.message_text is None
+        assert queue.grant_app_ids == frozenset({RECEPTION_GRANT, MENU_GRANT})
+        assert queue.glyph == "wrench"
+
+        # Four buttons ⇒ the 2+2 two-row canvas.
+        assert menu.menu_size(len(buttons)) == (menu.MENU_WIDTH, menu.MENU_HEIGHT_FULL)
+        assert menu.menu_rows(len(buttons)) == (2, 2)
 
     def test_reception_tile_points_at_the_same_board_the_maids_use(self):
         # Deliberate, not a copy-paste slip: reception READS the board the
@@ -276,23 +350,33 @@ class TestMenuButtonsForGrants:
     def test_both_grants_yield_six_buttons_maids_first(self):
         # An employee holding both is full-access in new-hotel, and here just
         # sees the union of both tile sets — table order, so the four maid
-        # tiles, then สถานะห้อง, then the shared report tile.
+        # tiles, then the shared report tile, then จัดการงานซ่อม.
+        #
+        # สถานะห้อง and งานซ่อมค้าง are BOTH ABSENT here even though
+        # `reception` reveals them — they carry
+        # hidden_by_grant_app_ids={"housekeeping"}, because แม่บ้าน (สถานะห้อง)
+        # and จัดการงานซ่อม (งานซ่อมค้าง) above already cover the identical
+        # ground with full write access, so the reception-only/read-only
+        # launchers would be wasted slots. That is what keeps the both-grants
+        # variant at 6 even though MENU_BUTTONS itself has grown to 8 rows.
         #
         # SIX is LINE's cap, exactly reached (3+3, the last layout menu_rows()
         # has). This assertion is therefore also the headroom alarm: adding a
-        # seventh row to MENU_BUTTONS turns this variant into one LINE cannot
-        # render, and its holders get UNLINKED by the over-cap guards rather
-        # than a menu. A seventh tool has to replace a tile, not join them.
+        # ninth row to MENU_BUTTONS (or removing a hide) turns this variant
+        # into one LINE cannot render, and its holders get UNLINKED by the
+        # over-cap guards rather than a menu.
         buttons = menu.buttons_for({MENU_GRANT, RECEPTION_GRANT})
         assert [b.label for b in buttons] == [
             "แม่บ้าน",
             "แจ้งซ่อม",
             "สต๊อกของ",
             "รับของมาส่ง",
-            "สถานะห้อง",
             REPORT_LABEL,
+            QUEUE_LABEL,
         ]
-        assert len(buttons) == len(menu.MENU_BUTTONS) == 6
+        assert "สถานะห้อง" not in [b.label for b in buttons]
+        assert OUTSTANDING_LABEL not in [b.label for b in buttons]
+        assert len(buttons) == len(menu.MENU_BUTTONS) - 2 == 6
         assert menu.menu_size(6) == (menu.MENU_WIDTH, menu.MENU_HEIGHT_FULL)
         assert menu.menu_rows(6) == (3, 3)
 
@@ -301,7 +385,10 @@ class TestMenuButtonsForGrants:
         # two rows (one per grant) instead of one row with two grants, the
         # owner — who holds both — would see รายงานแม่บ้าน TWICE, and the
         # variant would need seven cells on a six-cell canvas: not a cosmetic
-        # bug, a menu that cannot be created at all.
+        # bug, a menu that cannot be created at all. จัดการงานซ่อม is the
+        # second shared tile (widened 2026-09-06) and gets the identical
+        # check, minus the both-grants variant where it is revealed exactly
+        # the same regardless — no hide applies to it any more.
         #
         # Checked by URL as well as label, since a duplicate row would most
         # likely differ in label ("รายงานแม่บ้าน" vs "ตรวจรายงาน") while
@@ -310,16 +397,22 @@ class TestMenuButtonsForGrants:
             buttons = menu.buttons_for(grants)
             assert [b.label for b in buttons].count(REPORT_LABEL) == 1
             assert [b.url for b in buttons].count(HK_REPORT_URL) == 1
+            assert [b.label for b in buttons].count(QUEUE_LABEL) == 1
+            assert [b.url for b in buttons].count(QUEUE_URL) == 1
 
     def test_reception_tiles_are_hidden_without_a_menu_grant(self):
         # The gate itself. /hk and /hk/report are real room-state surfaces; a
         # tile onto either must never appear for an employee holding neither
-        # grant, nor be revealed by a menu-irrelevant grant.
+        # grant, nor be revealed by a menu-irrelevant grant. งานซ่อมค้าง and
+        # จัดการงานซ่อม have no URL / a different URL respectively but are
+        # gated the same way and belong in this sweep.
         for grants in (set(), {"rooms", "portal"}, {"payroll", "ota"},
                        {"housekeeping_admin"}):
             labels = [b.label for b in menu.buttons_for(grants)]
             assert "สถานะห้อง" not in labels
             assert REPORT_LABEL not in labels
+            assert OUTSTANDING_LABEL not in labels
+            assert QUEUE_LABEL not in labels
 
     def test_menu_irrelevant_grants_are_ignored(self):
         assert menu.buttons_for({"rooms", "portal"}) == menu.buttons_for(set())
@@ -331,7 +424,9 @@ class TestMenuButtonsForGrants:
         # MENU_BUTTONS order — never the order the grants happened to arrive,
         # and never set-iteration order. (Base buttons would come first if
         # any still existed; none do since 2026-08-14.)
-        expected = ["แม่บ้าน", "แจ้งซ่อม", "สต๊อกของ", "รับของมาส่ง", REPORT_LABEL]
+        expected = [
+            "แม่บ้าน", "แจ้งซ่อม", "สต๊อกของ", "รับของมาส่ง", REPORT_LABEL, QUEUE_LABEL,
+        ]
         assert [b.label for b in menu.buttons_for(
             ["housekeeping", "payroll", "rooms"]
         )] == expected
@@ -447,6 +542,196 @@ class TestSharedTileModel:
             ),),
         )
         assert menu.menu_signature({"housekeeping"}) != narrow
+
+
+class TestHiddenByGrantModel:
+    """``MenuButton.hidden_by_grant_app_ids`` — the 2026-09-06 model
+    extension that removes a revealed row for an employee who ALSO holds one
+    of the naming grants. Mechanism tests, on synthetic rows where possible,
+    so they keep holding when the next hidden tile arrives.
+    """
+
+    def test_hidden_button_is_dropped_when_the_hiding_grant_is_also_held(
+        self, monkeypatch
+    ):
+        rows = (
+            menu.MenuButton(
+                grant_app_id="reception", label="x", url="https://x.invalid/",
+                glyph="clipboard", hidden_by_grant_app_ids=frozenset({"housekeeping"}),
+            ),
+        )
+        monkeypatch.setattr(menu, "MENU_BUTTONS", rows)
+        assert menu.buttons_for({"reception"}) == rows
+        assert menu.buttons_for({"reception", "housekeeping"}) == ()
+
+    def test_hide_is_evaluated_after_the_also_grant_reveal_not_instead_of_it(
+        self, monkeypatch
+    ):
+        # A row that is BOTH shared (also_grant_app_ids) and hidden by one of
+        # the very grants that could reveal it: the hide must still win, so
+        # "revealed by grant X" and "hidden when holding grant X" compose
+        # rather than one silently overriding the other's data.
+        rows = (
+            menu.MenuButton(
+                grant_app_id="housekeeping",
+                also_grant_app_ids=frozenset({"reception"}),
+                label="x", url="https://x.invalid/", glyph="clipboard",
+                hidden_by_grant_app_ids=frozenset({"reception"}),
+            ),
+        )
+        monkeypatch.setattr(menu, "MENU_BUTTONS", rows)
+        assert menu.buttons_for({"housekeeping"}) == rows  # revealed, not hidden
+        assert menu.buttons_for({"reception"}) == ()       # revealed, then hidden
+        assert menu.buttons_for({"housekeeping", "reception"}) == ()
+
+    def test_the_real_room_status_tile_hides_behind_housekeeping(self):
+        # The live case: สถานะห้อง and แม่บ้าน open the identical board, so a
+        # housekeeping+reception holder gets the full-access tile and not a
+        # redundant read-only duplicate.
+        room_status = [
+            b for b in menu.MENU_BUTTONS if b.label == "สถานะห้อง"
+        ][0]
+        assert room_status.hidden_by_grant_app_ids == frozenset({MENU_GRANT})
+        assert room_status in menu.buttons_for({RECEPTION_GRANT})
+        assert room_status not in menu.buttons_for({RECEPTION_GRANT, MENU_GRANT})
+
+    def test_the_real_outstanding_report_tile_also_hides_behind_housekeeping(self):
+        # งานซ่อมค้าง (widened same day, 2026-09-06, "let maid mark fix done
+        # too"): once จัดการงานซ่อม became a SHARED tile, a housekeeping+
+        # reception holder reaches the queue page directly with full write
+        # access, so the read-only chat report is the redundant tile now —
+        # not จัดการงานซ่อม, which flipped from hidden to shared the same day.
+        outstanding = [
+            b for b in menu.MENU_BUTTONS if b.label == OUTSTANDING_LABEL
+        ][0]
+        assert outstanding.hidden_by_grant_app_ids == frozenset({MENU_GRANT})
+        assert outstanding in menu.buttons_for({RECEPTION_GRANT})
+        assert outstanding not in menu.buttons_for({RECEPTION_GRANT, MENU_GRANT})
+
+    def test_the_real_queue_tile_is_shared_not_hidden(self):
+        # The flip side of the above: จัดการงานซ่อม is no longer a
+        # hidden_by_grant_app_ids row — it is a SHARED tile (like
+        # รายงานแม่บ้าน) that a housekeeping-only maid now reaches too.
+        queue = [b for b in menu.MENU_BUTTONS if b.label == QUEUE_LABEL][0]
+        assert queue.hidden_by_grant_app_ids == frozenset()
+        assert queue.also_grant_app_ids == frozenset({MENU_GRANT})
+        assert queue in menu.buttons_for({RECEPTION_GRANT})
+        assert queue in menu.buttons_for({MENU_GRANT})
+        assert queue in menu.buttons_for({RECEPTION_GRANT, MENU_GRANT})
+
+    def test_hidden_by_grants_are_still_menu_relevant(self, monkeypatch):
+        # A grant that ONLY ever hides a row (never reveals one) must still
+        # count as menu-relevant — menu_grants() reduces to MENU_GRANT_APP_IDS
+        # before buttons_for() ever gets to check the hide, so if the hiding
+        # grant were missing from that set the hide would silently never fire.
+        rows = (
+            menu.MenuButton(
+                grant_app_id="reception", label="x", url="https://x.invalid/",
+                glyph="clipboard",
+                hidden_by_grant_app_ids=frozenset({"only_hides"}),
+            ),
+        )
+        monkeypatch.setattr(menu, "MENU_BUTTONS", rows)
+        monkeypatch.setattr(
+            menu, "MENU_GRANT_APP_IDS",
+            frozenset(
+                g for b in menu.MENU_BUTTONS
+                for g in b.grant_app_ids | b.hidden_by_grant_app_ids
+            ),
+        )
+        assert "only_hides" in menu.MENU_GRANT_APP_IDS
+        assert menu.buttons_for({"reception", "only_hides"}) == ()
+
+
+class TestMessageActionTiles:
+    """``MenuButton.message_text`` — the 2026-09-06 model extension for a
+    tile with no openable web page: tapping it sends text into the 1:1 chat
+    instead of opening a browser.
+    """
+
+    def test_a_message_button_may_carry_an_empty_url(self):
+        button = menu.MenuButton(
+            grant_app_id="reception", label="x", url="", glyph="clipboard",
+            message_text="ข้อความ",
+        )
+        assert button.url == ""
+        assert button.message_text == "ข้อความ"
+
+    def test_payload_emits_a_message_action_for_a_message_button_uri_for_others(
+        self, monkeypatch
+    ):
+        rows = (
+            menu.MenuButton(
+                grant_app_id="reception", label="a", url="https://a.invalid/",
+                glyph="clipboard",
+            ),
+            menu.MenuButton(
+                grant_app_id="reception", label="b", url="", glyph="clipboard",
+                message_text="ข้อความ",
+            ),
+        )
+        monkeypatch.setattr(menu, "MENU_BUTTONS", rows)
+        payload = menu.rich_menu_payload({"reception"})
+        actions = [area["action"] for area in payload["areas"]]
+        assert actions[0] == {"type": "uri", "label": "a", "uri": "https://a.invalid/"}
+        assert actions[1] == {"type": "message", "label": "b", "text": "ข้อความ"}
+
+    def test_the_real_outstanding_tile_is_a_message_action(self):
+        button = [
+            b for b in menu.MENU_BUTTONS if b.label == OUTSTANDING_LABEL
+        ][0]
+        assert button.message_text == OUTSTANDING_MESSAGE_TEXT
+        assert button.url == ""
+        payload = menu.rich_menu_payload({RECEPTION_GRANT})
+        outstanding_area = [
+            a for a in payload["areas"] if a["action"].get("text") == OUTSTANDING_MESSAGE_TEXT
+        ]
+        assert len(outstanding_area) == 1
+        assert outstanding_area[0]["action"]["type"] == "message"
+
+    def test_signature_changes_when_message_text_changes(self, monkeypatch):
+        # message_text must participate in the idempotency hash, or the sync
+        # script would treat a tile whose sent text changed as an unchanged
+        # menu and never re-create it.
+        rows = (
+            menu.MenuButton(
+                grant_app_id="reception", label="x", url="", glyph="clipboard",
+                message_text="เดิม",
+            ),
+        )
+        monkeypatch.setattr(menu, "MENU_BUTTONS", rows)
+        original = menu.menu_signature({"reception"})
+
+        monkeypatch.setattr(
+            menu, "MENU_BUTTONS",
+            (menu.MenuButton(
+                grant_app_id="reception", label="x", url="", glyph="clipboard",
+                message_text="ใหม่",
+            ),),
+        )
+        assert menu.menu_signature({"reception"}) != original
+
+    def test_a_uri_button_and_a_message_button_with_the_same_label_and_url_differ(
+        self, monkeypatch
+    ):
+        # url="" is shared by design between a message button and a (contrived)
+        # empty-url uri button; the signature must not collapse them.
+        monkeypatch.setattr(
+            menu, "MENU_BUTTONS",
+            (menu.MenuButton(
+                grant_app_id="reception", label="x", url="", glyph="clipboard",
+            ),),
+        )
+        no_message = menu.menu_signature({"reception"})
+
+        monkeypatch.setattr(
+            menu, "MENU_BUTTONS",
+            (menu.MenuButton(
+                grant_app_id="reception", label="x", url="", glyph="clipboard",
+                message_text="ข้อความ",
+            ),),
+        )
+        assert menu.menu_signature({"reception"}) != no_message
 
 
 class TestMenuKeys:
@@ -596,7 +881,13 @@ class TestMenuSignatureAndName:
         # the honest way to mint one: it is exactly the change that would
         # bring base back (re-adding clock-in is a one-line MENU_BUTTONS
         # edit), so this also pins that signatures still separate base from
-        # base+housekeeping the day that happens.
+        # base+reception the day that happens.
+        #
+        # Compared against `reception`, not `housekeeping`: the maid variant
+        # sits ON LINE's 6-button cap since จัดการงานซ่อม's widening
+        # (2026-09-06), so prepending one more base button here would push it
+        # to 7 and raise inside menu_signature() before the comparison ever
+        # ran. `reception` alone (4 tiles) still has headroom for it.
         synthetic_base = menu.MenuButton(
             grant_app_id=None,
             label="ทดสอบ",
@@ -606,7 +897,7 @@ class TestMenuSignatureAndName:
         monkeypatch.setattr(
             menu, "MENU_BUTTONS", (synthetic_base,) + menu.MENU_BUTTONS
         )
-        assert menu.menu_signature(set()) != menu.menu_signature({"housekeeping"})
+        assert menu.menu_signature(set()) != menu.menu_signature({RECEPTION_GRANT})
 
     def test_signature_ignores_menu_irrelevant_grants(self):
         # The sync script skips re-creating a menu whose signature is
@@ -623,32 +914,75 @@ class TestMenuSignatureAndName:
             with pytest.raises(ValueError):
                 menu.menu_signature(irrelevant)  # resolves to the empty base
 
-    def test_every_real_variant_has_a_distinct_signature(self):
-        # The sync script and provision_for_badge both SKIP re-creating a menu
-        # whose signature already matches. So a signature collision between two
-        # variants is not a cosmetic bug: it would leave holders of one variant
-        # linked to the other's menu — e.g. reception silently handed the four
-        # maid write-tiles. Sweep the whole powerset rather than spot-checking
-        # the pair added today, so this keeps holding as grants are added.
-        signatures = {}
+    def test_every_real_variant_has_a_distinct_rich_menu_name(self):
+        # Was test_every_real_variant_has_a_distinct_signature. That premise
+        # broke on 2026-09-06 when จัดการงานซ่อม was widened into a shared
+        # tile: base+housekeeping and base+housekeeping+reception now render
+        # the exact same six buttons in the exact same order (a
+        # housekeeping+reception holder no longer sees anything a
+        # housekeeping-only maid doesn't — see
+        # test_housekeeping_and_both_grants_now_share_a_signature below), so
+        # their SIGNATURES legitimately collide for the first time.
+        #
+        # What must still hold, and is what the sync script and
+        # provision_for_badge actually rely on to avoid cross-linking
+        # holders of one variant to another's menu, is that every real
+        # variant's RICH MENU NAME stays distinct — `rich_menu_name` embeds
+        # the variant KEY as well as the signature
+        # (``staffhub:<key>:<sig>``), and menu_key() differs by grant set
+        # even when two grant sets render identically. Sweep the whole
+        # powerset rather than spot-checking the pair added today, so this
+        # keeps holding as grants are added.
+        names = {}
         for grants in _real_variants():
             buttons = menu.buttons_for(grants)
             if not buttons:
-                continue  # the empty base has no signature at all
-            signatures[menu.menu_key(grants)] = menu.menu_signature(grants)
-        assert len(set(signatures.values())) == len(signatures) == 3
-        assert set(signatures) == {
+                continue  # the empty base has no menu, and so no name
+            names[menu.menu_key(grants)] = menu.rich_menu_name(grants)
+        assert len(set(names.values())) == len(names) == 3
+        assert set(names) == {
             "base+housekeeping",
             "base+reception",
             "base+housekeeping+reception",
         }
 
-    def test_granting_reception_churns_an_existing_maid_menu(self):
+    def test_housekeeping_and_both_grants_now_share_a_signature(self):
+        # The flip side of the test above, stated directly rather than left
+        # implicit: จัดการงานซ่อม's widening (2026-09-06, "let maid mark fix
+        # done too") means a housekeeping-only maid and a housekeeping+
+        # reception holder are shown the identical six tiles in the
+        # identical order — สถานะห้อง and งานซ่อมค้าง buy the reception-only
+        # variant nothing extra once `housekeeping` is also held, and
+        # จัดการงานซ่อม is now on both. Their button lists, and therefore
+        # their content signatures, are equal by design — this is not a
+        # regression to guard against, it is the whole point of the
+        # widening. What still tells the two variants apart operationally is
+        # their KEY (asserted above): each gets created and linked as its
+        # own named rich menu even though the two would be pixel-identical
+        # images.
+        assert menu.buttons_for({MENU_GRANT}) == menu.buttons_for(
+            {MENU_GRANT, RECEPTION_GRANT}
+        )
+        assert menu.menu_signature({MENU_GRANT}) == menu.menu_signature(
+            {MENU_GRANT, RECEPTION_GRANT}
+        )
+        assert menu.rich_menu_name({MENU_GRANT}) != menu.rich_menu_name(
+            {MENU_GRANT, RECEPTION_GRANT}
+        )
+
+    def test_granting_reception_relinks_a_maid_to_her_own_variant_menu(self):
         # The upgrade path, stated as the thing that must be true for it to
         # work: a maid who is also given `reception` moves to a DIFFERENT
-        # variant with a DIFFERENT signature, so her rich menu is re-created
-        # and re-linked instead of being left on the 4-tile image.
-        assert menu.menu_signature({MENU_GRANT}) != menu.menu_signature(
+        # variant KEY (``menu_key`` reads her full grant set), so
+        # provisioning looks up / creates a rich menu under her new variant's
+        # own name and links her to THAT — never left on a menu named for the
+        # variant she no longer is. This holds even though (2026-09-06,
+        # ``test_housekeeping_and_both_grants_now_share_a_signature``) the
+        # menu she lands on now happens to look identical to the one she
+        # left; re-uploading a byte-identical PNG under a new name is a
+        # deliberate cost, not a bug — see that test for why identical
+        # content is expected here.
+        assert menu.menu_key({MENU_GRANT}) != menu.menu_key(
             {MENU_GRANT, RECEPTION_GRANT}
         )
         assert menu.rich_menu_name({MENU_GRANT}) != menu.rich_menu_name(
@@ -678,14 +1012,16 @@ class TestRichMenuPayload:
     def test_payload_matches_line_richmenu_schema(self):
         # base+housekeeping, on the two-row 1686 canvas since it grew past 3
         # (รับของมาส่ง, 2026-08-17). Five tiles since รายงานแม่บ้าน
-        # (2026-09-02). It stopped being the MAXIMAL variant on 2026-09-01
-        # (base+housekeeping+reception) — that one is covered below.
+        # (2026-09-02); six since จัดการงานซ่อม was widened into a shared tile
+        # (2026-09-06, "let maid mark fix done too") — the housekeeping-only
+        # variant now sits ON LINE's cap too, alongside
+        # base+housekeeping+reception below.
         payload = menu.rich_menu_payload({"housekeeping"})
         assert payload["size"] == {"width": 2500, "height": 1686}
         assert payload["selected"] is True
         assert payload["name"] == menu.rich_menu_name({"housekeeping"})
         assert len(payload["chatBarText"]) <= 14  # LINE cap
-        assert len(payload["areas"]) == 5
+        assert len(payload["areas"]) == 6
 
     def test_areas_are_uri_actions_within_canvas(self):
         # ota is menu-irrelevant since 2026-08-14, so this is the same
@@ -697,7 +1033,7 @@ class TestRichMenuPayload:
         payload = menu.rich_menu_payload({"housekeeping", "ota"})
         width = payload["size"]["width"]
         height = payload["size"]["height"]
-        assert len(payload["areas"]) == 5
+        assert len(payload["areas"]) == 6
         assert any(area["bounds"]["y"] > 0 for area in payload["areas"])
         for area in payload["areas"]:
             bounds = area["bounds"]
@@ -721,43 +1057,70 @@ class TestRichMenuPayload:
             "https://housekeeping.thehfhotel.org/staff/stock",
             "https://housekeeping.thehfhotel.org/staff/receive",
             HK_REPORT_URL,
+            QUEUE_URL,
         ]
 
-    def test_reception_payload_is_two_tiles_on_the_half_canvas(self):
-        # Two tiles since the shared report tile (2026-09-02): the board it
-        # reads and the report screen it verifies on. Still one row.
+    def test_reception_payload_is_four_tiles_on_the_two_row_canvas(self):
+        # Four tiles since 2026-09-06: สถานะห้อง, the shared report tile,
+        # งานซ่อมค้าง (message action), and จัดการงานซ่อม (uri, the same-day
+        # "launch both" decision). First real payload to use the 2+2 layout.
         payload = menu.rich_menu_payload({RECEPTION_GRANT})
-        assert payload["size"] == {"width": 2500, "height": 843}
+        assert payload["size"] == {"width": 2500, "height": 1686}
         assert payload["name"] == menu.rich_menu_name({RECEPTION_GRANT})
         assert [area["action"] for area in payload["areas"]] == [
             {"type": "uri", "label": "สถานะห้อง", "uri": HK_BOARD_URL},
             {"type": "uri", "label": REPORT_LABEL, "uri": HK_REPORT_URL},
+            {
+                "type": "message",
+                "label": OUTSTANDING_LABEL,
+                "text": OUTSTANDING_MESSAGE_TEXT,
+            },
+            {"type": "uri", "label": QUEUE_LABEL, "uri": QUEUE_URL},
         ]
-        # The two split the canvas with nothing left over — no dead space to
-        # tap into, and the second cell absorbs the odd pixel.
+        # 2+2: the four split the canvas evenly across both rows, no dead
+        # space to tap into.
         assert [area["bounds"] for area in payload["areas"]] == [
             {"x": 0, "y": 0, "width": 1250, "height": 843},
             {"x": 1250, "y": 0, "width": 1250, "height": 843},
+            {"x": 0, "y": 843, "width": 1250, "height": 843},
+            {"x": 1250, "y": 843, "width": 1250, "height": 843},
         ]
 
     def test_both_grants_payload_is_six_tiles_split_three_plus_three(self):
+        # สถานะห้อง and งานซ่อมค้าง are BOTH absent:
+        # hidden_by_grant_app_ids={"housekeeping"} drops each once แม่บ้าน /
+        # จัดการงานซ่อม are also on the menu (see the both-grants labels test
+        # above), so จัดการงานซ่อม fills the sixth slot instead — a uri
+        # action, like every other tile here (the message action, งานซ่อมค้าง,
+        # is the one that is now hidden).
         payload = menu.rich_menu_payload({MENU_GRANT, RECEPTION_GRANT})
         assert payload["size"] == {"width": 2500, "height": 1686}
         assert len(payload["areas"]) == 6
-        assert [area["action"]["uri"] for area in payload["areas"]] == [
+        actions = [area["action"] for area in payload["areas"]]
+        uris = [area["action"].get("uri") for area in payload["areas"]]
+        assert uris == [
             HK_BOARD_URL,
             "https://housekeeping.thehfhotel.org/staff/report",
             "https://housekeeping.thehfhotel.org/staff/stock",
             "https://housekeeping.thehfhotel.org/staff/receive",
-            HK_BOARD_URL,
             HK_REPORT_URL,
+            QUEUE_URL,
         ]
-        # The shared tile is ONE tap area, not two — the payload is where a
-        # duplicated row would have become a seventh area LINE rejects.
-        assert [a["action"]["uri"] for a in payload["areas"]].count(HK_REPORT_URL) == 1
+        assert HK_BOARD_URL not in uris[4:]  # สถานะห้อง's URL, not reused
+        assert not any(action["type"] == "message" for action in actions)
+        assert actions[-1] == {
+            "type": "uri",
+            "label": QUEUE_LABEL,
+            "uri": QUEUE_URL,
+        }
+        # The shared tiles are ONE tap area each, not two — the payload is
+        # where a duplicated row would have become a seventh area LINE
+        # rejects.
+        assert uris.count(HK_REPORT_URL) == 1
+        assert uris.count(QUEUE_URL) == 1
         # 3+3: the full two-row grid, LINE's maximum. Pinned through the
         # bounds rather than menu_rows() because this is the payload LINE
-        # actually receives, and 6 is the first real variant to fill it.
+        # actually receives, and 6 is the maximal real variant.
         top = [a["bounds"] for a in payload["areas"] if a["bounds"]["y"] == 0]
         bottom = [a["bounds"] for a in payload["areas"] if a["bounds"]["y"] > 0]
         assert len(top) == 3 and len(bottom) == 3

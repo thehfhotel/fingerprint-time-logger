@@ -83,9 +83,18 @@ def _load_label_font(size: int) -> Tuple[ImageFont.FreeTypeFont, bool]:
 
 
 def _english_fallback_label(button: MenuButton) -> str:
-    """ASCII-safe stand-in when no Thai font exists: the tool's host name."""
+    """ASCII-safe stand-in when no Thai font exists: the tool's host name.
+
+    A ``message_text`` button (2026-09-06) carries no URL to fall back to —
+    ``url`` is ``""`` for those by design — so fall back to the message text
+    itself when it happens to be ASCII, and to the raw (empty) URL only as a
+    last resort otherwise; this path is only reachable at all if the bundled
+    Thai font is deleted.
+    """
     if button.label.isascii():
         return button.label
+    if button.message_text:
+        return urlparse(button.url).hostname or button.message_text
     return urlparse(button.url).hostname or button.url
 
 
@@ -291,6 +300,44 @@ def _glyph_photo_sheet(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, s
     )
 
 
+def _glyph_wrench_list(draw: ImageDraw.ImageDraw, x0: int, y0: int, size: int, stroke: int) -> None:
+    """Small wrench beside two ruled rows — outstanding maintenance (งานซ่อมค้าง).
+
+    Deliberately NOT the full ``wrench`` glyph: that one spans the whole
+    square swinging corner to corner, which reads as an ACTION — "go fix a
+    room now", แจ้งซ่อม's tile. This one only lists what is still open, so a
+    small still wrench sits beside two ruled rows (the receipt glyph's
+    GOLD_SOFT half-stroke rule) instead — a report, not a repair.
+    Deliberately NOT ``clipboard`` either: that mark is already สถานะห้อง's
+    board of rooms, and the two tiles can sit side by side on a reception
+    menu.
+    """
+    half = size // 2
+    thin = max(2, stroke // 2)
+
+    # Left half: a small wrench (same shape as _glyph_wrench, scaled down and
+    # confined to a half-width square so the ruled rows fit beside it).
+    draw.line(
+        [x0 + half // 6, y0 + half * 5 // 6, x0 + half * 3 // 4, y0 + half // 6],
+        fill=GOLD, width=stroke,
+    )
+    head = half * 2 // 5
+    hx0, hy0 = x0 + half - head, y0
+    draw.ellipse([hx0, hy0, hx0 + head, hy0 + head], outline=GOLD, width=thin)
+    knob = half // 8
+    kx, ky = x0 + half // 6, y0 + half * 5 // 6
+    draw.ellipse(
+        [kx - knob, ky - knob, kx + knob, ky + knob], outline=GOLD_SOFT, width=thin,
+    )
+
+    # Right half: two ruled rows — the outstanding items themselves.
+    rows_left = x0 + half + size // 10
+    rows_right = x0 + size - size // 12
+    for i in (1, 2):
+        y = y0 + size * i // 3
+        draw.line([rows_left, y, rows_right, y], fill=GOLD_SOFT, width=thin)
+
+
 _GLYPH_RENDERERS = {
     "clock": _glyph_clock,
     "clipboard": _glyph_clipboard,
@@ -301,6 +348,7 @@ _GLYPH_RENDERERS = {
     "bell": _glyph_bell,
     "broom": _glyph_broom,
     "wrench": _glyph_wrench,
+    "wrench_list": _glyph_wrench_list,
     "box": _glyph_box,
 }
 
