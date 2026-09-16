@@ -112,5 +112,7 @@ def test_default_palette_gets_leave_button():
     staff_leave_palette.install(Dummy)
     message = Dummy.palette_message()
     assert message["contents"]["footer"]["contents"][0]["action"] == {
-        "type": "message", "label": "แจ้งลา", "text": "แจ้งลา"
+        "type": "postback", "label": "แจ้งลา",
+        "data": staff_leave_palette.LEAVE_POSTBACK_DATA,
+        "displayText": "แจ้งลา",
     }
