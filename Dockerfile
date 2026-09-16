@@ -7,10 +7,11 @@ FROM python:3.11-slim AS base
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (Loma contains both Thai and Latin receipt glyphs)
 RUN apt-get update && apt-get install -y \
     gcc \
     curl \
+    fonts-tlwg-loma-otf \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 

@@ -21,6 +21,8 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from app.models.models import Base
+from app.models import staff_leave  # noqa: F401 — register leave tables for autogenerate
+
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

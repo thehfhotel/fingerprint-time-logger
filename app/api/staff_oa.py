@@ -20,6 +20,10 @@ app/services/staff_bot.py, which debounces them and answers with a free reply
 token. Follow handling is byte-for-byte what it was; the bot never pushes, and
 non-command chat is discarded before anything is logged.
 
+Since 2026-09-16 explicit leave commands and hfleave: postbacks are claimed
+first by staff_leave. That private, signed flow returns immediate reply-token
+messages and receipt images; it never forwards leave data to the general bot.
+
 The bot is also the ONLY responder for guest feedback raised on the public
 guest-feedback site (guest-feedback docs/CONTRACTS.md §15 rev 3, widened by
 rev 3.1 to every submission kind — praise, issue, request): it reads and
@@ -40,15 +44,18 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.models import Employee
-from app.services import staff_bot, staff_oa_menu, staff_oa_service
+from app.services import staff_bot, staff_leave, staff_oa_menu, staff_oa_service
+from app.api.staff_leave import image_router
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+router.include_router(image_router)
 
 # One short reply for not-yet-onboarded followers. Replies are free (no
 # push quota) and only sent for this one event, so the OA stays quiet.
@@ -128,7 +135,7 @@ async def staff_oa_webhook(
     x_line_signature: str = Header(default=""),
     db: Session = Depends(get_db),
 ):
-    """LINE Messaging API webhook: follow events + the staff bot."""
+    """LINE Messaging API webhook: follow events, leave requests and staff bot."""
     _require_enabled()
 
     body = await request.body()
@@ -148,12 +155,20 @@ async def staff_oa_webhook(
     if not isinstance(events, list):
         events = []
 
-    # Staff bot (HF ภายใน): message/postback/join events become debounced,
-    # free replies. Nothing is sent from inside this request — the bot waits
-    # for the chat to go quiet — so this loop only files intent, and a
-    # failure in it must not change the 200 LINE is waiting for.
+    # Explicit leave commands reply immediately in a worker thread. Every
+    # other message/postback/join retains the staff bot's existing debounce.
+    # A failure must not change the 200 LINE is waiting for or leak a leave
+    # event into the general bot. Never log employee data or reply tokens.
     commands = 0
     for event in events:
+        if staff_leave.is_leave_event(event):
+            try:
+                await run_in_threadpool(staff_leave.handle_event, event, db)
+                commands += 1
+            except Exception as exc:  # noqa: BLE001 — isolate each event
+                db.rollback()
+                logger.error("staff-leave event handling failed: %s", type(exc).__name__)
+            continue
         try:
             handled_event = staff_bot.handle_event_detail(event, db)
         except Exception:  # noqa: BLE001 — keep the webhook green per event

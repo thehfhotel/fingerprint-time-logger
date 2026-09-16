@@ -31,12 +31,15 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.models import Employee, EmployeeLeave, LeaveType, PublicHoliday
 from app.services.thai_holidays import thai_holidays_for_year
+from app.api.staff_leave import admin_router as staff_leave_admin_router
 
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 router = APIRouter()
+# These routes add a verified-manager check on top of the existing staff-tier gate.
+router.include_router(staff_leave_admin_router, prefix="/requests", tags=["staff-leave-review"])
 
 
 # Allowed leave types for the per-employee table. 'public_holiday' is
