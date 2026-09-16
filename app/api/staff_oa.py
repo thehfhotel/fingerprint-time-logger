@@ -32,8 +32,8 @@ confirms them from guest-feedback itself
 any LINE credentials or relaying events here. The event-forwarding relay this
 webhook used to run (PR #28/#30) is retired along with it.
 
-FAIL CLOSED: the endpoint answers 503 until both STAFF_OA_* secrets are
-configured (see app/core/config.py), and every request must carry a valid
+FAIL CLOSED: the POST endpoint answers 503 until both STAFF_OA_* secrets are
+configured (see app/core/config.py), and every POST request must carry a valid
 ``X-Line-Signature`` (HMAC of the raw body with the channel secret).
 Event processing is best-effort per event — a LINE API hiccup on one event
 never turns the webhook response into an error (LINE would retry and the
@@ -51,11 +51,14 @@ from app.core.database import get_db
 from app.models.models import Employee
 from app.services import staff_bot, staff_leave, staff_oa_menu, staff_oa_service
 from app.api.staff_leave import image_router
+from app.api.deployment_ready import router as deployment_ready_router
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 router.include_router(image_router)
+# Read-only GET readiness on the same URL; signed LINE POST is unchanged.
+router.include_router(deployment_ready_router)
 
 # One short reply for not-yet-onboarded followers. Replies are free (no
 # push quota) and only sent for this one event, so the OA stays quiet.
