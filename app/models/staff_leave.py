@@ -2,7 +2,7 @@
 from datetime import datetime
 
 from sqlalchemy import (CheckConstraint, Column, Date, DateTime, ForeignKey,
-                        Integer, String)
+                        Integer, LargeBinary, String)
 
 from app.core.database import Base
 
@@ -22,6 +22,10 @@ class StaffLeaveRequest(Base):
     date_to = Column(Date, nullable=False)
     status = Column(String(20), nullable=False, default="pending", index=True)
     version = Column(Integer, nullable=False, default=1)
+    medical_certificate = Column(LargeBinary, nullable=True)
+    medical_certificate_content_type = Column(String(50), nullable=True)
+    medical_certificate_sha256 = Column(String(64), nullable=True)
+    medical_certificate_uploaded_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     reviewed_by = Column(String(254), nullable=True)

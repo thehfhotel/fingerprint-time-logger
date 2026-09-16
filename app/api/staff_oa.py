@@ -1,43 +1,8 @@
 """Staff LINE OA webhook — Employee Hub follow-event handler (2026-07).
 
 LINE calls POST /api/public/staff-oa/webhook whenever something happens on
-the dedicated staff Official Account. We only act on ``follow`` events
-(employee adds/re-adds the OA as a friend):
-
-  * LINE userId matches an active employee's ``line_user_id`` → link that
-    employee's Role Menu (grant-driven rich menu, per-user link API). An
-    employee whose variant has no buttons at all — since 2026-08-14 that is
-    anyone without the ``housekeeping`` grant, see the MENU_BUTTONS comment
-    in app/services/staff_oa_menu.py — is linked to nothing, deliberately.
-  * unknown userId → link the channel's base/default menu if one exists
-    (with an empty base there is none) and reply once with a short Thai
-    pointer to the Q-badge onboarding flow that links LINE accounts to the
-    employee registry.
-
-Since 2026-09-05 this webhook is ALSO the staff bot's front door
-(``HF ภายใน``): ``message``/``postback``/``join`` events are routed into
-app/services/staff_bot.py, which debounces them and answers with a free reply
-token. Follow handling is byte-for-byte what it was; the bot never pushes, and
-non-command chat is discarded before anything is logged.
-
-Since 2026-09-16 explicit leave commands and hfleave: postbacks are claimed
-first by staff_leave. That private, signed flow returns immediate reply-token
-messages and receipt images; it never forwards leave data to the general bot.
-
-The bot is also the ONLY responder for guest feedback raised on the public
-guest-feedback site (guest-feedback docs/CONTRACTS.md §15 rev 3, widened by
-rev 3.1 to every submission kind — praise, issue, request): it reads and
-confirms them from guest-feedback itself
-(app/services/guest_feedback_client.py) rather than guest-feedback holding
-any LINE credentials or relaying events here. The event-forwarding relay this
-webhook used to run (PR #28/#30) is retired along with it.
-
-FAIL CLOSED: the POST endpoint answers 503 until both STAFF_OA_* secrets are
-configured (see app/core/config.py), and every POST request must carry a valid
-``X-Line-Signature`` (HMAC of the raw body with the channel secret).
-Event processing is best-effort per event — a LINE API hiccup on one event
-never turns the webhook response into an error (LINE would retry and the
-channel could wedge on a poison event).
+the dedicated staff Official Account. Follow events link the right rich menu,
+and verified leave events are claimed before the general staff bot.
 """
 
 import json
@@ -49,24 +14,20 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.models import Employee
-from app.services import staff_bot, staff_leave, staff_oa_menu, staff_oa_service
+from app.services import (staff_bot, staff_leave, staff_leave_palette,
+                          staff_oa_menu, staff_oa_service)
 from app.api.staff_leave import image_router
 from app.api.deployment_ready import router as deployment_ready_router
 
 logger = logging.getLogger(__name__)
 
+# Extend the default "HF ภายใน • มีอะไรให้ช่วยคะ" palette with แจ้งลา.
+staff_leave_palette.install(staff_bot)
+
 router = APIRouter()
 router.include_router(image_router)
-# Read-only GET readiness on the same URL; signed LINE POST is unchanged.
 router.include_router(deployment_ready_router)
 
-# One short reply for not-yet-onboarded followers. Replies are free (no
-# push quota) and only sent for this one event, so the OA stays quiet.
-#
-# The string itself moved to app/services/staff_bot.py on 2026-09-05, because
-# the bot sends the SAME text to a stranger who opens a 1:1 chat and the two
-# must never drift apart. Re-exported here under its original name: this is
-# still where the follow path reads it, and the text is unchanged.
 ONBOARDING_REPLY_TEXT = staff_bot.ONBOARDING_REPLY_TEXT
 
 
@@ -98,20 +59,6 @@ def _handle_follow_event(db: Session, event: dict) -> None:
         staff_oa_service.link_role_menu_for_line_user(db, line_user_id)
         return
 
-    # Unknown follower: pin the base menu explicitly (when there is one) and
-    # point them at the Q-badge onboarding flow so their LINE account gets
-    # linked.
-    #
-    # Since the 2026-08-14 maid-only re-scope there IS no base menu: every
-    # remaining button is gated on the `housekeeping` grant, so the `base`
-    # variant has zero buttons and the sync deliberately deploys nothing for
-    # it (see base_has_buttons in scripts/staff_oa_sync.py). A stranger
-    # therefore gets no rich menu — correct, they are not staff — and the
-    # reply below is the whole of what they get, which is why it must still
-    # be sent on this path. Distinguish the two reasons the menu is missing:
-    # "the variant has no buttons" is the designed state and only worth an
-    # info line, while "base has buttons but nothing is deployed" really does
-    # mean the sync has not run and an operator should act.
     deployed = staff_oa_service.deployed_menu_ids_by_key()
     base_menu_id = deployed.get("base")
     if base_menu_id:
@@ -130,6 +77,27 @@ def _handle_follow_event(db: Session, event: dict) -> None:
     reply_token = event.get("replyToken")
     if reply_token:
         staff_oa_service.reply_text_message(reply_token, ONBOARDING_REPLY_TEXT)
+
+
+def _leave_palette_event(event: object) -> dict | None:
+    """Translate our palette postback into the same private flow as ``แจ้งลา``.
+
+    The button deliberately uses ``cmd=palette`` as its fail-safe command so
+    the general staff-bot router still understands every palette postback. The
+    extra ``leave=1`` marker is intercepted here first. No unsigned leave form
+    state is accepted; this only opens the existing signed picker flow.
+    """
+    if not isinstance(event, dict) or event.get("type") != "postback":
+        return None
+    postback = event.get("postback")
+    if (not isinstance(postback, dict)
+            or postback.get("data") != staff_leave_palette.LEAVE_POSTBACK_DATA):
+        return None
+    converted = dict(event)
+    converted["type"] = "message"
+    converted["message"] = {"type": "text", "text": "แจ้งลา"}
+    converted.pop("postback", None)
+    return converted
 
 
 @router.post("/webhook")
@@ -158,15 +126,18 @@ async def staff_oa_webhook(
     if not isinstance(events, list):
         events = []
 
-    # Explicit leave commands reply immediately in a worker thread. Every
-    # other message/postback/join retains the staff bot's existing debounce.
-    # A failure must not change the 200 LINE is waiting for or leak a leave
-    # event into the general bot. Never log employee data or reply tokens.
     commands = 0
     for event in events:
-        if staff_leave.is_leave_event(event):
+        # A direct image is claimed by leave only when this employee has a
+        # pending sick-leave request without a certificate. Other media keeps
+        # the existing maintenance-ticket behavior. The palette's dedicated
+        # postback is translated to the same signed flow as typing แจ้งลา.
+        palette_event = _leave_palette_event(event)
+        if palette_event is not None or staff_leave.is_leave_event(event, db):
             try:
-                await run_in_threadpool(staff_leave.handle_event, event, db)
+                await run_in_threadpool(
+                    staff_leave.handle_event, palette_event if palette_event is not None else event, db
+                )
                 commands += 1
             except Exception as exc:  # noqa: BLE001 — isolate each event
                 db.rollback()

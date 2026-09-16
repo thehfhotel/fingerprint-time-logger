@@ -15,7 +15,6 @@ FONT_DIR = Path("/usr/share/fonts/opentype/tlwg")
 
 @lru_cache(maxsize=16)
 def _font(size: int, bold: bool = False):
-    # Installed explicitly by Dockerfile. Do not silently emit tofu if missing.
     name = "Loma-Bold.otf" if bold else "Loma.otf"
     return ImageFont.truetype(str(FONT_DIR / name), size)
 
@@ -70,25 +69,16 @@ def render_png(row: StaffLeaveRequest, rendered_at: datetime | None = None) -> b
     block("ระยะเวลาตามช่วงวันที่", f"{(row.date_to - row.date_from).days + 1} วันตามปฏิทิน • เต็มวัน")
     draw.line((70, y, 1010, y), fill="#D8E4DD", width=2)
     y += 28
+
     stamped = rendered_at or datetime.now(timezone.utc)
     if stamped.tzinfo is None:
         stamped = stamped.replace(tzinfo=timezone.utc)
-    created = row.created_at.replace(tzinfo=timezone.utc).astimezone(BKK)
-    details = [reference(row),
-               f"ส่งคำขอ {thai_date(created.date())} เวลา {created:%H:%M} น."]
-    if row.reviewed_at:
-        reviewed = row.reviewed_at.replace(tzinfo=timezone.utc).astimezone(BKK)
-        details.append(f"พิจารณา {thai_date(reviewed.date())} เวลา {reviewed:%H:%M} น.")
     stamped = stamped.astimezone(BKK)
-    details += [f"ภาพสถานะ ณ {thai_date(stamped.date())} เวลา {stamped:%H:%M} น.",
-                "จำนวนวันข้างต้นไม่ใช่ยอดสิทธิวันลา", "รูปนี้ไม่แสดงเหตุผลส่วนตัวหรือเอกสารแพทย์",
-                "ตรวจสอบสถานะปัจจุบัน: พิมพ์ ใบลาล่าสุด ใน HF ภายใน"]
-    if row.status == "pending":
-        details.append("ยังไม่ได้รับอนุมัติ • ไม่มีการสร้างลายเซ็นแทนผู้อนุมัติ")
+    details = [reference(row), f"สร้างเมื่อ {thai_date(stamped.date())} {stamped:%H:%M} น."]
     for text in details:
-        for line in _wrap(draw, text, _font(26), 940):
-            draw.text((70, y), line, font=_font(26), fill=muted)
-            y += 40
+        draw.text((70, y), text, font=_font(26), fill=muted)
+        y += 40
+
     if y + 60 > image.height:
         raise ValueError("Leave image exceeds layout height")
     output = BytesIO()

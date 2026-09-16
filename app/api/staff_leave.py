@@ -1,4 +1,4 @@
-"""Signed public receipt images; separately manager-authenticated review UI/API."""
+"""Signed public leave receipts and manager-authenticated review/medical attachment UI."""
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -20,8 +20,6 @@ PRIVATE_HEADERS = {"Cache-Control": "private, no-store", "X-Content-Type-Options
 
 
 def require_leave_manager(request: Request) -> str:
-    # This existing helper verifies the JWT AND the manager allowlist.
-    # Staff-tier Access, a shared kiosk, and a forged email header are not sufficient.
     email = get_cf_access_email(request)
     if not email:
         raise HTTPException(403, "กรุณาเข้าสู่ระบบด้วยบัญชีผู้จัดการ")
@@ -47,7 +45,13 @@ def _dto(row: StaffLeaveRequest) -> dict:
             "location": row.location, "leave_type": row.leave_type,
             "leave_label": staff_leave.TYPES[row.leave_type],
             "date_from": row.date_from.isoformat(), "date_to": row.date_to.isoformat(),
-            "calendar_days": (row.date_to - row.date_from).days + 1,
+            "calendar_days": staff_leave.calendar_days(row),
+            "medical_certificate_required": staff_leave.medical_certificate_required(row),
+            "medical_certificate_attached": bool(row.medical_certificate),
+            "medical_certificate_uploaded_at": (
+                row.medical_certificate_uploaded_at.isoformat() + "Z"
+                if row.medical_certificate_uploaded_at else None
+            ),
             "status": row.status, "status_label": staff_leave.STATUSES[row.status],
             "version": row.version, "created_at": row.created_at.isoformat() + "Z",
             "reviewed_by": row.reviewed_by}
@@ -61,6 +65,19 @@ def list_requests(response: Response, status: Literal["pending", "approved", "re
     rows = db.query(StaffLeaveRequest).filter(StaffLeaveRequest.status == status).order_by(
         StaffLeaveRequest.created_at.desc(), StaffLeaveRequest.id.desc()).offset(offset).limit(limit).all()
     return {"items": [_dto(row) for row in rows], "limit": limit, "offset": offset}
+
+
+@admin_router.get("/{request_id}/medical-certificate")
+def medical_certificate(request_id: str, manager: str = Depends(require_leave_manager),
+                        db: Session = Depends(get_db)):
+    row = db.get(StaffLeaveRequest, request_id)
+    if row is None or not row.medical_certificate:
+        raise HTTPException(404, "ไม่พบใบรับรองแพทย์", headers=PRIVATE_HEADERS)
+    return Response(
+        row.medical_certificate,
+        media_type=row.medical_certificate_content_type or "image/jpeg",
+        headers={**PRIVATE_HEADERS, "Content-Disposition": "inline"},
+    )
 
 
 class Decision(BaseModel):
@@ -99,11 +116,12 @@ body{font-family:system-ui,sans-serif;background:#f3f6f4;color:#17352f;margin:0;
 main{max-width:900px;margin:auto}h1{margin-bottom:8px}p{line-height:1.7}
 .card{background:white;border:1px solid #d8e4dd;border-radius:14px;padding:20px;margin:16px 0}
 button,select{font:inherit;padding:12px;margin:4px;border-radius:8px;border:1px solid #acbeb4;cursor:pointer}
-button{background:#17694f;color:white}button.reject{background:#a13030}button:disabled{opacity:.5;cursor:wait}
-.ref{overflow-wrap:anywhere;color:#52655f;font-size:14px}#message{white-space:pre-wrap}a{color:#17694f}
+button{background:#17694f;color:white}button.reject{background:#a13030}button:disabled{opacity:.5;cursor:not-allowed}
+.ref{overflow-wrap:anywhere;color:#52655f;font-size:14px}.warn{color:#9a4b00;font-weight:600}#message{white-space:pre-wrap}a{color:#17694f}
 </style><main><h1>HF ภายใน • พิจารณาใบลา</h1>
-<p>ตรวจสอบสิทธิวันลาและตารางงานก่อนอนุมัติ จำนวนวันเป็นวันตามปฏิทิน ไม่ใช่ยอดสิทธิวันลา
-ระบบจะลงวันลาในตารางงานเฉพาะรายการที่อนุมัติ และไม่เขียนทับวันที่มีวันลาเดิม</p>
+<p>รายการถูกบันทึกจาก LINE เข้าในระบบพนักงานทันทีที่พนักงานยืนยันส่งใบลา
+และลงวันลาในตารางงานเฉพาะเมื่ออนุมัติเท่านั้น</p>
+<p>ลาป่วยมากกว่า 3 วันต้องมีใบรับรองแพทย์ก่อนอนุมัติ ลาป่วยไม่เกิน 3 วันแนบได้โดยไม่บังคับ</p>
 <p><a href="/fingerprintlogs/v2/shifts-admin">เปิดตารางงาน</a></p>
 <label>สถานะ <select id="status"><option value="pending">รออนุมัติ</option>
 <option value="approved">อนุมัติแล้ว</option><option value="rejected">ไม่อนุมัติ</option>
@@ -126,11 +144,18 @@ function card(row){
  const box=el('section','','card');box.append(el('h2',row.employee_name));
  box.append(el('p',`${row.department||'ไม่ระบุแผนก'} • ${row.location||'ไม่ระบุสาขา'}`));
  box.append(el('p',`${row.leave_label} • ${dateTH(row.date_from)} – ${dateTH(row.date_to)} • ${row.calendar_days} วันตามปฏิทิน`));
+ if(row.leave_type==='sick'){
+  if(row.medical_certificate_attached){const a=el('a','ดูใบรับรองแพทย์');a.href=`${base}/${row.id}/medical-certificate`;a.target='_blank';a.rel='noopener';box.append(a);}
+  else if(row.medical_certificate_required)box.append(el('p','ต้องแนบใบรับรองแพทย์ก่อนอนุมัติ','warn'));
+  else box.append(el('p','ใบรับรองแพทย์: ไม่บังคับสำหรับรายการนี้','ref'));
+ }
  box.append(el('p',row.status_label));box.append(el('p',row.reference,'ref'));
  if(row.reviewed_by)box.append(el('p',`ผู้พิจารณา: ${row.reviewed_by}`,'ref'));
  if(row.status==='pending')for(const [decision,label] of [['approved','อนุมัติ'],['rejected','ไม่อนุมัติ']]){
   const button=el('button',label,decision==='rejected'?'reject':'');
+  if(decision==='approved'&&row.medical_certificate_required&&!row.medical_certificate_attached)button.disabled=true;
   button.onclick=async()=>{
+   if(button.disabled)return;
    if(!confirm(`${label}ใบลาของ ${row.employee_name} วันที่ ${dateTH(row.date_from)} – ${dateTH(row.date_to)}?`))return;
    box.querySelectorAll('button').forEach(b=>b.disabled=true);
    try{await api(`/${row.id}/decision`,{method:'POST',headers:{'Content-Type':'application/json','X-HF-Leave-Action':'review'},body:JSON.stringify({decision,version:row.version})});await load();}
