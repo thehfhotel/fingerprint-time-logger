@@ -1,0 +1,116 @@
+from datetime import date
+from io import BytesIO
+from uuid import uuid4
+
+from PIL import Image
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+
+from app.core.database import Base
+from app.models.models import Employee
+from app.services import staff_leave as service
+from app.services import staff_leave_palette
+
+
+def make_db(monkeypatch):
+    monkeypatch.setattr(service, "today", lambda: date(2026, 9, 16))
+    monkeypatch.setattr(service.staff_oa_service, "get_channel_secret", lambda: "test-secret")
+    engine = create_engine("sqlite://", poolclass=StaticPool,
+                           connect_args={"check_same_thread": False})
+    @event.listens_for(engine, "connect")
+    def fk(conn, _):
+        conn.execute("PRAGMA foreign_keys=ON")
+    Base.metadata.create_all(engine)
+    db = Session(engine)
+    employee = Employee(
+        badge_number="MED-1", display_name="พนักงานทดสอบ", thai_name="พนักงานทดสอบ",
+        department="ต้อนรับ", location="HF", line_user_id="Umed1",
+        is_active=True, pending_approval=False,
+    )
+    db.add(employee)
+    db.commit()
+    return engine, db, employee
+
+
+def test_direct_thai_leave_examples(monkeypatch):
+    monkeypatch.setattr(service, "today", lambda: date(2026, 9, 16))
+    assert service.parse_direct_request("แจ้งลา พักร้อน 17-20/9/2569") == (
+        "vacation", date(2026, 9, 17), date(2026, 9, 20))
+    assert service.parse_direct_request("แจ้งลา พักร้อน 17/9/2569") == (
+        "vacation", date(2026, 9, 17), date(2026, 9, 17))
+    assert service.parse_direct_request("แจ้งลา ลาป่วย 18/9/2569") == (
+        "sick", date(2026, 9, 18), date(2026, 9, 18))
+
+
+def test_sick_more_than_three_days_requires_certificate(monkeypatch):
+    engine, db, employee = make_db(monkeypatch)
+    try:
+        row = service.submit(db, employee, uuid4().hex, "sick",
+                             date(2026, 9, 17), date(2026, 9, 20))
+        assert service.medical_certificate_required(row)
+        try:
+            service.decide(db, row.id, "approved", row.version, "manager@example.invalid")
+            assert False, "approval should require medical certificate"
+        except service.LeaveError as exc:
+            assert "ใบรับรองแพทย์" in str(exc)
+        content = b"normalized-medical-image"
+        row = service.attach_medical_certificate(
+            db, row, content, "image/jpeg", service.hashlib.sha256(content).hexdigest())
+        assert row.medical_certificate == content
+        approved = service.decide(db, row.id, "approved", row.version,
+                                  "manager@example.invalid")
+        assert approved.status == "approved"
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_sick_three_days_certificate_optional(monkeypatch):
+    engine, db, employee = make_db(monkeypatch)
+    try:
+        row = service.submit(db, employee, uuid4().hex, "sick",
+                             date(2026, 9, 17), date(2026, 9, 19))
+        assert not service.medical_certificate_required(row)
+        assert service.decide(db, row.id, "approved", row.version,
+                              "manager@example.invalid").status == "approved"
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_medical_image_is_normalized(monkeypatch):
+    image = Image.new("RGB", (900, 1200), "white")
+    raw = BytesIO(); image.save(raw, format="PNG")
+    class Response:
+        status_code = 200
+        content = raw.getvalue()
+    monkeypatch.setattr(service.requests, "get", lambda *a, **k: Response())
+    monkeypatch.setattr(service.staff_oa_service, "get_channel_access_token", lambda: "token")
+    content, content_type, digest = service._download_medical_certificate("123")
+    assert content.startswith(b"\xff\xd8")
+    assert content_type == "image/jpeg"
+    assert digest == service.hashlib.sha256(content).hexdigest()
+
+
+def test_picker_uses_leave_until_label(monkeypatch):
+    engine, db, employee = make_db(monkeypatch)
+    try:
+        first = service._messages({"type":"message","message":{"type":"text","text":"แจ้งลา"}}, db, employee)[0]
+        action = first["quickReply"]["items"][0]["action"]
+        second = service._messages({"type":"postback","postback":{"data":action["data"],"params":{"date":"2026-09-17"}}}, db, employee)[0]
+        labels = [item["action"]["label"] for item in second["quickReply"]["items"]]
+        assert "ลาถึงวันที่" in labels
+        assert "เลือกวันสุดท้าย" not in labels
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_default_palette_gets_leave_button():
+    class Dummy:
+        @staticmethod
+        def palette_message():
+            return {"contents":{"footer":{"contents":[]}}}
+    staff_leave_palette.install(Dummy)
+    message = Dummy.palette_message()
+    assert message["contents"]["footer"]["contents"][0]["action"] == {
+        "type": "message", "label": "แจ้งลา", "text": "แจ้งลา"
+    }
