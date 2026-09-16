@@ -65,7 +65,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc curl sqlite3
+          sudo apt-get install -y gcc curl sqlite3 fonts-tlwg-loma-otf
 
       - name: Install Python dependencies
         run: |
@@ -80,6 +80,9 @@ jobs:
         run: |
           mkdir -p database
           python -c "from app.core.database import Base, engine; Base.metadata.create_all(bind=engine)"
+
+      - name: Verify backup gate and failure-path tests
+        run: pytest tests/unit/test_deploy_backup.py -v
 
       - name: Run unit + integration suites (deploy gate)
         # `-m "not slow"` matches ci.yml's integration step. The list of
@@ -101,7 +104,10 @@ jobs:
     # LOAD-BEARING. deploy-evergreen.yml does not run this repo's tests — it
     # cannot know what they are. Without this `needs:` a red suite would not
     # stop a push to main from reaching production.
-    name: Deploy to production
+    # The image performs a verified host-local backup inside Alembic env.py
+    # before any migration. Its existing CMD starts uvicorn only on success.
+    # No separate SSH command/installer or readiness variable is required.
+    name: Deploy (backup before migrations)
     needs: [test]
     if: github.ref == 'refs/heads/main'
     uses: thehfhotel/estate-ci/.github/workflows/deploy-evergreen.yml@571d115d63ecef9c30cd73f73a38e68395ab259f
@@ -124,6 +130,8 @@ jobs:
       # ADMIN_PASSCODE_HASH single-quoted — see header.
       env_payload: |
         DATABASE_URL=sqlite:///./database/attendance.db
+        HF_DEPLOY_RUN=${{ github.run_id }}-${{ github.run_attempt }}
+        HF_DEPLOY_COMMIT=${{ github.sha }}
         ENV=production
         BEHIND_PROXY=true
         ZKTECO_HOST=192.168.100.209
@@ -153,3 +161,37 @@ jobs:
         GUEST_FEEDBACK_READER_SECRET=${{ secrets.GUEST_FEEDBACK_READER_SECRET }}
         HOUSEKEEPING_STAFF_BOT_TOKEN=${{ secrets.HOUSEKEEPING_STAFF_BOT_TOKEN }}
         PORTAL_DIRECTORY_TOKEN=${{ secrets.PORTAL_DIRECTORY_TOKEN }}
+
+
+  verify_deployment:
+    name: Verify deployed run and backup
+    needs: [deploy]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - name: Require the new release to be serving with a verified snapshot
+        env:
+          EXPECTED_RUN: ${{ github.run_id }}-${{ github.run_attempt }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Existing public LINE webhook URL, GET only. POST still requires
+          # LINE's signature. Do not follow redirects: an Access login page
+          # or an older healthy container must never count as success.
+          url="https://erp.thehfhotel.org/api/public/staff-oa/webhook?run_id=${EXPECTED_RUN}&commit=${EXPECTED_COMMIT}"
+          for attempt in $(seq 1 90); do
+            status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              --connect-timeout 5 --max-time 10 --proto '=https' "$url") || status=000
+            if [ "$status" = 204 ]; then
+              echo 'Verified deployment run and pre-migration database snapshot.'
+              echo '## Deployment and host-local database backup verified' >> "$GITHUB_STEP_SUMMARY"
+              echo "Run: ${EXPECTED_RUN}; commit: ${EXPECTED_COMMIT}" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo '::error::New release/backup not verified. Deployment is NOT confirmed healthy. Do not auto-restore the database.'
+          exit 1
