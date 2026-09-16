@@ -79,6 +79,27 @@ def _handle_follow_event(db: Session, event: dict) -> None:
         staff_oa_service.reply_text_message(reply_token, ONBOARDING_REPLY_TEXT)
 
 
+def _leave_palette_event(event: object) -> dict | None:
+    """Translate our palette postback into the same private flow as ``แจ้งลา``.
+
+    The button deliberately uses ``cmd=palette`` as its fail-safe command so
+    the general staff-bot router still understands every palette postback. The
+    extra ``leave=1`` marker is intercepted here first. No unsigned leave form
+    state is accepted; this only opens the existing signed picker flow.
+    """
+    if not isinstance(event, dict) or event.get("type") != "postback":
+        return None
+    postback = event.get("postback")
+    if (not isinstance(postback, dict)
+            or postback.get("data") != staff_leave_palette.LEAVE_POSTBACK_DATA):
+        return None
+    converted = dict(event)
+    converted["type"] = "message"
+    converted["message"] = {"type": "text", "text": "แจ้งลา"}
+    converted.pop("postback", None)
+    return converted
+
+
 @router.post("/webhook")
 async def staff_oa_webhook(
     request: Request,
@@ -109,10 +130,14 @@ async def staff_oa_webhook(
     for event in events:
         # A direct image is claimed by leave only when this employee has a
         # pending sick-leave request without a certificate. Other media keeps
-        # the existing maintenance-ticket behavior.
-        if staff_leave.is_leave_event(event, db):
+        # the existing maintenance-ticket behavior. The palette's dedicated
+        # postback is translated to the same signed flow as typing แจ้งลา.
+        palette_event = _leave_palette_event(event)
+        if palette_event is not None or staff_leave.is_leave_event(event, db):
             try:
-                await run_in_threadpool(staff_leave.handle_event, event, db)
+                await run_in_threadpool(
+                    staff_leave.handle_event, palette_event if palette_event is not None else event, db
+                )
                 commands += 1
             except Exception as exc:  # noqa: BLE001 — isolate each event
                 db.rollback()
