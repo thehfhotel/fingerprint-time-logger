@@ -439,12 +439,63 @@ def _reply(token: str, messages: list[dict]) -> None:
         raise RuntimeError(f"Leave reply failed: HTTP {response.status_code}")
 
 
+def _receipt_heading(row: StaffLeaveRequest) -> str:
+    """Pending keeps its friendly "ส่งใบลาแล้ว" wording; anything else is
+    read from the roster (never trusted from ``row.status`` alone) — see
+    ``app.services.staff_leave_roster.effective_state``."""
+    if row.status == "pending":
+        return "ส่งใบลาแล้ว"
+    from sqlalchemy.orm import object_session
+
+    from app.services import staff_leave_roster
+    db = object_session(row)
+    if db is None:
+        return STATUSES.get(row.status, row.status)
+    return staff_leave_roster.effective_state(db, row).label
+
+
 def _receipt(row: StaffLeaveRequest) -> list[dict]:
     url = image_url(row)
     return [
-        _text(f"{STATUSES[row.status]}\nเลขอ้างอิง {reference(row)}\n"
+        _text(f"{_receipt_heading(row)}\nเลขอ้างอิง {reference(row)}\n"
               "กดรูปแล้วเลือกส่งต่อไปยังกลุ่มได้ รูปเป็นสถานะ ณ เวลาที่สร้าง "
               "พิมพ์ ใบลาล่าสุด เพื่อขอรูปสถานะปัจจุบัน"),
+        {"type": "image", "originalContentUrl": url, "previewImageUrl": url},
+    ]
+
+
+def _effective_date_text(effective) -> str:
+    """A single date, or an en-dash range, for whatever dates an
+    ``EffectiveLeave`` carries — falling back to the underlying request's
+    original range when the roster has released every date (e.g.
+    "cancelled")."""
+    dates = effective.dates
+    if not dates and effective.request is not None:
+        dates = (effective.request.date_from, effective.request.date_to)
+    if not dates:
+        return ""
+    if len(dates) == 1 or dates[0] == dates[-1]:
+        return thai_date(dates[0])
+    return f"{thai_date(dates[0])} – {thai_date(dates[-1])}"
+
+
+def _latest_leave_messages(effective) -> list[dict]:
+    """``ใบลาล่าสุด``: the most recent leave the ROSTER knows about (see
+    ``staff_leave_roster.latest_effective_leave``). A LINE-filed request
+    gets its usual text + receipt image; an admin-added roster run gets a
+    short text-only summary and no image (nothing was ever filed through
+    LINE for it)."""
+    if effective is None:
+        return [_text("ไม่พบใบลาของคุณ")]
+    if effective.source == "roster":
+        return [_text(
+            f"วันลาล่าสุดในตารางงาน: {TYPES.get(effective.leave_type, effective.leave_type)} "
+            f"{_effective_date_text(effective)} (บันทึกโดยแอดมิน)"
+        )]
+    row = effective.request
+    url = image_url(row)
+    return [
+        _text(f"{effective.label}\n{_effective_date_text(effective)}\nเลขอ้างอิง {reference(row)}"),
         {"type": "image", "originalContentUrl": url, "previewImageUrl": url},
     ]
 
@@ -607,6 +658,10 @@ def _messages(event: dict, db: Session, employee: Employee) -> list[dict]:
                         today() - timedelta(days=31), today() + timedelta(days=366))
                 for kind, label in TYPES.items()
             ])]
+        if command == "ใบลาล่าสุด":
+            from app.services import staff_leave_roster
+            return _latest_leave_messages(staff_leave_roster.latest_effective_leave(db, badge))
+
         query = db.query(StaffLeaveRequest).filter(
             StaffLeaveRequest.employee_badge_number == badge)
         if command == "ยกเลิกใบลา":
@@ -619,11 +674,9 @@ def _messages(event: dict, db: Session, employee: Employee) -> list[dict]:
             ))
         row = query.order_by(StaffLeaveRequest.created_at.desc(), StaffLeaveRequest.id.desc()).first()
         if row is None:
-            return [_text("ไม่พบใบลา" + ("ที่ยกเลิกได้" if command == "ยกเลิกใบลา" else "ของคุณ"))]
-        if command == "ยกเลิกใบลา":
-            return [_text(f"ยกเลิกใบลา {thai_date(row.date_from)} – {thai_date(row.date_to)}?", [
-                _postback("ยืนยันยกเลิกใบลา", action_data("cancel", badge, row.id))])]
-        return _after_submit(row)
+            return [_text("ไม่พบใบลาที่ยกเลิกได้")]
+        return [_text(f"ยกเลิกใบลา {thai_date(row.date_from)} – {thai_date(row.date_to)}?", [
+            _postback("ยืนยันยกเลิกใบลา", action_data("cancel", badge, row.id))])]
 
     verb, request_id, kind, start_s, end_s, expires = _parse_action(
         event["postback"]["data"], badge)

@@ -6,12 +6,17 @@ from pathlib import Path
 import unicodedata
 
 from PIL import Image, ImageDraw, ImageFont
+from sqlalchemy.orm import object_session
 
 from app.models.staff_leave import StaffLeaveRequest
-from app.services.staff_leave import BKK, STATUSES, TYPES, thai_date
+from app.services.staff_leave import BKK, TYPES, thai_date
 
 FONT_DIR = Path("/usr/share/fonts/opentype/tlwg")
 PORTION_LABELS = {"full": "เต็มวัน", "am": "ครึ่งวันเช้า", "pm": "ครึ่งวันบ่าย"}
+_STATUS_COLORS = {
+    "recorded": "accent", "partial": "accent",
+    "rejected": "danger", "cancelled": "muted", "cancelled_roster": "muted",
+}
 
 
 @lru_cache(maxsize=16)
@@ -37,7 +42,76 @@ def _wrap(draw, text: str, font, width: int) -> list[str]:
     return lines + [line or "—"]
 
 
+def _date_range(start, end) -> tuple:
+    from datetime import timedelta
+    return tuple(start + timedelta(days=n) for n in range((end - start).days + 1))
+
+
+def _effective_for_row(row: StaffLeaveRequest):
+    """The roster is the source of truth for what a leave receipt shows
+    (see ``app.services.staff_leave_roster``). When ``row`` is attached to a
+    live session, compute its real effective state; a detached/transient row
+    (no session — e.g. a plain object built in a test) falls back to a
+    best-effort approximation from the row's own fields only."""
+    from app.services import staff_leave_roster
+
+    db = object_session(row)
+    if db is not None:
+        return staff_leave_roster.effective_state(db, row)
+    if row.status == "cancelled":
+        status = ("cancelled_roster" if row.reviewed_by == staff_leave_roster.ROSTER_ADMIN_REVIEWER
+                  else "cancelled")
+        dates: tuple = ()
+    elif row.status in ("pending", "rejected"):
+        status = row.status
+        dates = _date_range(row.date_from, row.date_to)
+    else:  # "approved", no session to check the roster with
+        status = "recorded"
+        dates = _date_range(row.date_from, row.date_to)
+    return staff_leave_roster.EffectiveLeave(
+        status=status, dates=dates,
+        date_from=dates[0] if dates else None, date_to=dates[-1] if dates else None,
+        leave_type=row.leave_type, portion=getattr(row, "leave_portion", "full"),
+        source="line", request=row,
+    )
+
+
+def _dates_text(effective) -> str:
+    if effective.status == "cancelled_roster":
+        return "ไม่มีวันลาคงเหลือในตารางงาน"
+    dates = effective.dates
+    if not dates and effective.request is not None:
+        dates = (effective.request.date_from, effective.request.date_to)
+    if not dates:
+        return "—"
+    if effective.status == "partial":
+        return ", ".join(thai_date(d) for d in dates)
+    if dates[0] == dates[-1]:
+        return thai_date(dates[0])
+    return f"{thai_date(dates[0])} – {thai_date(dates[-1])}"
+
+
+def _duration_text(effective) -> str:
+    if effective.status == "cancelled_roster":
+        return "ไม่มีวันลาคงเหลือในตารางงาน"
+    if effective.portion in ("am", "pm"):
+        return f"0.5 วัน • {PORTION_LABELS.get(effective.portion, effective.portion)}"
+    days = len(effective.dates) if effective.dates else (
+        (effective.request.date_to - effective.request.date_from).days + 1
+        if effective.request else 0
+    )
+    unit = "วันตามปฏิทิน" if effective.status != "partial" else "วันคงเหลือในตารางงาน"
+    return f"{days} {unit} • เต็มวัน"
+
+
 def render_png(row: StaffLeaveRequest, rendered_at: datetime | None = None) -> bytes:
+    """Legacy row-only entry point. Kept working by computing the roster's
+    effective state internally (see ``_effective_for_row``)."""
+    return render_effective_png(_effective_for_row(row), rendered_at)
+
+
+def render_effective_png(effective, rendered_at: datetime | None = None) -> bytes:
+    row = effective.request
     image = Image.new("RGB", (1080, 2400), "white")
     draw = ImageDraw.Draw(image)
     ink, muted, accent = "#17352F", "#52655F", "#17694F"
@@ -48,13 +122,14 @@ def render_png(row: StaffLeaveRequest, rendered_at: datetime | None = None) -> b
 
     # ``pending`` remains an internal review/concurrency state only. Employees
     # should not see it as a status on the shareable leave image. Final states
-    # still appear because approved/rejected/cancelled materially change the
-    # meaning of a previously shared receipt.
-    if row.status != "pending":
-        status_colors = {"approved": accent, "rejected": "#A13030", "cancelled": muted}
-        draw.rounded_rectangle((70, y, 1010, y + 100), radius=16,
-                               fill=status_colors.get(row.status, muted))
-        draw.text((100, y + 12), STATUSES[row.status], font=_font(48, True), fill="white")
+    # still appear because they materially change the meaning of a
+    # previously shared receipt — including a roster edit changing it after
+    # the fact (see EFFECTIVE_LABELS' "_roster"-suffixed variants).
+    if effective.status != "pending":
+        color_key = _STATUS_COLORS.get(effective.status, "muted")
+        fill = {"accent": accent, "danger": "#A13030", "muted": muted}[color_key]
+        draw.rounded_rectangle((70, y, 1010, y + 100), radius=16, fill=fill)
+        draw.text((100, y + 12), effective.label, font=_font(48, True), fill="white")
         y += 132
 
     def block(label: str, value: str):
@@ -70,14 +145,9 @@ def render_png(row: StaffLeaveRequest, rendered_at: datetime | None = None) -> b
     property_name = {"HF": "The Harbour Front Hotel", "HF_VILLE": "HF Ville"}.get(
         row.location, row.location or "ไม่ระบุสาขา")
     block("แผนก / สาขา", " • ".join(filter(None, (row.department, property_name))))
-    block("ประเภทการลา", TYPES[row.leave_type])
-    block("ช่วงวันที่ลา (พ.ศ.)", f"{thai_date(row.date_from)} – {thai_date(row.date_to)}")
-    portion = getattr(row, "leave_portion", "full")
-    if portion == "full":
-        duration = f"{(row.date_to - row.date_from).days + 1} วันตามปฏิทิน • เต็มวัน"
-    else:
-        duration = f"0.5 วัน • {PORTION_LABELS.get(portion, portion)}"
-    block("ระยะเวลาการลา", duration)
+    block("ประเภทการลา", TYPES.get(effective.leave_type, effective.leave_type))
+    block("ช่วงวันที่ลา (พ.ศ.)", _dates_text(effective))
+    block("ระยะเวลาการลา", _duration_text(effective))
     draw.line((70, y, 1010, y), fill="#D8E4DD", width=2)
     y += 28
 

@@ -22,11 +22,13 @@ from datetime import date
 from uuid import uuid4
 
 from app.models.staff_leave import StaffLeaveRequest
-from app.services import staff_leave, staff_leave_manage, staff_leave_options
+from app.services import staff_leave, staff_leave_manage, staff_leave_options, staff_leave_roster
 from tests.integration.test_monthly_endpoint import (  # noqa: F401 (fixtures)
     _make_employee, monthly_client, monthly_engine, monthly_session,
     seed_device, seeded_shifts,
 )
+
+LEAVES_EMPLOYEE_PATH = "/api/private/leaves/employee"
 
 BY_DATE_PATH = "/api/private/attendance/by-date"
 MONTHLY_PATH = "/api/private/attendance/monthly/2026/5"
@@ -186,3 +188,54 @@ def test_webhook_submit_postback_auto_records_and_shows_in_report(
         assert day_row["leave_type"] == "personal"
         assert day_row.get("leave_portion") == "full"
     assert emp["totals"]["leave_days"] == 2.0
+
+
+def test_admin_deleting_one_roster_day_updates_reports_and_latest_leave(
+    monkeypatch, monthly_session, monthly_client, seed_device, seeded_shifts,
+):
+    """The roster is the single source of truth for every LINE leave
+    surface (docs/LEAVE_SYNC_SURFACES.md): deleting one day of an
+    auto-recorded leave on shifts-admin (here, via the same
+    /api/private/leaves/employee endpoint shifts-admin uses) removes that
+    day from the by-date/monthly reports while the other days remain, and
+    ``ใบลาล่าสุด`` (staff_leave_roster.latest_effective_leave) agrees it is
+    now only "partial"."""
+    monkeypatch.setattr(staff_leave, "today", lambda: FROZEN_TODAY)
+    employee = _make_employee(
+        monthly_session, "LV3", "PartialDay", role="technician", location="HF",
+    )
+
+    row = staff_leave.submit(
+        monthly_session, employee, uuid4().hex, "vacation",
+        date(2026, 5, 10), date(2026, 5, 12),
+    )
+    row = staff_leave._maybe_auto_approve(monthly_session, row)
+    assert row.status == "approved"
+
+    resp = monthly_client.delete(f"{LEAVES_EMPLOYEE_PATH}/LV3/2026-05-11")
+    assert resp.status_code == 204
+
+    # The removed middle day no longer shows as leave in either report...
+    by_date_11 = _by_date_row(monthly_client, date(2026, 5, 11), "LV3")
+    assert by_date_11["leave_type"] is None
+    assert by_date_11["status"] == "absent"
+    _, day11 = _month_day(monthly_client, "LV3", 11)
+    assert day11["leave_type"] is None
+    assert day11["status"] == "absent"
+
+    # ...while the other two days are untouched.
+    for on_date, day_index in ((date(2026, 5, 10), 10), (date(2026, 5, 12), 12)):
+        by_date = _by_date_row(monthly_client, on_date, "LV3")
+        assert by_date["status"] == "off"
+        assert by_date["leave_type"] == "vacation"
+        emp, day_row = _month_day(monthly_client, "LV3", day_index)
+        assert day_row["status"] == "leave"
+        assert day_row["leave_type"] == "vacation"
+    assert emp["totals"]["leave_days"] == 2.0
+
+    monthly_session.expire_all()
+    refreshed = monthly_session.get(StaffLeaveRequest, row.id)
+    assert refreshed.status == "approved"
+    latest = staff_leave_roster.latest_effective_leave(monthly_session, "LV3")
+    assert latest.status == "partial"
+    assert latest.dates == (date(2026, 5, 10), date(2026, 5, 12))

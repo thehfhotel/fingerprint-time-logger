@@ -159,6 +159,43 @@ Rollback: roll application code back through CI; retain the new tables and audit
 records. A schema downgrade drops request history and is not routine rollback.
 Existing approved roster rows are retained; never silently undo granted leave.
 
+## ตารางงานคือแหล่งข้อมูลหลัก / the roster is the source of truth
+
+Every LINE leave surface — `ใบลาล่าสุด`, the receipt PNG, the after-submit
+reply heading, `ยกเลิกใบลา`'s picker, and HF Family's slot digest — reads its
+current state from the **roster** (`EmployeeLeave`), never from
+`StaffLeaveRequest.status` alone. Whatever an admin does on
+`/v2/shifts-admin`'s วันลา · วันหยุด board is what LINE shows, immediately,
+with no separate sync job. `app/services/staff_leave_roster.py` is the only
+place that reconciles the two; see `docs/LEAVE_SYNC_SURFACES.md` for the
+exact contract.
+
+Concretely: an approved (or auto-recorded) request's roster rows all carry
+its reference (`HF-LV-<ID>`, optionally `|half=am`/`|half=pm`) in
+`EmployeeLeave.note`. If an admin deletes or overwrites one of those rows on
+shifts-admin, `app/api/leaves.py` calls
+`staff_leave_roster.on_roster_leave_removed` with the row's old note, in the
+same transaction, before committing:
+
+- The request's day reservation (`StaffLeaveDay`) for that date is released,
+  so the employee can re-file it through LINE afterward.
+- If that was the request's **last** remaining roster row, the roster itself
+  is what ended the leave: the request is marked `status="cancelled"`,
+  `reviewed_by="admin:shifts-admin"` (`ROSTER_ADMIN_REVIEWER` — an audit
+  marker only, never shown to the employee and never a LINE id or a name),
+  and any leftover `StaffLeaveDay`/medical-certificate data is cleared.
+- If some roster rows remain, the request stays `approved` but LINE reads it
+  as **"partial"** (`บันทึกการลาแล้ว (ปรับจากตารางงาน)`) — the remaining
+  dates only, not the originally filed range. `ยกเลิกใบลา` still offers it
+  (cancelling removes only the rows still there); once the roster has ended
+  it entirely (`"cancelled_roster"`), it drops out of that picker too.
+
+An admin can also add roster rows directly with no LINE request behind them
+at all. `ใบลาล่าสุด` still reports the most recent one (whichever is newer:
+the latest LINE-filed request, or the latest contiguous admin-added run) —
+as a short text summary ("วันลาล่าสุดในตารางงาน: ... (บันทึกโดยแอดมิน)")
+with **no** receipt image, since nothing was ever filed through LINE for it.
+
 ## Testing record
 
 Local isolated tests exercise SQLAlchemy transactions, API dependency boundaries,

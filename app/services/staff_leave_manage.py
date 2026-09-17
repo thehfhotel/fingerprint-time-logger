@@ -11,10 +11,12 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import object_session
 
 from app.models.models import EmployeeLeave
 from app.models.staff_leave import StaffLeaveDay, StaffLeaveRequest
 from app.services import staff_leave
+from app.services import staff_leave_roster
 
 PORTION_LABELS = {"full": "เต็มวัน", "am": "ครึ่งวันเช้า", "pm": "ครึ่งวันบ่าย"}
 MAX_CHOICES = 10
@@ -36,6 +38,10 @@ def _editable_rows(db, badge: str, mode: str = "edit",
     ``staff_leave.AUTO_REVIEWER``, read from the service module at call time
     so a test's monkeypatch or a live env change is honored). A
     manager-approved row (``reviewed_by`` anything else) is never offered.
+    Once recorded, offering to cancel additionally requires the roster's
+    EFFECTIVE state to still be pending/recorded/partial — see
+    ``_is_cancellable`` — so a request the roster already ended (every one
+    of its roster rows removed on shifts-admin) drops out of the picker too.
     """
     query = db.query(StaffLeaveRequest).filter(
         StaffLeaveRequest.employee_badge_number == badge,
@@ -50,9 +56,12 @@ def _editable_rows(db, badge: str, mode: str = "edit",
         ))
     else:
         query = query.filter(StaffLeaveRequest.status == "pending")
-    return query.order_by(
+    rows = query.order_by(
         StaffLeaveRequest.created_at.desc(), StaffLeaveRequest.id.desc()
     ).limit(limit).all()
+    if mode == "cancel":
+        rows = [r for r in rows if _is_cancellable(db, r, r.version)]
+    return rows
 
 
 def _latest_editable(db, badge: str) -> StaffLeaveRequest | None:
@@ -60,14 +69,20 @@ def _latest_editable(db, badge: str) -> StaffLeaveRequest | None:
     return rows[0] if rows else None
 
 
-def _is_cancellable(row: StaffLeaveRequest | None, expected_version: int) -> bool:
-    """Same cancellable rule as ``_editable_rows(mode="cancel")``, applied to
-    a single already-fetched row (picker confirm / cancel postback)."""
+def _is_cancellable(db, row: StaffLeaveRequest | None, expected_version: int) -> bool:
+    """Cancellable = still pending, or auto-recorded (never reviewed by a
+    manager) AND the roster's effective state for it is still
+    pending/recorded/partial — never once the roster itself has ended it
+    (``effective_state`` status "cancelled"/"cancelled_roster") or a manager
+    actually approved it."""
     if row is None or row.version != expected_version:
         return False
     if row.status == "pending":
         return True
-    return row.status == "approved" and row.reviewed_by == staff_leave.AUTO_REVIEWER
+    if row.status != "approved" or row.reviewed_by != staff_leave.AUTO_REVIEWER:
+        return False
+    effective = staff_leave_roster.effective_state(db, row)
+    return effective.status in ("recorded", "partial")
 
 
 def _portion(row: StaffLeaveRequest) -> str:
@@ -266,9 +281,17 @@ def install(service) -> None:
     original_messages = service._messages
     original_cancel = service.cancel
 
+    def _heading(row: StaffLeaveRequest) -> str:
+        if row.status == "pending":
+            return "ส่งใบลาแล้ว"
+        db = object_session(row)
+        if db is None:
+            return service.STATUSES.get(row.status, row.status)
+        return staff_leave_roster.effective_state(db, row).label
+
     def receipt(row: StaffLeaveRequest) -> list[dict]:
         url = service.image_url(row)
-        heading = "ส่งใบลาแล้ว" if row.status == "pending" else service.STATUSES[row.status]
+        heading = _heading(row)
         return [
             service._text(
                 f"{heading}\n{_row_detail(service, row)}\n"
@@ -320,7 +343,7 @@ def install(service) -> None:
                     if mode == "edit":
                         offerable = row.status == "pending" and row.version == expected_version
                     else:
-                        offerable = _is_cancellable(row, expected_version)
+                        offerable = _is_cancellable(db, row, expected_version)
                     if not offerable:
                         raise service.LeaveError("ใบลานี้เปลี่ยนแปลงแล้ว กรุณาเลือกใบลาใหม่")
                     return [
@@ -335,7 +358,7 @@ def install(service) -> None:
                         raise service.LeaveError("ไม่พบใบลาของคุณ")
                     if row.status == "cancelled" and row.version == expected_version + 1:
                         return receipt(row)
-                    if not _is_cancellable(row, expected_version):
+                    if not _is_cancellable(db, row, expected_version):
                         raise service.LeaveError("ใบลานี้เปลี่ยนแปลงแล้ว กรุณาเลือกใบลาใหม่")
                     try:
                         return receipt(original_cancel(db, badge, request_id))

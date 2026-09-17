@@ -26,6 +26,12 @@
   "use strict";
 
   var BASE = "/fingerprintlogs/v2/";
+  // Static assets (this file, leave-sync-ui.js, theme.js, …) are served from
+  // a DIFFERENT mount than the page routes above — /fingerprintlogs/static/*
+  // (see fingerprint_app.mount("/static", …) in main_unified.py), not
+  // /fingerprintlogs/v2/*. Keep the two prefixes distinct so a page-route
+  // constant never leaks into an asset URL (or vice versa).
+  var STATIC_BASE = "/fingerprintlogs/static/v2/";
 
   // ---------- Icons (inline stroke-width-2 SVG — never an emoji, never a font) ----------
   function icon(paths) {
@@ -46,6 +52,7 @@
     people: icon('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'),
     system: icon('<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>'),
     qr: icon('<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3z"/><path d="M20 14v3"/><path d="M14 20h7"/>'),
+    leaves: icon('<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 15l2 2 4-4"/>'),
     menu: icon('<line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>'),
   };
 
@@ -59,6 +66,7 @@
     { id: "live",         label: "ดูสด",       href: BASE + "live",       icon: ICONS.live,   bar: true,  topNav: true },
     { id: "monthly",      label: "รายงาน",     href: BASE + "monthly",    icon: ICONS.report, bar: true,  topNav: true },
     { id: "shifts-admin", label: "จัดกะ",      href: BASE + "shifts-admin", icon: ICONS.shifts, bar: true, topNav: true },
+    { id: "leaves",       label: "วันลา · วันหยุด", href: BASE + "leaves", icon: ICONS.leaves, bar: false, topNav: true },
     { id: "employees",    label: "พนักงาน",    href: BASE + "employees",  icon: ICONS.people, bar: true,  topNav: true },
     { id: "system",       label: "ระบบ",       href: BASE + "system",     icon: ICONS.system, bar: false, topNav: true },
     { id: "terminals",    label: "จุดสแกน QR", href: BASE + "terminals",  icon: ICONS.qr,     bar: false, topNav: false },
@@ -337,14 +345,14 @@
   }
 
   // Business-page enhancements are loaded only on the two leave-aware pages.
-  // Keeping the source in one shared file prevents shifts-admin and monthly
-  // from drifting into different leave labels/half-day behavior.
+  // Keeping the source in one shared file prevents leaves and monthly from
+  // drifting into different leave labels/half-day behavior.
   function loadPageEnhancement(mount) {
     var page = (mount.getAttribute("data-page") || "").trim();
-    if (page !== "shifts-admin" && page !== "monthly") return;
+    if (page !== "leaves" && page !== "monthly") return;
     if (document.querySelector('script[data-v2-leave-sync="1"]')) return;
     var script = document.createElement("script");
-    script.src = BASE + "leave-sync-ui.js";
+    script.src = STATIC_BASE + "leave-sync-ui.js";
     script.async = false;
     script.setAttribute("data-v2-leave-sync", "1");
     document.head.appendChild(script);

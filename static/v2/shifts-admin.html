@@ -195,10 +195,15 @@
   <main class="w-full px-4 pt-5 pb-28 md:px-6 md:pt-8 md:pb-12">
 
     <!-- HEADER -->
-    <header class="mb-5 md:mb-7">
-      <p class="text-xs font-semibold tracking-wide text-brand-600">จัดกะ</p>
-      <h1 class="mt-1 text-xl font-bold tracking-tight text-ink-900">จัดกะพนักงาน</h1>
-      <p class="mt-1 text-sm text-ink-500">กำหนดบทบาทและกะการทำงานให้พนักงานแต่ละคน รวมถึงตั้งกะรายวันสำหรับ Reception</p>
+    <header class="mb-5 md:mb-7 flex flex-wrap items-start justify-between gap-2">
+      <div>
+        <p class="text-xs font-semibold tracking-wide text-brand-600">จัดกะ</p>
+        <h1 class="mt-1 text-xl font-bold tracking-tight text-ink-900">จัดกะพนักงาน</h1>
+        <p class="mt-1 text-sm text-ink-500">กำหนดบทบาทและกะการทำงานให้พนักงานแต่ละคน รวมถึงตั้งกะรายวันสำหรับ Reception</p>
+      </div>
+      <!-- วันลา · วันหยุด moved to its own top-level page (nav.js DESTINATIONS). -->
+      <a href="/fingerprintlogs/v2/leaves"
+         class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold text-brand-700 hover:bg-brand-50">วันลา · วันหยุด →</a>
     </header>
 
     <!-- TABS — must scroll horizontally: four long Thai labels do not fit a
@@ -208,7 +213,6 @@
       <button role="tab" aria-selected="true" data-tab="roles" class="tab tab-on">บทบาท + กะหลัก</button>
       <button role="tab" aria-selected="false" data-tab="roster" class="tab">ตารางกะรายวัน (Reception)</button>
       <button role="tab" aria-selected="false" data-tab="hkoff" class="tab">วันหยุดแม่บ้าน</button>
-      <button role="tab" aria-selected="false" data-tab="leaveboard" class="tab">วันลา · วันหยุด</button>
     </div>
 
     <!-- TAB: Roles + default shift -->
@@ -400,26 +404,6 @@
       </div>
     </section>
 
-    <!-- TAB: Leave / holiday Kanban (per-employee, one column per type) -->
-    <section id="tabLeaveBoard" class="tab-pane hidden">
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-ink-200 bg-white p-3 shadow-card">
-        <div class="min-w-0">
-          <h2 class="text-base font-semibold text-ink-900">วันลา · วันหยุด</h2>
-          <p class="mt-0.5 text-xs text-ink-500">การลาและวันหยุดของพนักงานรายบุคคล แยกตามประเภท — เลือกเดือนเพื่อดูและเพิ่มรายการ</p>
-        </div>
-        <div class="flex w-full items-center gap-1.5 md:w-auto">
-          <button id="lbPrev" type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50 md:h-10 md:w-10" aria-label="เดือนก่อนหน้า"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="15 18 9 12 15 6"/></svg></button>
-          <div id="lbPeriodLabel" class="flex h-10 min-w-0 flex-1 items-center justify-center rounded-lg border border-ink-200 bg-white px-2 text-base font-semibold tabular-nums text-ink-800 shadow-card md:min-w-[10rem] md:flex-none md:px-4">—</div>
-          <button id="lbNext" type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50 md:h-10 md:w-10" aria-label="เดือนถัดไป"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="9 18 15 12 9 6"/></svg></button>
-          <button id="lbThisMonth" type="button" class="btn-secondary h-10">เดือนนี้</button>
-        </div>
-      </div>
-      <div id="lbError" class="mb-3 hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-2 text-sm text-bad-700">
-        <span id="lbErrorText">โหลดข้อมูลไม่สำเร็จ</span>
-        <button id="lbRetry" type="button" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
-      </div>
-      <div id="lbBoard" class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"></div>
-    </section>
   </main>
 
   <!-- MODAL-TO-SHEET (STYLE.md §5a): the roles-tab editor, below md only.
@@ -538,10 +522,9 @@
       // ---------- Tab switching ----------
       const tabs = Array.from(document.querySelectorAll(".tab[data-tab]"));
       const panes = {
-        roles:      document.getElementById("tabRoles"),
-        roster:     document.getElementById("tabRoster"),
-        hkoff:      document.getElementById("tabHkoff"),
-        leaveboard: document.getElementById("tabLeaveBoard"),
+        roles:  document.getElementById("tabRoles"),
+        roster: document.getElementById("tabRoster"),
+        hkoff:  document.getElementById("tabHkoff"),
       };
       tabs.forEach(t => t.addEventListener("click", () => {
         const target = t.getAttribute("data-tab");
@@ -553,7 +536,6 @@
         Object.entries(panes).forEach(([k, el]) => el.classList.toggle("hidden", k !== target));
         if (target === "roster") loadRoster();
         if (target === "hkoff") loadHkoff();
-        if (target === "leaveboard") loadLeaveBoard();
       }));
 
       // ---------- Boot ----------
@@ -1686,9 +1668,6 @@
             if (!panes.roster.classList.contains("hidden")) {
               renderRoster(rosterStart);
             }
-            if (!panes.leaveboard.classList.contains("hidden")) {
-              renderLeaveBoard();
-            }
             setStatus("บันทึกแล้ว", "good");
           } catch (err) {
             setStatus("บันทึกไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")", "bad");
@@ -1753,7 +1732,9 @@
 
       // ----- Leaves + holidays state -----
       // Indexed by ISO date — populated by loadLeavesForMonth(rosterStart),
-      // called from both the roster tab and the leaves tab.
+      // called from both the roster tab and the maid day-off grid (the
+      // authoritative add/delete leave board itself now lives on its own
+      // top-level page, see static/v2/leaves.html + leave-sync-ui.js).
       let HOLIDAYS_BY_DATE = {};          // { "YYYY-MM-DD": {date, name} }
       let LEAVES_BY_BADGE_DATE = {};      // { "badge|YYYY-MM-DD": {leave_type, note, id} }
 
@@ -1780,222 +1761,6 @@
           console.warn("leaves load failed", e);
           HOLIDAYS_BY_DATE = {};
           LEAVES_BY_BADGE_DATE = {};
-        }
-      }
-
-      // ===================================================================
-      // วันลา · วันหยุด — per-employee leave Kanban (replaces the old
-      // วันลา + วันหยุด tabs). One column per leave type, month-scoped.
-      // Add a leave (employee + single date) or delete a card. Backed by
-      // GET/POST/DELETE /api/private/leaves/employee. POST upserts on
-      // (badge,date), so a person can hold only one leave type per day.
-      // ===================================================================
-      const LB_COLUMNS = [
-        { type: "vacation",       label: "ลาพักร้อน" },
-        { type: "personal",       label: "ลากิจ" },
-        { type: "sick",           label: "ลาป่วย" },
-        { type: "public_holiday", label: "วันหยุดนักขัตฤกษ์" },
-      ];
-      const lbBoard = document.getElementById("lbBoard");
-      const lbPeriodLabel = document.getElementById("lbPeriodLabel");
-      const lbError = document.getElementById("lbError");
-      const lbErrorText = document.getElementById("lbErrorText");
-      document.getElementById("lbRetry").addEventListener("click", loadLeaveBoard);
-      let lbStart = null;   // "YYYY-MM-01"
-      let lbLeaves = [];    // EmployeeLeave rows in the current month
-
-      document.getElementById("lbPrev").addEventListener("click", () => {
-        lbStart = addMonths(lbStart || startOfMonth(V2.bangkokDate()), -1); loadLeaveBoard();
-      });
-      document.getElementById("lbNext").addEventListener("click", () => {
-        lbStart = addMonths(lbStart || startOfMonth(V2.bangkokDate()), 1); loadLeaveBoard();
-      });
-      document.getElementById("lbThisMonth").addEventListener("click", () => {
-        lbStart = startOfMonth(V2.bangkokDate()); loadLeaveBoard();
-      });
-
-      function lbEmployeeOptionsHtml() {
-        return '<option value="">— เลือกพนักงาน —</option>' +
-          EMPLOYEES.slice()
-            .sort((a, b) => (a.display_name || "").localeCompare(b.display_name || "", "th"))
-            .map(e => '<option value="' + V2.escapeHtml(e.badge_number) + '">' +
-              V2.escapeHtml((e.display_name || e.badge_number) + " (#" + e.badge_number + ")") +
-              '</option>').join("");
-      }
-
-      function lbDateLabel(iso) {
-        const dt = new Date(iso + "T12:00:00Z");
-        const wd = V2.WEEKDAY_TH_SHORT[dt.getUTCDay()];
-        const [, m, d] = iso.split("-").map(Number);
-        return wd + " " + String(d).padStart(2, "0") + "/" + String(m).padStart(2, "0");
-      }
-
-      // Inline per-control status for the add form (contract §3: mutations
-      // never use the pane-level error trio, and never a toast).
-      function lbSetStatus(node, text, kind) {
-        if (!node) return;
-        node.className = "block text-[11px] " +
-          ({ good: "text-good-700", bad: "text-bad-700" }[kind] || "text-ink-500");
-        node.textContent = text;
-        if (kind === "good") {
-          setTimeout(() => { if (node.textContent === text) node.textContent = ""; }, 1800);
-        }
-      }
-
-      async function loadLeaveBoard() {
-        lbError.classList.add("hidden");
-        if (SHIFTS.length === 0 || EMPLOYEES.length === 0) await loadAll();
-        if (!lbStart) lbStart = startOfMonth(V2.bangkokDate());
-        lbPeriodLabel.textContent = thaiPeriodLabel(lbStart);
-        const [y, m] = lbStart.split("-").map(Number);
-        const from = lbStart, to = addDays(lbStart, daysInMonth(y, m) - 1);
-        try {
-          lbLeaves = (await V2.apiFetch("/api/private/leaves/employee?from=" + from + "&to=" + to)) || [];
-        } catch (err) {
-          lbLeaves = [];
-          lbErrorText.textContent = "โหลดวันลาไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")";
-          lbError.classList.remove("hidden");
-        }
-        renderLeaveBoard();
-      }
-
-      function renderLeaveBoard() {
-        if (!lbStart) return;
-        const empByBadge = {};
-        EMPLOYEES.forEach(e => { empByBadge[e.badge_number] = e; });
-        const byType = {};
-        LB_COLUMNS.forEach(c => { byType[c.type] = []; });
-        lbLeaves.forEach(l => { (byType[l.leave_type] || (byType[l.leave_type] = [])).push(l); });
-
-        const [y, m] = lbStart.split("-").map(Number);
-        const monthEnd = addDays(lbStart, daysInMonth(y, m) - 1);
-
-        lbBoard.innerHTML = "";
-        LB_COLUMNS.forEach(col => {
-          const color = leaveFill(col.type);
-          const items = (byType[col.type] || []).slice().sort((a, b) =>
-            a.date.localeCompare(b.date) ||
-            a.employee_badge_number.localeCompare(b.employee_badge_number));
-
-          const card = document.createElement("div");
-          card.className = "flex flex-col rounded-xl border border-ink-200 bg-white shadow-card";
-
-          const head = document.createElement("div");
-          head.className = "flex items-center gap-2 border-b border-ink-100 px-3 py-2";
-          head.innerHTML =
-            '<span class="inline-block h-3 w-3 rounded" style="background:' + color + '"></span>' +
-            '<span class="text-sm font-semibold text-ink-800">' + V2.escapeHtml(col.label) + '</span>' +
-            '<span class="ml-auto rounded-full bg-ink-100 px-2 py-0.5 text-xs text-ink-500">' + items.length + '</span>';
-          card.appendChild(head);
-
-          const body = document.createElement("div");
-          body.className = "flex-1 space-y-1.5 p-2 min-h-[3rem]";
-          if (items.length === 0) {
-            body.innerHTML = '<p class="px-1 py-4 text-center text-xs text-ink-500">ยังไม่มีรายการ</p>';
-          } else {
-            items.forEach(l => {
-              const emp = empByBadge[l.employee_badge_number];
-              const name = emp ? (emp.display_name || emp.badge_number) : ("#" + l.employee_badge_number);
-              const row = document.createElement("div");
-              row.className = "flex items-center justify-between gap-2 rounded-lg border border-ink-100 bg-ink-50/40 px-2 py-1.5";
-              row.style.borderLeft = "3px solid " + color;
-              row.innerHTML =
-                '<div class="min-w-0">' +
-                '<div class="truncate text-sm text-ink-800">' + V2.escapeHtml(name) + '</div>' +
-                '<div class="text-[11px] tabular-nums text-ink-500">' + V2.escapeHtml(lbDateLabel(l.date)) +
-                (l.note ? ' · ' + V2.escapeHtml(l.note) : '') + '</div></div>';
-              const del = document.createElement("button");
-              del.className = "shrink-0 rounded px-1.5 text-ink-500 hover:text-bad-600";
-              del.setAttribute("aria-label", "ลบ");
-              del.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-              del.title = "ลบ";
-              const rowStatus = document.createElement("span");
-              rowStatus.className = "block text-[11px] text-ink-500";
-              del.addEventListener("click", () => lbDelete(l, del, rowStatus));
-              row.appendChild(del);
-              body.appendChild(row);
-              body.appendChild(rowStatus);
-            });
-          }
-          card.appendChild(body);
-
-          const foot = document.createElement("div");
-          foot.className = "flex flex-col gap-1.5 border-t border-ink-100 p-2";
-          const sel = document.createElement("select");
-          sel.className = "lb-emp-select h-9 w-full rounded-lg border border-ink-200 bg-white px-2 text-xs";
-          sel.innerHTML = lbEmployeeOptionsHtml();
-          const dateInput = document.createElement("input");
-          dateInput.type = "date";
-          dateInput.value = lbStart;
-          dateInput.min = lbStart;
-          dateInput.max = monthEnd;
-          dateInput.className = "lb-date-input h-9 w-full rounded-lg border border-ink-300 bg-white px-2 text-xs";
-          const addBtn = document.createElement("button");
-          addBtn.type = "button";
-          // Auto-width, not w-full: four columns of full-bleed burgundy read
-          // as a wall rather than as one primary per add form.
-          addBtn.className = "btn-primary h-9 self-start text-xs";
-          // Button copy says what happens, never a bare "+ เพิ่ม".
-          addBtn.textContent = "เพิ่ม" + col.label;
-          const addStatus = document.createElement("span");
-          addStatus.className = "block text-[11px] text-ink-500";
-          addBtn.addEventListener("click",
-            () => lbAdd(col.type, sel, dateInput, addBtn, addStatus));
-          foot.appendChild(sel);
-          foot.appendChild(dateInput);
-          foot.appendChild(addBtn);
-          foot.appendChild(addStatus);
-          card.appendChild(foot);
-
-          lbBoard.appendChild(card);
-        });
-      }
-
-      async function lbAdd(type, sel, dateInput, btn, statusEl) {
-        if (!sel.value) { lbSetStatus(statusEl, "เลือกพนักงานก่อน", "bad"); return; }
-        if (!dateInput.value) { lbSetStatus(statusEl, "เลือกวันที่ก่อน", "bad"); return; }
-        btn.disabled = true;
-        lbSetStatus(statusEl, "กำลังบันทึก…", "muted");
-        try {
-          const created = await V2.apiFetch("/api/private/leaves/employee", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              employee_badge_number: sel.value,
-              leave_type: type,
-              date: dateInput.value,
-            }),
-          });
-          // POST upserts on (badge,date): drop any existing row for that
-          // (badge,date) — possibly a different type — and add the new one.
-          (created || []).forEach(n => {
-            lbLeaves = lbLeaves.filter(l =>
-              !(l.employee_badge_number === n.employee_badge_number && l.date === n.date));
-            lbLeaves.push(n);
-          });
-          // renderLeaveBoard() rebuilds the column (and this button), so
-          // the success note goes on the fresh DOM, not the discarded one.
-          renderLeaveBoard();
-        } catch (err) {
-          lbSetStatus(statusEl, "เพิ่มไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")", "bad");
-        } finally {
-          btn.disabled = false;
-        }
-      }
-
-      async function lbDelete(l, btn, statusEl) {
-        btn.disabled = true;
-        lbSetStatus(statusEl, "กำลังลบ…", "muted");
-        try {
-          await V2.apiFetch("/api/private/leaves/employee/" +
-            encodeURIComponent(l.employee_badge_number) + "/" + l.date, { method: "DELETE" });
-          lbLeaves = lbLeaves.filter(x =>
-            !(x.employee_badge_number === l.employee_badge_number && x.date === l.date));
-          renderLeaveBoard();
-        } catch (err) {
-          lbSetStatus(statusEl, "ลบไม่สำเร็จ (" + (err.status || "เครือข่าย") + ")", "bad");
-        } finally {
-          btn.disabled = false;
         }
       }
 

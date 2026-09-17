@@ -385,6 +385,50 @@ def test_loma_font_has_thai_and_latin_not_tofu():
         assert bytes(font.getmask(char)) != missing
 
 
+def test_latest_leave_shows_partial_dates_and_roster_cancelled_wording(db):
+    """ใบลาล่าสุด reads the roster, not the stored request status — see
+    app/services/staff_leave_roster.py."""
+    row = submit(db)  # personal, START..START+2 (3 days)
+    row = service._maybe_auto_approve(db, row)
+    assert row.status == 'approved'
+
+    # An admin removes the middle day directly on shifts-admin.
+    db.query(EmployeeLeave).filter_by(date=START + timedelta(days=1)).delete()
+    db.commit()
+
+    partial = service._messages(text_event('ใบลาล่าสุด'), db, employee(db))
+    assert partial[1]['type'] == 'image'
+    assert 'บันทึกการลาแล้ว (ปรับจากตารางงาน)' in partial[0]['text']
+    assert service.thai_date(START) in partial[0]['text']
+    assert service.thai_date(START + timedelta(days=2)) in partial[0]['text']
+    assert service.thai_date(START + timedelta(days=1)) not in partial[0]['text']
+
+    # Now the admin removes every remaining day too: the roster itself has
+    # ended this leave, even though the request row still says "approved".
+    db.query(EmployeeLeave).delete()
+    db.commit()
+
+    gone = service._messages(text_event('ใบลาล่าสุด'), db, employee(db))
+    assert 'ยกเลิกแล้ว (ปรับจากตารางงาน)' in gone[0]['text']
+
+
+def test_latest_leave_shows_admin_roster_summary_without_image(db):
+    """A leave an admin typed directly into the roster (no LINE request
+    behind it at all) is still what ใบลาล่าสุด reports — text only, no
+    receipt image, since nothing was ever filed through LINE for it."""
+    db.add(EmployeeLeave(
+        employee_badge_number='TEST-A', date=START, leave_type='vacation', note=None,
+    ))
+    db.commit()
+
+    latest = service._messages(text_event('ใบลาล่าสุด'), db, employee(db))
+    assert len(latest) == 1
+    assert latest[0]['type'] == 'text'
+    assert 'วันลาล่าสุดในตารางงาน' in latest[0]['text']
+    assert '(บันทึกโดยแอดมิน)' in latest[0]['text']
+    assert 'HF-LV' not in latest[0]['text']
+
+
 def test_migration_roundtrip_preserves_foundation_tables():
     import importlib.util
     from pathlib import Path

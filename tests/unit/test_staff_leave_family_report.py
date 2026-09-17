@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core import database
 from app.core.database import Base
-from app.models.models import Employee
+from app.models.models import Employee, EmployeeLeave
 from app.models.staff_leave import StaffLeaveRequest
 from app.services import staff_leave, staff_leave_family_report as family
 
@@ -199,6 +199,14 @@ def test_fetch_and_mark_reported_use_durable_database(monkeypatch):
             rows.append(row)
             db.add(row)
         db.commit()
+        # The "approved" request needs its roster row too (effective_state
+        # reads the roster, not the stored status, to decide reportability).
+        approved_row = next(r for r in rows if r.status == "approved")
+        db.add(EmployeeLeave(
+            employee_badge_number="FAM-1", date=date(2026, 9, 20),
+            leave_type="vacation", note=staff_leave.reference(approved_row),
+        ))
+        db.commit()
 
         fetched, total = family.fetch_unreported(4)
         assert total == 2
@@ -212,6 +220,66 @@ def test_fetch_and_mark_reported_use_durable_database(monkeypatch):
         again, total_again = family.fetch_unreported(4)
         assert total_again == 1
         assert all(x.request_id != target for x in again)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_fetch_unreported_skips_roster_cancelled_and_reports_effective_dates(monkeypatch):
+    """An "approved" request whose roster rows were entirely removed by an
+    admin (see staff_leave_roster.on_roster_leave_removed) is effectively
+    cancelled_roster and must never appear in the digest, even though its
+    stored ``status`` was never itself "cancelled". A request that still
+    has SOME roster rows (partial) is reported with the remaining dates,
+    not its original filed range."""
+    engine = create_engine(
+        "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
+    )
+
+    @event.listens_for(engine, "connect")
+    def fk(conn, _):
+        conn.execute("PRAGMA foreign_keys=ON")
+
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    monkeypatch.setattr(database, "SessionLocal", Session)
+    monkeypatch.setattr(staff_leave, "image_url", lambda row: f"https://example/{row.id}.png")
+
+    db = Session()
+    try:
+        db.add(Employee(
+            badge_number="FAM-2", display_name="พนักงานทดสอบ 2", thai_name="พนักงานทดสอบ 2",
+            is_active=True, pending_approval=False,
+        ))
+
+        # Fully removed from the roster: reportable status "approved", but
+        # zero matching EmployeeLeave rows -> effective "cancelled_roster".
+        gone = StaffLeaveRequest(
+            id=uuid4().hex, employee_badge_number="FAM-2", employee_name="พนักงาน ลบหมด",
+            leave_type="vacation", leave_portion="full",
+            date_from=date(2026, 9, 21), date_to=date(2026, 9, 22),
+            status="approved", version=1,
+        )
+        # Still partially on the roster: one of its two days was removed.
+        partial = StaffLeaveRequest(
+            id=uuid4().hex, employee_badge_number="FAM-2", employee_name="พนักงาน เหลือบางวัน",
+            leave_type="sick", leave_portion="full",
+            date_from=date(2026, 9, 23), date_to=date(2026, 9, 24),
+            status="approved", version=1,
+        )
+        db.add_all([gone, partial])
+        db.commit()
+        db.add(EmployeeLeave(
+            employee_badge_number="FAM-2", date=date(2026, 9, 24),
+            leave_type="sick", note=staff_leave.reference(partial),
+        ))
+        db.commit()
+
+        fetched, total = family.fetch_unreported(4)
+        names = {x.employee_name: x for x in fetched}
+        assert "พนักงาน ลบหมด" not in names
+        assert names["พนักงาน เหลือบางวัน"].date_text == "24/09/2569"
+        assert total == 1
     finally:
         db.close()
         engine.dispose()

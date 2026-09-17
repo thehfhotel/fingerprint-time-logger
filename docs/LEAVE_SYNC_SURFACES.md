@@ -23,6 +23,40 @@ share `EmployeeLeave` as the authoritative approved-leave record.
   of a manager's email — never shown to shifts-admin/monthly, which only ever
   read `EmployeeLeave`, not the request/reviewer table).
 
+## The roster is the source of truth for LINE (two-way contract)
+
+`app/services/staff_leave_roster.py` is the only module that reconciles a
+`StaffLeaveRequest` against its roster rows. Every LINE leave surface reads
+its **effective state** from there — never `StaffLeaveRequest.status` alone.
+
+- **LINE -> roster, on confirmation.** Filing/auto-recording/manager-approval
+  write `EmployeeLeave` rows exactly as before (unchanged) — one row per
+  date, `note` carrying the request's reference (`HF-LV-<ID>`, or
+  `HF-LV-<ID>|half=am`/`pm` for a half day).
+- **Roster -> LINE, at read time.** `staff_leave_roster.effective_state(db,
+  row)` recomputes what a LINE surface should show by looking at the roster
+  rows that currently match that reference: all of the request's dates
+  present -> "recorded"; some missing -> "partial" (remaining dates only);
+  none left -> "cancelled_roster". `latest_effective_leave(db, badge)`
+  additionally considers the newest **admin-added** roster run (no LINE
+  reference at all) so `ใบลาล่าสุด` can report it too — as a short text
+  summary with no receipt image, since nothing was filed through LINE for
+  it.
+- **Reservation release on removal.** `app/api/leaves.py`'s
+  `delete_employee_leave` and the overwrite branch of
+  `create_employee_leaves` call `staff_leave_roster.on_roster_leave_removed`
+  with the row's OLD note, in the same transaction, before committing. If
+  that note references an existing request, its `StaffLeaveDay` for that one
+  date is released (so the employee can re-file it); if that was the
+  request's last remaining roster row and it was still `approved`, the
+  roster itself ends it — `status="cancelled"`,
+  `reviewed_by="admin:shifts-admin"` (`ROSTER_ADMIN_REVIEWER`). Overwriting a
+  linked row with no `note` in the request body preserves the existing
+  reference instead of wiping it, so a plain re-add/edit keeps the LINE link.
+- **Admin-added rows are visible to `ใบลาล่าสุด` without an image.** A roster
+  row with no LINE reference at all is still reportable as "the roster's
+  latest leave" when it is newer than any LINE-filed request — text only.
+
 ## UI behavior
 
 - shifts-admin > วันลา · วันหยุด shows five leave types and full/morning/afternoon

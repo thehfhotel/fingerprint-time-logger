@@ -6,7 +6,7 @@
   if (!V2 || !nav) return;
 
   var page = (nav.getAttribute("data-page") || "").trim();
-  if (page !== "shifts-admin" && page !== "monthly") return;
+  if (page !== "leaves" && page !== "monthly") return;
 
   var TYPES = [
     { code: "vacation", label: "ลาพักร้อน", short: "พร", color: "#EAF6EF" },
@@ -105,24 +105,31 @@
   }
 
   // ---------------------------------------------------------------------
-  // shifts-admin: authoritative employee leave board
+  // leaves: authoritative employee leave board (its own top-level page)
   // ---------------------------------------------------------------------
 
-  function installShiftsAdmin() {
+  function installLeaveBoard() {
+    if (document.getElementById("leaveSyncBoard")) return;
     var oldBoard = document.getElementById("lbBoard");
-    if (!oldBoard || document.getElementById("leaveSyncBoard")) return;
 
-    // The legacy board understands only four full-day types. Keep its month
-    // controls/events for backwards compatibility, but replace its visible
-    // contents with the shared EmployeeLeave view below.
-    oldBoard.style.display = "none";
-    var oldError = document.getElementById("lbError");
-    if (oldError) oldError.style.display = "none";
-
+    // A legacy static #lbBoard (the page's own mount point, moved wholesale
+    // from shifts-admin.html) understood only four full-day types. Keep its
+    // month controls/events for backwards compatibility, but replace its
+    // visible contents with the shared EmployeeLeave view below. Mount
+    // fresh into <main> when no such element exists at all, so this
+    // function never depends on that exact markup surviving unchanged.
     var board = document.createElement("div");
     board.id = "leaveSyncBoard";
     board.className = "space-y-3";
-    oldBoard.insertAdjacentElement("afterend", board);
+    if (oldBoard) {
+      oldBoard.style.display = "none";
+      var oldError = document.getElementById("lbError");
+      if (oldError) oldError.style.display = "none";
+      oldBoard.insertAdjacentElement("afterend", board);
+    } else {
+      var main = document.querySelector("main");
+      (main || document.body).appendChild(board);
+    }
 
     var monthStart = startOfMonth(V2.bangkokDate());
     var employees = [];
@@ -315,11 +322,6 @@
     });
     if (retry) retry.addEventListener("click", reload);
 
-    // Refresh when the tab is opened. This also picks up a leave created in
-    // HF ภายใน while the page was already open.
-    var tab = document.querySelector('.tab[data-tab="leaveboard"]');
-    if (tab) tab.addEventListener("click", reload);
-
     reload();
   }
 
@@ -483,6 +485,6 @@
     reload();
   }
 
-  if (page === "shifts-admin") installShiftsAdmin();
+  if (page === "leaves") installLeaveBoard();
   if (page === "monthly") installMonthly();
 })();

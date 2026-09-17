@@ -205,6 +205,51 @@ def test_edit_picker_excludes_auto_recorded_request(monkeypatch):
         db.close(); engine.dispose()
 
 
+def test_cancel_picker_excludes_a_roster_cancelled_request_and_includes_a_partial_one(
+    monkeypatch,
+):
+    """A request the roster itself already ended (every roster row it
+    created removed on shifts-admin) drops out of the cancel picker even
+    though it is still stored as "approved" — but a request with SOME
+    remaining roster rows (partial) still offers to cancel."""
+    engine, db, employee = make_db(monkeypatch)
+    try:
+        manage.install(service)
+
+        gone = service.submit(
+            db, employee, uuid4().hex, "personal",
+            date(2026, 9, 18), date(2026, 9, 18),
+        )
+        gone = service._maybe_auto_approve(db, gone)
+        assert gone.status == "approved" and gone.reviewed_by == service.AUTO_REVIEWER
+        # An admin removes the request's only roster day directly.
+        db.query(EmployeeLeave).filter_by(
+            employee_badge_number=employee.badge_number, date=date(2026, 9, 18),
+        ).delete()
+        db.commit()
+
+        partial = service.submit(
+            db, employee, uuid4().hex, "vacation",
+            date(2026, 9, 20), date(2026, 9, 22),
+        )
+        partial = service._maybe_auto_approve(db, partial)
+        assert partial.status == "approved"
+        db.query(EmployeeLeave).filter_by(
+            employee_badge_number=employee.badge_number, date=date(2026, 9, 21),
+        ).delete()
+        db.commit()
+
+        assert manage._is_cancellable(db, gone, gone.version) is False
+        assert manage._is_cancellable(db, partial, partial.version) is True
+
+        rows = manage._editable_rows(db, employee.badge_number, "cancel")
+        ids = {r.id for r in rows}
+        assert partial.id in ids
+        assert gone.id not in ids
+    finally:
+        db.close(); engine.dispose()
+
+
 def test_manager_approved_request_excluded_from_cancel_picker_and_cancel_v(
     monkeypatch,
 ):

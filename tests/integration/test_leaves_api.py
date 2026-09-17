@@ -5,6 +5,7 @@ and /api/private/shifts/{code}/color.
 Same isolated-engine fixture pattern as test_shifts_api.py.
 """
 from datetime import date as date_type, time
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +16,8 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base, get_db
 from app.main_unified import app
 from app.models.models import Employee, EmployeeLeave, LeaveType, PublicHoliday, Shift
+from app.models.staff_leave import StaffLeaveDay, StaffLeaveRequest
+from app.services import staff_leave, staff_leave_roster
 
 
 LEAVES_ROOT = "/api/private/leaves"
@@ -486,3 +489,123 @@ class TestOffShiftNotAssignable:
         )
         assert resp.status_code == 200
         assert resp.json()["color"] == "#000000"
+
+
+# ---------------------------------------------------------------------------
+# The roster is the single source of truth for LINE leave surfaces
+# (docs/LEAVE_SYNC_SURFACES.md) — deleting/overwriting a roster row here
+# feeds back into the linked LINE-filed request in the same transaction.
+# ---------------------------------------------------------------------------
+
+
+class TestRosterIsSourceOfTruthForLineRequests:
+    def test_deleting_roster_days_updates_linked_request_and_effective_state(
+        self, leaves_client, leaves_session, seeded_employee, monkeypatch,
+    ):
+        monkeypatch.setattr(staff_leave, "today", lambda: date_type(2026, 6, 20))
+        badge = "EMP01"
+        start, mid, end = date_type(2026, 6, 15), date_type(2026, 6, 16), date_type(2026, 6, 17)
+        request_id = uuid4().hex
+        row = StaffLeaveRequest(
+            id=request_id, employee_badge_number=badge, employee_name="Test Employee",
+            leave_type="vacation", date_from=start, date_to=end,
+            status="approved", version=1, reviewed_by=staff_leave.AUTO_REVIEWER,
+        )
+        leaves_session.add(row)
+        leaves_session.commit()
+        ref = staff_leave.reference(row)
+        for d in (start, mid, end):
+            leaves_session.add(EmployeeLeave(
+                employee_badge_number=badge, date=d, leave_type="vacation", note=ref,
+            ))
+            leaves_session.add(StaffLeaveDay(
+                employee_badge_number=badge, date=d, request_id=request_id,
+            ))
+        leaves_session.commit()
+
+        # Remove the middle day: the request is still "approved", but its
+        # effective state is now "partial" and re-filing that one date works.
+        resp = leaves_client.delete(f"{LEAVES_ROOT}/employee/{badge}/2026-06-16")
+        assert resp.status_code == 204
+
+        leaves_session.expire_all()
+        refreshed = leaves_session.get(StaffLeaveRequest, request_id)
+        assert refreshed.status == "approved"
+        assert leaves_session.query(StaffLeaveDay).filter_by(
+            request_id=request_id, date=mid
+        ).count() == 0
+        assert leaves_session.query(StaffLeaveDay).filter_by(request_id=request_id).count() == 2
+
+        effective = staff_leave_roster.effective_state(leaves_session, refreshed)
+        assert effective.status == "partial"
+        assert effective.dates == (start, end)
+
+        # Remove the two remaining days: the roster itself ends the request.
+        leaves_client.delete(f"{LEAVES_ROOT}/employee/{badge}/2026-06-15")
+        leaves_client.delete(f"{LEAVES_ROOT}/employee/{badge}/2026-06-17")
+
+        leaves_session.expire_all()
+        final = leaves_session.get(StaffLeaveRequest, request_id)
+        assert final.status == "cancelled"
+        assert final.reviewed_by == staff_leave_roster.ROSTER_ADMIN_REVIEWER
+        assert leaves_session.query(StaffLeaveDay).filter_by(request_id=request_id).count() == 0
+
+        # Freed dates: the employee can re-file the exact same range.
+        employee = leaves_session.query(Employee).filter_by(badge_number=badge).one()
+        refiled = staff_leave.submit(leaves_session, employee, uuid4().hex, "vacation", start, end)
+        assert refiled.status == "pending"
+
+    def test_upsert_without_note_preserves_line_reference(
+        self, leaves_client, leaves_session, seeded_employee,
+    ):
+        request_id = uuid4().hex
+        ref = f"HF-LV-{request_id.upper()}"
+        on_date = date_type(2026, 6, 15)
+        leaves_session.add(EmployeeLeave(
+            employee_badge_number="EMP01", date=on_date, leave_type="vacation", note=ref,
+        ))
+        leaves_session.commit()
+
+        resp = leaves_client.post(
+            f"{LEAVES_ROOT}/employee",
+            json={
+                "employee_badge_number": "EMP01",
+                "leave_type": "vacation",
+                "date": on_date.isoformat(),
+            },
+        )
+        assert resp.status_code == 200
+
+        leaves_session.expire_all()
+        stored = leaves_session.query(EmployeeLeave).filter_by(
+            employee_badge_number="EMP01", date=on_date,
+        ).one()
+        assert stored.note == ref
+
+    def test_upsert_with_explicit_note_replaces_reference(
+        self, leaves_client, leaves_session, seeded_employee,
+    ):
+        request_id = uuid4().hex
+        ref = f"HF-LV-{request_id.upper()}"
+        on_date = date_type(2026, 6, 15)
+        leaves_session.add(EmployeeLeave(
+            employee_badge_number="EMP01", date=on_date, leave_type="vacation", note=ref,
+        ))
+        leaves_session.commit()
+
+        resp = leaves_client.post(
+            f"{LEAVES_ROOT}/employee",
+            json={
+                "employee_badge_number": "EMP01",
+                "leave_type": "vacation",
+                "date": on_date.isoformat(),
+                "note": "แก้ไขโดยแอดมิน",
+            },
+        )
+        assert resp.status_code == 200
+
+        leaves_session.expire_all()
+        stored = leaves_session.query(EmployeeLeave).filter_by(
+            employee_badge_number="EMP01", date=on_date,
+        ).one()
+        assert stored.note == "แก้ไขโดยแอดมิน"

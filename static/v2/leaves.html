@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#4F0E0E" />
+  <title>วันลา · วันหยุด — ระบบบันทึกเวลา</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/fingerprintlogs/static/v2/theme.js"></script>
+  <!-- Shared navigation — renders BOTH navs. Every page, no exceptions.
+       loadPageEnhancement() in nav.js also injects leave-sync-ui.js for this
+       page id, which mounts the add/delete Kanban below. -->
+  <script defer src="/fingerprintlogs/static/v2/nav.js"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: window.V2.THEME },
+      safelist: [
+        "bg-brand-100", "text-brand-700",
+        "bg-good-100",  "text-good-700",
+        "bg-warn-100",  "text-warn-700",
+        "bg-bad-100",   "text-bad-700",
+        "bg-ink-200",   "text-ink-700",
+        "bg-off-100",   "text-off-600",
+        "bg-ink-100",   "bg-ink-50/40",
+      ],
+    };
+  </script>
+  <style>
+    /* Belt-and-braces: the CDN applies fontFamily only after theme.js parses. */
+    html, body { font-family: 'Sarabun', 'Noto Sans Thai', system-ui, -apple-system, sans-serif; }
+    /* HF One body type: 14px / 1.6 (Thai needs the tall leading). Set on BODY,
+       never on <html> — Tailwind's spacing scale is rem-based and rescaling the
+       root font-size shrinks every padding and gap utility on the page. */
+    body { font-size: 0.875rem; line-height: 1.6; }
+
+    /* ---------- Primary / secondary buttons (STYLE.md section 4) ---------- */
+    .btn-primary {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;                 /* --hf-radius */
+      font-size: .875rem; font-weight: 600;
+      background: #8B0000;                /* brand-500 */
+      border: 1px solid #8B0000;
+      color: #FFFFFF;                     /* 10.0:1 */
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-primary:hover   { background: #7A0000; border-color: #7A0000; }  /* brand-600 */
+    .btn-primary:active  { background: #6B1212; border-color: #6B1212; }  /* brand-700 */
+    .btn-primary:disabled{ background: #E8E4DF; border-color: #E8E4DF; color: #7A7268; cursor: not-allowed; }
+
+    .btn-secondary {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      min-height: 2.5rem;
+      padding: .5rem .875rem;
+      border-radius: 8px;
+      font-size: .875rem; font-weight: 500;
+      background: #FFFFFF;
+      border: 1px solid #CFC9C1;          /* --hf-border-strong */
+      color: #332D27;                     /* ink-800 */
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background-color .12s ease, border-color .12s ease;
+    }
+    .btn-secondary:hover { background: #FAF9F7; border-color: #7A7268; }
+    .btn-secondary:disabled { color: #7A7268; cursor: not-allowed; }
+
+    /* ---------- Focus: brand-500 at 40%, never a colored glow ---------- */
+    a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid rgba(139, 0, 0, .40);   /* brand-500 / 40% */
+      outline-offset: 2px;
+    }
+
+    /* ---------- Touch targets: every interactive control >=44px below md --
+       Mirrors the rule in shifts-admin.html — the Kanban's per-column
+       employee select / date input / add button used to live there. -->
+    @media (max-width: 767px) {
+      .btn-primary, .btn-secondary, .lb-emp-select, .lb-date-input {
+        min-height: 44px;
+      }
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-ink-50 text-ink-900 antialiased">
+
+  <!-- The ONLY nav markup this page carries. See STYLE.md §2. -->
+  <nav id="v2nav" data-page="leaves"></nav>
+
+  <main class="mx-auto max-w-7xl px-4 pt-5 pb-28 md:px-5 md:pt-8 md:pb-12">
+
+    <!-- HEADER -->
+    <header class="mb-5 md:mb-7">
+      <p class="text-xs font-semibold tracking-wide text-brand-600">วันลา · วันหยุด</p>
+      <h1 class="mt-1 text-xl font-bold tracking-tight text-ink-900">วันลา · วันหยุดพนักงาน</h1>
+      <p class="mt-1 text-sm text-ink-500">การลาและวันหยุดของพนักงานรายบุคคล แยกตามประเภท — เลือกเดือนเพื่อดูและเพิ่มรายการ</p>
+    </header>
+
+    <!-- Leave / holiday Kanban (per-employee, one column per type). Static
+         markup only — leave-sync-ui.js's installLeaveBoard() (injected by
+         nav.js for this page id) hides #lbBoard and mounts the live
+         add/delete board next to it. Same ids as the block this replaced in
+         shifts-admin.html's #tabLeaveBoard, so the shared script needs no
+         page-specific branching. -->
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-ink-200 bg-white p-3 shadow-card">
+      <div class="min-w-0">
+        <h2 class="text-base font-semibold text-ink-900">วันลา · วันหยุด</h2>
+        <p class="mt-0.5 text-xs text-ink-500">ข้อมูลเดียวกับ HF ภายในและรายงานรายเดือน</p>
+      </div>
+      <div class="flex w-full items-center gap-1.5 md:w-auto">
+        <button id="lbPrev" type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50 md:h-10 md:w-10" aria-label="เดือนก่อนหน้า"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <div id="lbPeriodLabel" class="flex h-10 min-w-0 flex-1 items-center justify-center rounded-lg border border-ink-200 bg-white px-2 text-base font-semibold tabular-nums text-ink-800 shadow-card md:min-w-[10rem] md:flex-none md:px-4">—</div>
+        <button id="lbNext" type="button" class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 hover:bg-ink-50 md:h-10 md:w-10" aria-label="เดือนถัดไป"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><polyline points="9 18 15 12 9 6"/></svg></button>
+        <button id="lbThisMonth" type="button" class="btn-secondary h-10">เดือนนี้</button>
+      </div>
+    </div>
+    <div id="lbError" class="mb-3 hidden rounded-xl border border-bad-100 bg-bad-50 px-4 py-2 text-sm text-bad-700">
+      <span id="lbErrorText">โหลดข้อมูลไม่สำเร็จ</span>
+      <button id="lbRetry" type="button" class="ml-2 font-semibold underline underline-offset-2 hover:text-bad-600">ลองใหม่</button>
+    </div>
+    <div id="lbBoard" class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"></div>
+  </main>
+
+  <script defer src="https://erp.thehfhotel.org/shell/hf-bar.js" data-app="Attendance" data-module="people"></script>
+</body>
+</html>

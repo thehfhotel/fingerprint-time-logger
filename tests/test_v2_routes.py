@@ -56,6 +56,7 @@ V2_UNGATED_ROUTES = [
     "/fingerprintlogs/v2/by-date",
     "/fingerprintlogs/v2/monthly",
     "/fingerprintlogs/v2/shifts-admin",
+    "/fingerprintlogs/v2/leaves",
 ]
 
 # The v1 admin pages whose inline guards were collapsed into the shared
@@ -254,6 +255,29 @@ class TestV2UngatedPagesStillServe:
 
         assert response.status_code == 200
         assert "text/html" in response.headers.get("content-type", "")
+
+
+class TestV2LeavesIsItsOwnTopLevelPage:
+    """วันลา · วันหยุด moved off the จัดกะ tab strip onto its own page
+    (SPEC_ROSTER_NAV.md, Track N) — pin the split so it can't silently
+    regress back onto shifts-admin or lose its board mount point.
+    """
+
+    def test_leaves_page_carries_the_nav_id_and_board_mount(self, test_client):
+        response = test_client.get("/fingerprintlogs/v2/leaves", follow_redirects=False)
+
+        assert response.status_code == 200
+        body = response.text
+        assert 'data-page="leaves"' in body
+        assert 'id="lbBoard"' in body
+
+    def test_shifts_admin_no_longer_hosts_the_leave_board_tab(self, test_client):
+        response = test_client.get(
+            "/fingerprintlogs/v2/shifts-admin", follow_redirects=False
+        )
+
+        assert response.status_code == 200
+        assert 'data-tab="leaveboard"' not in response.text
 
 
 class TestV1AdminPagesUnchanged:

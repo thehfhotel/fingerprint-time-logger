@@ -353,6 +353,17 @@ async def serve_v2_shifts_admin():
     """
     return serve_html_with_cache_control("static/v2/shifts-admin.html")
 
+@fingerprint_app.get("/v2/leaves")
+async def serve_v2_leaves():
+    """วันลา · วันหยุด — per-employee leave/holiday Kanban, its own
+    top-level page (moved off the จัดกะ tab strip).
+
+    Linked from the v2 nav as 'วันลา · วันหยุด'. Same Cloudflare Access
+    posture as the rest of /fingerprintlogs/* — protected upstream, not at
+    the FastAPI layer (ungated here, same as shifts-admin/monthly above).
+    """
+    return serve_html_with_cache_control("static/v2/leaves.html")
+
 @fingerprint_app.get("/v2/monthly")
 async def serve_v2_monthly():
     """Monthly payroll/management report — per-employee timesheet + grid.

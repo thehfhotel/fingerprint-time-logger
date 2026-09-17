@@ -167,8 +167,8 @@ placeholder is absent — a page without it simply has no nav, which is a bug.
 
 `data-page` is the destination **id**, one of:
 
-`index` · `live` · `monthly` · `shifts-admin` · `employees` · `system` ·
-`terminals`
+`index` · `live` · `monthly` · `shifts-admin` · `leaves` · `employees` ·
+`system` · `terminals`
 
 A page that is not itself a destination declares its **section** instead:
 `by-date` resolves to `monthly`, which is then highlighted with
@@ -186,6 +186,7 @@ Defined once, in `nav.js`. Never re-typed into a page.
 | ดูสด | `/fingerprintlogs/v2/live` | yes | yes | yes |
 | รายงาน | `/fingerprintlogs/v2/monthly` | yes | yes | yes |
 | จัดกะ | `/fingerprintlogs/v2/shifts-admin` | yes | yes | yes |
+| วันลา · วันหยุด | `/fingerprintlogs/v2/leaves` | yes | — | yes |
 | พนักงาน | `/fingerprintlogs/v2/employees` | yes | yes | yes |
 | ระบบ | `/fingerprintlogs/v2/system` | yes | — | yes |
 | จุดสแกน QR | `/fingerprintlogs/v2/terminals` | — | — | yes |
@@ -193,7 +194,7 @@ Defined once, in `nav.js`. Never re-typed into a page.
 **Terminals is NOT in the top nav.** It is reached from the ระบบ page, from a
 card on the index hub, and from the sheet.
 
-Seven tabs do not fit a 390px phone — that is ~55px per cell, which truncates
+Eight tabs do not fit a 390px phone — that is ~55px per cell, which truncates
 Thai labels and breaks the 44px touch target. So the bar carries the **four
 workhorse pages plus a fifth เมนู cell**, and everything is one tap away in the
 sheet.
@@ -254,7 +255,7 @@ top bar. The `max-w-*` comes from your `<main>` (section 1).
 Overlay `fixed inset-0 z-30 bg-ink-900/40`; panel `fixed inset-x-0 bottom-0
 z-40 rounded-t-2xl bg-white max-h-[80vh] overflow-y-auto overscroll-contain`,
 safe-area padding, `role="dialog" aria-modal="true" aria-label="เมนู"`. A
-decorative drag handle, then all seven destinations as rows:
+decorative drag handle, then all eight destinations as rows:
 
 ```html
 <a href="/fingerprintlogs/v2/live"

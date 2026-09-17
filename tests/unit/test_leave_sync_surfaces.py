@@ -149,7 +149,7 @@ def test_shared_leave_ui_covers_both_pages_and_hides_internal_reference_vocabula
     nav = Path("static/v2/nav.js").read_text(encoding="utf-8")
 
     for phrase in (
-        'page !== "shifts-admin" && page !== "monthly"',
+        'page !== "leaves" && page !== "monthly"',
         'code: "day_off"',
         'leave_portion',
         'ครึ่งวันเช้า',
@@ -160,7 +160,7 @@ def test_shared_leave_ui_covers_both_pages_and_hides_internal_reference_vocabula
     ):
         assert phrase in source
     assert "HF-LV-" not in source
-    assert 'script.src = BASE + "leave-sync-ui.js"' in nav
+    assert 'script.src = STATIC_BASE + "leave-sync-ui.js"' in nav
 
 
 def test_day_off_is_native_admin_leave_type_not_runtime_only():

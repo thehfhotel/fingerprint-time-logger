@@ -17,7 +17,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core import database
 from app.models.staff_leave import StaffLeaveRequest
-from app.services import staff_leave
+from app.services import staff_leave, staff_leave_roster
 
 logger = logging.getLogger(__name__)
 
@@ -42,28 +42,34 @@ def _thai_date(value: date) -> str:
     return staff_leave.thai_date(value)
 
 
-def _date_text(row: StaffLeaveRequest) -> str:
-    if row.date_from == row.date_to:
-        return _thai_date(row.date_from)
-    return f"{_thai_date(row.date_from)} – {_thai_date(row.date_to)}"
-
-
-def _to_item(row: StaffLeaveRequest) -> FamilyLeaveItem:
+def _to_item(row: StaffLeaveRequest, effective) -> FamilyLeaveItem:
     return FamilyLeaveItem(
         request_id=row.id,
         employee_name=row.employee_name,
-        leave_label=staff_leave.TYPES.get(row.leave_type, row.leave_type),
-        portion_label=PORTION_LABELS.get(row.leave_portion or "full", "เต็มวัน"),
-        date_text=_date_text(row),
+        leave_label=staff_leave.TYPES.get(effective.leave_type, effective.leave_type),
+        portion_label=PORTION_LABELS.get(effective.portion or "full", "เต็มวัน"),
+        date_text=_effective_date_text(effective, row),
         image_url=staff_leave.image_url(row),
     )
+
+
+def _effective_date_text(effective, row: StaffLeaveRequest) -> str:
+    dates = effective.dates or (row.date_from, row.date_to)
+    if dates[0] == dates[-1]:
+        return _thai_date(dates[0])
+    return f"{_thai_date(dates[0])} – {_thai_date(dates[-1])}"
 
 
 def fetch_unreported(limit: int) -> tuple[List[FamilyLeaveItem], int]:
     """Oldest new leaves not yet carried by HF Family's slot report.
 
-    Rejected/cancelled requests are deliberately excluded. Approved requests
-    remain reportable if a manager reviewed them before the next slot.
+    A request whose EFFECTIVE state (roster-recomputed — see
+    ``staff_leave_roster.effective_state``) is cancelled/cancelled_roster is
+    skipped even if its stored ``status`` was never itself "cancelled";
+    reported dates are the effective ones (the remaining roster dates for a
+    partially-removed leave), not the original filed range. Approved
+    requests remain reportable if a manager reviewed them before the next
+    slot.
 
     Leave reporting is an optional section on top of the existing HF Family
     slot report. If the leave schema/store is temporarily unavailable (for
@@ -83,7 +89,15 @@ def fetch_unreported(limit: int) -> tuple[List[FamilyLeaveItem], int]:
         rows = query.order_by(
             StaffLeaveRequest.created_at.asc(), StaffLeaveRequest.id.asc()
         ).limit(limit).all()
-        return [_to_item(row) for row in rows], total
+        items = []
+        skipped = 0
+        for row in rows:
+            effective = staff_leave_roster.effective_state(db, row)
+            if effective.status in ("cancelled", "cancelled_roster"):
+                skipped += 1
+                continue
+            items.append(_to_item(row, effective))
+        return items, max(total - skipped, len(items))
     except SQLAlchemyError as exc:
         logger.warning(
             "HF Family leave read unavailable; keeping base slot report: %s",

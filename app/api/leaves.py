@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.models import Employee, EmployeeLeave, LeaveType, PublicHoliday
 from app.services.thai_holidays import thai_holidays_for_year
+from app.services import staff_leave_roster
 from app.api.staff_leave import admin_router as staff_leave_admin_router
 
 
@@ -244,6 +245,17 @@ def create_employee_leaves(
     rather than duplicating. ``leave_portion`` is full/am/pm. A half-day can
     only target one date and uses the same legacy note marker as HF ภายใน, so
     LINE and ERP edits stay perfectly interoperable.
+
+    The roster is the single source of truth for every LINE leave surface
+    (see docs/LEAVE_SYNC_SURFACES.md). Overwriting an existing row that is
+    linked to a LINE-filed request (``note`` carries its "HF-LV-<ID>"
+    reference) always calls ``staff_leave_roster.on_roster_leave_removed``
+    with the OLD note before committing, so LINE's view of that request is
+    recomputed immediately. If the incoming payload has no ``note``, the old
+    row's reference note is PRESERVED as-is instead of being wiped, so an
+    admin re-adding/editing the same day (without typing a custom note)
+    keeps the LINE link intact; passing an explicit ``note`` still replaces
+    it, same as before.
     """
     if body.leave_type not in _ALLOWED_LEAVE_TYPES:
         raise HTTPException(
@@ -315,8 +327,24 @@ def create_employee_leaves(
             )
             db.add(row)
         else:
+            old_note = row.note
+            if body.note is None and staff_leave_roster.request_id_from_note(old_note) is not None:
+                # No note supplied: keep the existing LINE reference (and any
+                # half-day marker) untouched rather than wiping it.
+                new_note = old_note
+            else:
+                new_note = stored_note
             row.leave_type = body.leave_type
-            row.note = stored_note
+            row.note = new_note
+            if (staff_leave_roster.request_id_from_note(new_note)
+                    != staff_leave_roster.request_id_from_note(old_note)):
+                # The LINE link on this day changed (or was dropped): let the
+                # roster module recompute that request's reservation/state.
+                # A preserved reference is not a removal, so the day stays
+                # reserved for the request that still owns it.
+                staff_leave_roster.on_roster_leave_removed(
+                    db, body.employee_badge_number, d, old_note,
+                )
         written.append(row)
 
     db.commit()
@@ -335,11 +363,25 @@ def delete_employee_leave(
     on_date: date_type,
     db: Session = Depends(get_db),
 ) -> Response:
-    """Remove one leave row. Idempotent."""
+    """Remove one leave row. Idempotent.
+
+    If the removed row was linked to a LINE-filed request (its ``note``
+    carries the "HF-LV-<ID>" reference), calls
+    ``staff_leave_roster.on_roster_leave_removed`` with the OLD row's note
+    before committing so that request's day reservation is released and,
+    if this was its last remaining roster row, the request is marked
+    cancelled by the roster (see docs/LEAVE_SYNC_SURFACES.md).
+    """
+    old = db.query(EmployeeLeave).filter(
+        EmployeeLeave.employee_badge_number == badge,
+        EmployeeLeave.date == on_date,
+    ).first()
     db.query(EmployeeLeave).filter(
         EmployeeLeave.employee_badge_number == badge,
         EmployeeLeave.date == on_date,
     ).delete()
+    if old is not None:
+        staff_leave_roster.on_roster_leave_removed(db, badge, on_date, old.note)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
