@@ -148,6 +148,57 @@ def test_rejection_releases_days(db):
     submit(db)
 
 
+def test_auto_approve_records_roster_rows_with_auto_reviewer(db):
+    row = submit(db)  # personal, 3 calendar days (START..START+2)
+    row = service._maybe_auto_approve(db, row)
+    assert row.status == 'approved' and row.reviewed_by == service.AUTO_REVIEWER
+    rows = db.query(EmployeeLeave).filter_by(employee_badge_number='TEST-A').all()
+    assert len(rows) == 3
+    assert {r.note for r in rows} == {service.reference(row)}
+
+
+def test_auto_approve_disabled_keeps_pending_behaviour(db, monkeypatch):
+    monkeypatch.setenv('STAFF_LEAVE_AUTO_APPROVE', 'false')
+    row = submit(db)
+    result = service._maybe_auto_approve(db, row)
+    assert result.status == 'pending' and result.reviewed_by is None
+    assert db.query(EmployeeLeave).count() == 0
+
+
+def test_auto_approve_roster_conflict_leaves_request_pending_no_partial_rows(db):
+    row = submit(db)
+    db.add(EmployeeLeave(employee_badge_number='TEST-A', date=START, leave_type='sick', note='original'))
+    db.commit()
+    result = service._maybe_auto_approve(db, row)
+    assert result.status == 'pending' and result.reviewed_by is None
+    assert [r.note for r in db.query(EmployeeLeave)] == ['original']
+    assert db.query(StaffLeaveDay).filter_by(request_id=row.id).count() == 3
+
+
+def test_auto_approve_idempotent_on_already_approved_row(db):
+    row = submit(db)
+    once = service._maybe_auto_approve(db, row)
+    twice = service._maybe_auto_approve(db, once)
+    assert twice.status == 'approved' and twice.version == once.version
+    assert db.query(EmployeeLeave).count() == 3
+
+
+def test_cancel_auto_approved_deletes_only_its_own_rows(db):
+    unrelated = EmployeeLeave(employee_badge_number='TEST-A', date=START + timedelta(days=30),
+                              leave_type='vacation', note='unrelated')
+    db.add(unrelated)
+    db.commit()
+    row = submit(db)
+    row = service._maybe_auto_approve(db, row)
+    assert row.status == 'approved' and row.reviewed_by == service.AUTO_REVIEWER
+    cancelled = service.cancel(db, 'TEST-A', row.id)
+    assert cancelled.status == 'cancelled'
+    remaining = db.query(EmployeeLeave).all()
+    assert [r.note for r in remaining] == ['unrelated']
+    assert db.query(StaffLeaveDay).filter_by(request_id=row.id).count() == 0
+    submit(db)  # dates are free again
+
+
 def test_cancel_owner_only_idempotent_and_releases_days(db):
     row = submit(db)
     with pytest.raises(service.LeaveError):
@@ -187,6 +238,10 @@ def test_existing_roster_blocks_submission(db):
 
 
 def test_native_line_flow_needs_explicit_confirmation(db):
+    """Auto-record is on by default: the explicit confirmation still gates
+    creation, but that same confirmation now also records the leave (no
+    separate manager step) — see the auto-approve tests below for the
+    off/conflict cases."""
     emp = employee(db)
     first = service._messages(text_event('แจ้งลา'), db, emp)[0]
     choose_start = action(first)
@@ -198,11 +253,18 @@ def test_native_line_flow_needs_explicit_confirmation(db):
     confirmation = action(review)['data']
     receipt = service._messages(postback(confirmation), db, emp)
     assert receipt[1]['type'] == 'image'
-    assert 'ส่งใบลาแล้ว' in receipt[0]['text']
+    assert 'บันทึกการลาแล้ว' in receipt[0]['text']
     assert 'รออนุมัติ' not in receipt[0]['text']
-    assert db.query(EmployeeLeave).count() == 0
+    row = db.query(StaffLeaveRequest).one()
+    assert row.status == 'approved' and row.reviewed_by == service.AUTO_REVIEWER
+    assert db.query(EmployeeLeave).count() == 1
+    # Replay of the same signed confirmation is idempotent: already approved,
+    # so the second call is a no-op rather than a re-approval attempt.
     service._messages(postback(confirmation), db, emp)
     assert db.query(StaffLeaveRequest).count() == 1
+    assert db.query(EmployeeLeave).count() == 1
+    latest = service._messages(text_event('ใบลาล่าสุด'), db, emp)
+    assert 'บันทึกการลาแล้ว' in latest[0]['text']
 
 
 def test_forwarded_tampered_expired_buttons(db):

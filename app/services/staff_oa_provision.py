@@ -180,12 +180,15 @@ def _provision_line_user(
     key = staff_oa_menu.menu_key(grants)
     buttons = staff_oa_menu.buttons_for(grants)
 
-    # 5. No buttons -> no menu, and ACTIVELY unlink. Since the Hub became a
-    #    maid-only tool (see the MENU_BUTTONS comment in staff_oa_menu) the
-    #    `base` variant is EMPTY by design: an employee with no
-    #    menu-relevant grant must have NO menu, not a degraded one and not
-    #    somebody else's. Unlinking rather than merely declining to link is
-    #    the point of running on grant CHANGE: a demoted maid whose
+    # 5. No buttons -> no menu, and ACTIVELY unlink. `base` (see MENU_BUTTONS
+    #    in staff_oa_menu) now carries the ungated แจ้งลา tile, so every
+    #    active, LINE-linked employee resolves to at least that one button —
+    #    this branch is defensive rather than the live path it used to be
+    #    when base was empty. It stays: a future MENU_BUTTONS change that
+    #    empties base again (or a grants table with no rows at all) must
+    #    still leave a grant-less employee with NO menu, not a degraded one
+    #    and not somebody else's. Unlinking rather than merely declining to
+    #    link is the point of running on grant CHANGE: a demoted maid whose
     #    `housekeeping` grant was just revoked would otherwise keep maid
     #    tiles she no longer holds the grant for — buttons that now open a
     #    Cloudflare block page. A revocation has to be as automatic as a
@@ -199,27 +202,45 @@ def _provision_line_user(
         )
         return
 
-    # 6. Over LINE's 6-button cap. menu_size() raises for anything outside
-    #    1-6, and it is reached again (via menu_signature) from
+    # 6. Over MAX_BUTTONS. menu_size() raises for anything outside
+    #    1..MAX_BUTTONS, and it is reached again (via menu_signature) from
     #    rich_menu_name() below, so catching it here is what keeps this
-    #    function from raising on a grant combination LINE physically cannot
-    #    render as one menu. Not a live case, but no longer comfortable
-    #    insurance either: since รายงานแม่บ้าน (2026-09-02) the largest real
-    #    variant, base+housekeeping+reception, is EXACTLY at LINE's cap of 6,
-    #    so one more MenuButton row makes this branch real for the employees
-    #    who hold both grants. Mirrors the same guard in
-    #    scripts/staff_oa_sync.py, with the same disposition —
-    #    unlink, because with base empty there is no menu to fall back to.
+    #    function from raising on a grant combination that needs more
+    #    buttons than the Hub's layout supports. Mirrors the same guard (and
+    #    the same disposition) in scripts/staff_oa_sync.py: fall back to
+    #    LINKING the base menu — base now always carries at least the
+    #    ungated แจ้งลา tile, and every other variant's buttons are a
+    #    superset of base's, so linking base can never hand out more than
+    #    this employee is entitled to — and unlink only in the defensive
+    #    case where base itself has no buttons (see step 5) and there is
+    #    genuinely nothing to fall back to.
     try:
         staff_oa_menu.menu_size(len(buttons))
     except ValueError as exc:
         logger.warning(
-            "Staff-hub variant %r for badge=%s needs %d buttons, over LINE's "
-            "6-button cap (%s) — unlinking this employee's rich menu instead. "
-            "Remove one of this variant's grants, or ship a >6-button layout.",
-            key, badge_number, len(buttons), exc,
+            "Staff-hub variant %r for badge=%s needs %d buttons, over the "
+            "Hub's %d-button layout cap (%s). Remove one of this variant's "
+            "grants, or ship a bigger layout.",
+            key, badge_number, len(buttons), staff_oa_menu.MAX_BUTTONS, exc,
         )
-        staff_oa_service.unlink_rich_menu_from_user(line_user_id)
+        base_grants: Set[str] = frozenset()
+        base_buttons = staff_oa_menu.buttons_for(base_grants)
+        if base_buttons:
+            base_rich_menu_id = _ensure_variant_menu(
+                staff_oa_menu.menu_key(base_grants), base_grants
+            )
+            staff_oa_service.link_rich_menu_to_user(line_user_id, base_rich_menu_id)
+            logger.info(
+                "Linked badge=%s to the base staff-hub menu instead (variant "
+                "%r needs %d buttons, over the %d-button layout cap)",
+                badge_number, key, len(buttons), staff_oa_menu.MAX_BUTTONS,
+            )
+        else:
+            staff_oa_service.unlink_rich_menu_from_user(line_user_id)
+            logger.info(
+                "Unlinked badge=%s (variant %r is over the layout cap and "
+                "base has no buttons to fall back to)", badge_number, key,
+            )
         return
 
     # 7 + 8. Ensure the variant's menu exists, then link this user to it.

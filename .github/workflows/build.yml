@@ -152,6 +152,7 @@ jobs:
         PORTAL_DIRECTORY_URL=${{ vars.PORTAL_DIRECTORY_URL || 'http://hf-erp-portal:3000/portal-api/directory/managers' }}
         GUEST_FEEDBACK_BASE_URL=${{ vars.GUEST_FEEDBACK_BASE_URL }}
         HOUSEKEEPING_INTERNAL_URL=${{ vars.HOUSEKEEPING_INTERNAL_URL || 'http://housekeeping:4070' }}
+        STAFF_LEAVE_AUTO_APPROVE=${{ vars.STAFF_LEAVE_AUTO_APPROVE || 'true' }}
         JWT_SECRET=${{ secrets.JWT_SECRET }}
         ADMIN_PASSCODE_HASH='${{ secrets.ADMIN_PASSCODE_HASH }}'
         LINE_CHANNEL_ID=${{ secrets.LINE_CHANNEL_ID }}

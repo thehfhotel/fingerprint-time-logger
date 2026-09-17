@@ -34,10 +34,13 @@ touching anything. These are a **different channel** from `LINE_CHANNEL_*`
 **The Hub is a MAID tool** plus, since 2026-09-01, the reception half of the
 same sentence (owner directive 2026-08-14: "for maid to notify reception of
 cleaning progress and maid inventory"). It is still not a general employee
-launcher. **Every button is behind a grant** — there are no base buttons:
+launcher, with one exception: **แจ้งลา (file a leave request) is a BASE
+tile** (owner decision, 2026-09-18) — every linked employee sees it
+regardless of grants. Every OTHER button stays behind a grant:
 
 | Button | URL / action | Needs grant |
 |---|---|---|
+| แจ้งลา (file a leave request) | message action `แจ้งลา` → the LINE leave flow (`app/services/staff_leave.py`) | **none — every linked employee** |
 | แม่บ้าน (cleaning board) | https://hotel.thehfhotel.org/hk | `housekeeping` |
 | แจ้งซ่อม (breakage report) | https://housekeeping.thehfhotel.org/staff/report | `housekeeping` |
 | สต๊อกของ (stock count / purchase request) | https://housekeeping.thehfhotel.org/staff/stock | `housekeeping` |
@@ -47,17 +50,21 @@ launcher. **Every button is behind a grant** — there are no base buttons:
 | งานซ่อมค้าง (outstanding maintenance, chat report) | message action `งานค้าง` → staff bot report (no web page) — **hidden when `housekeeping` is also held** | `reception` |
 | จัดการงานซ่อม (outstanding maintenance, queue page) | https://housekeeping.thehfhotel.org/staff/queue | `housekeeping` **or** `reception` |
 
-Four variants exist: `base` (**0 buttons**), `base+reception` (**4**, since
-งานซ่อมค้าง and จัดการงานซ่อม joined 2026-09-06), `base+housekeeping` (**6**,
-since จัดการงานซ่อม was widened the same day to admit maids too — "let maid
-mark fix done too") and `base+housekeeping+reception` (6). LINE caps a rich
-menu at 6 buttons, so both non-empty variants that touch `housekeeping` sit
-exactly ON the cap — **there is no headroom left.** A ninth tool cannot be a
-ninth tile: it needs one removed, or two merged behind one tile. Adding a
-row to `MENU_BUTTONS` anyway does not fail loudly at deploy time — the
-over-cap guards in `scripts/staff_oa_sync.py` and
-`app/services/staff_oa_provision.py` would UNLINK everyone holding both
-grants (the owner included) and log a warning.
+Four variants exist: `base` (**1 tile** — แจ้งลา alone; a real, renderable
+menu, not an empty placeholder), `base+reception` (**5**: แจ้งลา, สถานะห้อง,
+รายงานแม่บ้าน, งานซ่อมค้าง, จัดการงานซ่อม), `base+housekeeping` (**7**: แจ้งลา,
+แม่บ้าน, แจ้งซ่อม, สต๊อกของ, รับของมาส่ง, รายงานแม่บ้าน, จัดการงานซ่อม) and
+`base+housekeeping+reception` (**7** — the same seven tiles as
+`base+housekeeping`; สถานะห้อง and งานซ่อมค้าง stay hidden). `MAX_BUTTONS = 8`
+is the Hub's own layout ceiling (2026-09-18) — a 4x2-cell grid at most; LINE
+itself allows up to 20 rich-menu areas, so this was never LINE's limit, only
+ours. The maximal real variant sits one tile under that ceiling today, so
+there is exactly one tile of headroom left before a tenth tool forces
+something to be removed or merged. Adding a row to `MENU_BUTTONS` past the
+ceiling does not fail loudly at deploy time — the over-cap guards in
+`scripts/staff_oa_sync.py` and `app/services/staff_oa_provision.py` fall
+back to the base menu (แจ้งลา alone) for everyone over the cap, or unlink
+them if even base has no buttons, and log a warning.
 
 **How งานซ่อมค้าง and จัดการงานซ่อม fit onto a menu already at the cap
 (2026-09-06):** neither added a row that had to render on the both-grants
@@ -83,8 +90,10 @@ report. A `reception`-only employee is unaffected by either hide (no
 `housekeeping` grant to trigger them) and keeps all four tiles: สถานะห้อง,
 รายงานแม่บ้าน, งานซ่อมค้าง, and จัดการงานซ่อม — the Hub's first real use of
 the 2+2 layout. A `housekeeping`-only maid, previously capped at five tiles,
-now also gets จัดการงานซ่อม as her sixth, reaching LINE's cap the same way
-the both-grants variant does.
+now also gets จัดการงานซ่อม as her sixth, reaching the Hub's then-6-tile
+layout ceiling the same way the both-grants variant does — never LINE's own
+limit, only the Hub's own choice at the time (see "Four variants exist"
+above for where that ceiling sits today).
 
 งานซ่อมค้าง itself is a `message` rich-menu action rather than `uri` —
 reception's web board is Google-IdP-gated and cannot open inside LINE's
@@ -128,7 +137,7 @@ An employee holding both grants does NOT see both tiles, though — since
 2026-09-06 สถานะห้อง is hidden the moment `housekeeping` is also held
 (`hidden_by_grant_app_ids={"housekeeping"}`), because แม่บ้าน already opens
 that same board with full write access and a second, read-only tile pointing
-at it would be a wasted slot on a menu at LINE's cap. A `reception`-only
+at it would be a wasted slot. A `reception`-only
 employee still gets สถานะห้อง; a `housekeeping`-holder never needed it in
 the first place. งานซ่อมค้าง carries the identical hide, for the identical
 reason on a different tool: once จัดการงานซ่อม is shared (above) a
@@ -143,34 +152,39 @@ reception-only, and a maid who also holds `reception` still cannot verify her
 own work; housekeeping.thehfhotel.org/staff/queue admits either grant on the
 server side the same way. The tile is a launcher, never an authorization.
 
-### `base` is deliberately empty — no-menu semantics
+### `base` carries แจ้งลา — every linked employee gets a menu
 
-An employee holding NEITHER `housekeeping` nor `reception` gets **no rich
-menu at all**. That is the intended meaning of a grant-only Hub, and the sync
-handles it explicitly rather than by accident:
+Owner decision (2026-09-18): an employee holding NEITHER `housekeeping` nor
+`reception` still gets a real, one-tile Employee Hub — แจ้งลา, so every
+linked employee can file a leave request regardless of what else they hold.
+This replaces the old "grant-only Hub, no menu at all for base" contract:
 
-- no `base` rich menu is created;
-- the **channel default is cleared** (`clear_default_rich_menu`), so it
-  never dangles at a menu that stale-deletion is about to remove;
-- employees on the `base` variant are **unlinked**
-  (`bulk_unlink_rich_menu`), not left pointing at a doomed menu;
+- the `base` rich menu (แจ้งลา alone) is **created like any other variant**;
+- the **channel default rich menu is `base`** — the first menu an unlinked
+  follower or a freshly-linked employee with no other grant would see;
+- employees on the `base` variant are **linked to it**, not unlinked — the
+  old `bulk_unlink_rich_menu` path for an empty base is gone; unlinking now
+  only happens when even `base` has no buttons (i.e. someone deletes the
+  แจ้งลา row too, which would be its own regression);
 - the follow webhook still replies to an unknown follower with the
-  onboarding pointer even though it links no menu — that reply is the only
-  onboarding route a new follower gets.
+  onboarding pointer (a stranger is never linked to any menu); a
+  known-but-ungranted follower is linked to `base` instead.
 
-Ordering matters: clearing the default happens **before** stale-menu
-deletion. Reversing it opens a window where the channel default names a
-deleted menu.
-
-The `>6-button` guard in `staff_oa_sync.py` is unrelated to this and stays.
-It is no longer comfortable insurance: the maximal real variant
-(`base+housekeeping+reception`) sits exactly ON LINE's 6-button cap today,
-so the margin before a real employee overflows it is a single `MenuButton`
-row (or a hide rule being removed) rather than several.
+**Over-cap disposition (`staff_oa_provision.py` /
+`scripts/staff_oa_sync.py`):** when a variant needs more buttons than
+`menu_size` accepts (more than `MAX_BUTTONS = 8`), both paths **fall back to
+linking the employee to the `base` menu** — since base now always has a
+button (แจ้งลา), there is always somewhere to fall back to. Unlinking only
+happens in the case base itself is empty (the pre-2026-09-18 contract, kept
+as a defensive fallback rather than a live path). This mirrors what
+`scripts/staff_oa_sync.py` already did at its own over-cap branch before
+`staff_oa_provision.py` was brought in line with it.
 
 **Consequence when applying:** issuing `housekeeping` grants and running
 `staff_oa_sync.py --apply` should happen in ONE operation. Applying the
-sync first leaves every linked employee with no menu until the grants land.
+sync first leaves every linked employee on `base` (แจ้งลา only) until the
+grants land — no longer with no menu at all, but still not the menu they
+are about to be entitled to.
 
 ### If a clock-in button ever comes back
 
@@ -268,9 +282,11 @@ from admin perspective. no need to run commands."*
 for ONE employee what the sync script does for the channel: computes their
 variant from `employee_app_grants`, **creates the rich menu if that variant
 is not deployed yet** (render PNG → `create_rich_menu` →
-`upload_rich_menu_image`), then links them to it. No buttons (the empty
-`base` case, i.e. no `housekeeping` grant) ⇒ it **unlinks** instead, so a
-revocation is as automatic as a grant.
+`upload_rich_menu_image`), then links them to it. No app grants at all
+(neither `housekeeping` nor `reception`) resolves to the `base` variant
+(แจ้งลา alone, since 2026-09-18) rather than to no menu — so a full
+revocation now **links the employee to `base`** instead of unlinking them,
+and a revocation is still as automatic as a grant.
 
 It fires from three places, always via FastAPI `BackgroundTasks` (after the
 response, in a threadpool — the blocking LINE/PIL work never touches the
@@ -861,8 +877,9 @@ configured to allow it:
 
 ## Images
 
-2500x843 (≤3 buttons) or 2500x1686 (4–6 buttons), PNG, well under LINE's
-1MB cap. Thai labels use the bundled **Prompt** font
+2500x843 (≤3 buttons) or 2500x1686 (4–8 buttons, `MAX_BUTTONS` — the Hub's
+own layout ceiling; LINE itself allows up to 20 rich-menu areas), PNG, well
+under LINE's 1MB cap. Thai labels use the bundled **Prompt** font
 (`assets/fonts/`, SIL OFL 1.1 — license alongside). Icons are pixel-exact
 crops of owner-approved HF Internal artwork, never drawn or generated in
 code — see `assets/staff_oa/icons/README.md` for provenance and the

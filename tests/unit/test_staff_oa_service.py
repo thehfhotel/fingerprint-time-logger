@@ -20,14 +20,18 @@ not change their menu" — a case these tests previously could not express,
 because every grant used to add a button. ``TestGrantFixturePremise`` pins
 both roles so the fixtures cannot rot if a tile comes back.
 
-AND `base` IS NOW EMPTY
------------------------
-The clock-in tile — the last ungated button — was removed the same day
-("remove the clock-in button too"), so the `base` variant has ZERO buttons.
-An employee who resolves to it has no menu, which changes what this module
-promises: ``link_role_menu_for_line_user`` must return None for them rather
-than link them to anything, and the sync script needs the two calls added
-alongside that, ``clear_default_rich_menu`` and ``bulk_unlink_rich_menu``.
+AND `base` IS REAL AGAIN
+------------------------
+The 2026-09-18 แจ้งลา (file leave) tile made `base` an ungated, always-on
+menu again: every linked employee sees it regardless of grants, so
+``buttons_for(frozenset())`` is a single-button tuple, never ``()``.
+``link_role_menu_for_line_user`` now links every employee — including one
+with no grants at all, or only menu-irrelevant grants — to that base menu;
+it declines (returns None) only when the feature is dark, the LINE user is
+unknown, or the resolved variant's menu has not been deployed yet (run the
+sync script). ``clear_default_rich_menu`` and ``bulk_unlink_rich_menu``
+still exist for the (no-buttons) degenerate case, which is unreachable with
+the current MENU_BUTTONS table but is kept as a fail-closed guard.
 """
 import base64
 import hashlib
@@ -102,12 +106,15 @@ class TestGrantFixturePremise:
             assert app_id not in staff_oa_menu.MENU_GRANT_APP_IDS
             assert staff_oa_menu.menu_key({app_id}) == BASE_KEY
 
-    def test_the_base_variant_has_no_buttons(self):
-        # The premise behind every "returns None / links nothing" assertion
-        # below. If a base button ever comes back, those tests are testing
-        # the wrong thing and must be re-pointed, not deleted.
-        assert staff_oa_menu.buttons_for(frozenset()) == ()
-        assert staff_oa_menu.buttons_for({MENU_GRANT}) != ()
+    def test_the_base_variant_has_exactly_the_leave_button(self):
+        # The premise behind every "links the base menu" assertion below
+        # (แจ้งลา shipped 2026-09-18 as the one ungated tile). If base ever
+        # goes back to zero buttons, those tests are testing the wrong thing
+        # and must be re-pointed, not deleted.
+        base_buttons = staff_oa_menu.buttons_for(frozenset())
+        assert len(base_buttons) == 1
+        assert base_buttons[0].label == "แจ้งลา"
+        assert staff_oa_menu.buttons_for({MENU_GRANT}) != base_buttons
 
 
 class TestEnablement:
@@ -387,62 +394,68 @@ class TestLinkRoleMenuForLineUser:
         assert key == HOUSEKEEPING_KEY
         assert line_api["linked"] == [("U-1", "rm-housekeeping")]
 
-    def test_returns_none_when_every_grant_is_menu_irrelevant(
+    def test_links_base_when_every_grant_is_menu_irrelevant(
         self, staff_oa_enabled, test_db, line_api
     ):
-        # Was test_links_base_when_every_grant_is_menu_irrelevant, asserting
-        # ("U-3", "rm-base"). Holding payroll/ota is still not "no grants" —
-        # but since the clock-in tile left on 2026-08-14 the `base` variant
-        # they resolve to has no buttons, so there is no menu to link. The
-        # helper must decline, quietly: no exception (it runs inside the
-        # follow webhook, where a raise is logged as a failed event) and
-        # above all no link to some other variant's menu, which would hand
-        # this employee maid tools they hold no grant for.
+        # Holding payroll/ota is still not "no grants", but neither grant
+        # is menu-relevant, so this employee resolves to `base`. Since
+        # แจ้งลา (2026-09-18) made `base` a real one-button menu, the
+        # helper links it rather than declining — every linked employee,
+        # maid or not, gets the leave tile.
         _make_employee(test_db, "1003", line_user_id="U-3")
         _grant(test_db, "1003", *MENU_IRRELEVANT_GRANTS)
 
-        assert service.link_role_menu_for_line_user(test_db, "U-3") is None
-        assert line_api["linked"] == []
+        key = service.link_role_menu_for_line_user(test_db, "U-3")
 
-    def test_returns_none_for_an_employee_with_no_grants_at_all(
+        assert key == BASE_KEY
+        assert line_api["linked"] == [("U-3", "rm-base")]
+
+    def test_links_base_for_an_employee_with_no_grants_at_all(
         self, staff_oa_enabled, test_db, line_api
     ):
-        # The commonest case in production now: an ordinary non-maid
-        # employee. Same outcome as above, reached without any grant rows —
-        # worth its own test because it is the path most followers take.
+        # The commonest case in production: an ordinary non-maid employee.
+        # Same outcome as above, reached without any grant rows — worth its
+        # own test because it is the path most followers take, and it is
+        # the whole point of แจ้งลา being an ungated tile.
         _make_employee(test_db, "1004", line_user_id="U-4")
 
-        assert service.link_role_menu_for_line_user(test_db, "U-4") is None
-        assert line_api["linked"] == []
+        key = service.link_role_menu_for_line_user(test_db, "U-4")
 
-    def test_does_not_raise_even_when_a_base_menu_is_still_deployed(
+        assert key == BASE_KEY
+        assert line_api["linked"] == [("U-4", "rm-base")]
+
+    def test_links_the_deployed_base_menu_not_some_other_variant(
         self, staff_oa_enabled, test_db, line_api
     ):
-        # A stale `staffhub:base:*` menu can sit on the channel between the
-        # button removal and the next sync run. The helper must NOT link it
-        # just because deployed_menu_ids_by_key() still finds it: the
-        # employee's variant has no buttons, and that check comes first.
+        # deployed_menu_ids_by_key() must resolve this employee to the
+        # `staffhub:base:*` richMenuId specifically, not fall through to
+        # whatever else happens to be deployed (e.g. the housekeeping
+        # variant also present in `line_api["deployed"]`).
         _make_employee(test_db, "1005", line_user_id="U-5")
 
-        assert service.link_role_menu_for_line_user(test_db, "U-5") is None
-        assert line_api["linked"] == []
+        key = service.link_role_menu_for_line_user(test_db, "U-5")
 
-    def test_a_demoted_maid_refollowing_is_actively_unlinked(
+        assert key == BASE_KEY
+        assert line_api["linked"] == [("U-5", "rm-base")]
+
+    def test_a_demoted_maid_refollowing_is_relinked_to_base(
         self, staff_oa_enabled, test_db, line_api
     ):
-        # The regression this guards: declining to link is NOT enough, because
-        # a previous link survives. An employee whose `housekeeping` grant was
-        # revoked, who blocks and re-adds the OA before anyone runs
-        # --apply, would otherwise keep her maid tiles — buttons that now open
-        # a Cloudflare block page, which is exactly the dead-end this Hub has
-        # been shedding. The refollow must self-heal rather than wait for the
-        # next sync.
+        # The regression this used to guard was a stale per-user link
+        # surviving a decline. Now that `base` always has a real menu, the
+        # self-heal happens by relinking rather than unlinking: an employee
+        # whose `housekeeping` grant was revoked, who blocks and re-adds the
+        # OA before anyone runs --apply, is relinked straight to the base
+        # menu — LINE's per-user link call replaces the previous one, so she
+        # no longer keeps maid tiles that now open a Cloudflare block page.
         _make_employee(test_db, "1006", line_user_id="U-6")
         _grant(test_db, "1006", *MENU_IRRELEVANT_GRANTS)
 
-        assert service.link_role_menu_for_line_user(test_db, "U-6") is None
-        assert line_api["linked"] == []
-        assert line_api["unlinked"] == ["U-6"]
+        key = service.link_role_menu_for_line_user(test_db, "U-6")
+
+        assert key == BASE_KEY
+        assert line_api["linked"] == [("U-6", "rm-base")]
+        assert line_api["unlinked"] == []
 
     def test_a_maid_with_a_menu_is_linked_not_unlinked(
         self, staff_oa_enabled, test_db, line_api

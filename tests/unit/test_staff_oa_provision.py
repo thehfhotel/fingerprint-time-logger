@@ -42,22 +42,21 @@ MENU_IRRELEVANT_GRANT = "payroll"
 HOUSEKEEPING_KEY = "base+housekeeping"
 
 # A synthetic grant carrying enough extra buttons to push a variant one past
-# LINE's 6-button cap. No REAL grant combination can overflow today, though
-# the largest real variant (base+housekeeping+reception) has SAT ON the cap
-# at 6 buttons since 2026-09-02, so the over-cap guard has to be tested
-# against a table that grew — exactly the fixture strategy
-# tests/unit/test_staff_oa_sync.py uses for the same guard.
+# the Hub's MAX_BUTTONS layout cap. No REAL grant combination can overflow
+# today — the largest real variant (base+housekeeping+reception) sits at 7,
+# one under the cap of 8 — so the over-cap guard has to be tested against a
+# table that grew — exactly the fixture strategy tests/unit/test_staff_oa_sync
+# .py uses for the same guard.
 SYNTHETIC_GRANT = "extra"
-# Derived from what MENU_GRANT ALONE reveals, which is what the over-cap tests
-# below actually grant — not from len(MENU_BUTTONS). Those were the same number
-# while `housekeeping` owned every button in the table; `reception` broke that
-# on 2026-09-01 and the fixture quietly stopped overflowing (6 buttons, not 7),
-# turning the over-cap tests green against a menu that fits. Load-bearing
-# again on 2026-09-02: the maid grant went from 4 tiles to 5 (รายงานแม่บ้าน,
-# shared with `reception`), so this now mints 2 synthetic buttons where it
-# minted 3 — and would mint too many, overflowing for the wrong reason, if it
-# were keyed on the 6-row table instead of on what MENU_GRANT reveals.
-_SYNTHETIC_BUTTON_COUNT = max(1, 7 - len(staff_oa_menu.buttons_for({MENU_GRANT})))
+# Derived from what MENU_GRANT ALONE reveals (base's แจ้งลา tile included),
+# which is what the over-cap tests below actually grant — not from
+# len(MENU_BUTTONS). Keying off MAX_BUTTONS + 1 rather than a hardcoded target
+# is what keeps this fixture overflowing exactly one past whatever the layout
+# cap is, however the button table changes shape.
+_HOUSEKEEPING_BUTTON_COUNT = len(staff_oa_menu.buttons_for({MENU_GRANT}))  # 7 today
+_SYNTHETIC_BUTTON_COUNT = max(
+    1, (staff_oa_menu.MAX_BUTTONS + 1) - _HOUSEKEEPING_BUTTON_COUNT
+)  # 2 today
 SYNTHETIC_BUTTONS = tuple(
     staff_oa_menu.MenuButton(
         grant_app_id=SYNTHETIC_GRANT,
@@ -68,6 +67,36 @@ SYNTHETIC_BUTTONS = tuple(
         glyph="clock",
     )
     for index in range(_SYNTHETIC_BUTTON_COUNT)
+)
+
+
+def _strip_base_button(buttons):
+    """Every button except the ungated (grant_app_id=None) one(s)."""
+    return tuple(button for button in buttons if button.grant_app_id is not None)
+
+
+# A second synthetic grant, sized to still overflow the layout cap when the
+# ungated base button is ALSO stripped out (base is one button lighter once
+# removed, so this needs one more synthetic button than SYNTHETIC_BUTTONS to
+# land past the cap again). Exists only for the defensive "base has no
+# buttons" branch — unreachable with today's real MENU_BUTTONS (แจ้งลา is
+# always there) but still code that has to work if a future table ever
+# empties base again.
+SYNTHETIC_GRANT_NO_BASE = "extra-no-base"
+_HOUSEKEEPING_BUTTON_COUNT_NO_BASE = len(
+    _strip_base_button(staff_oa_menu.buttons_for({MENU_GRANT}))
+)  # 6 today
+_SYNTHETIC_BUTTON_COUNT_NO_BASE = max(
+    1, (staff_oa_menu.MAX_BUTTONS + 1) - _HOUSEKEEPING_BUTTON_COUNT_NO_BASE
+)  # 3 today
+SYNTHETIC_BUTTONS_NO_BASE = tuple(
+    staff_oa_menu.MenuButton(
+        grant_app_id=SYNTHETIC_GRANT_NO_BASE,
+        label=f"ทดสอบข {index + 1}",
+        url=f"https://synthetic-nobase-{index + 1}.invalid/",
+        glyph="clock",
+    )
+    for index in range(_SYNTHETIC_BUTTON_COUNT_NO_BASE)
 )
 
 
@@ -199,7 +228,10 @@ def line_api(monkeypatch):
 
 @pytest.fixture
 def oversized_menu_table(monkeypatch):
-    """Grow MENU_BUTTONS so ``base+extra+housekeeping`` is 7 buttons.
+    """Grow MENU_BUTTONS so ``base+extra+housekeeping`` is over MAX_BUTTONS.
+
+    base keeps its real แจ้งลา tile — this fixture is for the LIVE
+    disposition (base present -> the over-cap employee falls back to it).
 
     Every staff_oa_menu function reads these module globals at call time, so
     patching them is enough for buttons_for / menu_key / menu_size alike.
@@ -212,6 +244,45 @@ def oversized_menu_table(monkeypatch):
         "MENU_GRANT_APP_IDS",
         staff_oa_menu.MENU_GRANT_APP_IDS | {SYNTHETIC_GRANT},
     )
+
+
+@pytest.fixture
+def empty_base_menu_table(monkeypatch):
+    """Strip the ungated base button so ``base`` is empty again.
+
+    Defensive-only: today's real MENU_BUTTONS always has แจ้งลา (2026-09-18).
+    Proves the "grantless employee -> unlink" branch still works if a future
+    table ever empties base again.
+    """
+    monkeypatch.setattr(
+        staff_oa_menu, "MENU_BUTTONS", _strip_base_button(staff_oa_menu.MENU_BUTTONS)
+    )
+
+
+@pytest.fixture
+def oversized_with_empty_base(monkeypatch):
+    """Over-cap AND base itself has no buttons — the disposition must be
+    UNLINK, not link, because there is nothing valid to fall back to.
+    """
+    stripped = _strip_base_button(staff_oa_menu.MENU_BUTTONS)
+    new_buttons = stripped + SYNTHETIC_BUTTONS_NO_BASE
+    monkeypatch.setattr(staff_oa_menu, "MENU_BUTTONS", new_buttons)
+    monkeypatch.setattr(
+        staff_oa_menu,
+        "MENU_GRANT_APP_IDS",
+        frozenset(
+            grant
+            for button in new_buttons
+            for grant in button.grant_app_ids | button.hidden_by_grant_app_ids
+        ),
+    )
+
+
+def _created_id_for(calls, name):
+    for index, payload in enumerate(calls["created"]):
+        if payload["name"] == name:
+            return f"richmenu-{index + 1}"
+    raise AssertionError(f"no created menu named {name!r}; created={calls['created']}")
 
 
 class TestFixturePremise:
@@ -228,16 +299,34 @@ class TestFixturePremise:
         assert MENU_GRANT in staff_oa_menu.MENU_GRANT_APP_IDS
         assert MENU_IRRELEVANT_GRANT not in staff_oa_menu.MENU_GRANT_APP_IDS
 
-    def test_base_is_empty_so_a_grantless_employee_gets_no_menu(self):
-        assert staff_oa_menu.buttons_for(frozenset()) == ()
+    def test_base_carries_the_leave_tile_so_a_grantless_employee_gets_a_menu(self):
+        # แจ้งลา (2026-09-18) is the one ungated tile every linked employee
+        # sees. Every "grantless employee -> linked to base" test below rests
+        # on this; if it ever fails, those tests need to flip back to
+        # expecting an unlink.
+        buttons = staff_oa_menu.buttons_for(frozenset())
+        assert len(buttons) == 1
+        assert buttons[0].label == "แจ้งลา"
 
-    def test_the_synthetic_table_really_does_overflow_lines_cap(
+    def test_the_synthetic_table_really_does_overflow_the_layout_cap(
         self, oversized_menu_table
     ):
         buttons = staff_oa_menu.buttons_for({MENU_GRANT, SYNTHETIC_GRANT})
-        assert len(buttons) == 7
+        assert len(buttons) > staff_oa_menu.MAX_BUTTONS
         with pytest.raises(ValueError):
             staff_oa_menu.menu_size(len(buttons))
+
+    def test_the_no_base_synthetic_table_still_overflows_with_base_empty(
+        self, oversized_with_empty_base
+    ):
+        assert staff_oa_menu.buttons_for(frozenset()) == ()
+        buttons = staff_oa_menu.buttons_for({MENU_GRANT, SYNTHETIC_GRANT_NO_BASE})
+        assert len(buttons) > staff_oa_menu.MAX_BUTTONS
+        with pytest.raises(ValueError):
+            staff_oa_menu.menu_size(len(buttons))
+
+    def test_empty_base_fixture_alone_truly_empties_base(self, empty_base_menu_table):
+        assert staff_oa_menu.buttons_for(frozenset()) == ()
 
 
 class TestProvisionCreatesAndLinks:
@@ -257,7 +346,9 @@ class TestProvisionCreatesAndLinks:
         assert len(line_api["created"]) == 1
         payload = line_api["created"][0]
         assert payload["name"] == staff_oa_menu.rich_menu_name({MENU_GRANT})
-        assert [area["action"]["uri"] for area in payload["areas"]] == [
+        # Message-action buttons (แจ้งลา) carry no "uri" key — .get(..., "")
+        # lines them up with their MenuButton.url, which is "" for those.
+        assert [area["action"].get("uri", "") for area in payload["areas"]] == [
             button.url for button in staff_oa_menu.buttons_for({MENU_GRANT})
         ]
         # Image uploaded to the menu that was just created — a rich menu with
@@ -327,31 +418,51 @@ class TestProvisionCreatesAndLinks:
 
 
 class TestProvisionRevokesAndDeclines:
-    def test_revoking_the_last_menu_grant_unlinks_the_user(
+    def test_revoking_the_last_menu_grant_falls_back_to_the_base_menu(
         self, staff_oa_enabled, line_api, test_db
     ):
-        # A demoted maid. Declining to link would NOT be enough — her old
-        # link survives on LINE's side, leaving tiles that now open a
-        # Cloudflare block page. A revocation has to be as automatic as a
-        # grant or "seamless from admin perspective" only holds one way.
+        # A demoted maid. Since แจ้งลา (2026-09-18) became an ungated base
+        # tile, she keeps a menu — just the base one, not the maid one — the
+        # same "beats a link to somebody else's stale menu" outcome
+        # link_role_menu_for_line_user's over-cap fallback aims for.
+        # Declining to relink would NOT be enough either way: her old
+        # housekeeping link survives on LINE's side, leaving tiles that now
+        # open a Cloudflare block page, unless it is explicitly repointed.
+        base_name = staff_oa_menu.rich_menu_name(frozenset())
         _make_employee(test_db, "5005", line_user_id="U-demoted")
         _grant(test_db, "5005", MENU_IRRELEVANT_GRANT)
 
         staff_oa_provision.provision_for_badge("5005")
 
-        assert line_api["unlinked"] == ["U-demoted"]
-        assert line_api["linked"] == []
-        assert line_api["created"] == []
+        assert line_api["unlinked"] == []
+        assert len(line_api["created"]) == 1
+        assert line_api["created"][0]["name"] == base_name
+        assert line_api["linked"] == [("U-demoted", "richmenu-1")]
 
-    def test_employee_with_no_grants_at_all_is_unlinked(
+    def test_employee_with_no_grants_at_all_is_linked_to_base(
         self, staff_oa_enabled, line_api, test_db
     ):
+        base_name = staff_oa_menu.rich_menu_name(frozenset())
         _make_employee(test_db, "5006", line_user_id="U-nobody")
 
         staff_oa_provision.provision_for_badge("5006")
 
-        assert line_api["unlinked"] == ["U-nobody"]
+        assert line_api["unlinked"] == []
+        assert line_api["created"][0]["name"] == base_name
+        assert line_api["linked"] == [("U-nobody", "richmenu-1")]
+
+    def test_grantless_employee_is_unlinked_when_base_is_defensively_empty(
+        self, staff_oa_enabled, line_api, test_db, empty_base_menu_table
+    ):
+        # The pre-2026-09-18 behaviour, still correct if a future MENU_BUTTONS
+        # table ever removes the ungated base tile again.
+        _make_employee(test_db, "5011", line_user_id="U-nobody-2")
+
+        staff_oa_provision.provision_for_badge("5011")
+
+        assert line_api["unlinked"] == ["U-nobody-2"]
         assert line_api["linked"] == []
+        assert line_api["created"] == []
 
     def test_unlinked_employee_is_a_no_op_with_zero_line_calls(
         self, staff_oa_enabled, line_api, test_db
@@ -531,26 +642,48 @@ class TestImageUploadFailureConverges:
 
 
 class TestOverCapVariant:
-    def test_over_cap_variant_warns_and_unlinks_without_raising(
+    def test_over_cap_variant_warns_and_falls_back_to_base(
         self, staff_oa_enabled, line_api, test_db, oversized_menu_table, caplog
     ):
-        # LINE caps a rich menu at 6 buttons. Uncaught, menu_size() raises
+        # Over the Hub's MAX_BUTTONS layout cap. Uncaught, menu_size() raises
         # from inside rich_menu_name() and this employee's provisioning
-        # explodes. Unlink rather than fall back to base: base is empty by
-        # design, so there is nothing to fall back to.
+        # explodes. base carries buttons now (แจ้งลา), and base's buttons are
+        # a strict subset of every other variant's, so falling back to it can
+        # never hand out more than this employee is entitled to.
+        base_name = staff_oa_menu.rich_menu_name(frozenset())
         _make_employee(test_db, "5301", line_user_id="U-overgranted")
         _grant(test_db, "5301", MENU_GRANT, SYNTHETIC_GRANT)
 
         with caplog.at_level("WARNING"):
             staff_oa_provision.provision_for_badge("5301")
 
-        assert line_api["created"] == []
-        assert line_api["linked"] == []
-        assert line_api["unlinked"] == ["U-overgranted"]
+        assert line_api["unlinked"] == []
+        created_names = [payload["name"] for payload in line_api["created"]]
+        assert created_names == [base_name]
+        base_id = _created_id_for(line_api, base_name)
+        assert line_api["linked"] == [("U-overgranted", base_id)]
         # The warning has to name WHO and WHICH variant, or an operator
         # cannot act on it.
         assert "5301" in caplog.text
         assert SYNTHETIC_GRANT in caplog.text
+
+    def test_over_cap_variant_with_empty_base_unlinks(
+        self, staff_oa_enabled, line_api, test_db, oversized_with_empty_base, caplog
+    ):
+        # The defensive branch: base itself has no buttons (only reachable
+        # today via the synthetic empty-base fixture), so there is nothing
+        # valid to fall back to and the employee is unlinked instead.
+        _make_employee(test_db, "5302", line_user_id="U-overgranted-2")
+        _grant(test_db, "5302", MENU_GRANT, SYNTHETIC_GRANT_NO_BASE)
+
+        with caplog.at_level("WARNING"):
+            staff_oa_provision.provision_for_badge("5302")
+
+        assert line_api["created"] == []
+        assert line_api["linked"] == []
+        assert line_api["unlinked"] == ["U-overgranted-2"]
+        assert "5302" in caplog.text
+        assert SYNTHETIC_GRANT_NO_BASE in caplog.text
 
 
 class TestReconcileAll:

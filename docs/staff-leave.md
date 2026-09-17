@@ -6,14 +6,61 @@ Open the existing internal staff OA in a **one-to-one chat** and send `แจ้
 (or `ขอลา`). No email, LIFF app, new channel, or rich-menu replacement is required.
 Choose sick/personal/vacation leave and its first date in LINE's native date
 picker, choose the last date (or one day), then explicitly confirm.
-Only that final confirmation writes a pending request. The OA replies with text
+Only that final confirmation writes a request. The OA replies with text
 and a deterministic Thai/English PNG that the employee can manually forward to a
 group. Names come from the linked employee registry, not chat display names.
 
 `ใบลาล่าสุด` returns the most recently submitted request with its current status
-and a newly signed image URL. `ยกเลิกใบลา` asks for confirmation to cancel the
-most recent pending request. Already approved requests cannot be employee-cancelled.
+and a newly signed image URL. `แก้ไขใบลา` lists still-pending requests (a
+request already recorded — auto or by a manager — is out of scope for editing;
+cancel it and file a fresh one instead) and lets the employee change type,
+dates or portion before it is decided. `ยกเลิกใบลา` asks for confirmation to
+cancel the most recent cancellable request — still pending, or auto-recorded
+and never reviewed by a manager (see "Auto-record mode" below). A request a
+manager has actually approved cannot be employee-cancelled, and never appears
+in either picker.
 Group commands only explain how to open a private chat; no group filing occurs.
+
+## Auto-record mode (default)
+
+The hotel has no manager-approval step: by default, the employee's final LINE
+confirmation records the leave into the roster (`EmployeeLeave`) immediately,
+the same way a manager approval always has — same half-day override, same
+family-group report hook, same one-transaction roster write. The reply and
+receipt PNG show `บันทึกการลาแล้ว` ("recorded"), never a pending/approval
+wording, and never say who or what reviewed it. Internally the request row is
+marked `status=approved`, `reviewed_by="auto:staff-oa"` (`AUTO_REVIEWER` in
+`app/services/staff_leave.py`) — an audit marker only, never shown to the
+employee and never a LINE id or a name.
+
+If the roster already has a leave entry on any date in the request (the same
+overlap check a manager approval uses), the auto-record aborts and the request
+stays **pending** with the ordinary "ส่งใบลาแล้ว" / waiting-for-review reply —
+nothing partial is written. The same happens if approval has an unmet
+precondition, such as a sick leave over 3 days still missing its medical
+certificate: that request stays pending until the certificate photo arrives,
+at which point attaching it immediately re-runs the same auto-record check
+and, once it clears, records the leave right there (reply and receipt flip to
+`บันทึกการลาแล้ว`) instead of waiting for a manager to reopen it. These
+pending requests are exactly what still shows up in the manager review UI.
+
+The `STAFF_LEAVE_AUTO_APPROVE` env var is the switch (`auto_approve_enabled()`
+in `app/services/staff_leave.py`, read live on every confirmation — no
+restart/redeploy needed to flip): unset or any of `1/true/yes/on` (case
+insensitive) means auto-record; anything else restores the original
+pending-until-a-manager-decides flow for every new confirmation. Turning it
+off does not touch already-recorded requests. The review UI at `.../manage`
+and the pending/reject/decide machinery are unchanged and stay fully usable —
+they are just dormant in the common case, with real work only when the switch
+is off or an auto-record hit one of the aborts above.
+
+Because an auto-recorded request was never reviewed by a manager, its owner
+may cancel it the same way a pending request is cancelled (latest cancellable
+request, explicit confirmation). Cancelling deletes only the roster rows that
+specific request created and releases its date reservation; it never touches
+another request's rows. A request a manager actually decided
+(`reviewed_by` is a manager email, not `auto:staff-oa`) remains final and
+non-cancellable, as before.
 
 ## Review
 
@@ -31,6 +78,11 @@ Existing roster leave entries are NEVER overwritten by this flow: conflicts
 abort the entire approval. Reviewer identity/time are recorded; no signature is
 invented. There is no automatic approval notification/push; the employee can
 request `ใบลาล่าสุด`. No manager queue notification is sent in this version.
+
+This review path is unchanged and always usable, but in auto-record mode
+(the default — see above) it mostly sits idle: only requests the switch left
+pending, or that an auto-record aborted (roster conflict, unmet
+precondition), appear here needing an actual manager decision.
 
 ## Scope and date semantics
 

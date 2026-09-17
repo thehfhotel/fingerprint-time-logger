@@ -113,13 +113,16 @@ def _submit_half(service, db, employee: Employee, request_id: str, kind: str,
     if existing is not None:
         if getattr(existing, "leave_portion", "full") != portion:
             raise service.LeaveError("เลขรายการนี้ถูกใช้แล้ว กรุณาพิมพ์ แจ้งลา เพื่อเริ่มใหม่")
-        return existing
+        return service._maybe_auto_approve(db, existing)
     row = service.submit(db, employee, request_id, kind, on_date, on_date)
     row.leave_portion = portion
     row.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(row)
-    return row
+    # Auto-record AFTER the portion is set: it routes through the installed
+    # `decide` (see install() below), which only treats this as a half-day
+    # once leave_portion is "am"/"pm".
+    return service._maybe_auto_approve(db, row)
 
 
 def _decide_half(service, db, row: StaffLeaveRequest, decision: str,

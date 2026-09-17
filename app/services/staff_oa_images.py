@@ -129,6 +129,25 @@ def _load_label_font(size: int) -> Tuple[ImageFont.FreeTypeFont, bool]:
     return ImageFont.load_default(size=size), False
 
 
+def fit_label_font(
+    label: str, max_width: int, start: int = 100, floor: int = 56, step: int = 4
+) -> Tuple[ImageFont.FreeTypeFont, bool]:
+    """The largest label font, from ``start`` down to ``floor``, that fits.
+
+    Loads the Thai (or English-fallback) font at ``start`` px and steps down
+    by ``step`` while the rendered label is wider than ``max_width``, never
+    stepping below ``floor`` — a card in the narrower 4-column rows (625 px
+    cells) needs a smaller font than the old fixed 100 px to keep a long
+    Thai label from overflowing its cell.
+    """
+    size = start
+    font, thai_capable = _load_label_font(size)
+    while font.getlength(label) > max_width and size - step >= floor:
+        size -= step
+        font, thai_capable = _load_label_font(size)
+    return font, thai_capable
+
+
 def _english_fallback_label(button: MenuButton) -> str:
     if button.label.isascii():
         return button.label
@@ -183,7 +202,7 @@ def verify_approved_assets() -> None:
         load_icon_asset(asset_key)
 
 
-def _draw_cell(image, draw, button, cell, font, thai_capable):
+def _draw_cell(image, draw, button, cell, thai_capable):
     x0, y0 = cell["x"], cell["y"]
     x1, y1 = x0 + cell["width"], y0 + cell["height"]
     margin, radius, shadow_offset = 28, 48, 10
@@ -208,6 +227,8 @@ def _draw_cell(image, draw, button, cell, font, thai_capable):
     image.paste(fitted, (cx - fitted.width // 2, cy - fitted.height // 2), fitted)
 
     label = button.label if thai_capable else _english_fallback_label(button)
+    max_width = (cell["width"] - 2 * margin) - 60
+    font, _thai_capable = fit_label_font(label, max_width)
     label_y = y0 + cell["height"] * 75 // 100
     draw.text((cx, label_y), label, font=font, fill=NAVY, anchor="mm")
     pill_w, pill_h = 92, 8
@@ -224,9 +245,9 @@ def render_menu_image(buttons: Sequence[MenuButton]) -> bytes:
     cells = menu_cells(len(buttons))
     image = Image.new("RGB", (width, height), CANVAS)
     draw = ImageDraw.Draw(image)
-    label_font, thai_capable = _load_label_font(size=100)
+    thai_capable = find_thai_font_path() is not None
     for button, cell in zip(buttons, cells):
-        _draw_cell(image, draw, button, cell, label_font, thai_capable)
+        _draw_cell(image, draw, button, cell, thai_capable)
     buffer = io.BytesIO()
     image.save(buffer, format="PNG", optimize=True, compress_level=9)
     return buffer.getvalue()

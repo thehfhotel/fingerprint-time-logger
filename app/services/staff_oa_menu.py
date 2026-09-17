@@ -22,6 +22,10 @@ MENU_WIDTH = 2500
 MENU_HEIGHT_HALF = 843
 MENU_HEIGHT_FULL = 1686
 
+# The Hub's own layout ceiling (a 4x2-cell grid at most). LINE itself allows
+# up to 20 rich-menu areas; this is our own cap, not LINE's.
+MAX_BUTTONS = 8
+
 
 @dataclass(frozen=True)
 class MenuButton:
@@ -52,9 +56,19 @@ class MenuButton:
         return frozenset({self.grant_app_id}) | self.also_grant_app_ids
 
 
-# Order here is the visual/tap order.  There are deliberately no ungated base
-# buttons; employees without a menu-relevant grant receive no Employee Hub.
+# Order here is the visual/tap order.  Base is no longer empty: แจ้งลา is the
+# one ungated tile every linked employee sees regardless of grants (it files
+# a leave request via the same message event as typing แจ้งลา by hand —
+# staff_leave.is_leave_event already handles it). Everything else stays
+# grant-gated.
 MENU_BUTTONS: Tuple[MenuButton, ...] = (
+    MenuButton(
+        grant_app_id=None,
+        label="แจ้งลา",
+        url="",
+        glyph="leave",
+        message_text="แจ้งลา",
+    ),
     MenuButton(
         grant_app_id="housekeeping",
         label="แม่บ้าน",
@@ -152,7 +166,7 @@ def buttons_for(granted_app_ids: Iterable[str]) -> Tuple[MenuButton, ...]:
 
 
 def menu_size(button_count: int) -> Tuple[int, int]:
-    if not 1 <= button_count <= 6:
+    if not 1 <= button_count <= MAX_BUTTONS:
         raise ValueError(f"Unsupported button count: {button_count}")
     if button_count <= 3:
         return (MENU_WIDTH, MENU_HEIGHT_HALF)
@@ -160,13 +174,19 @@ def menu_size(button_count: int) -> Tuple[int, int]:
 
 
 def menu_rows(button_count: int) -> Tuple[int, ...]:
-    if not 1 <= button_count <= 6:
+    if not 1 <= button_count <= MAX_BUTTONS:
         raise ValueError(f"Unsupported button count: {button_count}")
     if button_count <= 3:
         return (button_count,)
     if button_count == 4:
         return (2, 2)
-    return (3, button_count - 3)
+    if button_count == 5:
+        return (3, 2)
+    if button_count == 6:
+        return (3, 3)
+    if button_count == 7:
+        return (4, 3)
+    return (4, 4)
 
 
 def menu_cells(button_count: int) -> List[Dict[str, int]]:

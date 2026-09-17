@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import re
 import time
 from datetime import date, datetime, timedelta
@@ -18,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 from PIL import Image
+from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,9 +34,17 @@ TYPE_WORDS = {
     "กิจ": "personal", "ลากิจ": "personal",
     "พักร้อน": "vacation", "ลาพักร้อน": "vacation",
 }
-STATUSES = {"pending": "รออนุมัติ", "approved": "อนุมัติแล้ว",
+# "approved" covers both a manager's decision and an auto-recorded LINE
+# confirmation (see AUTO_REVIEWER) — the employee never sees who/what
+# reviewed it, so one shared label must read correctly for both.
+STATUSES = {"pending": "รออนุมัติ", "approved": "บันทึกการลาแล้ว",
             "rejected": "ไม่อนุมัติ", "cancelled": "ยกเลิกแล้ว"}
 COMMANDS = {"แจ้งลา", "ขอลา", "ใบลาล่าสุด", "ยกเลิกใบลา"}
+# Reviewer marker for a request auto-recorded on the employee's final LINE
+# confirmation (see auto_approve_enabled/_maybe_auto_approve) instead of a
+# human manager decision. Never a LINE id or employee name.
+AUTO_REVIEWER = "auto:staff-oa"
+_AUTO_APPROVE_TRUTHY = {"1", "true", "yes", "on"}
 PREFIX = "hfleave:"
 ORIGIN = "https://erp.thehfhotel.org"
 IMAGE_TTL = 86400
@@ -60,6 +70,16 @@ class LeaveError(ValueError):
 
 def today() -> date:
     return datetime.now(BKK).date()
+
+
+def auto_approve_enabled() -> bool:
+    """Read live (never cached) so ops can flip the switch without a deploy.
+
+    The hotel has no manager-approval step today: a LINE-confirmed leave
+    request is recorded immediately. Default TRUE when unset; the pending/
+    review machinery stays available behind this switch for the future.
+    """
+    return os.getenv("STAFF_LEAVE_AUTO_APPROVE", "true").strip().lower() in _AUTO_APPROVE_TRUTHY
 
 
 def thai_date(value: date) -> str:
@@ -232,15 +252,28 @@ def submit(db: Session, employee: Employee, request_id: str, kind: str,
 
 
 def cancel(db: Session, badge: str, request_id: str) -> StaffLeaveRequest:
+    """Employee-initiated cancel.
+
+    A still-pending request can always be cancelled. A request the employee
+    never had reviewed — auto-recorded on confirmation via AUTO_REVIEWER —
+    may also be cancelled, since no manager acted on it either; a request a
+    human manager approved (reviewed_by != AUTO_REVIEWER) stays final, as
+    today.
+    """
     row = db.get(StaffLeaveRequest, request_id)
     if row is None or row.employee_badge_number != badge:
         raise LeaveError("ไม่พบใบลาของคุณ")
     if row.status == "cancelled":
         return row
+    auto_recorded = row.status == "approved" and row.reviewed_by == AUTO_REVIEWER
     changed = db.query(StaffLeaveRequest).filter(
         StaffLeaveRequest.id == request_id,
         StaffLeaveRequest.employee_badge_number == badge,
-        StaffLeaveRequest.status == "pending",
+        or_(
+            StaffLeaveRequest.status == "pending",
+            and_(StaffLeaveRequest.status == "approved",
+                 StaffLeaveRequest.reviewed_by == AUTO_REVIEWER),
+        ),
     ).update({
         "status": "cancelled", "version": StaffLeaveRequest.version + 1,
         "medical_certificate": None, "medical_certificate_content_type": None,
@@ -251,6 +284,16 @@ def cancel(db: Session, badge: str, request_id: str) -> StaffLeaveRequest:
         db.rollback()
         raise LeaveError("ยกเลิกได้เฉพาะใบลาที่ยังรออนุมัติ กรุณาติดต่อผู้อนุมัติ")
     db.query(StaffLeaveDay).filter(StaffLeaveDay.request_id == request_id).delete()
+    if auto_recorded:
+        # Auto-recording wrote EmployeeLeave rows directly (see decide());
+        # remove ONLY the rows this request created — never a pre-existing
+        # unrelated roster entry on another date.
+        ref = reference(row)
+        db.query(EmployeeLeave).filter(
+            EmployeeLeave.employee_badge_number == badge,
+            EmployeeLeave.date >= row.date_from, EmployeeLeave.date <= row.date_to,
+            or_(EmployeeLeave.note == ref, EmployeeLeave.note.like(f"{ref}|%")),
+        ).delete(synchronize_session=False)
     db.commit()
     db.expire_all()
     return db.get(StaffLeaveRequest, request_id)
@@ -302,6 +345,30 @@ def decide(db: Session, request_id: str, decision: str, version: int,
         raise LeaveError("ตารางงานเปลี่ยนระหว่างอนุมัติ กรุณาโหลดใหม่ ไม่มีการเขียนทับข้อมูล") from exc
     db.expire_all()
     return db.get(StaffLeaveRequest, request_id)
+
+
+def _maybe_auto_approve(db: Session, row: StaffLeaveRequest) -> StaffLeaveRequest:
+    """Auto-record a just-confirmed request the same way a manager approval
+    would — the SAME installed ``decide`` (so staff_leave_options' half-day
+    override still applies), reviewer AUTO_REVIEWER.
+
+    Call this right after the step that creates/finalizes the pending
+    request (full-day submit, or a half-day submit once its portion is
+    set) — never from inside ``submit`` itself, which half-day submission
+    also uses before its portion is applied.
+
+    Any precondition ``decide`` enforces (a roster conflict, a still-missing
+    required medical certificate) leaves the request pending exactly like
+    today; a failed auto-decide never loses the submitted request.
+    """
+    if row.status != "pending" or not auto_approve_enabled():
+        return row
+    try:
+        return decide(db, row.id, "approved", row.version, AUTO_REVIEWER)
+    except LeaveError:
+        db.rollback()
+        db.expire_all()
+        return db.get(StaffLeaveRequest, row.id)
 
 
 def _medical_target(db: Session, employee: Employee) -> StaffLeaveRequest | None:
@@ -501,6 +568,12 @@ def handle_event(event: dict, db: Session) -> None:
                 raise LeaveError("ไม่พบใบลาป่วยที่รอแนบใบรับรองแพทย์")
             content, content_type, digest = _download_medical_certificate(str(message.get("id") or ""))
             row = attach_medical_certificate(db, row, content, content_type, digest)
+            # A certificate can be exactly what a sick leave over the
+            # threshold was waiting on; re-run the same auto-decide path a
+            # manager approval uses (through the installed `decide`, so a
+            # half-day override still applies) so it gets recorded right
+            # away instead of staying pending until someone reopens it.
+            row = _maybe_auto_approve(db, row)
             messages = [_text(
                 f"แนบใบรับรองแพทย์กับ {reference(row)} แล้ว และบันทึกไว้ในระบบพนักงาน"
             ), *_receipt(row)]
@@ -537,12 +610,18 @@ def _messages(event: dict, db: Session, employee: Employee) -> list[dict]:
         query = db.query(StaffLeaveRequest).filter(
             StaffLeaveRequest.employee_badge_number == badge)
         if command == "ยกเลิกใบลา":
-            query = query.filter(StaffLeaveRequest.status == "pending")
+            # Cancellable = still pending, or auto-recorded (never reviewed
+            # by a manager) — see cancel().
+            query = query.filter(or_(
+                StaffLeaveRequest.status == "pending",
+                and_(StaffLeaveRequest.status == "approved",
+                     StaffLeaveRequest.reviewed_by == AUTO_REVIEWER),
+            ))
         row = query.order_by(StaffLeaveRequest.created_at.desc(), StaffLeaveRequest.id.desc()).first()
         if row is None:
-            return [_text("ไม่พบใบลา" + ("ที่รออนุมัติ" if command == "ยกเลิกใบลา" else "ของคุณ"))]
+            return [_text("ไม่พบใบลา" + ("ที่ยกเลิกได้" if command == "ยกเลิกใบลา" else "ของคุณ"))]
         if command == "ยกเลิกใบลา":
-            return [_text(f"ยกเลิกใบลาที่รออนุมัติ {thai_date(row.date_from)} – {thai_date(row.date_to)}?", [
+            return [_text(f"ยกเลิกใบลา {thai_date(row.date_from)} – {thai_date(row.date_to)}?", [
                 _postback("ยืนยันยกเลิกใบลา", action_data("cancel", badge, row.id))])]
         return _after_submit(row)
 
@@ -567,7 +646,8 @@ def _messages(event: dict, db: Session, employee: Employee) -> list[dict]:
     start = date.fromisoformat(start_s)
     end = date.fromisoformat(params["date"] if verb == "to" else end_s)
     if verb == "submit":
-        return _after_submit(submit(db, employee, request_id, kind, start, end))
+        row = submit(db, employee, request_id, kind, start, end)
+        return _after_submit(_maybe_auto_approve(db, row))
     if verb not in ("to", "review"):
         raise LeaveError("คำสั่งไม่ถูกต้อง กรุณาเริ่มใหม่")
     validate_dates(start, end)

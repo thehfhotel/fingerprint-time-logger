@@ -7,18 +7,19 @@ registry, idempotently:
   1. Compute the menu variants actually needed: ``base`` (the channel
      default) plus every distinct grant-combination held by active
      employees with a linked LINE account (``employee_app_grants`` filtered
-     to the menu-relevant grants in app/services/staff_oa_menu.py). When
-     ``base`` has no buttons — its state since the Hub became a maid-only
-     tool on 2026-08-14 — it is not a variant at all: no menu is created
-     for it, the channel default is CLEARED instead of set, and the
-     employees who resolve to it are UNLINKED (see ``base_has_buttons`` in
-     ``sync()``). That is a deliberate configuration, not a failure.
+     to the menu-relevant grants in app/services/staff_oa_menu.py). ``base``
+     carries the ungated แจ้งลา tile (2026-09-18), so it always has at least
+     one button for every linked employee — the ``base`` has no buttons /
+     CLEARED-default / UNLINKED path (``base_has_buttons`` in ``sync()``) is
+     defensive coverage for a future MENU_BUTTONS table with no ungated row,
+     not the live state.
   2. Ensure each variant exists on the channel — rich-menu names embed a
      content signature (``staffhub:<variant>:<sig>``), so an unchanged
      variant is reused, a changed one is re-created with a freshly rendered
      HF One image (app/services/staff_oa_images.py). A variant whose grant
-     combination needs more than LINE's 6-button-per-menu cap is SKIPPED
-     with a warning naming the variant and its employees — see ``sync()``.
+     combination needs more buttons than the Hub's layout supports
+     (``staff_oa_menu.MAX_BUTTONS``) is SKIPPED with a warning naming the
+     variant and its employees — see ``sync()``.
   3. Make the ``base`` variant the channel default (or clear the default
      when base is empty).
   4. Link every linked employee to their variant (bulk link API, chunked);
@@ -104,20 +105,16 @@ def sync(apply: bool, render_dir: str = "") -> int:
     finally:
         db.close()
 
-    # Is `base` — the variant an employee with no menu-relevant grant
-    # resolves to — a menu at all? Since the Hub became a maid-only tool
-    # (owner, 2026-08-14: "remove the clock-in button too") every remaining
-    # button is gated on the `housekeeping` grant, so base has ZERO buttons
-    # and there is no base menu to deploy. That is a DELIBERATE state, not a
-    # breakage, and it is computed once here so every step below can branch
-    # on it explicitly instead of discovering it as a side effect of the
-    # >6-button guard (which would skip base for the wrong reason, print a
-    # scary SKIP for a configuration that is working as intended, and then
-    # KeyError on menu_ids["base"] three steps later).
-    #
-    # A future MENU_BUTTONS row with grant_app_id=None flips this back to
-    # True and restores the original behaviour exactly — both paths are
-    # tested (tests/unit/test_staff_oa_sync.py).
+    # Is `base` — the variant an employee with no OTHER menu-relevant grant
+    # resolves to — a menu at all? Since 2026-09-18 `base` carries the
+    # ungated แจ้งลา tile (owner: every linked employee sees it), so this is
+    # True in production. It is still computed explicitly, rather than
+    # assumed, so the layout-cap guard below (which would otherwise skip base
+    # for the wrong reason, print a scary SKIP for a configuration that is
+    # working as intended, and then KeyError on menu_ids["base"] three steps
+    # later) and every downstream branch stay correct if a future
+    # MENU_BUTTONS table ever empties base again — both paths (buttons /
+    # no buttons) are tested (tests/unit/test_staff_oa_sync.py).
     base_has_buttons = bool(staff_oa_menu.buttons_for(frozenset()))
 
     variant_keys = _plan_variants(assignments, base_has_buttons)
@@ -144,16 +141,16 @@ def sync(apply: bool, render_dir: str = "") -> int:
         try:
             staff_oa_menu.menu_size(button_count)
         except ValueError as exc:
-            # LINE caps a rich menu at 6 buttons. No grant combination an
-            # employee can actually hold overflows today — but as of
-            # 2026-09-02 (รายงานแม่บ้าน) the largest real variant,
-            # base+housekeeping+reception, is EXACTLY 6. The margin is one
-            # MenuButton row, so this guard is a step away from live rather
-            # than the comfortable insurance it was. It earned its place
-            # before: with payroll + ota + a 3-button housekeeping grant, one
-            # employee holding all three minted a 7-button variant, and the
-            # most likely person to do that was the owner self-granting
-            # everything to test the system.
+            # The Hub's layout supports up to staff_oa_menu.MAX_BUTTONS
+            # buttons per menu (LINE itself allows up to 20 areas — the cap
+            # here is the 4+3 grid layout, not a LINE limit). No grant
+            # combination an employee can actually hold overflows today — the
+            # largest real variant, base+housekeeping+reception, is 7, one
+            # under the cap of 8. It earned its place before: with payroll +
+            # ota + a 3-button housekeeping grant, one employee holding all
+            # three minted an over-cap variant, and the most likely person to
+            # do that was the owner self-granting everything to test the
+            # system.
             #
             # Left uncaught, staff_oa_menu.rich_menu_name() below (via
             # menu_signature -> menu_size) raises mid-loop and blocks every
@@ -180,10 +177,10 @@ def sync(apply: bool, render_dir: str = "") -> int:
             )
             print(
                 f"  SKIP   variant {key!r} needs {button_count} buttons "
-                f"(LINE cap is 6): {exc}. Affected employee LINE user "
-                f"id(s): {affected}. Remove one of this variant's grants "
-                f"from them (or ship a >6-button layout), then re-run — "
-                f"{fallback_note}"
+                f"(layout cap is {staff_oa_menu.MAX_BUTTONS}): {exc}. "
+                f"Affected employee LINE user id(s): {affected}. Remove one "
+                f"of this variant's grants from them (or ship a bigger "
+                f"layout), then re-run — {fallback_note}"
             )
             continue
 
@@ -248,7 +245,7 @@ def sync(apply: bool, render_dir: str = "") -> int:
             # employees to `base` instead of just leaving them alone: base
             # is a strict subset of every other variant's buttons, so this
             # can never hand out more than the employee is entitled to, it
-            # only ever hides buttons LINE's 6-button cap won't let this
+            # only ever hides buttons the layout cap won't let this
             # particular combination show. Explicit beats "leave whatever
             # link they already had" because a prior sync could have linked
             # them to some other now-stale menu — this guarantees they land
@@ -270,13 +267,15 @@ def sync(apply: bool, render_dir: str = "") -> int:
             if base_has_buttons:
                 print(
                     f"  link   {len(users)} user(s) -> {key!r} "
-                    f"(fallback: base — variant exceeds LINE's 6-button cap)"
+                    f"(fallback: base — variant exceeds the "
+                    f"{staff_oa_menu.MAX_BUTTONS}-button layout cap)"
                 )
             else:
                 print(
                     f"  unlink {len(users)} user(s) <- {key!r} "
-                    f"(fallback: none — variant exceeds LINE's 6-button cap "
-                    f"and base is empty by design)"
+                    f"(fallback: none — variant exceeds the "
+                    f"{staff_oa_menu.MAX_BUTTONS}-button layout cap and base "
+                    f"is empty by design)"
                 )
             continue
         if key == "base" and not base_has_buttons:
@@ -304,8 +303,8 @@ def sync(apply: bool, render_dir: str = "") -> int:
     # menu_ids/desired_names in the loop above regardless of what got
     # skipped, so this step keeps every menu that is genuinely in use. And
     # if an old menu for the *skipped* key happens to still exist (e.g. a
-    # prior run created it back when that grant combination fit under 6
-    # buttons), nobody is linked to it by the time we get here — the
+    # prior run created it back when that grant combination fit under the
+    # layout cap), nobody is linked to it by the time we get here — the
     # per-user step above already moved its would-be employees onto `base`
     # first — so reclaiming it as "stale" here deletes a menu that is truly
     # unreferenced, not one still in use.
@@ -335,9 +334,9 @@ def sync(apply: bool, render_dir: str = "") -> int:
         )
         print(
             f"WARNING: {len(skipped_variants)} variant(s) skipped for "
-            f"exceeding LINE's 6-button cap: {skipped_variants}. Their "
-            f"{disposition}; every other variant and employee synced "
-            f"normally."
+            f"exceeding the {staff_oa_menu.MAX_BUTTONS}-button layout cap: "
+            f"{skipped_variants}. Their {disposition}; every other variant "
+            f"and employee synced normally."
         )
 
     print("Done." if apply else "Dry-run complete — nothing changed.")

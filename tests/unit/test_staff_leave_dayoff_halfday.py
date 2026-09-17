@@ -54,7 +54,11 @@ def test_day_off_is_a_distinct_type_and_direct_text_parses(monkeypatch):
         db.close(); engine.dispose()
 
 
-def test_half_day_direct_text_and_approval_are_half_not_full(monkeypatch):
+def test_half_day_direct_text_and_manual_approval_are_half_not_full(monkeypatch):
+    """With the auto-record switch off, half-day requests still go through
+    the original pending -> manager-decide path, with the half-day override
+    (0.5 day, single EmployeeLeave row with the |half marker) intact."""
+    monkeypatch.setenv("STAFF_LEAVE_AUTO_APPROVE", "false")
     engine, db, employee = make_db(monkeypatch)
     try:
         event = {
@@ -71,6 +75,7 @@ def test_half_day_direct_text_and_approval_are_half_not_full(monkeypatch):
         row = db.query(StaffLeaveRequest).filter_by(
             employee_badge_number=employee.badge_number
         ).one()
+        assert row.status == "pending" and row.reviewed_by is None
         assert row.leave_portion == "am"
         assert service.calendar_days(row) == 0.5
 
@@ -80,6 +85,34 @@ def test_half_day_direct_text_and_approval_are_half_not_full(monkeypatch):
         assert leave.leave_type == "personal"
         assert leave.note.endswith("|half=am")
         assert staff_leave_options.portion_from_leave_note(leave.note) == "am"
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_half_day_auto_approve_records_immediately_with_half_marker(monkeypatch):
+    """Auto-record (default, switch unset) applies to the half-day path too,
+    through the SAME installed `decide` override — a single EmployeeLeave row
+    with the |half marker, reviewer AUTO_REVIEWER, no manager step."""
+    engine, db, employee = make_db(monkeypatch)
+    try:
+        event = {
+            "type": "message",
+            "message": {"type": "text", "text": "แจ้งลา ลากิจ ครึ่งวันบ่าย 18/9/2569"},
+        }
+        review = service._messages(event, db, employee)[0]
+        submit_action = review["quickReply"]["items"][0]["action"]
+        submit_event = {"type": "postback", "postback": {"data": submit_action["data"]}}
+        messages = service._messages(submit_event, db, employee)
+        assert messages
+        row = db.query(StaffLeaveRequest).filter_by(
+            employee_badge_number=employee.badge_number
+        ).one()
+        assert row.status == "approved" and row.reviewed_by == service.AUTO_REVIEWER
+        assert row.leave_portion == "pm"
+        leave = db.query(EmployeeLeave).filter_by(employee_badge_number=employee.badge_number).one()
+        assert leave.leave_type == "personal"
+        assert leave.note.endswith("|half=pm")
+        assert staff_leave_options.portion_from_leave_note(leave.note) == "pm"
     finally:
         db.close(); engine.dispose()
 
