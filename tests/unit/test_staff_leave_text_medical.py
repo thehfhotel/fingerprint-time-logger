@@ -104,11 +104,23 @@ def test_picker_uses_leave_until_label(monkeypatch):
         db.close(); engine.dispose()
 
 
-def test_default_palette_gets_leave_button():
+def test_default_palette_gets_leave_button_and_full_command_guide():
     class Dummy:
+        REQUEST_WORDS = frozenset({"ความคิดเห็น", "ฟีดแบค", "คำขอ"})
+
         @staticmethod
         def palette_message():
-            return {"contents":{"footer":{"contents":[]}}}
+            return {
+                "contents": {
+                    "body": {
+                        "contents": [
+                            {"type": "text", "text": "มีอะไรให้ช่วยคะ", "wrap": True}
+                        ]
+                    },
+                    "footer": {"contents": []},
+                }
+            }
+
     staff_leave_palette.install(Dummy)
     message = Dummy.palette_message()
     assert message["contents"]["footer"]["contents"][0]["action"] == {
@@ -116,3 +128,13 @@ def test_default_palette_gets_leave_button():
         "data": staff_leave_palette.LEAVE_POSTBACK_DATA,
         "displayText": "แจ้งลา",
     }
+    help_text = message["contents"]["body"]["contents"][0]["text"]
+    for phrase in (
+        "งานค้าง", "แจ้งซ่อม 204 แอร์ไม่เย็น", "งานของฉัน", "สถานะ 128",
+        "เพิ่มรูป 128", "ความคิดเห็นลูกค้า", "แจ้งลา",
+        "แจ้งลา ลากิจ ครึ่งวันเช้า 18/9/2569", "ใบลาล่าสุด",
+        "แก้ไขใบลา", "ยกเลิกใบลา",
+    ):
+        assert phrase in help_text
+    assert "ความคิดเห็นลูกค้า" in Dummy.REQUEST_WORDS
+    assert "HF-LV-" not in help_text
