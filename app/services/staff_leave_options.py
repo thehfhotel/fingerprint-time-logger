@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime
+from functools import wraps
 
 from sqlalchemy.exc import IntegrityError
 
@@ -324,6 +325,7 @@ def install(service) -> None:
             row["leave_portion"] = portion
             return row
 
+        @wraps(original_monthly_endpoint)
         async def monthly_with_fractional_leave(year: int, month: int, location=None, db=None):
             payload = await original_monthly_endpoint(
                 year=year, month=month, location=location, db=db
