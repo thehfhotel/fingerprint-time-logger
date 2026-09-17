@@ -238,7 +238,9 @@ def install(service) -> None:
                     row = db.get(StaffLeaveRequest, request_id)
                     if row is None or row.employee_badge_number != badge:
                         raise service.LeaveError("ไม่พบใบลาของคุณ")
-                    if row.status != "pending" or row.version != expected_version:
+                    submit_actions = {"submit_full", "submit_am", "submit_pm"}
+                    if (action not in submit_actions
+                            and (row.status != "pending" or row.version != expected_version)):
                         raise service.LeaveError(
                             "ใบลานี้ถูกตรวจหรือเปลี่ยนแปลงแล้ว กรุณาพิมพ์ ใบลาล่าสุด"
                         )
@@ -300,7 +302,7 @@ def install(service) -> None:
                             service, row, kind, start, end, portion,
                             expected_version, expires,
                         )]
-                    if action in ("submit_full", "submit_am", "submit_pm"):
+                    if action in submit_actions:
                         updated = _edit_request(
                             service, db, employee, request_id, expected_version,
                             kind, start, end, portion,
