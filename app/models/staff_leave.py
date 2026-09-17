@@ -18,6 +18,7 @@ class StaffLeaveRequest(Base):
     department = Column(String(100), nullable=True)
     location = Column(String(20), nullable=True)
     leave_type = Column(String(20), nullable=False)
+    leave_portion = Column(String(20), nullable=False, default="full")
     date_from = Column(Date, nullable=False)
     date_to = Column(Date, nullable=False)
     status = Column(String(20), nullable=False, default="pending", index=True)
@@ -34,9 +35,13 @@ class StaffLeaveRequest(Base):
     __table_args__ = (
         CheckConstraint("status IN ('pending','approved','rejected','cancelled')",
                         name="ck_staff_leave_status"),
-        CheckConstraint("leave_type IN ('sick','personal','vacation')",
+        CheckConstraint("leave_type IN ('sick','personal','vacation','day_off')",
                         name="ck_staff_leave_type"),
+        CheckConstraint("leave_portion IN ('full','am','pm')",
+                        name="ck_staff_leave_portion"),
         CheckConstraint("date_to >= date_from", name="ck_staff_leave_dates"),
+        CheckConstraint("leave_portion = 'full' OR date_to = date_from",
+                        name="ck_staff_leave_half_day_single_date"),
     )
 
 

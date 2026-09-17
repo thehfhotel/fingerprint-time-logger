@@ -11,6 +11,7 @@ from app.models.staff_leave import StaffLeaveRequest
 from app.services.staff_leave import BKK, STATUSES, TYPES, reference, thai_date
 
 FONT_DIR = Path("/usr/share/fonts/opentype/tlwg")
+PORTION_LABELS = {"full": "เต็มวัน", "am": "ครึ่งวันเช้า", "pm": "ครึ่งวันบ่าย"}
 
 
 @lru_cache(maxsize=16)
@@ -66,7 +67,12 @@ def render_png(row: StaffLeaveRequest, rendered_at: datetime | None = None) -> b
     block("แผนก / สาขา", " • ".join(filter(None, (row.department, property_name))))
     block("ประเภทการลา", TYPES[row.leave_type])
     block("ช่วงวันที่ลา (พ.ศ.)", f"{thai_date(row.date_from)} – {thai_date(row.date_to)}")
-    block("ระยะเวลาตามช่วงวันที่", f"{(row.date_to - row.date_from).days + 1} วันตามปฏิทิน • เต็มวัน")
+    portion = getattr(row, "leave_portion", "full")
+    if portion == "full":
+        duration = f"{(row.date_to - row.date_from).days + 1} วันตามปฏิทิน • เต็มวัน"
+    else:
+        duration = f"0.5 วัน • {PORTION_LABELS.get(portion, portion)}"
+    block("ระยะเวลาการลา", duration)
     draw.line((70, y, 1010, y), fill="#D8E4DD", width=2)
     y += 28
 
