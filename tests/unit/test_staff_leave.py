@@ -197,7 +197,9 @@ def test_native_line_flow_needs_explicit_confirmation(db):
     assert db.query(StaffLeaveRequest).count() == 0
     confirmation = action(review)['data']
     receipt = service._messages(postback(confirmation), db, emp)
-    assert receipt[1]['type'] == 'image' and 'รออนุมัติ' in receipt[0]['text']
+    assert receipt[1]['type'] == 'image'
+    assert 'ส่งใบลาแล้ว' in receipt[0]['text']
+    assert 'รออนุมัติ' not in receipt[0]['text']
     assert db.query(EmployeeLeave).count() == 0
     service._messages(postback(confirmation), db, emp)
     assert db.query(StaffLeaveRequest).count() == 1
