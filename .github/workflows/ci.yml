@@ -11,7 +11,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Strict-prod env checks need these set; tests use throwaway values.
   ENV: test
   TESTING: 'true'
   JWT_SECRET: ci-dummy-jwt-secret-do-not-use-in-prod
@@ -30,19 +29,15 @@ jobs:
           cache: pip
       - run: pip install flake8
       - name: Flake8 (errors only)
-        run: flake8 app tests --count --select=E9,F63,F7,F82 --show-source --statistics
+        run: flake8 app scripts tests --count --select=E9,F63,F7,F82 --show-source --statistics
       - name: Flake8 (informational)
         continue-on-error: true
-        run: flake8 app tests --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        run: flake8 app scripts tests --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
   test:
     name: Tests (unit + integration)
     runs-on: ubuntu-latest
     needs: lint
-    # Previously `continue-on-error: true` to tolerate pre-Oct-2025
-    # route rot. That sweep landed alongside this commit (all legacy
-    # paths updated, dead-functionality tests skipped with documented
-    # reasons), so the job now blocks PRs the way it should.
     steps:
       - uses: actions/checkout@v4
 
@@ -63,13 +58,6 @@ jobs:
           pip install pytest pytest-mock pytest-cov pytest-xdist factory-boy
 
       - name: Set up test database
-        # Tests use Base.metadata.create_all() (via tests/conftest.py) against
-        # in-memory SQLite, but importing app.main_unified at collection time
-        # builds the configured engine — that engine needs a database file
-        # that exists. We create the canonical schema directly from the
-        # SQLAlchemy models instead of replaying the Alembic chain, which
-        # was authored against a pre-existing prod DB and depends on
-        # foundation tables that no migration creates from scratch.
         run: |
           mkdir -p database
           python -c "from app.core.database import Base, engine; Base.metadata.create_all(bind=engine)"
@@ -80,8 +68,6 @@ jobs:
       - name: Run integration tests
         run: pytest tests/integration/ -v --cov=app --cov-append --cov-report=xml -m "not slow"
 
-      # v2 admin route + guard coverage. Lives at tests/ top level, so it
-      # matches neither of the directory globs above and has to be named.
       - name: Run v2 route tests
         run: pytest tests/test_v2_routes.py -v --cov=app --cov-append --cov-report=xml
 
@@ -97,7 +83,6 @@ jobs:
     name: Security scan
     runs-on: ubuntu-latest
     needs: lint
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -105,5 +90,5 @@ jobs:
           python-version: '3.11'
           cache: pip
       - run: pip install bandit
-      - name: Bandit (high severity only blocks)
-        run: bandit -r app -ll -ii
+      - name: Bandit (high severity blocks)
+        run: bandit -r app scripts -ll -ii

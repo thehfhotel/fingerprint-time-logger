@@ -1,31 +1,10 @@
 name: Build & Publish
 
-# Thin caller for the estate's shared deploy plumbing (thehfhotel/estate-ci).
-# The inline GHCR build and the cloudflared/forced-command SSH deploy used to
-# be spelled out here; that plumbing now lives once in the reusable workflow,
-# SHA-pinned below. The `test` job is unchanged and remains the deploy gate.
-#
-# What moved where:
-# - Image build+push: deploy-evergreen.yml's build job. The Dockerfile's
-#   FINAL stage is `fingerprint-logger` and `ARG BUILD_TYPE=production` is
-#   the default, so the reusable workflow's target-less build produces the
-#   same image the old `target:`+build-args build did. Deploys are now
-#   SHA-pinned (IMAGE_TAG=<sha> in the host .env) instead of re-rolling
-#   :latest while logging a SHA — fixing that long-standing mismatch.
-# - .env materialization: env_payload below, written verbatim into the
-#   tarball's .env by deploy-evergreen.yml after IMAGE_TAG and HOST_PORT.
-#   ADMIN_PASSCODE_HASH is single-quoted: compose's .env parser treats a
-#   single-quoted value as literal, which protects the bcrypt `$2b$12$...`
-#   from variable interpolation — the same job the legacy shim's $->$$
-#   escaping did (it is the only value on this app containing `$`).
-# - Host side: /srv/run-deploy-fingerprint.sh now speaks the estate tarball
-#   contract (rewritten 2026-08-13, one-time step; old shim backed up).
-#
-# Dropped surfaces, deliberate:
-# - tag (`v*`) builds and the workflow_dispatch extra-tag input — unused in
-#   practice; resurrect as a separate build-only workflow if ever needed.
-# - `environment: production` — verified empty (no protection rules), pure
-#   ceremony.
+# Production release pipeline. Every change reaches production only through:
+# merged-PR provenance -> quality -> full tests -> immutable image build ->
+# forced-command deploy -> repository-owned post-deploy operations -> release
+# verification. A direct push to main may exist in Git history, but this
+# workflow refuses to turn it into a production release.
 
 on:
   push:
@@ -37,17 +16,58 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Deploy gate. Runs the full unit + integration suites. Tests that
-  # target functionality which no longer exists (e.g. the pre-redesign
-  # auto_import_fingerprint_logs loop, nonce replay protection) are
-  # marked @pytest.mark.skip with documented reasons. Tests that
-  # require a running server (tests/e2e/) and the security suite stay
-  # out of this gate.
+  provenance:
+    name: Require merged PR provenance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Refuse a main SHA that did not arrive through a merged PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$api" > /tmp/associated-prs.json
+          python - <<'PY'
+          import json, os, sys
+          prs = json.load(open('/tmp/associated-prs.json', encoding='utf-8'))
+          valid = [
+              pr for pr in prs
+              if pr.get('merged_at')
+              and (pr.get('base') or {}).get('ref') == 'main'
+              and (pr.get('base') or {}).get('repo', {}).get('full_name') == os.environ['GITHUB_REPOSITORY']
+          ]
+          if not valid:
+              print('::error::Production deploy refused: current main SHA is not associated with a PR merged into this repository main branch.')
+              sys.exit(1)
+          print(f"Merged PR provenance verified: #{valid[0].get('number')}")
+          PY
+
+  quality:
+    name: Quality & security gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install quality tools
+        run: pip install flake8 bandit
+      - name: Flake8 blocking errors
+        run: flake8 app scripts tests --count --select=E9,F63,F7,F82 --show-source --statistics
+      - name: Bandit high severity
+        run: bandit -r app scripts -ll -ii
+
   test:
     name: Tests (deploy gate)
     runs-on: ubuntu-latest
-    # Same throwaway secrets ci.yml uses — needed because strict-prod
-    # config validation runs at import time.
     env:
       ENV: test
       TESTING: 'true'
@@ -74,20 +94,15 @@ jobs:
           pip install pytest pytest-mock pytest-xdist factory-boy
 
       - name: Set up test database
-        # See ci.yml for rationale — we build the schema directly from the
-        # models rather than replaying Alembic, because the migration chain
-        # was authored against a pre-existing prod DB.
         run: |
           mkdir -p database
           python -c "from app.core.database import Base, engine; Base.metadata.create_all(bind=engine)"
 
-      - name: Verify backup gate and failure-path tests
-        run: pytest tests/unit/test_deploy_backup.py -v
+      - name: Verify deploy and post-deploy failure paths
+        run: |
+          pytest tests/unit/test_deploy_backup.py tests/unit/test_post_deploy.py -v
 
       - name: Run unit + integration suites (deploy gate)
-        # `-m "not slow"` matches ci.yml's integration step. The list of
-        # legacy top-level test files is included explicitly because
-        # they're outside tests/unit and tests/integration.
         run: |
           pytest -v \
             tests/unit/ \
@@ -101,37 +116,29 @@ jobs:
             -m "not slow"
 
   deploy:
-    # LOAD-BEARING. deploy-evergreen.yml does not run this repo's tests — it
-    # cannot know what they are. Without this `needs:` a red suite would not
-    # stop a push to main from reaching production.
-    # The image performs a verified host-local backup inside Alembic env.py
-    # before any migration. Its existing CMD starts uvicorn only on success.
-    # No separate SSH command/installer or readiness variable is required.
+    # LOAD-BEARING: test, quality and merged-PR provenance must all be green.
+    # Historical contract was `needs: [test]`; test remains a hard dependency,
+    # with provenance and quality added rather than replacing it.
+    needs: [provenance, quality, test]
     name: Deploy (backup before migrations)
-    needs: [test]
     if: github.ref == 'refs/heads/main'
     uses: thehfhotel/estate-ci/.github/workflows/deploy-evergreen.yml@571d115d63ecef9c30cd73f73a38e68395ab259f
-    # A called workflow's GITHUB_TOKEN scopes come from the calling job; the
-    # reusable build job cannot push to GHCR without packages:write.
     permissions:
       contents: read
       packages: write
     with:
-      app_name: fingerprint # -> /srv/run-deploy-fingerprint.sh on the host
+      app_name: fingerprint
       image: ghcr.io/thehfhotel/fingerprint-time-logger
       host_port: "5000"
     secrets:
       ssh_key: ${{ secrets.EVERGREEN_DEPLOY_SSH_KEY }}
       host_key: ${{ secrets.EVERGREEN_HOST_KEY }}
-      # The exact key set the legacy shim's static block + env{} + secrets{}
-      # payload produced, one KEY=VALUE per line, empty values written
-      # deliberately (estate convention: a rotated-then-cleared secret must
-      # not leave a stale value behind; empty = feature dark, fail-closed).
-      # ADMIN_PASSCODE_HASH single-quoted — see header.
       env_payload: |
         DATABASE_URL=sqlite:///./database/attendance.db
         HF_DEPLOY_RUN=${{ github.run_id }}-${{ github.run_attempt }}
         HF_DEPLOY_COMMIT=${{ github.sha }}
+        HF_POST_DEPLOY_REQUIRED=true
+        HF_POST_DEPLOY_READY_TIMEOUT_SECONDS=${{ vars.HF_POST_DEPLOY_READY_TIMEOUT_SECONDS || '240' }}
         ENV=production
         BEHIND_PROXY=true
         ZKTECO_HOST=192.168.100.209
@@ -162,9 +169,8 @@ jobs:
         HOUSEKEEPING_STAFF_BOT_TOKEN=${{ secrets.HOUSEKEEPING_STAFF_BOT_TOKEN }}
         PORTAL_DIRECTORY_TOKEN=${{ secrets.PORTAL_DIRECTORY_TOKEN }}
 
-
   verify_deployment:
-    name: Verify deployed run and backup
+    name: Verify release + backup + post-deploy
     needs: [deploy]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -172,26 +178,28 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Require the new release to be serving with a verified snapshot
+      - name: Require exact release, verified snapshot and completed operations
         env:
           EXPECTED_RUN: ${{ github.run_id }}-${{ github.run_attempt }}
           EXPECTED_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           # Existing public LINE webhook URL, GET only. POST still requires
-          # LINE's signature. Do not follow redirects: an Access login page
-          # or an older healthy container must never count as success.
+          # LINE's signature. 204 now means all three conditions are true:
+          # exact image/run, verified pre-migration snapshot, and successful
+          # repository-owned post-deploy tasks (including rich-menu sync).
           url="https://erp.thehfhotel.org/api/public/staff-oa/webhook?run_id=${EXPECTED_RUN}&commit=${EXPECTED_COMMIT}"
           for attempt in $(seq 1 90); do
             status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
               --connect-timeout 5 --max-time 10 --proto '=https' "$url") || status=000
             if [ "$status" = 204 ]; then
-              echo 'Verified deployment run and pre-migration database snapshot.'
-              echo '## Deployment and host-local database backup verified' >> "$GITHUB_STEP_SUMMARY"
+              echo 'Verified release, pre-migration snapshot, and post-deploy operations.'
+              echo '## Production release fully verified' >> "$GITHUB_STEP_SUMMARY"
               echo "Run: ${EXPECTED_RUN}; commit: ${EXPECTED_COMMIT}" >> "$GITHUB_STEP_SUMMARY"
+              echo 'Staff LINE OA rich-menu reconciliation: complete' >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             sleep 5
           done
-          echo '::error::New release/backup not verified. Deployment is NOT confirmed healthy. Do not auto-restore the database.'
+          echo '::error::Release is not fully verified. Backup, serving SHA, or post-deploy operations did not complete.'
           exit 1

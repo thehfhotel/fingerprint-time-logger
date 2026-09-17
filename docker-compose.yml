@@ -1,38 +1,20 @@
-# Production Docker Compose - Single Consolidated File
-# Use: docker-compose up -d (standalone) or with nginx via ~/nginx/docker-compose.yml
+# Production Docker Compose - CI/CD is the only production mutation path.
+# The app and the one-shot post-deploy job always use the same immutable SHA
+# image. A release is not considered ready until post-deploy writes the exact
+# run/commit marker that app/api/deployment_ready.py verifies.
 
 services:
-  # FastAPI Application
   app:
-    # Production: pulled from GHCR by CI on push to main.
-    # To deploy: `docker compose pull && docker compose up -d`
-    # For local dev builds, use `docker buildx bake` (see docker-bake.hcl).
     image: ghcr.io/thehfhotel/fingerprint-time-logger:${IMAGE_TAG:-latest}
     pull_policy: always
     container_name: fingerprint-time-logger
     ports:
-      # HOST_PORT (not APP_PORT): the estate deploy writes HOST_PORT into
-      # .env (deploy-evergreen.yml contract); default matches production.
       - "${HOST_PORT:-5000}:5000"
     volumes:
-      # Bind-mount the SQLite file ONLY, not the whole database/ dir.
-      # The previous whole-directory mount silently shadowed the image's
-      # database/migrations/versions/, so newly-shipped Alembic migrations
-      # never reached prod (the host's older copy won). With just the .db
-      # file mounted, migrations + alembic.ini come from the image and
-      # the deploy script's `alembic upgrade head` actually applies them.
-      #
-      # journal_mode is 'delete' (default), so there are no long-lived
-      # WAL/SHM side files to also persist — verified 2026-05.
-      #
-      # The deploy script must `touch /home/deploy/fingerprint-time-logger/
-      # database/attendance.db` before `docker compose up -d` on first
-      # boot, otherwise Docker creates a directory at that path and the
-      # container crashes. On existing hosts the file already exists.
+      # Persist only the SQLite file so migrations always come from the image.
       - ./database/attendance.db:/app/database/attendance.db
       - ./logs:/app/logs
-      # Created automatically by Compose on evergreen; never container-local.
-      # The migration gate sets 0700 directories / 0600 snapshot files.
+      # Host-persistent pre-migration snapshots + post-deploy release markers.
       - /home/deploy/backups/fingerprint-time-logger:/backups
     environment:
       - DATABASE_URL=sqlite:///./database/attendance.db
@@ -40,109 +22,87 @@ services:
       - ZKTECO_PORT=${ZKTECO_PORT:-4370}
       - TZ=Asia/Bangkok
       - ENV=${ENV:-production}
-      # Supplied by build.yml for each deployment, including retries.
       - HF_DEPLOY_RUN=${HF_DEPLOY_RUN:-}
       - HF_DEPLOY_COMMIT=${HF_DEPLOY_COMMIT:-}
-      - BEHIND_PROXY=${BEHIND_PROXY:-true}  # Default true for nginx integration
+      # Production deploys set this true. Local/dev compose remains backward
+      # compatible unless explicitly enabled.
+      - HF_POST_DEPLOY_REQUIRED=${HF_POST_DEPLOY_REQUIRED:-false}
+      - BEHIND_PROXY=${BEHIND_PROXY:-true}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-https://erp.thehfhotel.org,https://emp.thehfhotel.org}
-      # LINE OAuth Configuration (Phase 2 - QR Check-in Feature)
       - LINE_CHANNEL_ID=${LINE_CHANNEL_ID}
       - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
       - LINE_CALLBACK_URL=${LINE_CALLBACK_URL}
-      # Same-browser LINE completion hand-off — off unless explicitly true.
-      # Without this line the flag cannot reach the container at all, so the
-      # feature would be un-flippable in production (the same drift that
-      # darkened central card-login, noted below). Empty is safe: the reader
-      # treats "set but empty" exactly like "false", so the estate's
-      # empty-env-variable trap (HFID_ISSUER, LINE_CALLBACK_URL) fails closed
-      # here instead of open. See app/services/line_handoff_store.py.
       - LINE_SAME_BROWSER_HANDOFF=${LINE_SAME_BROWSER_HANDOFF:-false}
       - JWT_SECRET=${JWT_SECRET}
-      # HF ID — OIDC identity provider (LINE-brokered employee SSO for
-      # Cloudflare Access). All optional: the /oidc surface ships DARK (404)
-      # until HFID_SIGNING_KEY is set. See app/services/oidc_service.py.
       - HFID_SIGNING_KEY=${HFID_SIGNING_KEY:-}
       - HFID_CLIENT_ID=${HFID_CLIENT_ID:-}
       - HFID_CLIENT_SECRET=${HFID_CLIENT_SECRET:-}
       - HFID_ISSUER=${HFID_ISSUER:-}
       - HFID_REDIRECT_URIS=${HFID_REDIRECT_URIS:-}
-      # Admin Console Security
       - ADMIN_PASSCODE_HASH=${ADMIN_PASSCODE_HASH}
-      # Central card-login — un-darks /api/private/reader/* when set. These
-      # were present in the LIVE host compose but missing here (drift found
-      # 2026-08-13): shipping this file without them silently darkens the
-      # feature, because empty env = feature off by estate convention.
       - READER_SECRET=${READER_SECRET}
       - READER_RESOLVE_SECRET=${READER_RESOLVE_SECRET}
-      # Staff LINE OA (Employee Hub) — dark when unset. Same drift story as
-      # READER_* above.
       - STAFF_OA_CHANNEL_ACCESS_TOKEN=${STAFF_OA_CHANNEL_ACCESS_TOKEN}
       - STAFF_OA_CHANNEL_SECRET=${STAFF_OA_CHANNEL_SECRET}
-      # Guest requests read/confirm side — the staff bot reads and confirms
-      # guest-feedback's pending คำขอลูกค้า server-to-server (guest-feedback
-      # docs/CONTRACTS.md §15 rev 3; the old event-forwarder is retired).
-      # Empty either = dark. Server-to-server over the shared-nginx network
-      # below, same shape as PORTAL_DIRECTORY_URL: the URL is not a secret,
-      # the reader secret is.
       - GUEST_FEEDBACK_BASE_URL=${GUEST_FEEDBACK_BASE_URL:-}
       - GUEST_FEEDBACK_READER_SECRET=${GUEST_FEEDBACK_READER_SECRET:-}
-      # Staff bot read side — the OA answers งานค้าง with housekeeping's open
-      # แจ้งซ่อม digest, fetched server-to-server over the shared-nginx
-      # network. The URL is not a secret (it has a working default); the
-      # token is, and an empty token darkens the read (fixed Thai line, no
-      # dial-out). Token value == housekeeping's STAFF_BOT_INGRESS_TOKEN.
       - HOUSEKEEPING_INTERNAL_URL=${HOUSEKEEPING_INTERNAL_URL:-http://housekeeping:4070}
       - HOUSEKEEPING_STAFF_BOT_TOKEN=${HOUSEKEEPING_STAFF_BOT_TOKEN:-}
-      # HF Portal manager directory — who counts as an admin for Cloudflare
-      # Access auto-login. Server-to-server over the shared-nginx network (no
-      # Cloudflare Access in the path, so no bypass token needed). The URL is
-      # not a secret; the bearer token is. Both empty → dormant, and the app
-      # falls back to its in-code manager floor (estate convention: empty env =
-      # feature off). See app/services/manager_directory.py.
       - PORTAL_DIRECTORY_URL=${PORTAL_DIRECTORY_URL:-http://hf-erp-portal:3000/portal-api/directory/managers}
       - PORTAL_DIRECTORY_TOKEN=${PORTAL_DIRECTORY_TOKEN:-}
-      # Slack webhook for ZK time-sync notifications (the main app now owns
-      # this — the standalone zk-time-sync container has been retired).
       - ZK_SYNC_SLACK_WEBHOOK_URL=${ZK_SYNC_SLACK_WEBHOOK_URL}
       - AUTO_IMPORT_INTERVAL_MINUTES=${AUTO_IMPORT_INTERVAL_MINUTES:-30}
       - ZK_DRIFT_TOLERANCE_SECONDS=${ZK_DRIFT_TOLERANCE_SECONDS:-5}
-      # ZK tuning trio: written to the host .env by every deploy since May
-      # but passed into the container by NEITHER compose file until
-      # 2026-08-13 — the app had only ever seen its in-code defaults.
-      # Fallbacks match those defaults (and the workflow's vars defaults).
       - ZK_STARTUP_RETRY_MINUTES=${ZK_STARTUP_RETRY_MINUTES:-3}
       - ZK_CATCHUP_LOOKBACK_HOURS=${ZK_CATCHUP_LOOKBACK_HOURS:-48}
       - ZK_EXPECTED_UTC_OFFSET_MINUTES=${ZK_EXPECTED_UTC_OFFSET_MINUTES:-420}
-      # Eviction-alerting trio, added for incident 2026-09-05 (reader session
-      # repeatedly stolen by another TCP client; see
-      # docs/incidents/2026-09-05-zk-session-evictions.md). Defaults match
-      # the in-code fallbacks. An env var not listed here never reaches the
-      # container no matter what's in the host .env — this is that lesson
-      # applied up front. PAGE_AFTER_FAILURES: consecutive failed 5-min
-      # checks before a paging Slack alert. KICK_DEGRADED_THRESHOLD:
-      # evictions in the trailing 60 min that trigger a non-paging
-      # "degraded" note (rate-limited to 1/hour). KICK_BACKOFF_SECONDS: base
-      # wait after an eviction before reconnecting (doubles on repeat
-      # evictions within 120s, capped at 60s).
       - ZK_SYNC_PAGE_AFTER_FAILURES=${ZK_SYNC_PAGE_AFTER_FAILURES:-2}
       - ZK_KICK_DEGRADED_THRESHOLD=${ZK_KICK_DEGRADED_THRESHOLD:-3}
       - ZK_KICK_BACKOFF_SECONDS=${ZK_KICK_BACKOFF_SECONDS:-5}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/fingerprintlogs/health"]
-      interval: 600s  # Changed from 5 minutes to 10 minutes to reduce device connections
+      interval: 600s
       timeout: 10s
       retries: 3
       start_period: 40s
     networks:
       - app-network
-      - shared-nginx  # Connect to shared nginx network for routing
+      - shared-nginx
+
+  # One-shot, repository-versioned operational work. This replaces manual
+  # `docker exec ... staff_oa_sync.py --apply`. It waits for the new app to
+  # serve, verifies this run's pre-migration snapshot, reconciles LINE rich
+  # menus from the production employee DB, then atomically writes a marker.
+  # The public deployment readiness probe refuses 204 until that marker exists.
+  post-deploy:
+    image: ghcr.io/thehfhotel/fingerprint-time-logger:${IMAGE_TAG:-latest}
+    pull_policy: always
+    command: ["python", "scripts/post_deploy.py"]
+    restart: "no"
+    depends_on:
+      - app
+    volumes:
+      - ./database/attendance.db:/app/database/attendance.db
+      - /home/deploy/backups/fingerprint-time-logger:/backups
+    environment:
+      - DATABASE_URL=sqlite:///./database/attendance.db
+      - TZ=Asia/Bangkok
+      - ENV=${ENV:-production}
+      - HF_DEPLOY_RUN=${HF_DEPLOY_RUN:-}
+      - HF_DEPLOY_COMMIT=${HF_DEPLOY_COMMIT:-}
+      - HF_POST_DEPLOY_REQUIRED=${HF_POST_DEPLOY_REQUIRED:-false}
+      - HF_POST_DEPLOY_READY_URL=http://app:5000/fingerprintlogs/health
+      - HF_POST_DEPLOY_READY_TIMEOUT_SECONDS=${HF_POST_DEPLOY_READY_TIMEOUT_SECONDS:-240}
+      - STAFF_OA_CHANNEL_ACCESS_TOKEN=${STAFF_OA_CHANNEL_ACCESS_TOKEN}
+      - STAFF_OA_CHANNEL_SECRET=${STAFF_OA_CHANNEL_SECRET}
+    networks:
+      - app-network
 
 networks:
   app-network:
     driver: bridge
 
-  # External shared nginx network for reverse proxy
   shared-nginx:
     external: true
     name: shared-nginx
