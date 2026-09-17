@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime
+from functools import wraps
 
 from sqlalchemy.exc import IntegrityError
 
@@ -34,6 +35,42 @@ def portion_from_leave_note(note: str | None) -> str:
         return "full"
     match = re.search(r"\|half=(am|pm)$", note)
     return match.group(1) if match else "full"
+
+
+def recount_monthly_day_totals(payload: dict) -> dict:
+    """Recount fractional day totals from monthly day rows in-place.
+
+    The core monthly endpoint predates half-day leave and counts every status as
+    one full day. Half-day rows keep their real attendance status and carry
+    ``leave_portion`` as an annotation, so this postprocessor splits the day:
+    0.5 leave + 0.5 worked/absent/off. Hours and lateness totals stay untouched
+    because they are based on the actual punches and remain authoritative.
+    """
+    for employee in payload.get("employees") or []:
+        totals = employee.get("totals") or {}
+        worked = absent = off = leave = 0.0
+        for day_row in employee.get("days") or []:
+            status = day_row.get("status")
+            if status in ("untracked", "future", "pending"):
+                continue
+            half = day_row.get("leave_portion") in ("am", "pm")
+            weight = 0.5 if half else 1.0
+            if half:
+                leave += 0.5
+            if status == "present":
+                worked += weight
+            elif status == "absent":
+                absent += weight
+            elif status == "off":
+                off += weight
+            elif status == "leave" and not half:
+                leave += 1.0
+        totals["worked_days"] = worked
+        totals["absent_days"] = absent
+        totals["off_days"] = off
+        totals["leave_days"] = leave
+        employee["totals"] = totals
+    return payload
 
 
 def _parse_half(service, text: str):
@@ -250,6 +287,7 @@ def install(service) -> None:
         from app.api import consolidated_attendance as attendance_api
         original_shift_row = attendance_api._build_shift_row
         original_month_day = attendance_api._build_month_day
+        original_monthly_endpoint = attendance_api.get_attendance_monthly
 
         def build_shift_row(db, employee, target_day, eff, *, holiday=None, leave=None):
             portion = portion_from_leave_note(getattr(leave, "note", None)) if leave else "full"
@@ -269,10 +307,15 @@ def install(service) -> None:
                             holiday, leave):
             portion = portion_from_leave_note(getattr(leave, "note", None)) if leave else "full"
             if leave is None or portion == "full":
-                return original_month_day(
+                row = original_month_day(
                     employee, day, eff, punches, today=today, now_bkk=now_bkk,
                     holiday=holiday, leave=leave,
                 )
+                if leave is not None:
+                    row["leave_portion"] = "full"
+                elif row.get("leave_type") == "public_holiday":
+                    row["leave_portion"] = "full"
+                return row
             row = original_month_day(
                 employee, day, eff, punches, today=today, now_bkk=now_bkk,
                 holiday=holiday, leave=None,
@@ -282,7 +325,25 @@ def install(service) -> None:
             row["leave_portion"] = portion
             return row
 
+        @wraps(original_monthly_endpoint)
+        async def monthly_with_fractional_leave(year: int, month: int, location=None, db=None):
+            payload = await original_monthly_endpoint(
+                year=year, month=month, location=location, db=db
+            )
+            return recount_monthly_day_totals(payload)
+
         attendance_api._build_shift_row = build_shift_row
         attendance_api._build_month_day = build_month_day
+        attendance_api.get_attendance_monthly = monthly_with_fractional_leave
+
+        # APIRoute's request handler keeps a reference to ``dependant`` created
+        # by the decorator, so update its call target as well as the module
+        # symbol. The dependency graph/signature is unchanged.
+        for route in attendance_api.router.routes:
+            if getattr(route, "path", None) == "/monthly/{year}/{month}":
+                route.endpoint = monthly_with_fractional_leave
+                if getattr(route, "dependant", None) is not None:
+                    route.dependant.call = monthly_with_fractional_leave
+                break
     except Exception:
         pass

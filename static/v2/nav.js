@@ -336,6 +336,20 @@
     return { open: openSheet, close: closeSheet, isOpen: function () { return open; } };
   }
 
+  // Business-page enhancements are loaded only on the two leave-aware pages.
+  // Keeping the source in one shared file prevents shifts-admin and monthly
+  // from drifting into different leave labels/half-day behavior.
+  function loadPageEnhancement(mount) {
+    var page = (mount.getAttribute("data-page") || "").trim();
+    if (page !== "shifts-admin" && page !== "monthly") return;
+    if (document.querySelector('script[data-v2-leave-sync="1"]')) return;
+    var script = document.createElement("script");
+    script.src = BASE + "leave-sync-ui.js";
+    script.async = false;
+    script.setAttribute("data-v2-leave-sync", "1");
+    document.head.appendChild(script);
+  }
+
   // ---------- Boot ----------
 
   function build() {
@@ -370,6 +384,8 @@
       openMenu: api.open,
       closeMenu: api.close,
     };
+
+    loadPageEnhancement(mount);
   }
 
   if (document.readyState === "loading") {

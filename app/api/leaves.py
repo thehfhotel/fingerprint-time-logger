@@ -7,15 +7,13 @@ Public holidays: company-wide non-working days. CRUD on date as PK.
 
 Employee leaves: per-employee, per-date rows. One row per (badge, date)
 so a multi-day vacation is N rows. The admin UI bulk-creates a range.
+Half-day metadata is kept in the legacy EmployeeLeave.note marker used by
+HF ภายใน, but this API exposes it as the first-class ``leave_portion`` field
+so every ERP surface reads the same data without duplicating leave records.
 
 Both are consumed by:
-  - The reception roster grid (renderRoster on /v2/shifts-admin tab 2),
-    which renders a colored badge instead of the A/B/C/D dropdown on
-    days that have a leave or holiday.
-  - The /by-date page (consolidated_attendance.get_attendance_by_date),
-    which surfaces leaves/holidays as status='off' with a leave_type
-    field so the UI can label "พักร้อน" / "ลากิจ" / "ลาป่วย" /
-    "วันหยุดนักขัตฤกษ์".
+  - The reception roster grid and leave board on /v2/shifts-admin.
+  - The /monthly attendance report and /by-date attendance views.
 """
 
 from __future__ import annotations
@@ -35,6 +33,8 @@ from app.api.staff_leave import admin_router as staff_leave_admin_router
 
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_HALF_DAY_MARKER_RE = re.compile(r"\|half=(am|pm)(?=$|\|)")
+_ALLOWED_LEAVE_PORTIONS = ("full", "am", "pm")
 
 
 router = APIRouter()
@@ -46,11 +46,9 @@ router.include_router(staff_leave_admin_router, prefix="/requests", tags=["staff
 # included here in addition to existing in its own (company-wide)
 # PublicHoliday table, because the admin sometimes wants to mark a
 # specific employee as off-for-holiday without applying it to everyone
-# (e.g. ad-hoc holiday for one branch's staff). When both a per-employee
-# public_holiday row and a company-wide PublicHoliday row exist for the
-# same date, the company-wide entry wins in /by-date's status logic —
-# but they render identically, so the difference is invisible to users.
-_ALLOWED_LEAVE_TYPES = ("vacation", "personal", "sick", "public_holiday")
+# (e.g. ad-hoc holiday for one branch's staff). ``day_off`` is the separate
+# employee rest-day/comp-day type used by HF ภายใน's "ใช้วันหยุด" flow.
+_ALLOWED_LEAVE_TYPES = ("vacation", "personal", "sick", "public_holiday", "day_off")
 
 
 # --- Schemas -------------------------------------------------------------
@@ -71,6 +69,7 @@ class EmployeeLeaveOut(BaseModel):
     employee_badge_number: str
     date: date_type
     leave_type: str
+    leave_portion: str = "full"
     note: Optional[str] = None
 
 
@@ -78,10 +77,12 @@ class EmployeeLeaveIn(BaseModel):
     """Body for POST /api/private/leaves/employee.
 
     Pass either a single date OR a date range. Range is inclusive on
-    both ends, expanded into N rows in the DB.
+    both ends, expanded into N rows in the DB. Half-day leave is limited to a
+    single date because one EmployeeLeave row represents one calendar day.
     """
     employee_badge_number: str
     leave_type: str
+    leave_portion: str = "full"
     date: Optional[date_type] = None
     date_from: Optional[date_type] = None
     date_to: Optional[date_type] = None
@@ -95,13 +96,36 @@ def _holiday_to_dto(h: PublicHoliday) -> PublicHolidayOut:
     return PublicHolidayOut(date=h.date, name=h.name)
 
 
+def _portion_from_note(note: Optional[str]) -> str:
+    match = _HALF_DAY_MARKER_RE.search(note or "")
+    return match.group(1) if match else "full"
+
+
+def _clean_leave_note(note: Optional[str]) -> Optional[str]:
+    """Hide the compatibility ``|half=...`` marker from API consumers."""
+    if not note:
+        return None
+    cleaned = _HALF_DAY_MARKER_RE.sub("", note).strip(" |")
+    return cleaned or None
+
+
+def _note_with_portion(note: Optional[str], portion: str) -> Optional[str]:
+    """Encode half-day metadata in EmployeeLeave.note for legacy storage."""
+    clean = _clean_leave_note(note)
+    if portion == "full":
+        return clean
+    marker = f"|half={portion}"
+    return f"{clean}{marker}" if clean else marker
+
+
 def _leave_to_dto(l: EmployeeLeave) -> EmployeeLeaveOut:
     return EmployeeLeaveOut(
         id=l.id,
         employee_badge_number=l.employee_badge_number,
         date=l.date,
         leave_type=l.leave_type,
-        note=l.note,
+        leave_portion=_portion_from_note(l.note),
+        note=_clean_leave_note(l.note),
     )
 
 
@@ -217,12 +241,19 @@ def create_employee_leaves(
     the requested range (or the single date).
 
     Idempotent per (badge, date): existing rows are updated in-place
-    rather than duplicating.
+    rather than duplicating. ``leave_portion`` is full/am/pm. A half-day can
+    only target one date and uses the same legacy note marker as HF ภายใน, so
+    LINE and ERP edits stay perfectly interoperable.
     """
     if body.leave_type not in _ALLOWED_LEAVE_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"leave_type must be one of {_ALLOWED_LEAVE_TYPES}",
+        )
+    if body.leave_portion not in _ALLOWED_LEAVE_PORTIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"leave_portion must be one of {_ALLOWED_LEAVE_PORTIONS}",
         )
 
     if body.date is not None and (body.date_from is not None or body.date_to is not None):
@@ -241,6 +272,11 @@ def create_employee_leaves(
             )
         from_d, to_d = body.date_from, body.date_to
     _validate_range(from_d, to_d, max_days=92)  # quarter-year cap on a single bulk insert
+    if body.leave_portion != "full" and from_d != to_d:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Half-day leave must use a single date",
+        )
 
     employee = (
         db.query(Employee)
@@ -265,6 +301,7 @@ def create_employee_leaves(
         .all()
     )
     existing_by_date = {r.date: r for r in existing_rows}
+    stored_note = _note_with_portion(body.note, body.leave_portion)
 
     written: list[EmployeeLeave] = []
     for d in span:
@@ -274,12 +311,12 @@ def create_employee_leaves(
                 employee_badge_number=body.employee_badge_number,
                 date=d,
                 leave_type=body.leave_type,
-                note=body.note,
+                note=stored_note,
             )
             db.add(row)
         else:
             row.leave_type = body.leave_type
-            row.note = body.note
+            row.note = stored_note
         written.append(row)
 
     db.commit()
@@ -326,7 +363,7 @@ def _leave_type_to_dto(lt: LeaveType) -> LeaveTypeOut:
 
 @router.get("/types", response_model=list[LeaveTypeOut])
 def list_leave_types(db: Session = Depends(get_db)) -> list[LeaveTypeOut]:
-    """List the 4 leave types with their current display colors.
+    """List employee leave types with their current display colors.
 
     The shifts-admin "ตั้งค่าสีกะ" legend renders one color picker per
     type next to the shift-color pickers.
