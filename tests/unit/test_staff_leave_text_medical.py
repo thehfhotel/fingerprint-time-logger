@@ -128,7 +128,9 @@ def test_default_palette_gets_leave_button_and_full_command_guide():
         "data": staff_leave_palette.LEAVE_POSTBACK_DATA,
         "displayText": "แจ้งลา",
     }
-    help_text = message["contents"]["body"]["contents"][0]["text"]
+    body_contents = message["contents"]["body"]["contents"]
+    assert body_contents[0]["text"] == "มีอะไรให้ช่วยคะ"
+    help_text = body_contents[1]["text"]
     for phrase in (
         "งานค้าง", "แจ้งซ่อม 204 แอร์ไม่เย็น", "งานของฉัน", "สถานะ 128",
         "เพิ่มรูป 128", "ความคิดเห็นลูกค้า", "แจ้งลา",
