@@ -1,8 +1,8 @@
 """Employee-side leave maintenance for HF ภายใน.
 
-The database keeps ``pending`` as an internal concurrency/review state, but the
-employee-facing LINE flow deliberately does not present it as a status. Employees
-may edit or cancel only the latest request that has not been reviewed yet.
+Employees choose a leave by readable type/date details. Internal request UUIDs
+remain signed inside LINE postbacks and are never presented as something a staff
+member must read, remember, or type.
 """
 from __future__ import annotations
 
@@ -15,17 +15,63 @@ from app.models.models import EmployeeLeave
 from app.models.staff_leave import StaffLeaveDay, StaffLeaveRequest
 
 PORTION_LABELS = {"full": "เต็มวัน", "am": "ครึ่งวันเช้า", "pm": "ครึ่งวันบ่าย"}
+MAX_CHOICES = 10
 _EDIT_VERB_RE = re.compile(
     r"^edit_(from|to|review|half_am|half_pm|submit_full|submit_am|submit_pm)_v(\d+)$"
 )
+_PICK_VERB_RE = re.compile(r"^pick_(edit|cancel)_v(\d+)$")
+_CANCEL_VERB_RE = re.compile(r"^cancel_v(\d+)$")
 _INSTALLED = False
 
 
-def _latest_editable(db, badge: str) -> StaffLeaveRequest | None:
+def _editable_rows(db, badge: str, limit: int = MAX_CHOICES) -> list[StaffLeaveRequest]:
     return db.query(StaffLeaveRequest).filter(
         StaffLeaveRequest.employee_badge_number == badge,
         StaffLeaveRequest.status == "pending",
-    ).order_by(StaffLeaveRequest.created_at.desc(), StaffLeaveRequest.id.desc()).first()
+    ).order_by(
+        StaffLeaveRequest.created_at.desc(), StaffLeaveRequest.id.desc()
+    ).limit(limit).all()
+
+
+def _latest_editable(db, badge: str) -> StaffLeaveRequest | None:
+    rows = _editable_rows(db, badge, 1)
+    return rows[0] if rows else None
+
+
+def _portion(row: StaffLeaveRequest) -> str:
+    return PORTION_LABELS.get(getattr(row, "leave_portion", "full"), "เต็มวัน")
+
+
+def _date_range(service, row: StaffLeaveRequest) -> str:
+    if row.date_from == row.date_to:
+        return service.thai_date(row.date_from)
+    return f"{service.thai_date(row.date_from)} – {service.thai_date(row.date_to)}"
+
+
+def _row_detail(service, row: StaffLeaveRequest) -> str:
+    return f"{service.TYPES[row.leave_type]} • {_portion(row)}\n{_date_range(service, row)} (พ.ศ.)"
+
+
+def _selection_message(service, rows: list[StaffLeaveRequest], mode: str) -> dict:
+    if mode not in ("edit", "cancel"):
+        raise ValueError("unsupported leave selection mode")
+    title = "เลือกใบลาที่ต้องการแก้ไข" if mode == "edit" else "เลือกใบลาที่ต้องการยกเลิก"
+    action_word = "แก้ใบที่" if mode == "edit" else "ยกเลิกใบที่"
+    lines = [title, ""]
+    actions = []
+    for index, row in enumerate(rows, start=1):
+        lines.append(
+            f"{index}. {service.TYPES[row.leave_type]} • {_portion(row)}\n"
+            f"   {_date_range(service, row)}"
+        )
+        actions.append(service._postback(
+            f"{action_word} {index}",
+            service.action_data(
+                f"pick_{mode}_v{row.version}", row.employee_badge_number, row.id,
+            ),
+        ))
+    lines.extend(("", "แตะปุ่มด้านล่างได้เลย ไม่ต้องพิมพ์เลขรายการ"))
+    return service._text("\n".join(lines), actions)
 
 
 def _sanitize_text(text: str) -> str:
@@ -54,11 +100,8 @@ def _sanitize_messages(messages: list[dict]) -> list[dict]:
 
 def _edit_start_message(service, row: StaffLeaveRequest) -> dict:
     badge = row.employee_badge_number
-    current_portion = PORTION_LABELS.get(getattr(row, "leave_portion", "full"), "เต็มวัน")
     return service._text(
-        f"แก้ไขใบลา {service.reference(row)}\n"
-        f"ปัจจุบัน: {service.TYPES[row.leave_type]} • {current_portion}\n"
-        f"{service.thai_date(row.date_from)} – {service.thai_date(row.date_to)}\n"
+        f"กำลังแก้ไขใบลา\n{_row_detail(service, row)}\n\n"
         "เลือกประเภทลาและวันเริ่มใหม่", [
             service._picker(
                 label,
@@ -74,6 +117,20 @@ def _edit_start_message(service, row: StaffLeaveRequest) -> dict:
     )
 
 
+def _cancel_confirm_message(service, row: StaffLeaveRequest) -> dict:
+    return service._text(
+        f"ยืนยันยกเลิกใบลานี้?\n{_row_detail(service, row)}", [
+            service._postback(
+                "ยืนยันยกเลิก",
+                service.action_data(
+                    f"cancel_v{row.version}", row.employee_badge_number, row.id,
+                ),
+            ),
+            {"type": "message", "label": "ไม่ยกเลิก", "text": "ใบลาล่าสุด"},
+        ],
+    )
+
+
 def _edit_review(service, row: StaffLeaveRequest, kind: str, start: date, end: date,
                  portion: str, expected_version: int, expires: int | None = None) -> dict:
     days = 0.5 if portion in ("am", "pm") else (end - start).days + 1
@@ -85,7 +142,7 @@ def _edit_review(service, row: StaffLeaveRequest, kind: str, start: date, end: d
             else "\nลาป่วยไม่เกิน 3 วัน: แนบใบรับรองแพทย์ได้ แต่ไม่บังคับ"
         )
     return service._text(
-        f"ตรวจสอบการแก้ไขใบลา\n{service.reference(row)}\n"
+        f"ตรวจสอบการแก้ไขใบลา\n"
         f"{service.TYPES[kind]} • {PORTION_LABELS[portion]}\n"
         f"{service.thai_date(start)} – {service.thai_date(end)} (พ.ศ.)\n"
         f"{days:g} วัน{medical_line}", [
@@ -119,12 +176,10 @@ def _edit_request(service, db, employee, request_id: str, expected_version: int,
         row.leave_type, row.date_from, row.date_to,
         getattr(row, "leave_portion", "full"),
     )
-    # LINE may redeliver a confirmation. The first successful edit increments
-    # version once; a byte-identical replay is therefore safe and idempotent.
     if row.status == "pending" and row.version == expected_version + 1 and current == target:
         return row
     if row.status != "pending" or row.version != expected_version:
-        raise service.LeaveError("ใบลานี้ถูกตรวจหรือเปลี่ยนแปลงแล้ว กรุณาพิมพ์ ใบลาล่าสุด")
+        raise service.LeaveError("ใบลานี้ถูกตรวจหรือเปลี่ยนแปลงแล้ว กรุณาเลือกใบลาใหม่")
     if current == target:
         return row
 
@@ -136,9 +191,6 @@ def _edit_request(service, db, employee, request_id: str, expected_version: int,
         raise service.LeaveError("ช่วงวันที่ใหม่มีวันลาในตารางงานแล้ว กรุณาตรวจสอบกับผู้ดูแล")
 
     try:
-        # Remove this request's reservations inside the same transaction. Any
-        # conflict while inserting the new dates rolls the whole edit back,
-        # restoring both the old request values and old reservations.
         db.query(StaffLeaveDay).filter(
             StaffLeaveDay.request_id == row.id
         ).delete(synchronize_session=False)
@@ -180,54 +232,76 @@ def install(service) -> None:
 
     service.COMMANDS.add("แก้ไขใบลา")
     original_messages = service._messages
-    original_receipt = service._receipt
     original_cancel = service.cancel
 
     def receipt(row: StaffLeaveRequest) -> list[dict]:
-        if row.status != "pending":
-            return original_receipt(row)
         url = service.image_url(row)
+        heading = "ส่งใบลาแล้ว" if row.status == "pending" else service.STATUSES[row.status]
         return [
             service._text(
-                f"ส่งใบลาแล้ว\nเลขอ้างอิง {service.reference(row)}\n"
+                f"{heading}\n{_row_detail(service, row)}\n"
                 "กดรูปแล้วเลือกส่งต่อไปยังกลุ่มได้ "
                 "พิมพ์ ใบลาล่าสุด เพื่อขอรูปฉบับล่าสุด"
             ),
             {"type": "image", "originalContentUrl": url, "previewImageUrl": url},
         ]
 
+    def after_submit(row: StaffLeaveRequest) -> list[dict]:
+        if service.medical_certificate_required(row) and not row.medical_certificate:
+            return [service._text(
+                f"บันทึกใบลาในระบบพนักงานแล้ว\n{_row_detail(service, row)}\n"
+                f"ลาป่วย {service.calendar_days(row):g} วัน ต้องแนบรูปใบรับรองแพทย์ก่อนอนุมัติ\n"
+                "กรุณาส่งรูปใบรับรองแพทย์เป็นข้อความถัดไปในแชตนี้"
+            )]
+        messages = receipt(row)
+        if row.leave_type == "sick" and not row.medical_certificate:
+            messages.append(service._text(
+                "ลาป่วยไม่เกิน 3 วันไม่บังคับใบรับรองแพทย์ "
+                "หากมีสามารถส่งรูปในแชตนี้เพื่อแนบกับใบลาได้"
+            ))
+        return messages
+
     def messages(event, db, employee):
         badge = employee.badge_number
         if event.get("type") == "message":
             text = ((event.get("message") or {}).get("text") or "").strip()
-            if text == "แก้ไขใบลา":
-                row = _latest_editable(db, badge)
-                if row is None:
-                    return [service._text("ไม่มีใบลาที่แก้ไขได้")]
-                return [_edit_start_message(service, row)]
-            if text == "ยกเลิกใบลา":
-                row = _latest_editable(db, badge)
-                if row is None:
-                    return [service._text("ไม่มีใบลาที่ยกเลิกได้")]
-                portion = PORTION_LABELS.get(getattr(row, "leave_portion", "full"), "เต็มวัน")
-                return [service._text(
-                    f"ยกเลิกใบลา {service.reference(row)}?\n"
-                    f"{service.TYPES[row.leave_type]} • {portion}\n"
-                    f"{service.thai_date(row.date_from)} – {service.thai_date(row.date_to)}", [
-                        service._postback(
-                            "ยืนยันยกเลิกใบลา",
-                            service.action_data("cancel", badge, row.id),
-                        )
-                    ],
-                )]
+            if text in ("แก้ไขใบลา", "ยกเลิกใบลา"):
+                rows = _editable_rows(db, badge)
+                if not rows:
+                    label = "แก้ไข" if text == "แก้ไขใบลา" else "ยกเลิก"
+                    return [service._text(f"ไม่มีใบลาที่{label}ได้")]
+                mode = "edit" if text == "แก้ไขใบลา" else "cancel"
+                return [_selection_message(service, rows, mode)]
 
         if event.get("type") == "postback":
             data = ((event.get("postback") or {}).get("data") or "")
             if isinstance(data, str) and data.startswith(service.PREFIX):
                 verb, request_id, kind, start_s, end_s, expires = service._parse_action(data, badge)
-                if verb == "cancel":
+                row = db.get(StaffLeaveRequest, request_id)
+
+                pick = _PICK_VERB_RE.fullmatch(verb)
+                if pick:
+                    mode, version_s = pick.groups()
+                    expected_version = int(version_s)
+                    if (row is None or row.employee_badge_number != badge
+                            or row.status != "pending" or row.version != expected_version):
+                        raise service.LeaveError("ใบลานี้เปลี่ยนแปลงแล้ว กรุณาเลือกใบลาใหม่")
+                    return [
+                        _edit_start_message(service, row)
+                        if mode == "edit" else _cancel_confirm_message(service, row)
+                    ]
+
+                cancel_match = _CANCEL_VERB_RE.fullmatch(verb)
+                if cancel_match:
+                    expected_version = int(cancel_match.group(1))
+                    if row is None or row.employee_badge_number != badge:
+                        raise service.LeaveError("ไม่พบใบลาของคุณ")
+                    if row.status == "cancelled" and row.version == expected_version + 1:
+                        return receipt(row)
+                    if row.status != "pending" or row.version != expected_version:
+                        raise service.LeaveError("ใบลานี้เปลี่ยนแปลงแล้ว กรุณาเลือกใบลาใหม่")
                     try:
-                        return service._receipt(original_cancel(db, badge, request_id))
+                        return receipt(original_cancel(db, badge, request_id))
                     except service.LeaveError as exc:
                         raise service.LeaveError(_sanitize_text(str(exc))) from exc
 
@@ -235,15 +309,12 @@ def install(service) -> None:
                 if matched:
                     action, version_s = matched.groups()
                     expected_version = int(version_s)
-                    row = db.get(StaffLeaveRequest, request_id)
                     if row is None or row.employee_badge_number != badge:
                         raise service.LeaveError("ไม่พบใบลาของคุณ")
                     submit_actions = {"submit_full", "submit_am", "submit_pm"}
                     if (action not in submit_actions
                             and (row.status != "pending" or row.version != expected_version)):
-                        raise service.LeaveError(
-                            "ใบลานี้ถูกตรวจหรือเปลี่ยนแปลงแล้ว กรุณาพิมพ์ ใบลาล่าสุด"
-                        )
+                        raise service.LeaveError("ใบลานี้เปลี่ยนแปลงแล้ว กรุณาเลือกใบลาใหม่")
                     params = (event.get("postback") or {}).get("params") or {}
                     if action == "from":
                         start = date.fromisoformat(params["date"])
@@ -315,4 +386,5 @@ def install(service) -> None:
             raise service.LeaveError(_sanitize_text(str(exc))) from exc
 
     service._receipt = receipt
+    service._after_submit = after_submit
     service._messages = messages
