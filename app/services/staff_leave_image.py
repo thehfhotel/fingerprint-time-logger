@@ -1,4 +1,4 @@
-"""Deterministic Thai PNG. Deliberately excludes reasons, medical data and LINE IDs."""
+"""Deterministic Thai PNG. Deliberately excludes reasons, medical data and internal IDs."""
 from datetime import datetime, timezone
 from functools import lru_cache
 from io import BytesIO
@@ -8,7 +8,7 @@ import unicodedata
 from PIL import Image, ImageDraw, ImageFont
 
 from app.models.staff_leave import StaffLeaveRequest
-from app.services.staff_leave import BKK, STATUSES, TYPES, reference, thai_date
+from app.services.staff_leave import BKK, STATUSES, TYPES, thai_date
 
 FONT_DIR = Path("/usr/share/fonts/opentype/tlwg")
 PORTION_LABELS = {"full": "เต็มวัน", "am": "ครึ่งวันเช้า", "pm": "ครึ่งวันบ่าย"}
@@ -85,10 +85,12 @@ def render_png(row: StaffLeaveRequest, rendered_at: datetime | None = None) -> b
     if stamped.tzinfo is None:
         stamped = stamped.replace(tzinfo=timezone.utc)
     stamped = stamped.astimezone(BKK)
-    details = [reference(row), f"สร้างเมื่อ {thai_date(stamped.date())} {stamped:%H:%M} น."]
-    for text in details:
-        draw.text((70, y), text, font=_font(26), fill=muted)
-        y += 40
+    draw.text(
+        (70, y),
+        f"สร้างจาก HF ภายใน • {thai_date(stamped.date())} {stamped:%H:%M} น.",
+        font=_font(26), fill=muted,
+    )
+    y += 40
 
     if y + 60 > image.height:
         raise ValueError("Leave image exceeds layout height")
