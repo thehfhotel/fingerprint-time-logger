@@ -32,6 +32,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from app.services import cf_access_service
 from app.services.admin_auth_service import admin_auth_service
+from app.utils.static_asset_version import asset_version
 
 ACCEPTED_AUD = "3c622b40cc931c7414dcfc583bed1f50afaac316eafb914cc7f153650843ea8b"
 # One of the default CF_ADMIN_EMAILS (see cf_access_service.py).
@@ -278,6 +279,26 @@ class TestV2LeavesIsItsOwnTopLevelPage:
 
         assert response.status_code == 200
         assert 'data-tab="leaveboard"' not in response.text
+
+
+class TestV2StaticAssetUrlsAreVersioned:
+    """The edge in front of the app (nginx/Cloudflare) caches
+    /fingerprintlogs/static/** BY URL for hours, ignoring our no-store
+    header — so every asset URL a v2 page serves must carry this deploy's
+    ``?v=`` stamp (app/utils/static_asset_version.py), or a deploy can keep
+    running the previous release's JS for up to 4 hours.
+    """
+
+    @pytest.mark.parametrize(
+        "url", ["/fingerprintlogs/v2/leaves", "/fingerprintlogs/v2/shifts-admin"]
+    )
+    def test_nav_and_theme_js_carry_the_deploy_version_stamp(self, test_client, url):
+        response = test_client.get(url, follow_redirects=False)
+
+        assert response.status_code == 200
+        version = asset_version()
+        assert f"nav.js?v={version}" in response.text
+        assert f"theme.js?v={version}" in response.text
 
 
 class TestV1AdminPagesUnchanged:

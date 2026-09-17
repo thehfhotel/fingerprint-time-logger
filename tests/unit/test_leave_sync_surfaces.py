@@ -161,6 +161,12 @@ def test_shared_leave_ui_covers_both_pages_and_hides_internal_reference_vocabula
         assert phrase in source
     assert "HF-LV-" not in source
     assert 'script.src = STATIC_BASE + "leave-sync-ui.js"' in nav
+    # nav.js propagates its OWN ?v=<deploy> stamp onto the leave-sync-ui.js
+    # URL it injects (app/utils/static_asset_version.py stamps nav.js's own
+    # <script src>; the edge cache keys by URL, so an unstamped injected
+    # script could keep serving stale for hours after a deploy).
+    assert "currentScript" in nav
+    assert '"?v="' in nav
 
 
 def test_day_off_is_native_admin_leave_type_not_runtime_only():

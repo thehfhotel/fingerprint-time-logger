@@ -2,7 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from contextlib import asynccontextmanager
 import logging
 import asyncio
@@ -11,6 +11,7 @@ from typing import List
 import json
 from datetime import datetime, timedelta
 from app.utils.cache_busting import cache_manager
+from app.utils.static_asset_version import asset_version, version_static_urls
 
 from app.core.database import engine, Base
 from app.api import (
@@ -267,7 +268,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # Helper function to serve HTML with cache control headers
 def serve_html_with_cache_control(file_path: str):
-    response = FileResponse(file_path)
+    # Stamp every /fingerprintlogs/static/** asset URL with this deploy's
+    # version (see app/utils/static_asset_version.py) so the edge cache in
+    # front of us — which ignores our no-store header and caches by URL —
+    # gets a brand-new cache key for nav.js/theme.js/etc. on every deploy,
+    # instead of serving up to 4 hours of the previous release's assets.
+    with open(file_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    html = version_static_urls(html, asset_version())
+    response = HTMLResponse(content=html)
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"

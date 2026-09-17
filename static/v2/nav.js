@@ -33,6 +33,28 @@
   // constant never leaks into an asset URL (or vice versa).
   var STATIC_BASE = "/fingerprintlogs/static/v2/";
 
+  // ---------- Cache-busting propagation ----------
+  // The server stamps ?v=<deploy> onto every static asset URL it writes into
+  // page HTML (app/utils/static_asset_version.py) because the edge in front
+  // of us (nginx/Cloudflare) caches /fingerprintlogs/static/** BY URL for
+  // hours, ignoring our no-store header. This file is itself loaded with
+  // that stamp already on its own <script src>, so it reads it back off its
+  // own URL and forwards it onto leave-sync-ui.js (see loadPageEnhancement)
+  // — otherwise that injected script would keep its own, unstamped cache
+  // key and could keep serving stale for up to 4 hours after a deploy even
+  // though nav.js itself refreshed correctly.
+  var NAV_SCRIPT_SRC = (document.currentScript && document.currentScript.src) || "";
+
+  function assetVersion() {
+    var src = NAV_SCRIPT_SRC;
+    if (!src) {
+      var el = document.querySelector('script[src*="/static/v2/nav.js"]');
+      src = el ? el.src : "";
+    }
+    var m = src.match(/[?&]v=([^&]+)/);
+    return m ? m[1] : null;
+  }
+
   // ---------- Icons (inline stroke-width-2 SVG — never an emoji, never a font) ----------
   function icon(paths) {
     return (
@@ -352,7 +374,8 @@
     if (page !== "leaves" && page !== "monthly") return;
     if (document.querySelector('script[data-v2-leave-sync="1"]')) return;
     var script = document.createElement("script");
-    script.src = STATIC_BASE + "leave-sync-ui.js";
+    var version = assetVersion();
+    script.src = STATIC_BASE + "leave-sync-ui.js" + (version ? "?v=" + version : "");
     script.async = false;
     script.setAttribute("data-v2-leave-sync", "1");
     document.head.appendChild(script);

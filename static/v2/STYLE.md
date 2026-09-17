@@ -165,6 +165,18 @@ That is the whole page-side contract. `nav.js` then:
 injection cannot push the page down under the reader. It exits silently if the
 placeholder is absent — a page without it simply has no nav, which is a bug.
 
+**Asset URLs are stamped server-side, per deploy — never hand-write `?v=`.**
+`serve_html_with_cache_control` (app/main_unified.py) rewrites every
+`/fingerprintlogs/static/**` `src=`/`href=` in a page's HTML to carry this
+release's `?v=<deploy>` (app/utils/static_asset_version.py) before it ever
+reaches the browser, because the edge in front of us caches those URLs by
+URL for hours regardless of our `no-store` header. A page's own `<script
+src="/fingerprintlogs/static/v2/nav.js">` needs no query string in the
+source file — it gets one at serve time. `nav.js` reads that stamp back off
+its own `<script>` tag and forwards it onto the `leave-sync-ui.js` it
+injects, so a script written into the DOM after load still gets a fresh
+cache key too.
+
 `data-page` is the destination **id**, one of:
 
 `index` · `live` · `monthly` · `shifts-admin` · `leaves` · `employees` ·
