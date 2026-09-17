@@ -302,8 +302,10 @@ def test_date_picker_upper_boundary_never_sends_min_equal_max(db):
     last = service.today() + timedelta(days=366)
     data = service.action_data('from', 'TEST-A', uuid4().hex, 'sick')
     message = service._messages(postback(data, last.isoformat()), db, employee(db))[0]
-    assert len(message['quickReply']['items']) == 1
-    assert action(message)['type'] == 'postback'
+    actions = [item['action'] for item in message['quickReply']['items']]
+    assert [item['label'] for item in actions] == ['ลา 1 วัน', 'ครึ่งวันเช้า', 'ครึ่งวันบ่าย']
+    assert all(item['type'] == 'postback' for item in actions)
+    assert not any(item['type'] == 'datetimepicker' for item in actions)
 
 
 def test_image_non_ascii_signature_fails_closed(db):
