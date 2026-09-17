@@ -1,7 +1,7 @@
 """Integration hook for leave intake and command discovery in HF ภายใน."""
 from __future__ import annotations
 
-LEAVE_BUTTON_MARKER = "hf-leave-palette-v3"
+LEAVE_BUTTON_MARKER = "hf-leave-palette-v4"
 LEAVE_POSTBACK_DATA = "cmd=palette&leave=1"
 
 # Keep this short enough to scan on a phone, but explicit enough that an
@@ -41,6 +41,14 @@ def _install_help_body(message: dict) -> None:
     body_contents = body.get("contents")
     if not isinstance(body_contents, list):
         return
+
+    # Preserve the default greeting as the first line. The command guide is
+    # supplemental discovery text and must never replace "มีอะไรให้ช่วยคะ".
+    if any(
+        isinstance(item, dict) and item.get("text") == HELP_TEXT
+        for item in body_contents
+    ):
+        return
     help_block = {
         "type": "text",
         "text": HELP_TEXT,
@@ -48,7 +56,7 @@ def _install_help_body(message: dict) -> None:
         "size": "sm",
     }
     if body_contents and isinstance(body_contents[0], dict) and body_contents[0].get("type") == "text":
-        body_contents[0] = help_block
+        body_contents.insert(1, help_block)
     else:
         body_contents.insert(0, help_block)
 
