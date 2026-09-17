@@ -14,19 +14,21 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.models import Employee
-from app.services import (staff_bot, staff_leave, staff_leave_manage,
-                          staff_leave_options, staff_leave_palette,
-                          staff_oa_menu, staff_oa_service)
+from app.services import (staff_bot, staff_leave, staff_leave_family_report,
+                          staff_leave_manage, staff_leave_options,
+                          staff_leave_palette, staff_oa_menu, staff_oa_service)
 from app.api.staff_leave import image_router
 from app.api.deployment_ready import router as deployment_ready_router
 
 logger = logging.getLogger(__name__)
 
 # Extend the default "HF ภายใน • มีอะไรให้ช่วยคะ" palette with แจ้งลา,
-# add day-off + half-day options, then install employee-side edit/cancel behavior.
+# add day-off + half-day options, install employee-side edit/cancel behavior,
+# then add new leaves to HF Family's existing scheduled free reply-token report.
 staff_leave_palette.install(staff_bot)
 staff_leave_options.install(staff_leave)
 staff_leave_manage.install(staff_leave)
+staff_leave_family_report.install(staff_bot, staff_oa_service)
 
 router = APIRouter()
 router.include_router(image_router)
