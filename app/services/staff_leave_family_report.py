@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Dict, List, Optional, Sequence
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.core import database
 from app.models.staff_leave import StaffLeaveRequest
 from app.services import staff_leave
@@ -60,8 +62,14 @@ def _to_item(row: StaffLeaveRequest) -> FamilyLeaveItem:
 def fetch_unreported(limit: int) -> tuple[List[FamilyLeaveItem], int]:
     """Oldest new leaves not yet carried by HF Family's slot report.
 
-    Rejected/cancelled requests are deliberately excluded.  Approved requests
+    Rejected/cancelled requests are deliberately excluded. Approved requests
     remain reportable if a manager reviewed them before the next slot.
+
+    Leave reporting is an optional section on top of the existing HF Family
+    slot report. If the leave schema/store is temporarily unavailable (for
+    example in an older unit-test schema or during a failed migration), this
+    section fails dark instead of breaking maintenance/feedback reporting.
+    Unreported rows remain untouched and can be retried in a later slot.
     """
     if limit <= 0:
         return [], 0
@@ -76,6 +84,12 @@ def fetch_unreported(limit: int) -> tuple[List[FamilyLeaveItem], int]:
             StaffLeaveRequest.created_at.asc(), StaffLeaveRequest.id.asc()
         ).limit(limit).all()
         return [_to_item(row) for row in rows], total
+    except SQLAlchemyError as exc:
+        logger.warning(
+            "HF Family leave read unavailable; keeping base slot report: %s",
+            type(exc).__name__,
+        )
+        return [], 0
     finally:
         db.close()
 
@@ -196,7 +210,7 @@ def install(staff_bot_module, staff_oa_service_module) -> None:
             current = str(messages[text_index].get("text") or "")
             combined = current + ("\n\n" if current else "") + section
             # A very large maintenance/feedback digest should not force us to
-            # send images without their leave explanation.  In that rare case
+            # send images without their leave explanation. In that rare case
             # use a separate text object and reduce the image batch by one.
             if len(combined) <= staff_bot_module.MAX_MESSAGE_CHARS:
                 messages[text_index] = {**messages[text_index], "text": combined}
