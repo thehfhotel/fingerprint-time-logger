@@ -863,8 +863,10 @@ configured to allow it:
 
 2500x843 (≤3 buttons) or 2500x1686 (4–6 buttons), PNG, well under LINE's
 1MB cap. Thai labels use the bundled **Prompt** font
-(`assets/fonts/`, SIL OFL 1.1 — license alongside). Preview without
-credentials:
+(`assets/fonts/`, SIL OFL 1.1 — license alongside). Icons are pixel-exact
+crops of owner-approved HF Internal artwork, never drawn or generated in
+code — see `assets/staff_oa/icons/README.md` for provenance and the
+glyph→asset fit table. Preview without credentials:
 
 ```bash
 python scripts/staff_oa_render_menus.py --out /tmp/staffhub-previews

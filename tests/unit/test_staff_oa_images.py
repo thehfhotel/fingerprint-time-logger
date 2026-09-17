@@ -37,15 +37,30 @@ The empty base is why nothing here renders ``buttons_for(set())``: there is
 no image for a variant with no buttons, ``menu_size(0)`` raises, and the
 sync script never asks for one (``base_has_buttons`` in
 scripts/staff_oa_sync.py). The one-button cases below stay synthetic for a
-second reason: they drive a PARTICULAR glyph and a particular pixel through
+second reason: they drive a PARTICULAR asset and a particular pixel through
 the renderer, which a real variant could not do.
+
+REAL VS SYNTHETIC VARIANTS BELOW
+---------------------------------
+Real variants (``buttons_for({...})``) exercise the production grant table
+end to end. Synthetic buttons (``_synthetic_buttons`` / ``_buttons_of_count``)
+mint button lists no grant set produces, so the button-count-driven layout
+code (``menu_size`` / ``menu_rows`` / ``menu_cells``) stays covered for the
+counts (1, 2, 3, 5) production never reaches. Synthetic buttons always name
+one of the seven canonical asset keys directly (e.g. "time", "leave") rather
+than a MenuButton glyph alias, so they exercise real, approved artwork
+through ``resolve_glyph_asset``'s identity entries — never a placeholder.
 """
+import inspect
 import io
+import itertools
+import json
+import os
+import shutil
+from pathlib import Path
 
 import pytest
-from PIL import Image
-
-import itertools
+from PIL import Image, ImageChops, ImageOps, ImageStat
 
 from app.services import staff_oa_images as images
 from app.services.staff_oa_menu import (
@@ -53,6 +68,7 @@ from app.services.staff_oa_menu import (
     MENU_GRANT_APP_IDS,
     MenuButton,
     buttons_for,
+    menu_cells,
     menu_size,
 )
 
@@ -105,19 +121,49 @@ UNREACHABLE_BUTTON_COUNTS = tuple(
     if count not in REAL_VARIANT_BUTTON_COUNTS
 )
 
-# Glyph renderers that no current MenuButton names: the tiles that used them
-# were removed or deferred on 2026-08-14 (เบิกค่าใช้จ่าย/receipt,
-# เงินเดือน/baht, OTA Desk/bell, แม่บ้าน/broom — broom explicitly deferred,
-# not deleted). They are still registered in production, so the synthetic
-# padding below wears them: that keeps the glyph coverage the removed tiles
-# used to provide incidentally. Derived, not listed, so a returning tile
-# silently moves back to being covered by its own real variant instead.
+# Canonical asset keys that resolve_glyph_asset already accepts directly (via
+# GLYPH_ASSET_KEYS's identity entries) but that no current MenuButton names —
+# every real button reaches its asset through one of the seven glyph aliases
+# (broom, wrench, box, tray, clipboard, photo_sheet, wrench_list) instead.
+# Used to pad synthetic buttons for counts no grant set reaches, so those
+# fixtures wear canonical-key names nothing else in this file already covers
+# and always resolve to real, approved artwork. Derived, not listed, so a
+# canonical key a future MenuButton starts naming directly drops itself out
+# of the padding pool automatically.
 ORPHANED_GLYPHS = tuple(
-    sorted(set(images._GLYPH_RENDERERS) - {button.glyph for button in MENU_BUTTONS})
+    sorted(set(images.GLYPH_ASSET_KEYS) - {button.glyph for button in MENU_BUTTONS})
 )
-PADDING_GLYPHS = ORPHANED_GLYPHS or tuple(sorted(images._GLYPH_RENDERERS))
+PADDING_GLYPHS = ORPHANED_GLYPHS or tuple(sorted(images.GLYPH_ASSET_KEYS))
 
 SYNTHETIC_GRANT = "extra"
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CROPS_MANIFEST_PATH = REPO_ROOT / "assets" / "staff_oa" / "icons" / "crops.json"
+
+EXPECTED_ICON_ASSETS = {
+    "leave": "leave_calendar.png",
+    "time": "time_clock.png",
+    "announcement": "announcement_megaphone.png",
+    "handbook": "handbook_document.png",
+    "maintenance": "maintenance_tools.png",
+    "contacts": "team_contacts.png",
+    "suggestions": "suggestions_chat.png",
+}
+
+# The identity entries (canonical key -> itself) plus the seven MenuButton
+# glyph aliases production actually uses today, spelled out on purpose: this
+# file is where that mapping contract is pinned, so it must not be derived
+# from GLYPH_ASSET_KEYS itself.
+EXPECTED_GLYPH_ASSET_KEYS = {
+    **{key: key for key in EXPECTED_ICON_ASSETS},
+    "broom": "contacts",
+    "wrench": "maintenance",
+    "box": "handbook",
+    "tray": "time",
+    "clipboard": "handbook",
+    "photo_sheet": "suggestions",
+    "wrench_list": "maintenance",
+}
 
 
 def _render(buttons):
@@ -157,19 +203,6 @@ def _with_glyph(button, glyph):
     )
 
 
-def _report_button():
-    """One of the two SHARED tiles in the real table — รายงานแม่บ้าน.
-
-    Found by label rather than "the shared tile" now that จัดการงานซ่อม is
-    also shared (2026-09-06): a grant-set filter would return two rows and
-    no longer identify either uniquely.
-    """
-    shared = [b for b in MENU_BUTTONS if b.label == "รายงานแม่บ้าน"]
-    assert len(shared) == 1, "expected exactly one รายงานแม่บ้าน row"
-    assert len(shared[0].grant_app_ids) > 1, "รายงานแม่บ้าน must still be shared"
-    return shared[0]
-
-
 def _buttons_of_count(button_count):
     """A legal button list of exactly ``button_count`` buttons, for counts no
     grant set produces.
@@ -180,9 +213,6 @@ def _buttons_of_count(button_count):
     extras it takes) is the point: the sibling sync test broke once already by
     assuming a button count the real table no longer produced, and this keeps
     working whether the table shrinks again or the cap is somehow raised.
-
-    Was ``_padded_to``; renamed because "padded" stopped describing what it
-    usually does on 2026-09-02.
     """
     real = list(MENU_BUTTONS[:button_count])
     return tuple(real + list(_synthetic_buttons(button_count - len(real))))
@@ -275,68 +305,286 @@ class TestBundledThaiFont:
         assert "assets" in path and "Prompt" in path
 
 
-class TestRenderMenuImage:
-    def test_single_button_menu_renders_half_height_png(self):
-        # Was test_base_menu_renders_half_height_png, rendering
-        # buttons_for(set()) back when base carried the clock-in tile. Base
-        # is empty since 2026-08-14 and has no image at all, so the
-        # one-button canvas is exercised synthetically — it is still live
-        # code (menu_size/menu_rows both special-case small counts) and one
-        # button is what any single returning tile would produce.
-        png_bytes, image = _render(_synthetic_buttons(1))
-        assert image.format == "PNG"
-        assert image.size == HALF_HEIGHT_CANVAS
-        assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
+class TestApprovedIconAssetRegistry:
+    """Item 1: ICON_ASSETS is exactly the seven approved keys, every file it
+    names exists under ICON_ROOT, and that file set matches crops.json's —
+    the manifest and the renderer must never drift apart."""
 
-    def test_the_empty_base_variant_cannot_be_rendered(self):
-        # Not a gap in coverage — a contract. render_menu_image goes through
-        # menu_size(), so a 0-button variant raises rather than silently
-        # producing a blank burgundy rectangle that the sync would then
-        # upload to LINE as if it were a menu.
-        with pytest.raises(ValueError):
-            images.render_menu_image(buttons_for(frozenset()))
+    def test_icon_assets_has_exactly_the_seven_canonical_keys(self):
+        assert images.ICON_ASSETS == EXPECTED_ICON_ASSETS
 
-    def test_housekeeping_menu_renders_full_height_png(self):
-        # This test has followed the maid menu up and down: full height when
-        # the variant was 5 buttons, half when the 2026-08-14 re-scope cut it
-        # to 2, and full again since รับของมาส่ง made it 4 (2026-08-17), then
-        # 5 (รายงานแม่บ้าน, 2026-09-02) and 6 (จัดการงานซ่อม widened into a
-        # shared tile, 2026-09-06). It is no longer the ONLY real variant with
-        # an image — that stopped being true on 2026-09-01 — so it is pinned
-        # against the maid grant's own count rather than the whole table's.
-        # Still the only variant that exercises the broom/box/tray glyphs
-        # together.
-        png_bytes, image = _render_and_open({"housekeeping"})
-        assert len(buttons_for({"housekeeping"})) == HOUSEKEEPING_BUTTON_COUNT
-        assert image.format == "PNG"
-        assert image.size == FULL_HEIGHT_CANVAS
-        assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
+    def test_icon_root_is_the_repo_assets_directory(self):
+        expected = REPO_ROOT / "assets" / "staff_oa" / "icons"
+        assert os.path.realpath(images.ICON_ROOT) == os.path.realpath(str(expected))
 
-    def test_reception_menu_renders_full_height_png(self):
-        # The reception variant is four real tiles since 2026-09-06:
-        # สถานะห้อง, the shared report tile, งานซ่อมค้าง (message action), and
-        # จัดการงานซ่อม (uri) — the first real variant to use the 2+2 layout.
-        # Its glyphs — clipboard, photo_sheet, wrench_list, and the reused
-        # wrench — are drawn by nothing else but the maid menu (wrench), so
-        # this is where any of them raising at render time would surface as
-        # more than the registry sweep at the bottom of the file.
-        png_bytes, image = _render_and_open({"reception"})
-        assert len(buttons_for({"reception"})) == RECEPTION_BUTTON_COUNT == 4
-        assert image.format == "PNG"
-        assert image.size == FULL_HEIGHT_CANVAS
-        assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
+    def test_every_asset_file_exists_under_icon_root(self):
+        for key, filename in images.ICON_ASSETS.items():
+            path = images.icon_asset_path(key)
+            assert path == os.path.join(images.ICON_ROOT, filename)
+            assert os.path.isfile(path), f"{key} -> {filename} missing under ICON_ROOT"
 
-    def test_both_grants_render_the_six_button_menu(self):
-        # An employee holding housekeeping AND reception — the maximal real
-        # variant, six cells filling the 3+3 grid, which is LINE's cap and the
-        # count where the PNG is largest and the 1MB limit closest. It is a
-        # REAL variant since 2026-09-02; until then this canvas could only be
-        # reached with synthetic padding.
-        buttons = buttons_for({"housekeeping", "reception"})
-        assert len(buttons) == MAX_REAL_BUTTON_COUNT == LINE_BUTTON_CAP
+    def test_icon_assets_files_equal_crops_json_names(self):
+        with open(CROPS_MANIFEST_PATH, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        manifest_names = set(manifest["crops"].keys())
+        assert set(images.ICON_ASSETS.values()) == manifest_names
+        on_disk = {p.name for p in Path(images.ICON_ROOT).glob("*.png")}
+        assert on_disk == manifest_names
+
+
+class TestApprovedIconAssetFiles:
+    """Item 2: every asset, opened directly (not via load_icon_asset's own
+    ``.convert("RGBA")``, which would mask an originally wrong mode), is a
+    344x293 RGBA PNG — the guard against the old 64px JPEG thumbnails."""
+
+    @pytest.mark.parametrize("key", sorted(EXPECTED_ICON_ASSETS))
+    def test_asset_is_a_344x293_rgba_png(self, key):
+        path = images.icon_asset_path(key)
+        with Image.open(path) as opened:
+            assert opened.format == "PNG"
+            assert opened.mode == "RGBA"
+            assert opened.size == (344, 293)
+
+
+class TestGlyphResolution:
+    """Item 3: every MenuButton glyph resolves to a real, existing asset, and
+    the whole glyph->key table matches the owner-approved mapping exactly."""
+
+    def test_glyph_asset_keys_matches_the_approved_table_exactly(self):
+        assert images.GLYPH_ASSET_KEYS == EXPECTED_GLYPH_ASSET_KEYS
+
+    @pytest.mark.parametrize(
+        "button", MENU_BUTTONS, ids=[button.label for button in MENU_BUTTONS]
+    )
+    def test_every_menu_button_glyph_resolves_to_an_existing_asset(self, button):
+        key = images.resolve_glyph_asset(button.glyph)
+        assert key in images.ICON_ASSETS
+        assert key == EXPECTED_GLYPH_ASSET_KEYS[button.glyph]
+        assert os.path.isfile(images.icon_asset_path(key))
+
+
+class TestUnknownGlyphFailsClosed:
+    """Item 4: a glyph naming nothing in the registry must stop rendering,
+    never silently skip the icon."""
+
+    def test_unknown_glyph_raises_approved_asset_error(self):
+        real_button = MENU_BUTTONS[0]
+        unknown = _with_glyph(real_button, "no-such-glyph")
+        with pytest.raises(images.ApprovedAssetError):
+            images.render_menu_image((unknown,))
+
+    def test_resolve_glyph_asset_itself_raises_for_unknown_glyph(self):
+        with pytest.raises(images.ApprovedAssetError):
+            images.resolve_glyph_asset("no-such-glyph")
+
+
+@pytest.fixture
+def isolated_icon_root(tmp_path, monkeypatch):
+    """A writable copy of the real icon directory, swapped in for ICON_ROOT
+    for the duration of one test — so a test can delete or corrupt an asset
+    without touching the committed files. Clears the lru_cache before AND
+    after, so neither a previous test's cached Image nor this test's leaks
+    across the ICON_ROOT swap."""
+    icons_copy = tmp_path / "icons"
+    shutil.copytree(images.ICON_ROOT, icons_copy)
+    monkeypatch.setattr(images, "ICON_ROOT", str(icons_copy))
+    images.load_icon_asset.cache_clear()
+    yield icons_copy
+    images.load_icon_asset.cache_clear()
+
+
+class TestMissingOrCorruptAssetsFailClosed:
+    """Item 5: any way an approved asset can go missing or stop being a
+    readable PNG must raise ApprovedAssetError, whether or not the current
+    real table even uses that particular asset."""
+
+    # แจ้งซ่อม (wrench) is a real MENU_BUTTONS row and resolves to
+    # "maintenance" — used directly by this test as "the real tile".
+    REAL_TILE = next(button for button in MENU_BUTTONS if button.glyph == "wrench")
+
+    def test_deleting_the_asset_a_real_tile_uses_fails_closed(self, isolated_icon_root):
+        key = images.resolve_glyph_asset(self.REAL_TILE.glyph)
+        (isolated_icon_root / images.ICON_ASSETS[key]).unlink()
+        with pytest.raises(images.ApprovedAssetError):
+            images.render_menu_image((self.REAL_TILE,))
+
+    def test_deleting_an_asset_no_current_tile_uses_still_fails_closed(self, isolated_icon_root):
+        # "leave" has no MenuButton glyph naming it today (see
+        # ORPHANED_GLYPHS), so nothing in this render would ask for it by
+        # name — verify_approved_assets() must check it anyway.
+        (isolated_icon_root / images.ICON_ASSETS["leave"]).unlink()
+        with pytest.raises(images.ApprovedAssetError):
+            images.render_menu_image((self.REAL_TILE,))
+
+    def test_jpeg_saved_under_a_png_name_fails_closed(self, isolated_icon_root):
+        key = images.resolve_glyph_asset(self.REAL_TILE.glyph)
+        target = isolated_icon_root / images.ICON_ASSETS[key]
+        Image.new("RGB", (344, 293), (10, 20, 30)).save(target, format="JPEG")
+        with pytest.raises(images.ApprovedAssetError):
+            images.render_menu_image((self.REAL_TILE,))
+
+    def test_load_icon_asset_itself_raises_for_a_missing_file(self, isolated_icon_root):
+        (isolated_icon_root / images.ICON_ASSETS["leave"]).unlink()
+        with pytest.raises(images.ApprovedAssetError):
+            images.load_icon_asset("leave")
+
+
+class TestNoLegacyFallback:
+    """Item 6: nothing from the old programmatic-glyph-drawing era survives —
+    no registry, no ``_glyph_*`` helpers, no leftover meal tile."""
+
+    def test_no_glyph_renderers_registry(self):
+        assert not hasattr(images, "_GLYPH_RENDERERS")
+
+    def test_no_attribute_name_starts_with_glyph_underscore(self):
+        assert not any(name.startswith("_glyph_") for name in vars(images))
+
+    def test_module_defines_no_function_named_with_a_glyph_prefix(self):
+        assert not any(
+            name.startswith("_glyph") and inspect.isfunction(getattr(images, name))
+            for name in dir(images)
+        )
+
+    def test_source_defines_no_legacy_registry(self):
+        # Not a literal "_glyph_" substring scan: the approved public name
+        # ``resolve_glyph_asset`` legitimately contains that substring, so
+        # the source-level check that actually distinguishes "legacy helper"
+        # from "approved public function" is the simplest one the spec
+        # itself falls back to — no function name starts with "_glyph" (see
+        # the two tests above) — plus the registry name itself never
+        # reappears, literally, anywhere.
+        source = inspect.getsource(images)
+        assert "_GLYPH_RENDERERS" not in source
+
+    def test_meal_is_gone(self):
+        assert "meal" not in images.ICON_ASSETS
+        assert "meal" not in images.GLYPH_ASSET_KEYS
+
+
+REAL_VARIANT_GRANTS = (
+    frozenset({"reception"}),
+    frozenset({"housekeeping"}),
+    frozenset({"housekeeping", "reception"}),
+)
+
+
+class TestRealVariantsRenderWithinLinesContract:
+    """Item 7: PNG, exact canvas, under LINE's 1MB cap, for every real,
+    non-empty variant."""
+
+    @pytest.mark.parametrize(
+        "grants", REAL_VARIANT_GRANTS, ids=lambda g: "+".join(sorted(g))
+    )
+    def test_real_variant_is_a_conforming_png(self, grants):
+        buttons = buttons_for(grants)
         png_bytes, image = _render(buttons)
         assert image.format == "PNG"
-        assert image.size == FULL_HEIGHT_CANVAS
+        assert image.size == menu_size(len(buttons))
+        assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
+
+
+def _expected_paste(button, cell):
+    """Reproduce the renderer's own icon_size/centre/contain math (spec
+    section "Rendering rules") to get the exact box the artwork should land
+    in — never a hand-guessed rectangle."""
+    key = images.resolve_glyph_asset(button.glyph)
+    asset = images.load_icon_asset(key)
+    icon_size = max(230, min(400, min(cell["width"], cell["height"]) * 48 // 100))
+    cx = cell["x"] + cell["width"] // 2
+    cy = cell["y"] + cell["height"] * 39 // 100
+    fitted = ImageOps.contain(asset, (icon_size, icon_size), method=Image.Resampling.LANCZOS)
+    left = cx - fitted.width // 2
+    top = cy - fitted.height // 2
+    box = (left, top, left + fitted.width, top + fitted.height)
+    return fitted, box
+
+
+def _fraction_differs_from_surface(region, threshold=24):
+    surface_plane = Image.new("RGB", region.size, images.SURFACE)
+    diff = ImageChops.difference(region, surface_plane)
+    bands = diff.split()
+    masks = [band.point(lambda v: 255 if v > threshold else 0) for band in bands]
+    combined = masks[0]
+    for mask in masks[1:]:
+        combined = ImageChops.lighter(combined, mask)
+    hits = ImageStat.Stat(combined).sum[0] / 255
+    total = region.size[0] * region.size[1]
+    return hits / total
+
+
+class TestArtworkIsActuallyVisible:
+    """Item 8: the pasted artwork, not a blank or mis-cropped tile — checked
+    against decoded pixels only, never a rasteriser-dependent constant."""
+
+    @pytest.mark.parametrize(
+        "grants", REAL_VARIANT_GRANTS, ids=lambda g: "+".join(sorted(g))
+    )
+    def test_every_cell_shows_its_icon(self, grants):
+        buttons = buttons_for(grants)
+        png_bytes, _image = _render(buttons)
+        rendered = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        cells = menu_cells(len(buttons))
+        for button, cell in zip(buttons, cells):
+            fitted, box = _expected_paste(button, cell)
+            region = rendered.crop(box)
+
+            # At least a fifth of the paste box must visibly differ from
+            # plain SURFACE white — proves something was actually drawn.
+            assert _fraction_differs_from_surface(region) >= 0.20, (
+                f"{button.label!r} ({button.glyph!r}) looks blank in its cell"
+            )
+
+            # The region's mean colour must match the same asset, contained
+            # the same way, composited on the same white — proves it is
+            # THIS asset (not a mismatched crop or a stale cached one).
+            white_canvas = Image.new("RGB", fitted.size, images.SURFACE)
+            if fitted.mode == "RGBA":
+                white_canvas.paste(fitted, (0, 0), fitted)
+            else:
+                white_canvas.paste(fitted, (0, 0))
+            actual_mean = ImageStat.Stat(region).mean
+            expected_mean = ImageStat.Stat(white_canvas).mean
+            for actual, expected in zip(actual_mean, expected_mean):
+                assert abs(actual - expected) <= 8, (
+                    f"{button.label!r} ({button.glyph!r}) mean colour drifted "
+                    f"from its own asset: {actual_mean} vs {expected_mean}"
+                )
+
+
+class TestDistinctAndDeterministicRendering:
+    """Item 9: different assets really do produce different pixels, and the
+    same input always produces the exact same bytes."""
+
+    def test_distinct_glyphs_give_distinct_tiles(self):
+        base = MenuButton(
+            grant_app_id=SYNTHETIC_GRANT,
+            label="ทดสอบ",
+            url="https://synthetic.invalid/",
+            glyph="wrench",
+        )
+        _wrench_bytes, wrench_image = _render((base,))
+        _broom_bytes, broom_image = _render((_with_glyph(base, "broom"),))
+        assert wrench_image.size == broom_image.size
+        assert wrench_image.tobytes() != broom_image.tobytes()
+
+    def test_identical_input_renders_identical_bytes(self):
+        buttons = buttons_for({"reception"})
+        first = images.render_menu_image(buttons)
+        second = images.render_menu_image(buttons)
+        assert first == second
+
+
+class TestCanvasSizingAcrossButtonCounts:
+    """Item 10: the half-height canvas still renders for 1-3 buttons naming
+    canonical keys directly, and the full-height canvas still renders for
+    4-6 (real buttons padded with synthetic canonical-key ones)."""
+
+    @pytest.mark.parametrize("button_count", (1, 2, 3))
+    def test_half_height_canvas_renders_with_canonical_key_glyphs(self, button_count):
+        buttons = _synthetic_buttons(button_count, glyphs=("time", "leave", "announcement"))
+        png_bytes, image = _render(buttons)
+        assert image.format == "PNG"
+        assert image.size == HALF_HEIGHT_CANVAS
         assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
 
     @pytest.mark.parametrize("button_count", (4, 5, 6))
@@ -344,94 +592,10 @@ class TestRenderMenuImage:
         # 4 (reception) and 6 (the maid menu and both-grants alike) are real
         # variants; 5 is not any more — จัดการงานซ่อม's widening (2026-09-06)
         # skipped the maid menu straight from 5 to 6 — so 5 is padded with a
-        # synthetic button via _buttons_of_count(). This test predates that
-        # distinction and stays as a direct, non-grant-driven check of the
-        # 2+2 / 3+2 / 3+3 layout code itself.
+        # synthetic canonical-key button via _buttons_of_count(). This test
+        # predates that distinction and stays as a direct, non-grant-driven
+        # check of the 2+2 / 3+2 / 3+3 layout code itself.
         png_bytes, image = _render(_buttons_of_count(button_count))
         assert image.format == "PNG"
         assert image.size == FULL_HEIGHT_CANVAS
         assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
-
-    def test_canvas_uses_hf_one_burgundy(self):
-        # Same single-button canvas this always used (it was buttons_for(set())
-        # while base still had the clock-in tile); the pixel checked is in the
-        # margin above the panels, so the button count is incidental.
-        _, image = _render(_synthetic_buttons(1))
-        # A pixel on the gutter between panels is the burgundy base coat.
-        assert image.getpixel((1250, 4)) == images.BURGUNDY
-
-
-class TestGlyphRenderers:
-    """Every registered glyph must still draw.
-
-    The real table names broom/wrench/box/tray/clipboard/photo_sheet, so
-    clock, receipt, baht and bell have no tile giving them incidental
-    coverage. They are still in the production registry, so cover them
-    directly — reading the registry rather than listing names, because the
-    registry is the thing under test, and because that is what makes a NEW
-    glyph (clipboard 2026-09-01, photo_sheet 2026-09-02) covered the moment it
-    is registered rather than when someone remembers to add it.
-    """
-
-    @pytest.mark.parametrize("glyph", sorted(images._GLYPH_RENDERERS))
-    def test_glyph_renders_on_a_single_button_menu(self, glyph):
-        png_bytes, image = _render(_synthetic_buttons(1, glyphs=(glyph,)))
-        assert image.format == "PNG"
-        assert image.size == HALF_HEIGHT_CANVAS
-        assert len(png_bytes) < LINE_IMAGE_MAX_BYTES
-
-    def test_the_reception_tile_glyph_actually_paints(self):
-        """Rendering without raising is NOT evidence a glyph drew anything.
-
-        ``_draw_cell`` does ``_GLYPH_RENDERERS.get(button.glyph)`` and simply
-        skips when the name is unknown — no exception, no warning, just a tile
-        with a label and no mark. A typo'd glyph name on a MenuButton would
-        therefore sail through every other test in this file. So compare
-        pixels: the real สถานะห้อง tile against the identical tile naming a
-        glyph that does not exist. If clipboard were misspelled in either
-        module, the two would be identical and this goes red.
-        """
-        reception = buttons_for({"reception"})
-        assert len(reception) == RECEPTION_BUTTON_COUNT
-        assert reception[0].glyph == "clipboard"
-        assert "clipboard" in images._GLYPH_RENDERERS
-
-        board = reception[0]
-        unglyphed = (_with_glyph(board, "no-such-glyph"),)
-        _, drawn = _render((board,))
-        _, undrawn = _render(unglyphed)
-        assert drawn.size == undrawn.size
-        assert drawn.tobytes() != undrawn.tobytes()
-
-    def test_the_report_tile_glyph_actually_paints(self):
-        """Same idiom for photo_sheet, the tile added 2026-09-02.
-
-        A typo'd glyph name is silent — ``_draw_cell`` just skips an unknown
-        one — so "it rendered" proves nothing. The real รายงานแม่บ้าน tile is
-        compared against the identical tile naming a glyph that does not
-        exist; if photo_sheet were misspelled in either module the two would
-        be identical and this goes red.
-        """
-        report = _report_button()
-        assert report.glyph == "photo_sheet"
-        assert "photo_sheet" in images._GLYPH_RENDERERS
-
-        _, drawn = _render((report,))
-        _, undrawn = _render((_with_glyph(report, "no-such-glyph"),))
-        assert drawn.size == undrawn.size
-        assert drawn.tobytes() != undrawn.tobytes()
-
-    def test_the_report_tile_does_not_reuse_the_room_status_mark(self):
-        """The two tiles sit side by side on a receptionist's menu.
-
-        A report tile that drew สถานะห้อง's clipboard would render as the same
-        tile twice — which no other test in this file would catch, because
-        both names are registered and both draw something. Comparing the two
-        marks in the SAME cell (one button, same label, same url) isolates the
-        glyph as the only difference.
-        """
-        report = _report_button()
-        _, as_photo_sheet = _render((report,))
-        _, as_clipboard = _render((_with_glyph(report, "clipboard"),))
-        assert as_photo_sheet.size == as_clipboard.size
-        assert as_photo_sheet.tobytes() != as_clipboard.tobytes()

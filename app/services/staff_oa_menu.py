@@ -11,10 +11,10 @@ import json
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
 
-# v3 = HF Internal soft UI redesign (light cards, navy/teal icon system).
+# v4 = approved HF Internal PNG icon assets from the 2026-09-17 reference art.
 # The version participates in the signature so staff_oa_sync creates fresh
-# LINE rich-menu objects and uploads fresh images instead of reusing v2.
-IMAGE_STYLE_VERSION = 3
+# LINE rich-menu objects and uploads fresh images instead of reusing v3.
+IMAGE_STYLE_VERSION = 4
 
 RICH_MENU_NAME_PREFIX = "staffhub"
 CHAT_BAR_TEXT = "เมนูพนักงาน"

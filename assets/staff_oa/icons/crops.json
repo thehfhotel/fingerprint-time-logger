@@ -1,0 +1,18 @@
+{
+  "format": "hf-staff-oa-icon-crops-v2",
+  "source": {
+    "file": "assets/staff_oa/source/hf_internal_icon_sheet_2026-09-17.png",
+    "sha256": "f6f8b61e1554b5e981f6f12136ad74774da438795d2f5d8bd8b2e7150ffbb93e",
+    "size": [1536, 1024],
+    "supplied": "2026-09-17 22:23 by the owner (HF INTERNAL sheet, 7 tiles)"
+  },
+  "crops": {
+    "leave_calendar.png":         {"box": [28, 89, 372, 382],    "corner_radius": 32, "sheet_label": "แจ้งลา"},
+    "time_clock.png":             {"box": [404, 89, 748, 382],   "corner_radius": 32, "sheet_label": "ลงเวลา"},
+    "announcement_megaphone.png": {"box": [785, 89, 1129, 382],  "corner_radius": 32, "sheet_label": "ประกาศ"},
+    "handbook_document.png":      {"box": [1164, 89, 1508, 382], "corner_radius": 32, "sheet_label": "คู่มือพนักงาน"},
+    "maintenance_tools.png":      {"box": [174, 504, 518, 797],  "corner_radius": 32, "sheet_label": "แจ้งซ่อม"},
+    "team_contacts.png":          {"box": [595, 504, 939, 797],  "corner_radius": 32, "sheet_label": "ติดต่อทีมงาน"},
+    "suggestions_chat.png":       {"box": [1015, 504, 1359, 797], "corner_radius": 32, "sheet_label": "ข้อเสนอแนะ"}
+  }
+}

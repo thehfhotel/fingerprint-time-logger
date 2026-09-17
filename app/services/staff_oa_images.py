@@ -1,49 +1,68 @@
-"""Employee Hub rich-menu image renderer — HF Internal soft UI (2026-09).
+"""Employee Hub rich-menu renderer — approved HF Internal artwork only.
 
-Renders deterministic 2500x843 / 2500x1686 PNGs for the LINE staff OA.
-The interaction model and tap bounds live in :mod:`staff_oa_menu`; this
-module is presentation only.  The visual language is intentionally closer
-to a modern hotel staff app than the former burgundy/gold board: pale canvas,
-white cards, navy typography, teal line icons, and soft blue/mint icon badges.
+Every icon on the Employee Hub rich menu is a pixel-exact crop of the
+owner-approved HF Internal icon sheet supplied 2026-09-17 22:23
+(``assets/staff_oa/source/hf_internal_icon_sheet_2026-09-17.png``), cut by
+``scripts/split_staff_oa_icon_sheet.py`` per ``assets/staff_oa/icons/crops.json``
+into the seven PNGs under ``assets/staff_oa/icons/``. This renderer never
+draws, synthesizes, recolours, filters or sharpens icon artwork — it may
+only scale an approved PNG (LANCZOS) and alpha-paste it onto the card. See
+``assets/staff_oa/icons/README.md`` for full provenance and fit notes.
+
+Canonical asset keys (``ICON_ASSETS``) and the ``MenuButton.glyph`` values
+that resolve to them (``GLYPH_ASSET_KEYS``), with a fit note per glyph
+(owner-confirmed 2026-09-17 — see the README for the full rationale):
+
+    key            asset                          glyphs -> key (fit)
+    leave          leave_calendar.png              leave -> leave (exact)
+    time           time_clock.png                  time -> time (exact); tray -> time (weak)
+    announcement   announcement_megaphone.png      announcement -> announcement (exact)
+    handbook       handbook_document.png           handbook -> handbook (exact); box -> handbook (weak);
+                                                     clipboard -> handbook (reasonable)
+    maintenance    maintenance_tools.png           maintenance -> maintenance (exact); wrench -> maintenance (exact);
+                                                     wrench_list -> maintenance (reasonable)
+    contacts       team_contacts.png               contacts -> contacts (exact); broom -> contacts (reasonable)
+    suggestions    suggestions_chat.png            suggestions -> suggestions (exact); photo_sheet -> suggestions (weak)
+
+(There is no ``meal`` key or asset any more — the approved sheet has seven
+tiles, not eight.)
+
+Fail-closed contract: ``resolve_glyph_asset``, ``icon_asset_path`` and
+``load_icon_asset`` all raise ``ApprovedAssetError`` instead of ever
+falling back to a blank tile or a legacy drawn glyph — for an unknown
+glyph, an unknown asset key, a missing file, an unreadable file, or a file
+that is not a PNG. ``render_menu_image`` calls ``verify_approved_assets()``
+before drawing anything, so even an asset that no button on the requested
+variant currently uses must still be present and valid.
 """
-
+from functools import lru_cache
 import io
 import logging
 import os
 from typing import Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from app.services.staff_oa_menu import MenuButton, menu_cells, menu_size
 
 logger = logging.getLogger(__name__)
-
-# HF Internal soft palette.  BURGUNDY/GOLD names remain as compatibility
-# aliases because older tests and the glyph helpers import those symbols.
-CANVAS = (246, 249, 252)          # #F6F9FC
-SURFACE = (255, 255, 255)         # #FFFFFF
-SURFACE_ALT = (251, 253, 255)     # #FBFDFF
-BORDER = (220, 230, 238)          # #DCE6EE
-SHADOW = (229, 236, 242)          # #E5ECF2
-NAVY = (24, 58, 84)               # #183A54
-NAVY_SOFT = (76, 103, 124)        # #4C677C
-TEAL = (35, 154, 156)             # #239A9C
-TEAL_DETAIL = (91, 185, 185)      # #5BB9B9
-MINT_BADGE = (221, 244, 239)       # #DDF4EF
-BLUE_BADGE = (228, 240, 250)       # #E4F0FA
-WARM_BADGE = (253, 238, 213)       # #FDEED5
-ROSE_BADGE = (250, 229, 226)       # #FAE5E2
-
-# Backward-compatible public palette names used by existing tests/helpers.
-BURGUNDY = CANVAS
-BURGUNDY_LIGHT = SURFACE
-BURGUNDY_DARK = SURFACE_ALT
-GOLD = TEAL
-GOLD_SOFT = TEAL_DETAIL
-WHITE = NAVY
+CANVAS = (246, 249, 252)
+SURFACE = (255, 255, 255)
+SURFACE_ALT = (251, 253, 255)
+BORDER = (220, 230, 238)
+SHADOW = (229, 236, 242)
+NAVY = (24, 58, 84)
+NAVY_SOFT = (76, 103, 124)
+TEAL = (35, 154, 156)
+TEAL_DETAIL = (91, 185, 185)
+MINT_BADGE = (221, 244, 239)
+BLUE_BADGE = (228, 240, 250)
+WARM_BADGE = (253, 238, 213)
+ROSE_BADGE = (250, 229, 226)
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ICON_ROOT = os.path.join(_REPO_ROOT, "assets", "staff_oa", "icons")
 _THAI_FONT_CANDIDATES = (
     os.path.join(_REPO_ROOT, "assets", "fonts", "Prompt-SemiBold.ttf"),
     os.path.join(_REPO_ROOT, "assets", "fonts", "Prompt-Regular.ttf"),
@@ -55,6 +74,41 @@ _FALLBACK_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
 )
+
+# Canonical key -> approved asset filename under ICON_ROOT. Exactly the
+# seven tiles on the 2026-09-17 22:23 HF Internal sheet.
+ICON_ASSETS: dict[str, str] = {
+    "leave": "leave_calendar.png",
+    "time": "time_clock.png",
+    "announcement": "announcement_megaphone.png",
+    "handbook": "handbook_document.png",
+    "maintenance": "maintenance_tools.png",
+    "contacts": "team_contacts.png",
+    "suggestions": "suggestions_chat.png",
+}
+
+# MenuButton.glyph -> canonical key. Identity for the seven canonical keys,
+# plus the seven glyphs MENU_BUTTONS uses today. Naming anything else
+# (clock/receipt/baht/bell/meal, all gone) fails closed.
+GLYPH_ASSET_KEYS: dict[str, str] = {
+    **{key: key for key in ICON_ASSETS},
+    "broom": "contacts",
+    "wrench": "maintenance",
+    "box": "handbook",
+    "tray": "time",
+    "clipboard": "handbook",
+    "photo_sheet": "suggestions",
+    "wrench_list": "maintenance",
+}
+
+
+class ApprovedAssetError(RuntimeError):
+    """Raised whenever an approved icon asset can't be resolved or loaded.
+
+    The renderer fails closed on every path that touches artwork: an
+    unknown glyph, an unknown asset key, a missing file, an unreadable
+    file, or a file that isn't a PNG. There is no blank-tile fallback.
+    """
 
 
 def find_thai_font_path() -> Optional[str]:
@@ -83,176 +137,56 @@ def _english_fallback_label(button: MenuButton) -> str:
     return urlparse(button.url).hostname or button.url
 
 
-def _glyph_clock(draw, x0, y0, size, stroke):
-    draw.ellipse([x0, y0, x0 + size, y0 + size], outline=GOLD, width=stroke)
-    cx, cy = x0 + size // 2, y0 + size // 2
-    draw.line([cx, cy, cx, y0 + size // 4], fill=GOLD, width=stroke)
-    draw.line([cx, cy, x0 + size * 2 // 3, cy + size // 8], fill=GOLD, width=stroke)
-
-
-def _glyph_receipt(draw, x0, y0, size, stroke):
-    inset = size // 8
-    left, right = x0 + inset, x0 + size - inset
-    draw.rounded_rectangle([left, y0, right, y0 + size], radius=size // 12,
-                           outline=GOLD, width=stroke)
-    for i in range(1, 4):
-        y = y0 + i * size // 4
-        draw.line([left + inset, y, right - inset, y], fill=GOLD_SOFT,
-                  width=max(2, stroke // 2))
-
-
-def _glyph_baht(draw, x0, y0, size, stroke):
-    draw.ellipse([x0, y0, x0 + size, y0 + size], outline=GOLD, width=stroke)
-    cx = x0 + size // 2
+def resolve_glyph_asset(glyph: str) -> str:
+    """MenuButton.glyph -> canonical ICON_ASSETS key. Fails closed."""
     try:
-        font = ImageFont.truetype(_FALLBACK_FONT_CANDIDATES[0], size // 2)
-    except OSError:
-        font = ImageFont.load_default(size=size // 2)
-    draw.text((cx, y0 + size // 2), "B", font=font, fill=GOLD, anchor="mm")
-    draw.line([cx, y0 + size // 5, cx, y0 + size * 4 // 5], fill=GOLD,
-              width=max(2, stroke // 2))
+        return GLYPH_ASSET_KEYS[glyph]
+    except KeyError as exc:
+        raise ApprovedAssetError(f"Unknown Employee Hub icon glyph: {glyph!r}") from exc
 
 
-def _glyph_bell(draw, x0, y0, size, stroke):
-    dome_top = y0 + size // 5
-    draw.pieslice([x0, dome_top, x0 + size, dome_top + size], 180, 360,
-                  outline=GOLD, width=stroke)
-    base_y = dome_top + size // 2
-    draw.line([x0, base_y + stroke, x0 + size, base_y + stroke], fill=GOLD, width=stroke)
-    cx, knob = x0 + size // 2, size // 10
-    draw.ellipse([cx - knob, y0, cx + knob, y0 + 2 * knob], outline=GOLD,
-                 width=max(2, stroke // 2))
+def icon_asset_path(asset_key: str) -> str:
+    """Canonical key -> absolute path under ICON_ROOT. Fails closed."""
+    try:
+        filename = ICON_ASSETS[asset_key]
+    except KeyError as exc:
+        raise ApprovedAssetError(f"Unknown approved Staff OA icon asset key: {asset_key!r}") from exc
+    return os.path.join(ICON_ROOT, filename)
 
 
-def _glyph_broom(draw, x0, y0, size, stroke):
-    draw.line([x0 + size * 3 // 4, y0, x0 + size // 3, y0 + size * 3 // 5],
-              fill=GOLD, width=stroke)
-    head = [
-        (x0 + size // 2, y0 + size // 2),
-        (x0 + size // 8, y0 + size * 7 // 8),
-        (x0 + size * 5 // 8, y0 + size),
-        (x0 + size * 3 // 4, y0 + size * 5 // 8),
-    ]
-    draw.polygon(head, outline=GOLD, width=stroke)
-    for i in range(1, 4):
-        x = x0 + size // 8 + i * size // 8
-        draw.line([x, y0 + size * 3 // 4, x + size // 16, y0 + size * 15 // 16],
-                  fill=GOLD_SOFT, width=max(2, stroke // 2))
+@lru_cache(maxsize=len(ICON_ASSETS))
+def load_icon_asset(asset_key: str) -> Image.Image:
+    """Load an approved icon asset as RGBA. Fails closed; never a fallback.
+
+    Cached by asset_key; tests that swap ICON_ROOT call
+    ``load_icon_asset.cache_clear()`` before and after.
+    """
+    path = icon_asset_path(asset_key)
+    if not os.path.isfile(path):
+        raise ApprovedAssetError(f"Approved Staff OA icon asset is missing: {path}")
+    try:
+        with Image.open(path) as opened:
+            if opened.format != "PNG":
+                raise ApprovedAssetError(f"Approved Staff OA icon asset is not a PNG: {path}")
+            return opened.convert("RGBA").copy()
+    except OSError as exc:
+        raise ApprovedAssetError(f"Approved Staff OA icon asset is unreadable: {path}") from exc
 
 
-def _glyph_wrench(draw, x0, y0, size, stroke):
-    draw.line([x0 + size // 6, y0 + size * 5 // 6,
-               x0 + size * 3 // 4, y0 + size // 6], fill=GOLD, width=stroke * 2)
-    head = size * 2 // 5
-    hx0, hy0 = x0 + size - head, y0
-    draw.ellipse([hx0, hy0, hx0 + head, hy0 + head], outline=GOLD, width=stroke)
-    knob = size // 8
-    kx, ky = x0 + size // 6, y0 + size * 5 // 6
-    draw.ellipse([kx - knob, ky - knob, kx + knob, ky + knob], outline=GOLD_SOFT,
-                 width=max(2, stroke // 2))
+def verify_approved_assets() -> None:
+    """Load every approved asset, even ones the current variant skips.
+
+    Fails closed as a whole even when a broken/missing asset belongs to a
+    tile that isn't on the menu being rendered right now.
+    """
+    for asset_key in ICON_ASSETS:
+        load_icon_asset(asset_key)
 
 
-def _glyph_box(draw, x0, y0, size, stroke):
-    inset = size // 8
-    left, right = x0 + inset, x0 + size - inset
-    top, bottom = y0 + size // 6, y0 + size
-    draw.rounded_rectangle([left, top, right, bottom], radius=size // 14,
-                           outline=GOLD, width=stroke)
-    mid_y = top + (bottom - top) // 3
-    draw.line([left, mid_y, right, mid_y], fill=GOLD, width=stroke)
-    cx = x0 + size // 2
-    draw.line([cx, top, cx, mid_y], fill=GOLD_SOFT, width=max(2, stroke // 2))
-
-
-def _glyph_tray(draw, x0, y0, size, stroke):
-    inset = size // 8
-    left, right, cx = x0 + inset, x0 + size - inset, x0 + size // 2
-    tray_top = y0 + size * 2 // 3
-    draw.line([left, tray_top, left, y0 + size], fill=GOLD, width=stroke)
-    draw.line([right, tray_top, right, y0 + size], fill=GOLD, width=stroke)
-    draw.line([left, y0 + size, right, y0 + size], fill=GOLD, width=stroke)
-    draw.line([cx, y0, cx, tray_top - stroke], fill=GOLD, width=stroke)
-    head = size // 4
-    draw.line([cx - head, tray_top - stroke - head, cx, tray_top - stroke], fill=GOLD, width=stroke)
-    draw.line([cx + head, tray_top - stroke - head, cx, tray_top - stroke], fill=GOLD, width=stroke)
-
-
-def _glyph_clipboard(draw, x0, y0, size, stroke):
-    inset = size // 8
-    left, right = x0 + inset, x0 + size - inset
-    top, bottom = y0 + size // 6, y0 + size
-    draw.rounded_rectangle([left, top, right, bottom], radius=size // 14,
-                           outline=GOLD, width=stroke)
-    cx, clip_half = x0 + size // 2, size // 5
-    draw.rounded_rectangle([cx - clip_half, y0, cx + clip_half, top + stroke],
-                           radius=size // 20, outline=GOLD, width=stroke)
-    for i in range(1, 4):
-        y = top + i * (bottom - top) // 4
-        draw.line([left + inset, y, right - inset, y], fill=GOLD_SOFT,
-                  width=max(2, stroke // 2))
-
-
-def _glyph_photo_sheet(draw, x0, y0, size, stroke):
-    left, right = x0 + size // 6, x0 + size * 5 // 6
-    top, bottom = y0, y0 + size * 5 // 6
-    thin = max(2, stroke // 2)
-    draw.rounded_rectangle([left, top, right, bottom], radius=size // 14,
-                           outline=GOLD, width=stroke)
-    tick, tick_x = size // 12, left + size // 6
-    for i in range(1, 4):
-        y = top + i * (bottom - top) // 4
-        draw.line([tick_x - tick, y, tick_x - tick // 3, y + tick], fill=GOLD, width=thin)
-        draw.line([tick_x - tick // 3, y + tick, tick_x + tick, y - tick], fill=GOLD, width=thin)
-        draw.line([tick_x + size // 6, y, right - size // 12, y], fill=GOLD_SOFT, width=thin)
-    lens = size // 3
-    lx0, ly0 = x0 + size - lens, y0 + size - lens
-    draw.ellipse([lx0, ly0, lx0 + lens, ly0 + lens], outline=GOLD, width=stroke)
-    draw.ellipse([lx0 + lens // 4, ly0 + lens // 4,
-                  lx0 + lens * 3 // 4, ly0 + lens * 3 // 4], outline=GOLD_SOFT, width=thin)
-
-
-def _glyph_wrench_list(draw, x0, y0, size, stroke):
-    half, thin = size // 2, max(2, stroke // 2)
-    draw.line([x0 + half // 6, y0 + half * 5 // 6,
-               x0 + half * 3 // 4, y0 + half // 6], fill=GOLD, width=stroke)
-    head = half * 2 // 5
-    hx0 = x0 + half - head
-    draw.ellipse([hx0, y0, hx0 + head, y0 + head], outline=GOLD, width=thin)
-    knob = half // 8
-    kx, ky = x0 + half // 6, y0 + half * 5 // 6
-    draw.ellipse([kx - knob, ky - knob, kx + knob, ky + knob], outline=GOLD_SOFT, width=thin)
-    rows_left, rows_right = x0 + half + size // 10, x0 + size - size // 12
-    for i in (1, 2):
-        y = y0 + size * i // 3
-        draw.line([rows_left, y, rows_right, y], fill=GOLD_SOFT, width=thin)
-
-
-_GLYPH_RENDERERS = {
-    "clock": _glyph_clock,
-    "clipboard": _glyph_clipboard,
-    "photo_sheet": _glyph_photo_sheet,
-    "tray": _glyph_tray,
-    "receipt": _glyph_receipt,
-    "baht": _glyph_baht,
-    "bell": _glyph_bell,
-    "broom": _glyph_broom,
-    "wrench": _glyph_wrench,
-    "wrench_list": _glyph_wrench_list,
-    "box": _glyph_box,
-}
-
-_BADGES = (BLUE_BADGE, MINT_BADGE, WARM_BADGE, ROSE_BADGE)
-
-
-def _draw_cell(draw, button, cell, index, font, thai_capable):
+def _draw_cell(image, draw, button, cell, font, thai_capable):
     x0, y0 = cell["x"], cell["y"]
     x1, y1 = x0 + cell["width"], y0 + cell["height"]
-    margin = 28
-    radius = 48
-
-    # Subtle offset shadow followed by a clean white card.  It remains flat
-    # enough to compress well below LINE's 1 MB upload limit.
-    shadow_offset = 10
+    margin, radius, shadow_offset = 28, 48, 10
     draw.rounded_rectangle(
         [x0 + margin + shadow_offset, y0 + margin + shadow_offset,
          x1 - margin + shadow_offset, y1 - margin + shadow_offset],
@@ -264,51 +198,35 @@ def _draw_cell(draw, button, cell, index, font, thai_capable):
     )
 
     cell_min = min(cell["width"], cell["height"])
-    badge_size = max(230, min(390, cell_min * 48 // 100))
-    badge_x = x0 + cell["width"] // 2
-    badge_y = y0 + cell["height"] * 39 // 100
-    half_badge = badge_size // 2
-    draw.ellipse(
-        [badge_x - half_badge, badge_y - half_badge,
-         badge_x + half_badge, badge_y + half_badge],
-        fill=_BADGES[index % len(_BADGES)],
+    icon_size = max(230, min(400, cell_min * 48 // 100))
+    cx = x0 + cell["width"] // 2
+    cy = y0 + cell["height"] * 39 // 100
+    asset_key = resolve_glyph_asset(button.glyph)
+    fitted = ImageOps.contain(
+        load_icon_asset(asset_key), (icon_size, icon_size), method=Image.Resampling.LANCZOS
     )
-
-    glyph_size = badge_size * 54 // 100
-    stroke = max(7, glyph_size // 15)
-    glyph_x = badge_x - glyph_size // 2
-    glyph_y = badge_y - glyph_size // 2
-    renderer = _GLYPH_RENDERERS.get(button.glyph)
-    if renderer:
-        renderer(draw, glyph_x, glyph_y, glyph_size, stroke)
+    image.paste(fitted, (cx - fitted.width // 2, cy - fitted.height // 2), fitted)
 
     label = button.label if thai_capable else _english_fallback_label(button)
     label_y = y0 + cell["height"] * 75 // 100
-    draw.text((x0 + cell["width"] // 2, label_y), label, font=font,
-              fill=NAVY, anchor="mm")
-
-    # Tiny teal pill: enough brand accent to connect the cards without the
-    # heavy underline of the old design.
+    draw.text((cx, label_y), label, font=font, fill=NAVY, anchor="mm")
     pill_w, pill_h = 92, 8
     pill_y = min(label_y + font.size * 2 // 3, y1 - margin - 26)
     draw.rounded_rectangle(
-        [x0 + cell["width"] // 2 - pill_w // 2, pill_y,
-         x0 + cell["width"] // 2 + pill_w // 2, pill_y + pill_h],
+        [cx - pill_w // 2, pill_y, cx + pill_w // 2, pill_y + pill_h],
         radius=pill_h // 2, fill=TEAL,
     )
 
 
 def render_menu_image(buttons: Sequence[MenuButton]) -> bytes:
-    """Render one Role Menu PNG at the exact LINE canvas size."""
+    verify_approved_assets()
     width, height = menu_size(len(buttons))
     cells = menu_cells(len(buttons))
     image = Image.new("RGB", (width, height), CANVAS)
     draw = ImageDraw.Draw(image)
-
     label_font, thai_capable = _load_label_font(size=100)
-    for index, (button, cell) in enumerate(zip(buttons, cells)):
-        _draw_cell(draw, button, cell, index, label_font, thai_capable)
-
+    for button, cell in zip(buttons, cells):
+        _draw_cell(image, draw, button, cell, label_font, thai_capable)
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
+    image.save(buffer, format="PNG", optimize=True, compress_level=9)
     return buffer.getvalue()
