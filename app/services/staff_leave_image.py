@@ -45,12 +45,17 @@ def render_png(row: StaffLeaveRequest, rendered_at: datetime | None = None) -> b
     draw.text((70, 34), "HF ภายใน", font=_font(54, True), fill="white")
     draw.text((70, 112), "ใบแจ้งลา / LEAVE REQUEST", font=_font(36), fill="white")
     y = 260
-    status_colors = {"pending": "#946900", "approved": accent,
-                     "rejected": "#A13030", "cancelled": muted}
-    draw.rounded_rectangle((70, y, 1010, y + 100), radius=16,
-                           fill=status_colors[row.status])
-    draw.text((100, y + 12), STATUSES[row.status], font=_font(48, True), fill="white")
-    y += 132
+
+    # ``pending`` remains an internal review/concurrency state only. Employees
+    # should not see it as a status on the shareable leave image. Final states
+    # still appear because approved/rejected/cancelled materially change the
+    # meaning of a previously shared receipt.
+    if row.status != "pending":
+        status_colors = {"approved": accent, "rejected": "#A13030", "cancelled": muted}
+        draw.rounded_rectangle((70, y, 1010, y + 100), radius=16,
+                               fill=status_colors.get(row.status, muted))
+        draw.text((100, y + 12), STATUSES[row.status], font=_font(48, True), fill="white")
+        y += 132
 
     def block(label: str, value: str):
         nonlocal y
