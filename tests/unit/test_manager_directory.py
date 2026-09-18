@@ -3,14 +3,23 @@ Unit tests for the estate manager directory (app/services/manager_directory.py).
 
 The admin allowlist is no longer six emails hardcoded in source: it tracks the
 HF Portal's live "HF Managers" tier via GET /portal-api/directory/managers, with
-the old in-code list kept as the floor. These tests pin the resolution layering,
-the fail-closed behaviour of every failure mode, and the properties that make
-the guard hot path safe (no network I/O, no partial reads).
+an operator-configured MANAGER_ADMIN_EMAILS floor (comma-separated, lower-cased,
+stripped; empty when unset) used when no live snapshot has ever been obtained.
+These tests pin the resolution layering, the fail-closed behaviour of every
+failure mode, and the properties that make the guard hot path safe (no network
+I/O, no partial reads).
 
 No test here touches the network: ``manager_directory._http_get`` is the single
 seam for the one HTTP call in the module, and the autouse fixture replaces it
 with a raiser so a test that forgets to install a fake fails loudly instead of
 dialing out.
+
+PROTECTED/OTHER_MANAGER/NEW_MANAGER/OUTSIDER below are clearly-fake
+``@example.invalid``/``@thehfhotel.org`` addresses, not real people's emails.
+The ``isolated_directory`` fixture installs PROTECTED + OTHER_MANAGER (plus
+four more fake addresses, mirroring production's 6-manager floor shape) as
+MANAGER_ADMIN_EMAILS for every test in this file, via monkeypatch — nothing
+is hardcoded in application source any more.
 """
 import threading
 import time
@@ -19,10 +28,23 @@ import pytest
 
 from app.services import cf_access_service, manager_directory
 
-PROTECTED = manager_directory.PROTECTED_ADMIN  # admin-1@example.invalid
-OTHER_MANAGER = "admin-3@example.invalid"          # in the in-code floor
+PROTECTED = "admin-1@example.invalid"  # first in _DEFAULT_FLOOR -> the break-glass owner
+OTHER_MANAGER = "admin-3@example.invalid"          # also in _DEFAULT_FLOOR
 NEW_MANAGER = "newly.promoted@thehfhotel.org"  # only ever in the live directory
-OUTSIDER = "admin-7@example.invalid"   # employee-tier shared mailbox
+OUTSIDER = "employee-1@example.invalid"   # employee-tier shared mailbox, never in the floor
+
+# The MANAGER_ADMIN_EMAILS floor this file installs by default — same shape
+# (6 addresses) as production's old hardcoded list, just entirely synthetic.
+# PROTECTED is listed FIRST: manager_directory.PROTECTED_ADMIN always
+# resolves to the first configured address (the break-glass owner).
+_DEFAULT_FLOOR = (
+    PROTECTED,
+    "admin-2@example.invalid",
+    OTHER_MANAGER,
+    "admin-4@example.invalid",
+    "admin-5@example.invalid",
+    "admin-6@example.invalid",
+)
 
 
 class _FakeResponse:
@@ -68,6 +90,7 @@ def isolated_directory(monkeypatch):
     monkeypatch.delenv("CF_ADMIN_EMAILS", raising=False)
     monkeypatch.delenv("PORTAL_DIRECTORY_TOKEN", raising=False)
     monkeypatch.delenv("PORTAL_DIRECTORY_URL", raising=False)
+    monkeypatch.setenv("MANAGER_ADMIN_EMAILS", ",".join(_DEFAULT_FLOOR))
 
     def _no_network(*args, **kwargs):
         raise AssertionError("test attempted real network I/O")
@@ -273,16 +296,9 @@ class TestDormancy:
         assert manager_directory._refresh_once() is False
         assert manager_directory.live_snapshot() is None
 
-    def test_dormant_verdicts_match_the_pre_directory_allowlist(self):
-        """The exact allowlist the app shipped with, unchanged."""
-        legacy_allowlist = {
-            "admin-2@example.invalid",
-            "admin-1@example.invalid",
-            "admin-3@example.invalid",
-            "admin-4@example.invalid",
-            "admin-5@example.invalid",
-            "admin-6@example.invalid",
-        }
+    def test_dormant_verdicts_match_the_configured_floor(self):
+        """STATIC_ADMIN_EMAILS is exactly what MANAGER_ADMIN_EMAILS parses to."""
+        legacy_allowlist = set(_DEFAULT_FLOOR)
         assert set(manager_directory.STATIC_ADMIN_EMAILS) == legacy_allowlist
 
         for email in legacy_allowlist:
@@ -357,7 +373,7 @@ class TestNormalization:
         monkeypatch.setattr(manager_directory, "_http_get", _directory_returning(NEW_MANAGER))
         manager_directory._refresh_once()
 
-        assert manager_directory.is_admin_email("admin-9@example.invalid") is True
+        assert manager_directory.is_admin_email(PROTECTED.upper()) is True
         assert manager_directory.is_admin_email(f" {PROTECTED} ") is True
 
     def test_non_string_and_empty_input_is_rejected_not_crashed(self):

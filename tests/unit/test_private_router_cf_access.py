@@ -35,14 +35,16 @@ from app.main_unified import app as fastapi_app
 from app.services import cf_access_service
 
 ACCEPTED_AUD = "3c622b40cc931c7414dcfc583bed1f50afaac316eafb914cc7f153650843ea8b"
-# One of the default CF_ADMIN_EMAILS (see cf_access_service.py) — used to
-# prove admins are NOT accidentally locked out either.
+# Clearly-fake address put in the MANAGER_ADMIN_EMAILS floor by the
+# patch_jwks_client fixture below — used to prove admins are NOT
+# accidentally locked out either.
 ADMIN_EMAIL = "admin-1@example.invalid"
-# A real HF shared mailbox (the reception-1 kiosk identity) that the SAME
-# Access app admits but that is NOT an admin — see app/api/deps.py's
-# module docstring for why require_cf_access must accept this identity
-# where require_admin_auth would not.
-NON_ADMIN_EMAIL = "admin-7@example.invalid"
+# Deliberately NOT added to MANAGER_ADMIN_EMAILS — a staff/kiosk-tier
+# identity (e.g. a shared hotel mailbox) that the SAME Access app admits
+# but that is NOT an admin — see app/api/deps.py's module docstring for
+# why require_cf_access must accept this identity where require_admin_auth
+# would not.
+NON_ADMIN_EMAIL = "employee-1@example.invalid"
 
 # One representative, cheap (no device I/O, empty-DB-safe) GET endpoint
 # per protected router — enough to prove the dependency lets a verified
@@ -115,6 +117,7 @@ def patch_jwks_client(monkeypatch, rsa_keypair):
     monkeypatch.delenv("CF_AUTO_LOGIN", raising=False)
     monkeypatch.delenv("CF_ACCESS_AUDS", raising=False)
     monkeypatch.delenv("CF_ADMIN_EMAILS", raising=False)
+    monkeypatch.setenv("MANAGER_ADMIN_EMAILS", ADMIN_EMAIL)
 
 
 def _make_cf_token(

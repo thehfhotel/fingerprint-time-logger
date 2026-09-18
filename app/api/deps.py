@@ -31,10 +31,12 @@ evidence in THIS repo confirm real, live non-admin traffic against these
 exact routers:
 
   1. tests/unit/test_admin_auth_cf_access.py's NON_ADMIN_EMAIL /
-     tests/unit/test_cf_access_service.py's EMPLOYEE_EMAIL is a REAL HF
-     shared mailbox ("admin-7@example.invalid" — the
-     reception-1 kiosk identity per hf-erp's hostnames.json) that these
-     same Access apps admit but that must never get admin auto-login.
+     tests/unit/test_cf_access_service.py's EMPLOYEE_EMAIL stand in for a
+     real HF shared mailbox (the reception-1 kiosk identity per hf-erp's
+     hostnames.json) that these same Access apps admit but that must
+     never get admin auto-login — the test files use a clearly-fake
+     placeholder address, kept out of MANAGER_ADMIN_EMAILS, rather than
+     the real one.
   2. app/main_unified.py's own page guards encode a two-tier split:
      serve_admin_page() (the /v2/employees, /v2/system, /v2/terminals
      pages) requires an admin identity, while serve_html_with_cache_

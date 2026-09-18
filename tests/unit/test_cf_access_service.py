@@ -24,12 +24,14 @@ ACCEPTED_AUD_2 = "57f843579497b508143412a5980c1c4fc94ca01abadab465b57a88b5a733e4
 # gated by the admin allowlist — any well-formed, correctly-signed email
 # claim is a valid outcome there.
 TEST_EMAIL = "manager@thehfhotel.org"
-# One of the default CF_ADMIN_EMAILS — used for get_cf_access_email tests,
+# Clearly-fake address put in the MANAGER_ADMIN_EMAILS floor by the
+# patch_jwks_client fixture below — used for get_cf_access_email tests,
 # which DO enforce the admin allowlist.
 ADMIN_EMAIL = "admin-1@example.invalid"
-# A real HF shared mailbox admitted by the same Access apps but NOT an
-# admin — must fall through to the passcode path, never auto-login.
-EMPLOYEE_EMAIL = "admin-7@example.invalid"
+# Deliberately NOT added to MANAGER_ADMIN_EMAILS — an Access-admitted
+# identity that is NOT an admin (e.g. a shared hotel mailbox) — must fall
+# through to the passcode path, never auto-login.
+EMPLOYEE_EMAIL = "employee-1@example.invalid"
 
 
 @pytest.fixture(scope="module")
@@ -78,6 +80,7 @@ def patch_jwks_client(monkeypatch, rsa_keypair):
     monkeypatch.delenv("CF_AUTO_LOGIN", raising=False)
     monkeypatch.delenv("CF_ACCESS_AUDS", raising=False)
     monkeypatch.delenv("CF_ADMIN_EMAILS", raising=False)
+    monkeypatch.setenv("MANAGER_ADMIN_EMAILS", ADMIN_EMAIL)
 
 
 def _make_token(

@@ -60,6 +60,8 @@ coverage.xml
 *.cover
 .hypothesis/
 test-reports/
+reports/
+security_reports/
 
 # ============================================================================
 # Playwright & Browser Testing
@@ -72,6 +74,8 @@ test-results/
 # Database Files (Runtime Data)
 # ============================================================================
 *.db
+*.db-*
+*.db.gz
 *.db-journal
 *.db-shm
 *.db-wal
@@ -79,6 +83,8 @@ test-results/
 *.sqlite3
 database/*.db
 database/*.db-*
+backups/
+backup/
 
 # ============================================================================
 # Logs

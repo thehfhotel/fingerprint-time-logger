@@ -169,6 +169,7 @@ jobs:
         GUEST_FEEDBACK_READER_SECRET=${{ secrets.GUEST_FEEDBACK_READER_SECRET }}
         HOUSEKEEPING_STAFF_BOT_TOKEN=${{ secrets.HOUSEKEEPING_STAFF_BOT_TOKEN }}
         PORTAL_DIRECTORY_TOKEN=${{ secrets.PORTAL_DIRECTORY_TOKEN }}
+        MANAGER_ADMIN_EMAILS=${{ secrets.MANAGER_ADMIN_EMAILS }}
 
   verify_deployment:
     name: Verify release + backup + post-deploy

@@ -29,11 +29,13 @@ from app.services import cf_access_service
 from app.services.admin_auth_service import admin_auth_service
 
 ACCEPTED_AUD = "3c622b40cc931c7414dcfc583bed1f50afaac316eafb914cc7f153650843ea8b"
-# One of the default CF_ADMIN_EMAILS (see cf_access_service.py).
+# Clearly-fake address put in the MANAGER_ADMIN_EMAILS floor by the
+# patch_jwks_client fixture below (see app/services/manager_directory.py).
 TEST_EMAIL = "admin-1@example.invalid"
-# A real HF shared mailbox the same Access apps admit but that is NOT an
-# admin — must never get auto-login.
-NON_ADMIN_EMAIL = "admin-7@example.invalid"
+# Deliberately NOT added to MANAGER_ADMIN_EMAILS — an Access-admitted
+# identity that is NOT an admin (e.g. a shared hotel mailbox) — must never
+# get auto-login.
+NON_ADMIN_EMAIL = "employee-1@example.invalid"
 
 VALIDATE_URL = "/api/private/admin/auth/validate"
 PROTECTED_TEST_URL = "/api/private/test"
@@ -73,6 +75,7 @@ def patch_jwks_client(monkeypatch, rsa_keypair):
     monkeypatch.delenv("CF_AUTO_LOGIN", raising=False)
     monkeypatch.delenv("CF_ACCESS_AUDS", raising=False)
     monkeypatch.delenv("CF_ADMIN_EMAILS", raising=False)
+    monkeypatch.setenv("MANAGER_ADMIN_EMAILS", TEST_EMAIL)
 
 
 def _make_cf_token(

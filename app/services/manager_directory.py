@@ -63,23 +63,61 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# Owner account that must never lose admin access — the break-glass path back
-# in if a membership edit, a policy rename, or a portal outage would otherwise
-# leave nobody able to repair it. Mirrors PROTECTED_MANAGER in the portal's
-# src/server/access.ts. Not a secret.
-PROTECTED_ADMIN = "admin-1@example.invalid"
 
-# The in-code floor: the 6 HF Managers as of this writing. NOT the source of
-# truth any more (the portal directory is) — this is what the app falls back to
-# when no live snapshot has ever been obtained. Not secrets.
-STATIC_ADMIN_EMAILS = (
-    "admin-2@example.invalid",
-    "admin-1@example.invalid",
-    "admin-3@example.invalid",
-    "admin-4@example.invalid",
-    "admin-5@example.invalid",
-    "admin-6@example.invalid",
-)
+def _parse_admin_emails_env(raw: str) -> tuple:
+    """Comma-separated env value -> normalized (lowercased, stripped) tuple.
+
+    Empty/unset input yields an empty tuple — there is no in-code default
+    any more; the floor is entirely operator-configured.
+    """
+    return tuple(
+        item.strip().lower() for item in raw.split(",") if item.strip()
+    )
+
+
+def _manager_admin_emails() -> tuple:
+    """
+    The operator-configured manager/admin floor: MANAGER_ADMIN_EMAILS
+    (comma-separated, lower-cased, stripped), empty tuple when unset. Read
+    fresh from the environment on every call — same "operator change takes
+    effect without a restart" convention as ``_floor_emails``'s
+    ``CF_ADMIN_EMAILS`` and ``_directory_token``/``_directory_url`` below. No
+    emails are hardcoded in source any more; configure this in the deploy
+    environment.
+    """
+    return _parse_admin_emails_env(os.getenv("MANAGER_ADMIN_EMAILS", ""))
+
+
+def _protected_admin() -> str:
+    """
+    Owner account that must never lose admin access — the break-glass path
+    back in if a membership edit, a policy rename, or a portal outage would
+    otherwise leave nobody able to repair it. Mirrors PROTECTED_MANAGER in
+    the portal's src/server/access.ts. The first configured manager email is
+    the break-glass owner; '' (matches nothing — see ``_normalize``) when
+    MANAGER_ADMIN_EMAILS is unset entirely.
+    """
+    emails = _manager_admin_emails()
+    return emails[0] if emails else ""
+
+
+def __getattr__(name):
+    """
+    PEP 562 module ``__getattr__``: keep ``PROTECTED_ADMIN`` and
+    ``STATIC_ADMIN_EMAILS`` available as public, live, env-driven attributes
+    (e.g. ``manager_directory.PROTECTED_ADMIN``) without caching them at
+    import time — a test's ``monkeypatch.setenv("MANAGER_ADMIN_EMAILS", ...)``
+    takes effect on the very next read, no module reload required. Code
+    inside this module calls ``_protected_admin()``/``_manager_admin_emails()``
+    directly instead of the bare names, since module-level bytecode does not
+    route through ``__getattr__``.
+    """
+    if name == "PROTECTED_ADMIN":
+        return _protected_admin()
+    if name == "STATIC_ADMIN_EMAILS":
+        return _manager_admin_emails()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Server-to-server over the shared-nginx Docker network — no Cloudflare Access
 # in the path, so no bypass token is needed. Not a secret; overridable so a
@@ -138,7 +176,7 @@ def _floor_emails() -> FrozenSet[str]:
     operator change takes effect without a restart.
     """
     raw = os.getenv("CF_ADMIN_EMAILS", "").strip()
-    source = raw.split(",") if raw else STATIC_ADMIN_EMAILS
+    source = raw.split(",") if raw else _manager_admin_emails()
     return frozenset(_normalize(item) for item in source if _normalize(item))
 
 
@@ -284,7 +322,7 @@ def is_admin_email(email) -> bool:
 
     snapshot = _snapshot  # single read — see the module docstring on atomicity
     if snapshot is not None:
-        return normalized == PROTECTED_ADMIN or normalized in snapshot
+        return normalized == _protected_admin() or normalized in snapshot
     return normalized in _floor_emails()
 
 
