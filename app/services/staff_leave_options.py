@@ -19,7 +19,8 @@ from app.models.staff_leave import StaffLeaveDay, StaffLeaveRequest
 PORTION_LABELS = {"full": "เต็มวัน", "am": "ครึ่งวันเช้า", "pm": "ครึ่งวันบ่าย"}
 _HALF_RE = re.compile(
     r"^(?:แจ้งลา|ขอลา)\s+"
-    r"(?P<kind>ลาพักร้อน|พักร้อน|ลาป่วย|ป่วย|ลากิจ|กิจ|ใช้วันหยุด|วันหยุด)\s+"
+    r"(?P<kind>ลาพักร้อน|พักร้อน|ลาป่วย|ป่วย|ลากิจ|กิจ"
+    r"|ใช้วันหยุดนักขัตฤกษ์|วันหยุดนักขัตฤกษ์|ใช้วันหยุด|วันหยุด|นักขัตฤกษ์)\s+"
     r"(?P<portion>ครึ่งวันเช้า|ครึ่งวันบ่าย)\s+"
     r"(?P<date>\d{1,2}/\d{1,2}/\d{4})\s*$"
 )
@@ -185,13 +186,22 @@ def install(service) -> None:
         return
     _INSTALLED = True
 
-    # Fourth employee leave type. `day_off` means using an employee's own
-    # accrued/rest day; it is deliberately distinct from company public holidays.
-    service.TYPES["day_off"] = "ใช้วันหยุด"
-    service.TYPE_WORDS.update({"ใช้วันหยุด": "day_off", "วันหยุด": "day_off"})
+    # Fourth employee leave type. `public_holiday` means using an employee's
+    # own accrued/rest day AND the company's public-holiday calendar type —
+    # merged into one code 2026-09-18 (previously `day_off` was tracked
+    # separately from `public_holiday`).
+    service.TYPES["public_holiday"] = "ใช้วันหยุดนักขัตฤกษ์"
+    service.TYPE_WORDS.update({
+        "ใช้วันหยุด": "public_holiday",
+        "วันหยุด": "public_holiday",
+        "นักขัตฤกษ์": "public_holiday",
+        "วันหยุดนักขัตฤกษ์": "public_holiday",
+        "ใช้วันหยุดนักขัตฤกษ์": "public_holiday",
+    })
     service.DIRECT_RE = re.compile(
         r"^(?:แจ้งลา|ขอลา)\s+"
-        r"(?P<kind>ลาพักร้อน|พักร้อน|ลาป่วย|ป่วย|ลากิจ|กิจ|ใช้วันหยุด|วันหยุด)\s+"
+        r"(?P<kind>ลาพักร้อน|พักร้อน|ลาป่วย|ป่วย|ลากิจ|กิจ"
+        r"|ใช้วันหยุดนักขัตฤกษ์|วันหยุดนักขัตฤกษ์|ใช้วันหยุด|วันหยุด|นักขัตฤกษ์)\s+"
         r"(?P<dates>\S+)\s*$"
     )
 
@@ -273,13 +283,6 @@ def install(service) -> None:
             return data
 
         leave_api._dto = dto
-    except Exception:
-        pass
-
-    try:
-        from app.api import leaves as leaves_api
-        if "day_off" not in leaves_api._ALLOWED_LEAVE_TYPES:
-            leaves_api._ALLOWED_LEAVE_TYPES = (*leaves_api._ALLOWED_LEAVE_TYPES, "day_off")
     except Exception:
         pass
 

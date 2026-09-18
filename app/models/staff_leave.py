@@ -38,7 +38,7 @@ class StaffLeaveRequest(Base):
     __table_args__ = (
         CheckConstraint("status IN ('pending','approved','rejected','cancelled')",
                         name="ck_staff_leave_status"),
-        CheckConstraint("leave_type IN ('sick','personal','vacation','day_off')",
+        CheckConstraint("leave_type IN ('sick','personal','vacation','public_holiday')",
                         name="ck_staff_leave_type"),
         CheckConstraint("leave_portion IN ('full','am','pm')",
                         name="ck_staff_leave_portion"),

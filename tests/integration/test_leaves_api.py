@@ -335,6 +335,38 @@ class TestEmployeeLeaves:
         assert resp.status_code == 200
         assert resp.json()[0]["leave_type"] == "public_holiday"
 
+    def test_create_rejects_day_off_merged_into_public_holiday(
+        self, leaves_client, seeded_employee
+    ):
+        """day_off was merged into public_holiday 2026-09-18 (migration
+        20260918_000000_merge_day_off_into_public_holiday); the old code is
+        no longer an accepted leave_type."""
+        resp = leaves_client.post(
+            f"{LEAVES_ROOT}/employee",
+            json={
+                "employee_badge_number": "EMP01",
+                "leave_type": "day_off",
+                "date": "2026-06-15",
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_create_accepts_public_holiday_half_day(
+        self, leaves_client, seeded_employee, leaves_session
+    ):
+        resp = leaves_client.post(
+            f"{LEAVES_ROOT}/employee",
+            json={
+                "employee_badge_number": "EMP01",
+                "leave_type": "public_holiday",
+                "leave_portion": "am",
+                "date": "2026-06-15",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()[0]["leave_type"] == "public_holiday"
+        assert resp.json()[0]["leave_portion"] == "am"
+
     def test_create_404_unknown_employee(self, leaves_client):
         resp = leaves_client.post(
             f"{LEAVES_ROOT}/employee",

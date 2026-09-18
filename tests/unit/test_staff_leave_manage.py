@@ -57,11 +57,11 @@ def test_edit_request_keeps_reference_and_replaces_reservations(monkeypatch):
 
         updated = manage._edit_request(
             service, db, employee, request_id, old_version,
-            "day_off", date(2026, 9, 20), date(2026, 9, 20), "pm",
+            "public_holiday", date(2026, 9, 20), date(2026, 9, 20), "pm",
         )
         assert updated.id == request_id
         assert updated.version == old_version + 1
-        assert updated.leave_type == "day_off"
+        assert updated.leave_type == "public_holiday"
         assert updated.leave_portion == "pm"
         assert updated.date_from == updated.date_to == date(2026, 9, 20)
         days = db.query(StaffLeaveDay).filter_by(request_id=request_id).all()
@@ -70,7 +70,7 @@ def test_edit_request_keeps_reference_and_replaces_reservations(monkeypatch):
         # LINE retry of the same signed confirmation is idempotent.
         replay = manage._edit_request(
             service, db, employee, request_id, old_version,
-            "day_off", date(2026, 9, 20), date(2026, 9, 20), "pm",
+            "public_holiday", date(2026, 9, 20), date(2026, 9, 20), "pm",
         )
         assert replay.version == old_version + 1
     finally:

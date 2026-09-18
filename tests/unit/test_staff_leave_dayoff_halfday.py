@@ -39,17 +39,54 @@ def make_db(monkeypatch):
 def test_day_off_is_a_distinct_type_and_direct_text_parses(monkeypatch):
     engine, db, employee = make_db(monkeypatch)
     try:
-        assert service.TYPES["day_off"] == "ใช้วันหยุด"
+        assert service.TYPES["public_holiday"] == "ใช้วันหยุดนักขัตฤกษ์"
         assert service.parse_direct_request("แจ้งลา ใช้วันหยุด 18/9/2569") == (
-            "day_off", date(2026, 9, 18), date(2026, 9, 18)
+            "public_holiday", date(2026, 9, 18), date(2026, 9, 18)
+        )
+        assert service.parse_direct_request("แจ้งลา นักขัตฤกษ์ 18/9/2569") == (
+            "public_holiday", date(2026, 9, 18), date(2026, 9, 18)
         )
         row = service.submit(
-            db, employee, uuid4().hex, "day_off", date(2026, 9, 18), date(2026, 9, 18)
+            db, employee, uuid4().hex, "public_holiday", date(2026, 9, 18), date(2026, 9, 18)
         )
         approved = service.decide(db, row.id, "approved", row.version, "manager@example.invalid")
-        assert approved.leave_type == "day_off"
+        assert approved.leave_type == "public_holiday"
         roster = db.query(EmployeeLeave).filter_by(employee_badge_number=employee.badge_number).one()
-        assert roster.leave_type == "day_off"
+        assert roster.leave_type == "public_holiday"
+    finally:
+        db.close(); engine.dispose()
+
+
+def test_line_typed_use_day_off_and_nakhattarue_both_file_public_holiday(monkeypatch):
+    """Both the pre-existing day_off wording and the formal public-holiday
+    wording map to the same merged public_holiday type, and the confirmation
+    reply carries LINE's label (ใช้วันหยุดนักขัตฤกษ์), not the shorter admin
+    board label."""
+    engine, db, employee = make_db(monkeypatch)
+    try:
+        for text in ("แจ้งลา ใช้วันหยุด 18/9/2569", "แจ้งลา นักขัตฤกษ์ 18/9/2569"):
+            event = {"type": "message", "message": {"type": "text", "text": text}}
+            review = service._messages(event, db, employee)[0]
+            assert "ใช้วันหยุดนักขัตฤกษ์" in review["text"]
+            submit_action = review["quickReply"]["items"][0]["action"]
+            submit_event = {"type": "postback", "postback": {"data": submit_action["data"]}}
+            messages = service._messages(submit_event, db, employee)
+            assert messages
+            row = db.query(StaffLeaveRequest).filter_by(
+                employee_badge_number=employee.badge_number
+            ).order_by(StaffLeaveRequest.created_at.desc()).first()
+            assert row.leave_type == "public_holiday"
+            roster = db.query(EmployeeLeave).filter_by(
+                employee_badge_number=employee.badge_number, date=date(2026, 9, 18),
+            ).one()
+            assert roster.leave_type == "public_holiday"
+            db.query(EmployeeLeave).filter_by(
+                employee_badge_number=employee.badge_number
+            ).delete()
+            db.query(StaffLeaveRequest).filter_by(
+                employee_badge_number=employee.badge_number
+            ).delete()
+            db.commit()
     finally:
         db.close(); engine.dispose()
 
@@ -125,7 +162,7 @@ def test_picker_offers_both_half_day_periods(monkeypatch):
             db, employee,
         )[0]
         kinds = [item["action"]["label"] for item in first["quickReply"]["items"]]
-        assert "ใช้วันหยุด" in kinds
+        assert "ใช้วันหยุดนักขัตฤกษ์" in kinds
         personal = next(
             item["action"] for item in first["quickReply"]["items"]
             if item["action"]["label"] == "ลากิจ"

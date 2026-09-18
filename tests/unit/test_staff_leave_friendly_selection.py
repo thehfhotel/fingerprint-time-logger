@@ -76,12 +76,12 @@ def test_cancel_selection_and_confirm_never_show_internal_id(monkeypatch):
     engine, db, employee = make_db(monkeypatch)
     try:
         row = add_leave(
-            db, employee, "day_off", date(2026, 9, 21), date(2026, 9, 21), "pm"
+            db, employee, "public_holiday", date(2026, 9, 21), date(2026, 9, 21), "pm"
         )
         selection = manage._selection_message(service, [row], "cancel")
         confirm = manage._cancel_confirm_message(service, row)
 
-        assert "ใช้วันหยุด" in selection["text"]
+        assert "ใช้วันหยุดนักขัตฤกษ์" in selection["text"]
         assert "ครึ่งวันบ่าย" in selection["text"]
         assert row.id not in selection["text"]
         assert row.id not in confirm["text"]

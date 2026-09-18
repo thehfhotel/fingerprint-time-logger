@@ -12,7 +12,6 @@
     { code: "vacation", label: "ลาพักร้อน", short: "พร", color: "#EAF6EF" },
     { code: "personal", label: "ลากิจ", short: "กจ", color: "#FBF3E1" },
     { code: "sick", label: "ลาป่วย", short: "ปว", color: "#FBEAEA" },
-    { code: "day_off", label: "ใช้วันหยุด", short: "ชห", color: "#E8E4DF" },
     { code: "public_holiday", label: "วันหยุดนักขัตฤกษ์", short: "นข", color: "#CFC9C1" },
   ];
   var PORTIONS = {
@@ -178,7 +177,7 @@
       info.className = "rounded-xl border border-ink-200 bg-white px-4 py-3 shadow-card";
       info.innerHTML =
         '<p class="text-sm font-semibold text-ink-900">ข้อมูลเดียวกับ HF ภายในและรายงานรายเดือน</p>' +
-        '<p class="mt-0.5 text-xs text-ink-500">รองรับเต็มวัน ครึ่งวันเช้า ครึ่งวันบ่าย และใช้วันหยุด · ครึ่งวันไม่ลบกะของวันนั้น</p>';
+        '<p class="mt-0.5 text-xs text-ink-500">รองรับเต็มวัน ครึ่งวันเช้า ครึ่งวันบ่าย และวันหยุดนักขัตฤกษ์ · ครึ่งวันไม่ลบกะของวันนั้น</p>';
 
       var grid = document.createElement("div");
       grid.className = "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5";
