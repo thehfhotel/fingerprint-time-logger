@@ -5,7 +5,7 @@
 
 services:
   app:
-    image: ghcr.io/thehfhotel/fingerprint-time-logger:${IMAGE_TAG:-latest}
+    image: ghcr.io/thehfhotel/fingerprint-time-logger-app:${IMAGE_TAG:-latest}
     pull_policy: always
     container_name: fingerprint-time-logger
     ports:
@@ -76,7 +76,7 @@ services:
   # menus from the production employee DB, then atomically writes a marker.
   # The public deployment readiness probe refuses 204 until that marker exists.
   post-deploy:
-    image: ghcr.io/thehfhotel/fingerprint-time-logger:${IMAGE_TAG:-latest}
+    image: ghcr.io/thehfhotel/fingerprint-time-logger-app:${IMAGE_TAG:-latest}
     pull_policy: always
     command: ["python", "scripts/post_deploy.py"]
     restart: "no"
