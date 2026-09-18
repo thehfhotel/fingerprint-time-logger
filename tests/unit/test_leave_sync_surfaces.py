@@ -10,6 +10,8 @@ from sqlalchemy.pool import StaticPool
 from app.api import leaves as leaves_api
 from app.core.database import Base
 from app.models.models import Employee, EmployeeLeave
+from app.services import staff_leave as staff_leave_service
+from app.services import staff_leave_options
 from app.services.staff_leave_options import recount_monthly_day_totals
 
 
@@ -33,18 +35,18 @@ def make_db():
     return engine, db
 
 
-def test_admin_leave_api_round_trips_day_off_half_day_without_marker_leak():
+def test_admin_leave_api_round_trips_public_holiday_half_day_without_marker_leak():
     engine, db = make_db()
     try:
         body = leaves_api.EmployeeLeaveIn(
             employee_badge_number="SYNC-1",
-            leave_type="day_off",
+            leave_type="public_holiday",
             leave_portion="am",
             date=date(2026, 9, 18),
         )
         out = leaves_api.create_employee_leaves(body, db)
         assert len(out) == 1
-        assert out[0].leave_type == "day_off"
+        assert out[0].leave_type == "public_holiday"
         assert out[0].leave_portion == "am"
         assert out[0].note is None
 
@@ -150,7 +152,7 @@ def test_shared_leave_ui_covers_both_pages_and_hides_internal_reference_vocabula
 
     for phrase in (
         'page !== "leaves" && page !== "monthly"',
-        'code: "day_off"',
+        'code: "public_holiday"',
         'leave_portion',
         'ครึ่งวันเช้า',
         'ครึ่งวันบ่าย',
@@ -160,6 +162,12 @@ def test_shared_leave_ui_covers_both_pages_and_hides_internal_reference_vocabula
     ):
         assert phrase in source
     assert "HF-LV-" not in source
+    # day_off was merged into public_holiday 2026-09-18: exactly one
+    # public_holiday column remains and no day_off column exists. Admin
+    # surfaces use the shorter board label, not LINE's longer one.
+    assert source.count('code: "public_holiday"') == 1
+    assert 'code: "day_off"' not in source
+    assert 'label: "วันหยุดนักขัตฤกษ์"' in source
     assert 'script.src = STATIC_BASE + "leave-sync-ui.js"' in nav
     # nav.js propagates its OWN ?v=<deploy> stamp onto the leave-sync-ui.js
     # URL it injects (app/utils/static_asset_version.py stamps nav.js's own
@@ -169,5 +177,14 @@ def test_shared_leave_ui_covers_both_pages_and_hides_internal_reference_vocabula
     assert '"?v="' in nav
 
 
-def test_day_off_is_native_admin_leave_type_not_runtime_only():
-    assert "day_off" in leaves_api._ALLOWED_LEAVE_TYPES
+def test_public_holiday_is_native_admin_leave_type_and_line_filable():
+    assert "public_holiday" in leaves_api._ALLOWED_LEAVE_TYPES
+    assert "day_off" not in leaves_api._ALLOWED_LEAVE_TYPES
+
+
+def test_line_label_differs_from_admin_board_label():
+    staff_leave_options.install(staff_leave_service)
+    # LINE (staff_leave_options.TYPES) uses the longer, formal label; the
+    # admin board (leave-sync-ui.js, checked above) uses the shorter one.
+    assert staff_leave_service.TYPES["public_holiday"] == "ใช้วันหยุดนักขัตฤกษ์"
+    assert "day_off" not in staff_leave_service.TYPES

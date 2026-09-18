@@ -5,14 +5,21 @@ share `EmployeeLeave` as the authoritative approved-leave record.
 
 ## Data contract
 
-- `leave_type`: `vacation`, `personal`, `sick`, `day_off`, `public_holiday`
+- `leave_type`: `vacation`, `personal`, `sick`, `public_holiday`
 - `leave_portion`: API field `full`, `am`, `pm`
 - Half-day compatibility is stored in `EmployeeLeave.note` as `|half=am` or
   `|half=pm`; the admin API removes that marker from the public `note` field and
   exposes `leave_portion` explicitly.
-- `public_holiday` is admin/holiday-table only: it comes from the shared
-  `PublicHoliday` table, never from a LINE-filed request. HF ภายใน's `แจ้งลา`
-  flow cannot file `public_holiday`; `staff_leave.TYPES` never includes it.
+- `public_holiday` is filable both ways: from the admin's shared
+  `PublicHoliday` (company-wide) table AND from HF ภายใน's `แจ้งลา` LINE
+  flow, which used to track a separate `day_off` code. The two were merged
+  2026-09-18 (migration `20260918_000000_merge_day_off_into_public_holiday`)
+  because they meant the same thing — an employee using their own
+  rest/holiday day. `staff_leave.TYPES["public_holiday"]` is the LINE label
+  (`ใช้วันหยุดนักขัตฤกษ์`); admin surfaces (leave-type legend, leave board,
+  roster cell picker, monthly report) show the shorter `วันหยุดนักขัตฤกษ์`.
+  Typed keywords `ใช้วันหยุด` / `วันหยุด` / `นักขัตฤกษ์` /
+  `วันหยุดนักขัตฤกษ์` / `ใช้วันหยุดนักขัตฤกษ์` all map to `public_holiday`.
 - No second leave table or sync job is required. An approval in HF ภายใน writes
   `EmployeeLeave`, and both ERP pages read that same row.
 - In auto-record mode (the default — see `docs/staff-leave.md`), a
@@ -59,7 +66,7 @@ its **effective state** from there — never `StaffLeaveRequest.status` alone.
 
 ## UI behavior
 
-- shifts-admin > วันลา · วันหยุด shows five leave types and full/morning/afternoon
+- shifts-admin > วันลา · วันหยุด shows four leave types and full/morning/afternoon
   portions. Admin-created leave writes through the same `/api/private/leaves/employee`
   endpoint.
 - monthly shows a leave/holiday panel sourced from the same API.

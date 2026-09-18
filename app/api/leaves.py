@@ -47,9 +47,10 @@ router.include_router(staff_leave_admin_router, prefix="/requests", tags=["staff
 # included here in addition to existing in its own (company-wide)
 # PublicHoliday table, because the admin sometimes wants to mark a
 # specific employee as off-for-holiday without applying it to everyone
-# (e.g. ad-hoc holiday for one branch's staff). ``day_off`` is the separate
-# employee rest-day/comp-day type used by HF ภายใน's "ใช้วันหยุด" flow.
-_ALLOWED_LEAVE_TYPES = ("vacation", "personal", "sick", "public_holiday", "day_off")
+# (e.g. ad-hoc holiday for one branch's staff). It is also the type HF
+# ภายใน's "ใช้วันหยุดนักขัตฤกษ์" LINE flow files (merged with the former
+# separate `day_off` code 2026-09-18).
+_ALLOWED_LEAVE_TYPES = ("vacation", "personal", "sick", "public_holiday")
 
 
 # --- Schemas -------------------------------------------------------------

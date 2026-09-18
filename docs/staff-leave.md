@@ -86,8 +86,18 @@ precondition), appear here needing an actual manager decision.
 
 ## Scope and date semantics
 
-Version one supports **full-day** `sick`, `personal`, `vacation` only, matching
-existing roster types. The inclusive range is expressed as calendar days, NOT a
+Four leave types are filable through LINE: `sick`, `personal`, `vacation`, and
+`public_holiday` (an employee using their own rest/holiday day — the LINE
+label is `ใช้วันหยุดนักขัตฤกษ์`, typed via `ใช้วันหยุด` / `วันหยุด` /
+`นักขัตฤกษ์` / `วันหยุดนักขัตฤกษ์` / `ใช้วันหยุดนักขัตฤกษ์`, or picked from the
+type buttons). `public_holiday` supports the same full/half-day (am/pm)
+options as the others. Admin surfaces (leave-type legend, leave board, roster
+cell picker, monthly report) show it as `วันหยุดนักขัตฤกษ์`, matching the
+existing company-wide `PublicHoliday` calendar type it shares a code with as
+of the 2026-09-18 merge (migration
+`20260918_000000_merge_day_off_into_public_holiday`; before that, LINE's
+version was tracked separately as `day_off`). The inclusive range is
+expressed as calendar days, NOT a
 calculated entitlement or payroll deduction. Managers must check shifts,
 scheduled days off, policy and entitlement before approving a range. Each date
 in an approved range becomes a roster leave entry, matching the existing admin

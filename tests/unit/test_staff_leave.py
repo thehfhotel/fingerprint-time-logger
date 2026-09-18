@@ -114,8 +114,13 @@ def test_invalid_ranges(db, start, end):
     assert db.query(StaffLeaveRequest).count() == 0
 
 
-@pytest.mark.parametrize('kind', ['public_holiday', 'invalid'])
+@pytest.mark.parametrize('kind', ['day_off', 'invalid'])
 def test_invalid_types(db, kind):
+    # `day_off` was merged into `public_holiday` 2026-09-18 (migration
+    # 20260918_000000_merge_day_off_into_public_holiday) and is no longer a
+    # filable type; `public_holiday` itself IS filable through LINE now (see
+    # tests/unit/test_staff_leave_dayoff_halfday.py), via the
+    # staff_leave_options patch that app.api.staff_oa installs at import.
     with pytest.raises(service.LeaveError):
         submit(db, kind=kind)
 
