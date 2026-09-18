@@ -128,7 +128,7 @@ jobs:
       packages: write
     with:
       app_name: fingerprint
-      image: ghcr.io/thehfhotel/fingerprint-time-logger
+      image: ghcr.io/thehfhotel/fingerprint-time-logger-app
       host_port: "5000"
     secrets:
       ssh_key: ${{ secrets.EVERGREEN_DEPLOY_SSH_KEY }}
